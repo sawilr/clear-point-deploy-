@@ -16,6 +16,7 @@ const concernsEN = [
   'Understand Medicare Supplement / Medigap',
   'Enrollment Periods',
   'Federal / State / Union / Retiree / VA / TRICARE / Disability Benefits',
+  'Disability, SSI, SSDI or Medicare Premium Help',
   'I am new to Medicare',
   'I am not sure',
 ];
@@ -29,6 +30,7 @@ const concernsES = [
   'Entender Medicare Supplement / Medigap',
   'Períodos de Inscripción',
   'Beneficios Federales / Estatales / Unión / Retiro / VA / TRICARE / Discapacidad',
+  'Discapacidad, SSI, SSDI o ayuda con primas Medicare',
   'Soy nuevo en Medicare',
   'No estoy seguro',
 ];
