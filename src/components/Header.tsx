@@ -198,6 +198,7 @@ export function Header() {
               ))}
               <Link to="/about" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('About', 'Acerca de')}</Link>
               <Link to="/contact" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Contact', 'Contacto')}</Link>
+              <Link to="/resources" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Resources', 'Recursos')}</Link>
             </div>
             <button
               onClick={() => handleScrollNav('/#smart-medicare-review')}

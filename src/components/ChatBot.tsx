@@ -2295,13 +2295,14 @@ export function ChatBot() {
 
   /* ---------- Welcome ---------- */
 
-  function startWelcome(clearExisting = false) {
+  function startWelcome(clearExisting = false, langOverride?: ChatLanguage) {
+    const welcomeLang = langOverride ?? memory.language;
     setStep('language');
     enqueueBot(
       [
         {
           text:
-            memory.language === 'es'
+            welcomeLang === 'es'
               ? 'Hola, bienvenido a Clear Point Senior Advisors. ¿Prefiere inglés o español?'
               : 'Hi, welcome to Clear Point Senior Advisors. Would you prefer English or Spanish?',
           options: [
@@ -2322,19 +2323,26 @@ export function ChatBot() {
     setIsTyping(false);
     setMessages([]);
     setStep('language');
-    const resetMemory = { ...DEFAULT_MEMORY, language: memory.language };
+    // Sync to current page language on reset so close+reopen uses active site language
+    const newLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
+    const resetMemory = { ...DEFAULT_MEMORY, language: newLang };
     setMemory(resetMemory);
     if (typeof window !== 'undefined') {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(resetMemory)));
     }
-    window.setTimeout(() => startWelcome(true), 150);
+    window.setTimeout(() => startWelcome(true, newLang), 150);
   }
 
   function openChat() {
     setIsOpen(true);
     if (!hasOpened && messages.length === 0) {
       setHasOpened(true);
-      startWelcome();
+      // Sync to current page language on first open
+      const currentLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
+      if (memory.language !== currentLang) {
+        updateMemory({ language: currentLang });
+      }
+      startWelcome(false, currentLang);
     }
   }
 
@@ -3140,7 +3148,7 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed bottom-[72px] right-3 md:bottom-6 md:right-6 z-50 w-[calc(100vw-12px)] md:w-[480px] lg:w-[520px] max-w-[calc(100vw-12px)] h-[calc(100dvh-88px)] md:h-[700px] max-h-[calc(100dvh-88px)] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 w-[calc(100vw-12px)] md:w-[480px] lg:w-[520px] max-w-[calc(100vw-12px)] h-[calc(100dvh-88px)] md:h-[700px] max-h-[calc(100dvh-88px)] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">

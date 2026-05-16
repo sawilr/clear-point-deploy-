@@ -48,7 +48,7 @@ export function Footer() {
               <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><Link to="/resources" className="hover:text-cream-50 transition-colors">{t('Resources & Blog', 'Recursos y Blog')}</Link></li>
-              <li><Link to="/contact" className="hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</Link></li>
+              <li><a href="/#how" className="hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
             </ul>
           </div>
 
@@ -71,7 +71,7 @@ export function Footer() {
 
         {/* Bottom */}
         <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-cream-50/30">
-          <span>© 2025 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
+          <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center gap-3">
             <Link to="/privacy-policy" className="hover:text-cream-50/60 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
             <span>|</span>

@@ -24,7 +24,7 @@ export default function App() {
     <div className="min-h-screen bg-cream-50">
       <ScrollToTop />
       <Header />
-      <main className="pb-16 md:pb-0">
+      <main className="pb-20 md:pb-0">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
