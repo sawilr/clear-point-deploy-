@@ -1141,6 +1141,112 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         pace: 'slow',
       },
     ],
+    edu_ssdi_ssi: [
+      { text: 'Esta área es importante porque SSI, SSDI, Medicaid, beneficios por discapacidad y Medicare no funcionan igual.', pace: 'slow' },
+      { text: 'SSI por sí solo normalmente no significa que alguien tenga Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo de las reglas del estado. Medicare antes de los 65 años normalmente depende de SSDI después del período requerido, o de condiciones especiales como ALS o ESRD.', pace: 'slow' },
+      { text: 'Si alguien tiene SSDI, Medicare puede comenzar después del período requerido por discapacidad. Si alguien tiene 65 años o más, las reglas de Medicare también dependen del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años.', pace: 'slow' },
+      { text: 'Si alguien no tiene suficientes quarters para Parte A sin prima, puede que pueda comprar Parte A. Si tiene ingresos y recursos limitados, el estado puede ayudar a pagar Parte A y/o Parte B mediante Medicare Savings Programs como QMB.', pace: 'slow' },
+      { text: 'Clear Point puede ayudarle a entender qué preguntas hacer, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.', pace: 'slow' },
+      {
+        text: '¿Cuál de estas situaciones aplica a usted?',
+        options: [
+          { label: 'Recibo SSI', value: 'edu_ssdi_ssi_ssi' },
+          { label: 'Recibo SSDI', value: 'edu_ssdi_ssi_ssdi' },
+          { label: 'Tengo Medicaid', value: 'edu_ssdi_ssi_medicaid' },
+          { label: 'Tengo menos de 65 años', value: 'edu_ssdi_ssi_under65' },
+          { label: 'Tengo 65 años o más', value: 'edu_ssdi_ssi_over65' },
+          { label: 'No tengo 40 quarters de trabajo', value: 'edu_ssdi_ssi_quarters' },
+          { label: 'Necesito ayuda pagando Parte A o Parte B', value: 'edu_ssdi_ssi_partab' },
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssi: [
+      { text: 'SSI por sí solo no significa automáticamente Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo del estado. Si tiene menos de 65 años, Medicare normalmente requiere SSDI después del período requerido, o una condición especial como ALS o ESRD. La elegibilidad debe confirmarse con Social Security o Medicaid.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssdi: [
+      { text: 'Personas aprobadas para SSDI pueden ser elegibles para Medicare después del período requerido por discapacidad. Deben confirmar el tiempo exacto con Social Security. Algunas condiciones como ALS o ESRD pueden tener reglas diferentes.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_medicaid: [
+      { text: 'Tener Medicaid no significa automáticamente que tenga Medicare. Medicaid y Medicare son programas separados. Algunas personas tienen ambos, lo que se llama elegibilidad dual. Si tiene menos de 65 años y tiene Medicaid pero no Medicare, es posible que necesite verificar si aplica SSDI, ALS o ESRD. La elegibilidad debe confirmarse con Medicaid o Social Security.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_under65: [
+      { text: 'Personas menores de 65 años pueden calificar para Medicare por SSDI después del período requerido, ESRD o ALS. SSI por sí solo no es lo mismo que SSDI y no lleva automáticamente a Medicare. Debe verificar su situación con Social Security para entender cuándo comenzaría Medicare si tiene SSDI.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_over65: [
+      { text: 'A los 65 años o más, la elegibilidad de Medicare depende en parte del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si no tiene suficientes quarters, todavía puede obtener Parte A pagando una prima. Los Medicare Savings Programs del estado pueden ayudar en algunos casos.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_quarters: [
+      { text: 'Aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare, pueden permitir Parte A sin prima. El historial de trabajo del cónyuge también puede importar en algunas situaciones. Si no tiene suficientes quarters, Parte A puede requerir una prima mensual. Algunas personas con ingresos y recursos limitados pueden recibir ayuda pagando esa prima mediante un Medicare Savings Program del estado como QMB. La elegibilidad debe confirmarse con Social Security o la agencia estatal.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_partab: [
+      { text: 'Programas como QMB pueden ayudar a pagar la prima de Parte A si aplica, la prima de Parte B, y a veces deducibles, coaseguro y copagos. La elegibilidad depende de ingresos, recursos, reglas del estado y estatus de Medicare. Tendría que solicitar a través de la agencia estatal de Medicaid para ver si puede calificar. Clear Point no puede determinar elegibilidad, pero un asesor puede ayudarle a entender qué preguntas hacer.', pace: 'slow' },
+      {
+        text: '¿Quiere hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
   };
 
   const messages = language === 'es' ? es[topic] : en[topic];
@@ -1401,118 +1507,11 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         },
       ],
     },
-    edu_ssdi_ssi: [
-      { text: 'Esta área es importante porque SSI, SSDI, Medicaid, beneficios por discapacidad y Medicare no funcionan igual.', pace: 'slow' },
-      { text: 'SSI por sí solo normalmente no significa que alguien tenga Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo de las reglas del estado. Medicare antes de los 65 años normalmente depende de SSDI después del período requerido, o de condiciones especiales como ALS o ESRD.', pace: 'slow' },
-      { text: 'Si alguien tiene SSDI, Medicare puede comenzar después del período requerido por discapacidad. Si alguien tiene 65 años o más, las reglas de Medicare también dependen del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años.', pace: 'slow' },
-      { text: 'Si alguien no tiene suficientes quarters para Parte A sin prima, puede que pueda comprar Parte A. Si tiene ingresos y recursos limitados, el estado puede ayudar a pagar Parte A y/o Parte B mediante Medicare Savings Programs como QMB.', pace: 'slow' },
-      { text: 'Clear Point puede ayudarle a entender qué preguntas hacer, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.', pace: 'slow' },
-      {
-        text: '¿Cuál de estas situaciones aplica a usted?',
-        options: [
-          { label: 'Recibo SSI', value: 'edu_ssdi_ssi_ssi' },
-          { label: 'Recibo SSDI', value: 'edu_ssdi_ssi_ssdi' },
-          { label: 'Tengo Medicaid', value: 'edu_ssdi_ssi_medicaid' },
-          { label: 'Tengo menos de 65 años', value: 'edu_ssdi_ssi_under65' },
-          { label: 'Tengo 65 años o más', value: 'edu_ssdi_ssi_over65' },
-          { label: 'No tengo 40 quarters de trabajo', value: 'edu_ssdi_ssi_quarters' },
-          { label: 'Necesito ayuda pagando Parte A o Parte B', value: 'edu_ssdi_ssi_partab' },
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_ssi: [
-      { text: 'SSI por sí solo no significa automáticamente Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo del estado. Si tiene menos de 65 años, Medicare normalmente requiere SSDI después del período requerido, o una condición especial como ALS o ESRD. La elegibilidad debe confirmarse con Social Security o Medicaid.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_ssdi: [
-      { text: 'Personas aprobadas para SSDI pueden ser elegibles para Medicare después del período requerido por discapacidad. Deben confirmar el tiempo exacto con Social Security. Algunas condiciones como ALS o ESRD pueden tener reglas diferentes.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_medicaid: [
-      { text: 'Tener Medicaid no significa automáticamente que tenga Medicare. Medicaid y Medicare son programas separados. Algunas personas tienen ambos, lo que se llama elegibilidad dual. Si tiene menos de 65 años y tiene Medicaid pero no Medicare, es posible que necesite verificar si aplica SSDI, ALS o ESRD. La elegibilidad debe confirmarse con Medicaid o Social Security.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_under65: [
-      { text: 'Personas menores de 65 años pueden calificar para Medicare por SSDI después del período requerido, ESRD o ALS. SSI por sí solo no es lo mismo que SSDI y no lleva automáticamente a Medicare. Debe verificar su situación con Social Security para entender cuándo comenzaría Medicare si tiene SSDI.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_over65: [
-      { text: 'A los 65 años o más, la elegibilidad de Medicare depende en parte del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si no tiene suficientes quarters, todavía puede obtener Parte A pagando una prima. Los Medicare Savings Programs del estado pueden ayudar en algunos casos.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_quarters: [
-      { text: 'Aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare, pueden permitir Parte A sin prima. El historial de trabajo del cónyuge también puede importar en algunas situaciones. Si no tiene suficientes quarters, Parte A puede requerir una prima mensual. Algunas personas con ingresos y recursos limitados pueden recibir ayuda pagando esa prima mediante un Medicare Savings Program del estado como QMB. La elegibilidad debe confirmarse con Social Security o la agencia estatal.', pace: 'slow' },
-      {
-        text: '¿Quiere continuar o hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
-    edu_ssdi_ssi_partab: [
-      { text: 'Programas como QMB pueden ayudar a pagar la prima de Parte A si aplica, la prima de Parte B, y a veces deducibles, coaseguro y copagos. La elegibilidad depende de ingresos, recursos, reglas del estado y estatus de Medicare. Tendría que solicitar a través de la agencia estatal de Medicaid para ver si puede calificar. Clear Point no puede determinar elegibilidad, pero un asesor puede ayudarle a entender qué preguntas hacer.', pace: 'slow' },
-      {
-        text: '¿Quiere hablar con un asesor?',
-        options: [
-          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
-        ],
-        pace: 'slow',
-      },
-    ],
   };
 
-  const messages = language === 'es' ? es[topic] : en[topic];
-  return messages || (language === 'es'
-    ? [{ text: 'Vamos paso a paso. ¿Qué parte de Medicare te gustaría entender?', pace: 'slow' }]
-    : [{ text: "Let's go step by step. What part of Medicare would you like to understand?", pace: 'slow' }]);
+  return programs[state]?.[language] || (language === 'es'
+    ? [{ text: 'En este momento no tengo programas específicos para ese estado, pero un asesor puede revisar las opciones disponibles.', options: [{ label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'slow' }]
+    : [{ text: 'I do not have state-specific programs for that state at this moment, but an advisor can review available options.', options: [{ label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'slow' }]);
 }
 
 /* ------------------------------------------------------------------ */
