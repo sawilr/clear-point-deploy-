@@ -7,8 +7,8 @@ import { CheckIcon, ChevronRight } from './icons';
 
 const TOTAL_STEPS = 6;
 
-const SSDI_CONCERN_EN = 'Disability, SSI, SSDI or Medicare Premium Help';
-const SSDI_CONCERN_ES = 'Discapacidad, SSI, SSDI o ayuda con primas Medicare';
+const SSDI_CONCERN_EN = 'I have disability, SSI, SSDI, or need help with Medicare premiums';
+const SSDI_CONCERN_ES = 'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare';
 
 const ssdiQuestionsEN = [
   { key: 'age',         q: 'Are you currently 65 or older?',                                                              opts: ['Yes', 'No', 'Turning 65 soon'] },
@@ -28,30 +28,26 @@ const ssdiQuestionsES = [
 ];
 
 const concernsEN = [
-  'Lower my Medicare costs',
-  'Check Medicaid / MSP / Extra Help',
-  'Check my doctors',
-  'Check my medications',
-  'Compare Medicare Advantage plans',
-  'Understand Medicare Supplement / Medigap',
-  'Enrollment Periods',
-  'Federal / State / Union / Retiree / VA / TRICARE / Disability Benefits',
-  'Disability, SSI, SSDI or Medicare Premium Help',
+  'I want to lower my Medicare costs',
+  'I may need Medicaid, Medicare Savings Program, or Extra Help',
+  'I have Medicare Advantage and want to review my plan',
+  'I have Medicare Supplement / Medigap',
   'I am new to Medicare',
+  'I am not insured or not sure what I have',
+  'I have disability, SSI, SSDI, or need help with Medicare premiums',
+  'I have retiree, union, federal, state, VA, or TRICARE coverage that may affect Medicare',
   'I am not sure',
 ];
 
 const concernsES = [
-  'Reducir mis costos de Medicare',
-  'Revisar Medicaid / MSP / Extra Help',
-  'Revisar mis doctores',
-  'Revisar mis medicamentos',
-  'Comparar planes Medicare Advantage',
-  'Entender Medicare Supplement / Medigap',
-  'Periodos de Inscripción',
-  'Beneficios Federales / Estatales / Unión / Retiro / VA / TRICARE / Discapacidad',
-  'Discapacidad, SSI, SSDI o ayuda con primas Medicare',
+  'Quiero reducir mis costos de Medicare',
+  'Puede que necesite Medicaid, Programa de Ahorro de Medicare o Extra Help',
+  'Tengo Medicare Advantage y quiero revisar mi plan',
+  'Tengo Medicare Supplement / Medigap',
   'Soy nuevo en Medicare',
+  'No tengo seguro o no estoy seguro de lo que tengo',
+  'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare',
+  'Tengo cobertura de retiro, unión, federal, estatal, VA o TRICARE que puede afectar Medicare',
   'No estoy seguro',
 ];
 
@@ -252,7 +248,7 @@ export function SmartMedicareReview() {
           {step === 1 && ssdiSubStep === 0 && (
             <div>
               <p className="text-earth-800 text-base font-semibold mb-5">
-                {t('What would you like help with today?', '¿Con qué le gustaría recibir ayuda hoy?')}
+                {t('What Medicare situation best matches you today?', '¿Cuál situación de Medicare describe mejor su caso hoy?')}
               </p>
               <div className="grid gap-2.5">
                 {concerns.map((c) => (
