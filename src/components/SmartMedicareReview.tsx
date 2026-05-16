@@ -14,6 +14,8 @@ const concernsEN = [
   'Check my medications',
   'Compare Medicare Advantage plans',
   'Understand Medicare Supplement / Medigap',
+  'Enrollment Periods',
+  'Federal / State / Union / Retiree Benefits',
   'I am new to Medicare',
   'I am not sure',
 ];
@@ -25,6 +27,8 @@ const concernsES = [
   'Revisar mis medicamentos',
   'Comparar planes Medicare Advantage',
   'Entender Medicare Supplement / Medigap',
+  'Períodos de Inscripción',
+  'Beneficios Federales / Estatales / Sindicales / Jubilación',
   'Soy nuevo en Medicare',
   'No estoy seguro',
 ];

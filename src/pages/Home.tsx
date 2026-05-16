@@ -137,6 +137,7 @@ const carriers: Carrier[] = [
   { name: 'Wellcare', logo: '/carriers/wellcare.png', alt: 'Wellcare logo', className: 'max-w-[78px] max-h-[78px]' },
   { name: 'Wellpoint', logo: '/carriers/wellpoint.png', alt: 'Wellpoint logo', className: 'max-w-[148px] max-h-[52px]' },
   { name: 'Centene', logo: '/carriers/centene.png', alt: 'Centene logo', className: 'max-w-[146px] max-h-[56px]' },
+  { name: 'VNS Health', logo: '/carriers/vns-health.png', alt: 'VNS Health logo', className: 'max-w-[130px] max-h-[44px]' },
 ];
 
 export default function Home() {
