@@ -7,6 +7,26 @@ import { CheckIcon, ChevronRight } from './icons';
 
 const TOTAL_STEPS = 6;
 
+const SSDI_CONCERN_EN = 'Disability, SSI, SSDI or Medicare Premium Help';
+const SSDI_CONCERN_ES = 'Discapacidad, SSI, SSDI o ayuda con primas Medicare';
+
+const ssdiQuestionsEN = [
+  { key: 'age',         q: 'Are you currently 65 or older?',                                                              opts: ['Yes', 'No', 'Turning 65 soon'] },
+  { key: 'medicare',    q: 'Do you currently have Medicare?',                                                              opts: ['Yes, I have Medicare', 'No, I do not have Medicare yet', 'I am not sure'] },
+  { key: 'benefits',    q: 'Do you receive SSI, SSDI, Medicaid, or disability-related benefits?',                         opts: ['SSI', 'SSDI', 'Medicaid', 'Disability benefits', 'Not sure', 'None of these'] },
+  { key: 'ssdiApproved',q: 'Have you been approved for Social Security Disability Insurance (SSDI)?',                     opts: ['Yes', 'No', 'Not sure'] },
+  { key: 'quarters',    q: 'Do you or your spouse have about 40 work quarters / 10 years of Medicare-covered work?',      opts: ['Yes', 'No', 'Not sure'] },
+  { key: 'needsHelp',   q: 'What do you need help understanding?',                                                        opts: ['When Medicare may start', 'Help paying Part A or Part B', 'Medicaid / MSP / Extra Help', 'Disability and Medicare rules', 'Speak with an advisor'] },
+];
+const ssdiQuestionsES = [
+  { key: 'age',         q: '¿Tiene 65 años o más?',                                                                      opts: ['Sí', 'No', 'Cumplo 65 pronto'] },
+  { key: 'medicare',    q: '¿Actualmente tiene Medicare?',                                                                opts: ['Sí, tengo Medicare', 'No, todavía no tengo Medicare', 'No estoy seguro'] },
+  { key: 'benefits',    q: '¿Recibe SSI, SSDI, Medicaid o beneficios relacionados con discapacidad?',                    opts: ['SSI', 'SSDI', 'Medicaid', 'Beneficios por discapacidad', 'No estoy seguro', 'Ninguno'] },
+  { key: 'ssdiApproved',q: '¿Fue aprobado para Social Security Disability Insurance (SSDI)?',                            opts: ['Sí', 'No', 'No estoy seguro'] },
+  { key: 'quarters',    q: '¿Usted o su cónyuge tienen aproximadamente 40 quarters / 10 años de trabajo cubierto?',      opts: ['Sí', 'No', 'No estoy seguro'] },
+  { key: 'needsHelp',   q: '¿Qué necesita entender?',                                                                   opts: ['Cuándo puede comenzar Medicare', 'Ayuda pagando Parte A o Parte B', 'Medicaid / MSP / Extra Help', 'Reglas de discapacidad y Medicare', 'Hablar con un asesor'] },
+];
+
 const concernsEN = [
   'Lower my Medicare costs',
   'Check Medicaid / MSP / Extra Help',
@@ -28,7 +48,7 @@ const concernsES = [
   'Revisar mis medicamentos',
   'Comparar planes Medicare Advantage',
   'Entender Medicare Supplement / Medigap',
-  'Períodos de Inscripción',
+  'Periodos de Inscripción',
   'Beneficios Federales / Estatales / Unión / Retiro / VA / TRICARE / Discapacidad',
   'Discapacidad, SSI, SSDI o ayuda con primas Medicare',
   'Soy nuevo en Medicare',
@@ -51,9 +71,16 @@ export function SmartMedicareReview() {
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [ssdiSubStep, setSsdiSubStep] = useState(0);
+  const [ssdiAnswers, setSsdiAnswers] = useState<Record<string, string>>({});
 
   const concerns = lang === 'es' ? concernsES : concernsEN;
   const isEs = lang === 'es';
+  const ssdiQuestions = isEs ? ssdiQuestionsES : ssdiQuestionsEN;
+  const isSSdiConcern = concern === SSDI_CONCERN_EN || concern === SSDI_CONCERN_ES;
+  const currentSsdiQ = (isSSdiConcern && ssdiSubStep >= 1 && ssdiSubStep <= 6)
+    ? ssdiQuestions[ssdiSubStep - 1]
+    : null;
 
   const handleZip = (val: string) => {
     const clean = val.replace(/\D/g, '').slice(0, 5);
@@ -160,6 +187,11 @@ export function SmartMedicareReview() {
       `- Consent to contact: Yes`,
       '',
       `Client Main Concern: ${concern}`,
+      ...(Object.keys(ssdiAnswers).length > 0 ? [
+        '',
+        'Disability / SSI / SSDI Screening Answers:',
+        ...Object.entries(ssdiAnswers).map(([k, v]) => `- ${k}: ${v}`),
+      ] : []),
       '',
       'Recommended Agent Follow-Up:',
       'Verify Medicare status, current coverage, doctors, medications, income/household status if asking about Medicaid, MSP, Extra Help/LIS, and any plan review request.',
@@ -217,7 +249,7 @@ export function SmartMedicareReview() {
         {/* Step Content */}
         <div className="bg-white rounded-2xl shadow-lifted p-6 sm:p-8 border border-cream-200">
           {/* Step 1 — Main Concern */}
-          {step === 1 && (
+          {step === 1 && ssdiSubStep === 0 && (
             <div>
               <p className="text-earth-800 text-base font-semibold mb-5">
                 {t('What would you like help with today?', '¿Con qué le gustaría recibir ayuda hoy?')}
@@ -226,7 +258,12 @@ export function SmartMedicareReview() {
                 {concerns.map((c) => (
                   <button
                     key={c}
-                    onClick={() => { setConcern(c); nextStep(); }}
+                    onClick={() => {
+                      setConcern(c);
+                      setSsdiAnswers({});
+                      const isSSdi = c === SSDI_CONCERN_EN || c === SSDI_CONCERN_ES;
+                      if (isSSdi) { setSsdiSubStep(1); } else { setSsdiSubStep(0); nextStep(); }
+                    }}
                     className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
                       concern === c
                         ? 'border-gold-400 bg-gold-50 text-earth-900'
@@ -236,6 +273,76 @@ export function SmartMedicareReview() {
                     {c}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* SSDI/SSI Screening Sub-steps */}
+          {step === 1 && currentSsdiQ && (
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-gold-500 mb-3">
+                {isEs ? `Pregunta ${ssdiSubStep} de 6` : `Question ${ssdiSubStep} of 6`}
+              </p>
+              <p className="text-earth-800 text-base font-semibold mb-5">{currentSsdiQ.q}</p>
+              <div className="grid gap-2.5">
+                {currentSsdiQ.opts.map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => {
+                      setSsdiAnswers(prev => ({ ...prev, [currentSsdiQ.key]: opt }));
+                      setSsdiSubStep(s => s + 1);
+                    }}
+                    className="w-full text-left px-4 py-4 rounded-xl border-2 border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700 text-base font-medium transition-all"
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => { setSsdiSubStep(s => s === 1 ? 0 : s - 1); }}
+                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+              >
+                {isEs ? '← Atrás' : '← Back'}
+              </button>
+            </div>
+          )}
+
+          {/* SSDI/SSI Educational Summary */}
+          {step === 1 && isSSdiConcern && ssdiSubStep === 7 && (
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-gold-500 mb-3">
+                {isEs ? 'Información educativa' : 'Educational Information'}
+              </p>
+              <div className="bg-cream-50 rounded-xl p-4 text-sm text-earth-700 space-y-3 mb-5 leading-relaxed">
+                {isEs ? (
+                  <>
+                    <p>Las reglas de Medicare pueden ser diferentes para personas que reciben SSI, SSDI, Medicaid o beneficios relacionados con discapacidad. <strong>SSI por sí solo no significa automáticamente que la persona tenga Medicare.</strong> Personas menores de 65 años pueden recibir Medicare si califican por SSDI después del período requerido, o por situaciones especiales como ALS o ESRD.</p>
+                    <p>Para Medicare Parte A, muchas personas no pagan prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si alguien no tiene Parte A sin prima, todavía podría comprar Parte A.</p>
+                    <p>En algunos casos, si los ingresos y recursos son limitados, un Medicare Savings Program del estado, como QMB, puede ayudar a pagar Parte A y/o Parte B.</p>
+                    <p className="text-xs text-earth-500 italic">Clear Point puede ayudarle a organizar las preguntas correctas, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.</p>
+                  </>
+                ) : (
+                  <>
+                    <p>Medicare rules can be different for people who receive SSI, SSDI, Medicaid, or disability-related benefits. <strong>SSI by itself does not automatically mean a person has Medicare.</strong> People under 65 may get Medicare if they qualify through SSDI after the required waiting period, or through special situations such as ALS or ESRD.</p>
+                    <p>For Medicare Part A, many people do not pay a premium if they or a spouse have about 40 work quarters, usually around 10 years of Medicare-covered work. If someone does not have premium-free Part A, they may still be able to buy Part A.</p>
+                    <p>In some cases, if income and resources are limited, a state Medicare Savings Program such as QMB may help pay Part A and/or Part B.</p>
+                    <p className="text-xs text-earth-500 italic">Clear Point can help organize the right questions, but final eligibility must be confirmed with Social Security, Medicare, Medicaid, or the state agency.</p>
+                  </>
+                )}
+              </div>
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => nextStep()}
+                  className="w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 rounded-xl hover:bg-earth-900 transition-all flex items-center justify-center gap-2"
+                >
+                  {isEs ? 'Continuar — Solicitar revisión gratuita' : 'Continue — Request my free review'} <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => { setConcern(''); setSsdiSubStep(0); setSsdiAnswers({}); }}
+                  className="w-full text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700 py-2"
+                >
+                  {isEs ? 'Volver a temas' : 'Back to topics'}
+                </button>
               </div>
             </div>
           )}
