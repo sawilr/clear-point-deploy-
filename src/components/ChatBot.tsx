@@ -137,6 +137,7 @@ const TOPIC_MENU_EN: Option[] = [
   { label: 'State Prescription Assistance', value: 'edu_spap' },
   { label: 'Medicare Supplement', value: 'edu_supplement' },
   { label: 'Special Benefits (Union / VA / Disability)', value: 'edu_special_benefits' },
+  { label: 'Disability / SSI / SSDI / Medicare Premium Help', value: 'edu_ssdi_ssi' },
   { label: 'Talk to an Advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
@@ -152,6 +153,7 @@ const TOPIC_MENU_ES: Option[] = [
   { label: 'Ayuda Estatal para Medicinas', value: 'edu_spap' },
   { label: 'Planes Suplementarios de Medicare', value: 'edu_supplement' },
   { label: 'Beneficios Especiales (Unión / VA / Discapacidad)', value: 'edu_special_benefits' },
+  { label: 'Discapacidad / SSI / SSDI / ayuda con primas Medicare', value: 'edu_ssdi_ssi' },
   { label: 'Hablar con un Asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
@@ -601,6 +603,112 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi: [
+      { text: 'This is an important area because SSI, SSDI, Medicaid, disability benefits, and Medicare do not all work the same way.', pace: 'slow' },
+      { text: 'SSI by itself usually does not mean someone has Medicare. Many people with SSI may have Medicaid, depending on state rules. Medicare before age 65 usually depends on SSDI after the required waiting period, or special conditions such as ALS or ESRD.', pace: 'slow' },
+      { text: 'If someone has SSDI, Medicare may start after the required disability waiting period. If someone is 65 or older, Medicare rules also depend on work history. Many people get premium-free Part A if they or a spouse have about 40 work quarters, usually around 10 years.', pace: 'slow' },
+      { text: 'If someone does not have enough quarters for premium-free Part A, they may be able to buy Part A. If income and resources are limited, the state may help pay Part A and/or Part B through Medicare Savings Programs such as QMB.', pace: 'slow' },
+      { text: 'Clear Point can help you understand what questions to ask, but final eligibility must be confirmed with Social Security, Medicare, Medicaid, or the state agency.', pace: 'slow' },
+      {
+        text: 'Which of these applies to you?',
+        options: [
+          { label: 'I receive SSI', value: 'edu_ssdi_ssi_ssi' },
+          { label: 'I receive SSDI', value: 'edu_ssdi_ssi_ssdi' },
+          { label: 'I have Medicaid', value: 'edu_ssdi_ssi_medicaid' },
+          { label: 'I am under 65', value: 'edu_ssdi_ssi_under65' },
+          { label: 'I am 65 or older', value: 'edu_ssdi_ssi_over65' },
+          { label: 'I do not have 40 work quarters', value: 'edu_ssdi_ssi_quarters' },
+          { label: 'I need help paying Part A or Part B', value: 'edu_ssdi_ssi_partab' },
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssi: [
+      { text: 'SSI alone does not automatically mean Medicare. Many SSI recipients may have Medicaid, depending on state rules. If you are under 65, Medicare usually requires SSDI after the required waiting period, or a special condition like ALS or ESRD. Eligibility must be confirmed with Social Security or Medicaid.', pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssdi: [
+      { text: 'People approved for SSDI may become eligible for Medicare after the required disability waiting period. They should confirm timing with Social Security. Some conditions such as ALS or ESRD may have different rules.', pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_medicaid: [
+      { text: 'Having Medicaid does not automatically mean you have Medicare. Medicaid and Medicare are separate programs. Some people have both, which is called dual eligibility. If you are under 65 and have Medicaid but not Medicare, you may need to check whether SSDI, ALS, or ESRD pathways apply to you. Eligibility must be confirmed with Medicaid or Social Security.', pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_under65: [
+      { text: 'People under 65 may qualify for Medicare through SSDI after the required waiting period, through ESRD, or through ALS. SSI alone is not the same as SSDI and does not automatically lead to Medicare. You should verify your situation with Social Security to understand your Medicare start date if you have SSDI.', pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_over65: [
+      { text: 'At age 65 or older, Medicare eligibility depends in part on work history. Many people get premium-free Part A if they or a spouse have about 40 work quarters, usually around 10 years of Medicare-covered work. If you do not have enough quarters, you may still be able to get Part A by paying a premium. State Medicare Savings Programs may also help in some cases.', pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_quarters: [
+      { text: "About 40 quarters, usually around 10 years of Medicare-covered work, may allow premium-free Part A. A spouse's work history may also matter in some situations. If you do not have enough quarters, Part A may require a monthly premium. Some people with limited income and resources may be able to get help paying that premium through a state Medicare Savings Program such as QMB. Eligibility must be confirmed with Social Security or the state agency.", pace: 'slow' },
+      {
+        text: 'Would you like to continue or speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_partab: [
+      { text: 'Programs like QMB may help pay Part A premiums if needed, Part B premiums, and sometimes deductibles, coinsurance, and copays. Eligibility depends on income, resources, state rules, and Medicare status. You would need to apply through your state Medicaid agency to see if you may qualify. Clear Point cannot determine eligibility, but an advisor can help you understand what questions to ask.', pace: 'slow' },
+      {
+        text: 'Would you like to speak with an advisor?',
+        options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
         pace: 'slow',
       },
@@ -1293,7 +1401,54 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         },
       ],
     },
-  };
+    edu_ssdi_ssi: [
+      { text: 'Esta área es importante porque SSI, SSDI, Medicaid, beneficios por discapacidad y Medicare no funcionan igual.', pace: 'slow' },
+      { text: 'SSI por sí solo normalmente no significa que alguien tenga Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo de las reglas del estado. Medicare antes de los 65 años normalmente depende de SSDI después del período requerido, o de condiciones especiales como ALS o ESRD.', pace: 'slow' },
+      { text: 'Si alguien tiene SSDI, Medicare puede comenzar después del período requerido por discapacidad. Si alguien tiene 65 años o más, las reglas de Medicare también dependen del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años.', pace: 'slow' },
+      { text: 'Si alguien no tiene suficientes quarters para Parte A sin prima, puede que pueda comprar Parte A. Si tiene ingresos y recursos limitados, el estado puede ayudar a pagar Parte A y/o Parte B mediante Medicare Savings Programs como QMB.', pace: 'slow' },
+      { text: 'Clear Point puede ayudarle a entender qué preguntas hacer, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.', pace: 'slow' },
+      {
+        text: '¿Cuál de estas situaciones aplica a usted?',
+        options: [
+          { label: 'Recibo SSI', value: 'edu_ssdi_ssi_ssi' },
+          { label: 'Recibo SSDI', value: 'edu_ssdi_ssi_ssdi' },
+          { label: 'Tengo Medicaid', value: 'edu_ssdi_ssi_medicaid' },
+          { label: 'Tengo menos de 65 años', value: 'edu_ssdi_ssi_under65' },
+          { label: 'Tengo 65 años o más', value: 'edu_ssdi_ssi_over65' },
+          { label: 'No tengo 40 quarters de trabajo', value: 'edu_ssdi_ssi_quarters' },
+          { label: 'Necesito ayuda pagando Parte A o Parte B', value: 'edu_ssdi_ssi_partab' },
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssi: [
+      { text: 'SSI por sí solo no significa automáticamente Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo del estado. Si tiene menos de 65 años, Medicare normalmente requiere SSDI después del período requerido, o una condición especial como ALS o ESRD. La elegibilidad debe confirmarse con Social Security o Medicaid.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_ssdi: [
+      { text: 'Personas aprobadas para SSDI pueden ser elegibles para Medicare después del período requerido por discapacidad. Deben confirmar el tiempo exacto con Social Security. Algunas condiciones como ALS o ESRD pueden tener reglas diferentes.', pace: 'slow' },
+      {
+        text: '¿Quiere continuar o hablar con un asesor?',
+        options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_ssdi_ssi_medicaid: [
+      { text: 'Tener Medicaid no significa automáticamente que tenga Medicare. Medicaid y Medicare son programas separados. Algunas personas tienen ambos, lo que se llama elegibilidad dual. Si tiene menos de 65 años y tiene Medicaid pero no Medicare, es posible que necesite verificar si aplica SSD���2�U5$B��V�Vv�&�ƖFBFV&R6��f�&�'6R6���VF�6�B�6�6��6V7W&�G��r�6S�w6��rr�����FW�C�|+�V�W&R6��F��V"��&�"6��V�6W6�#�r���F���3�����&VâuV�W&��&�"6��V�6W6�"r�f�VS�w&WVW7E�&Wf�Wrr��6���6�V�F"6�74��S�'r�B��B"�������&Vâuf��fW"�FV�54��54D�r�f�VS�vVGU�76F��76�r�����&Vâuf��fW"FV�2FR�VF�6&Rr�f�VS�vVGU�&6��F��F��72r������6S�w6��rr��������VGU�76F��76��V�FW#cS����FW�C�uW'6��2�V��&W2FRcR;�2VVFV�6Ɩf�6"&�VF�6&R�"54D�FW7\:�2FV�W,:��F�&WVW&�F��U5$B��2�54��"<:�6�����W2��֗6��VR54D������WfWF��:F�6�V�FR�VF�6&R�FV&RfW&�f�6"7R6�GV6�;6�6��6�6��6V7W&�G�&V�FV�FW"7\:�F�6��V�,:��VF�6&R6�F�V�R54D��r�6S�w6��rr�����FW�C�|+�V�W&R6��F��V"��&�"6��V�6W6�#�r���F���3�����&VâuV�W&��&�"6��V�6W6�"r�f�VS�w&WVW7E�&Wf�Wrr��6���6�V�F"6�74��S�'r�B��B"�������&Vâuf��fW"�FV�54��54D�r�f�VS�vVGU�76F��76�r�����&Vâuf��fW"FV�2FR�VF�6&Rr�f�VS�vVGU�&6��F��F��72r������6S�w6��rr��������VGU�76F��76���fW#cS����FW�C�t��2cR;�2��:2��V�Vv�&�ƖFBFR�VF�6&RFWV�FRV�'FRFV���7F�&��FRG&&����V6�2W'6��2&V6�&V�'FR6��&��6�V���2�7R<;6�VvRF�V�V�&����F�V�FRCV'FW'2���&���V�FRV��2;�2FRG&&��7V&�W'F��"�VF�6&R�6���F�V�R7Vf�6�V�FW2V'FW'2�F�Fl:�VVFR�'FV�W"'FRv�F�V�&�����2�VF�6&R6f��w2&�w&�2FV�W7FF�VVFV��VF"V��wV��266�2�r�6S�w6��rr�����FW�C�|+�V�W&R6��F��V"��&�"6��V�6W6�#�r���F���3�����&VâuV�W&��&�"6��V�6W6�"r�f�VS�w&WVW7E�&Wf�Wrr��6���6�V�F"6�74��S�'r�B��B"�������&Vâuf��fW"�FV�54��54D�r�f�VS�vVGU�76F��76�r�����&Vâuf��fW"FV�2FR�VF�6&Rr�f�VS�vVGU�&6��F��F��72r������6S�w6��rr��������VGU�76F��76��V'FW'3����FW�C�t&����F�V�FRCV'FW'2���&���V�FRV��2;�2FRG&&��7V&�W'F��"�VF�6&R�VVFV�W&֗F�"'FR6��&���V���7F�&��FRG&&��FV�<;6�VvRF�&�:��VVFR���'F"V��wV�26�GV6���W2�6���F�V�R7Vf�6�V�FW2V'FW'2�'FRVVFR&WVW&�"V�&���V�7V���wV�2W'6��26����w&W6�2�&V7W'6�2Ɩ֗FF�2VVFV�&V6�&�"�VFv�F�W6&���VF��FRV��VF�6&R6f��w2&�w&�FV�W7FF�6����"��V�Vv�&�ƖFBFV&R6��f�&�'6R6��6�6��6V7W&�G���vV�6�W7FF��r�6S�w6��rr�����FW�C�|+�V�W&R6��F��V"��&�"6��V�6W6�#�r���F���3�����&VâuV�W&��&�"6��V�6W6�"r�f�VS�w&WVW7E�&Wf�Wrr��6���6�V�F"6�74��S�'r�B��B"�������&Vâuf��fW"�FV�54��54D�r�f�VS�vVGU�76F��76�r�����&Vâuf��fW"FV�2FR�VF�6&Rr�f�VS�vVGU�&6��F��F��72r������6S�w6��rr��������VGU�76F��76��'F#����FW�C�u&�w&�26����"VVFV��VF"v"�&��FR'FR6�Ɩ6��&��FR'FR"��fV6W2FVGV6�&�W2�6�6VwW&��6�v�2��V�Vv�&�ƖFBFWV�FRFR��w&W6�2�&V7W'6�2�&Vv�2FV�W7FF��W7FGW2FR�VF�6&R�FV�G,:�VR6�Ɩ6�F"G&l:�2FR�vV�6�W7FF�FR�VF�6�B&fW"6�VVFR6Ɩf�6"�6�V"���B��VVFRFWFW&֖�"V�Vv�&�ƖFB�W&�V�6W6�"VVFR�VF&�RV�FV�FW"\:�&VwV�F2�6W"�r�6S�w6��rr�����FW�C�|+�V�W&R�&�"6��V�6W6�#�r���F���3�����&VâuV�W&��&�"6��V�6W6�"r�f�VS�w&WVW7E�&Wf�Wrr��6���6�V�F"6�74��S�'r�B��B"�������&Vâuf��fW"�FV�54��54D�r�f�VS�vVGU�76F��76�r�����&Vâuf��fW"FV�2FR�VF�6&Rr�f�VS�vVGU�&6��F��F��72r������6S�w6��rr�������  };
 
   return programs[state]?.[language] || (language === 'es'
     ? [{ text: 'En este momento no tengo programas específicos para ese estado, pero un asesor puede revisar las opciones disponibles.', options: [{ label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'slow' }]
@@ -2436,6 +2591,14 @@ export function ChatBot() {
         edu_union_retiree: 'Union/Retiree Benefits',
         edu_va_tricare: 'VA/TRICARE Benefits',
         edu_disability: 'Disability Benefits',
+        edu_ssdi_ssi: 'SSI / SSDI / Medicare Premium Help',
+        edu_ssdi_ssi_ssi: 'SSI Information',
+        edu_ssdi_ssi_ssdi: 'SSDI Information',
+        edu_ssdi_ssi_medicaid: 'Medicaid / Medicare',
+        edu_ssdi_ssi_under65: 'Under 65 Medicare',
+        edu_ssdi_ssi_over65: '65+ Medicare',
+        edu_ssdi_ssi_quarters: 'Work Quarters / Part A',
+        edu_ssdi_ssi_partab: 'Part A / Part B Help',
         edu_snp: 'SNP Plans',
         edu_enrollment: 'Enrollment Periods',
         edu_advantage_types: 'HMO vs PPO',
