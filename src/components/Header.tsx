@@ -64,6 +64,21 @@ export function Header() {
 
   const isHome = location.pathname === '/';
 
+  /* Navigate to home then scroll to section — fixes broken nav from non-home pages */
+  const handleScrollNav = (href: string) => {
+    closeNav();
+    const id = href.replace('/#', '#');
+    if (isHome) {
+      scrollTo(id);
+    } else {
+      navigate('/');
+      setTimeout(() => {
+        const el = document.querySelector(id);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 150);
+    }
+  };
+
   return (
     <>
       {/* Top Bar */}
@@ -116,10 +131,10 @@ export function Header() {
               </div>
 
               {navLinks.filter(l => !l.label.includes('Services')).map((link) => (
-                link.scroll && isHome ? (
+                link.scroll ? (
                   <button
                     key={link.href}
-                    onClick={() => scrollTo(link.href.replace('/#', '#'))}
+                    onClick={() => handleScrollNav(link.href)}
                     className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors"
                   >
                     {t(link.label, link.labelEs)}
@@ -138,11 +153,17 @@ export function Header() {
             </div>
 
             {/* Desktop CTA */}
-            <div className="hidden lg:flex items-center gap-4">
+            <div className="hidden lg:flex items-center gap-3">
               <a href="tel:18663108702" className="text-sm font-bold text-earth-900 flex items-center gap-1.5 hover:text-gold-500 transition-colors">
                 <PhoneIcon className="w-4 h-4" />
                 1-866-310-8702
               </a>
+              <button
+                onClick={() => handleScrollNav('/#smart-medicare-review')}
+                className="bg-gold-400 text-earth-900 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-gold-300 transition-all hover:shadow-soft"
+              >
+                {t('Smart Review', 'Revisión Inteligente')}
+              </button>
               <Link
                 to="/contact"
                 className="bg-earth-800 text-cream-50 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft"
@@ -171,20 +192,20 @@ export function Header() {
             <Link to="/extra-help" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               {navLinks.filter(l => l.scroll).map((link) => (
-                link.scroll && isHome ? (
-                  <button key={link.href} onClick={() => scrollTo(link.href.replace('/#', '#'))} className="block text-base font-medium text-earth-800 w-full text-left">
-                    {t(link.label, link.labelEs)}
-                  </button>
-                ) : (
-                  <Link key={link.href} to={link.href} className="block text-base font-medium text-earth-800" onClick={closeNav}>
-                    {t(link.label, link.labelEs)}
-                  </Link>
-                )
+                <button key={link.href} onClick={() => handleScrollNav(link.href)} className="block text-base font-medium text-earth-800 w-full text-left">
+                  {t(link.label, link.labelEs)}
+                </button>
               ))}
               <Link to="/about" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('About', 'Acerca de')}</Link>
               <Link to="/contact" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Contact', 'Contacto')}</Link>
             </div>
-            <Link to="/contact" className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-4" onClick={closeNav}>
+            <button
+              onClick={() => handleScrollNav('/#smart-medicare-review')}
+              className="block w-full text-center bg-gold-400 text-earth-900 font-semibold px-5 py-3 rounded-lg mt-4"
+            >
+              {t('Smart Review', 'Revisión Inteligente')}
+            </button>
+            <Link to="/contact" className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-2" onClick={closeNav}>
               {t('Free Review', 'Revisión Gratis')}
             </Link>
           </div>
