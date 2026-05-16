@@ -136,6 +136,7 @@ const TOPIC_MENU_EN: Option[] = [
   { label: 'Medicare Savings Programs', value: 'edu_msp' },
   { label: 'State Prescription Assistance', value: 'edu_spap' },
   { label: 'Medicare Supplement', value: 'edu_supplement' },
+  { label: 'Special Benefits (Union / VA / Disability)', value: 'edu_special_benefits' },
   { label: 'Talk to an Advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
@@ -150,6 +151,7 @@ const TOPIC_MENU_ES: Option[] = [
   { label: 'Programa de Ahorro de Medicare', value: 'edu_msp' },
   { label: 'Ayuda Estatal para Medicinas', value: 'edu_spap' },
   { label: 'Planes Suplementarios de Medicare', value: 'edu_supplement' },
+  { label: 'Beneficios Especiales (Unión / VA / Discapacidad)', value: 'edu_special_benefits' },
   { label: 'Hablar con un Asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
@@ -540,6 +542,69 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       });
       return msgs;
     })(),
+    edu_special_benefits: [
+      { text: 'Some people have benefits beyond standard Medicare — such as union or retiree plans, VA or TRICARE coverage, or disability benefits. These can affect how Medicare works for you.', pace: 'slow' },
+      {
+        text: 'Which situation applies to you?',
+        options: [
+          { label: 'I have union or retiree benefits', value: 'edu_union_retiree' },
+          { label: 'I have VA or TRICARE', value: 'edu_va_tricare' },
+          { label: 'I receive disability benefits', value: 'edu_disability' },
+          { label: 'I want to check doctors or medications', value: 'edu_medication' },
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_union_retiree: [
+      { text: 'Union and employer retiree plans can vary widely. Some plans continue as your primary coverage when you turn 65. Others become secondary to Medicare and require you to enroll in Medicare Parts A and B to keep your union or retiree benefits active.', pace: 'slow' },
+      { text: 'The rules depend on your specific union contract or employer retiree plan. Plans differ on whether they cover prescriptions, dental, vision, and how they coordinate with Medicare.', pace: 'slow' },
+      { text: '⚠️ Never cancel union or retiree coverage without first speaking with your plan administrator and a licensed advisor. Canceling could cause you to lose benefits permanently or trigger Medicare late enrollment penalties.', pace: 'slow' },
+      { text: 'A licensed advisor can review how your specific union or retiree plan coordinates with Medicare and whether any changes make sense for your situation.', pace: 'slow' },
+      {
+        text: 'Would you like an advisor to review your situation?',
+        options: [
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_va_tricare: [
+      { text: 'If you have VA or TRICARE benefits, Medicare works differently for you than for most people.', pace: 'slow' },
+      { text: 'VA Benefits: The VA health system is separate from Medicare. VA coverage does not replace a Medicare Advantage or Part D plan. You can have both VA and Medicare, but they do not automatically coordinate — the VA covers care at VA facilities, while Medicare covers care outside the VA system. Having Medicare Part B gives you more flexibility if you ever need non-VA care.', pace: 'slow' },
+      { text: 'TRICARE: If you are a retired service member or dependent with TRICARE, you generally need to enroll in Medicare Part B to keep your TRICARE coverage active. TRICARE for Life requires both Medicare Part A and Part B enrollment. Failing to enroll in Part B can cause you to lose TRICARE coverage.', pace: 'slow' },
+      { text: '⚠️ Important: If you lose VA or TRICARE benefits, you may qualify for a Special Enrollment Period for Medicare. Do not delay — timing matters.', pace: 'slow' },
+      { text: 'A licensed advisor can help you understand how VA and TRICARE coordinate with Medicare and what options may make sense for your situation.', pace: 'slow' },
+      {
+        text: 'Would you like an advisor to review your situation?',
+        options: [
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_disability: [
+      { text: 'If you receive Social Security Disability Insurance (SSDI), you generally become eligible for Medicare after a 24-month waiting period from when your disability benefits begin.', pace: 'slow' },
+      { text: 'Some conditions qualify for Medicare without the 24-month wait: ALS (Lou Gehrig\'s disease) qualifies immediately, and End-Stage Renal Disease (ESRD) has its own separate rules.', pace: 'slow' },
+      { text: 'During the 24-month waiting period, you may need other coverage options. A licensed advisor can review what may be available in your area.', pace: 'slow' },
+      { text: 'Once you have Medicare due to disability, you may also qualify for Extra Help / LIS to lower prescription drug costs, or other assistance programs depending on your income and resources.', pace: 'slow' },
+      { text: 'At age 65, your Medicare coverage continues automatically — you do not need to re-enroll.', pace: 'slow' },
+      {
+        text: 'Would you like to learn more or speak with an advisor?',
+        options: [
+          { label: 'Extra Help / LIS', value: 'edu_extra_help' },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
   };
 
   const es: Record<string, QueuedBotMessage[]> = {
@@ -905,6 +970,69 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       });
       return msgs;
     })(),
+    edu_special_benefits: [
+      { text: 'Algunas personas tienen beneficios más allá del Medicare estándar — como planes de sindicato o retiro, cobertura de VA o TRICARE, o beneficios por discapacidad. Estos pueden afectar cómo funciona Medicare para usted.', pace: 'slow' },
+      {
+        text: '¿Cuál situación aplica a usted?',
+        options: [
+          { label: 'Tengo beneficios de unión o retiro', value: 'edu_union_retiree' },
+          { label: 'Tengo VA o TRICARE', value: 'edu_va_tricare' },
+          { label: 'Recibo beneficios por discapacidad', value: 'edu_disability' },
+          { label: 'Quiero revisar doctores o medicinas', value: 'edu_medication' },
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_union_retiree: [
+      { text: 'Los planes de sindicato y de retiro de empleadores pueden variar mucho. Algunos planes continúan como su cobertura principal cuando cumple 65 años. Otros se vuelven secundarios a Medicare y requieren que usted se inscriba en las Partes A y B de Medicare para mantener sus beneficios de sindicato o retiro activos.', pace: 'slow' },
+      { text: 'Las reglas dependen de su contrato sindical específico o del plan de retiro del empleador. Los planes varían en si cubren medicamentos, dental, visión y cómo coordinan con Medicare.', pace: 'slow' },
+      { text: '⚠️ Nunca cancele su cobertura de sindicato o retiro sin antes hablar con el administrador de su plan y un asesor licenciado. Cancelar podría hacerle perder beneficios permanentemente o generar penalidades de inscripción tardía en Medicare.', pace: 'slow' },
+      { text: 'Un asesor licenciado puede revisar cómo su plan específico de sindicato o retiro coordina con Medicare y si algún cambio tiene sentido para su situación.', pace: 'slow' },
+      {
+        text: '¿Quiere que un asesor revise su situación?',
+        options: [
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_va_tricare: [
+      { text: 'Si tiene beneficios de VA o TRICARE, Medicare funciona de manera diferente para usted que para la mayoría de las personas.', pace: 'slow' },
+      { text: 'Beneficios de VA: El sistema de salud de VA es separado de Medicare. La cobertura de VA no reemplaza un plan Medicare Advantage o Parte D. Puede tener tanto VA como Medicare, pero no coordinan automáticamente — el VA cubre atención en instalaciones del VA, mientras que Medicare cubre atención fuera del sistema del VA. Tener la Parte B de Medicare le da más flexibilidad si alguna vez necesita atención fuera del VA.', pace: 'slow' },
+      { text: 'TRICARE: Si usted es un militar retirado o dependiente con TRICARE, generalmente necesita inscribirse en la Parte B de Medicare para mantener su cobertura de TRICARE activa. TRICARE for Life requiere inscripción en ambas, Parte A y Parte B de Medicare. No inscribirse en la Parte B puede hacer que pierda su cobertura de TRICARE.', pace: 'slow' },
+      { text: '⚠️ Importante: Si pierde sus beneficios de VA o TRICARE, puede calificar para un Período de Inscripción Especial de Medicare. No espere — el tiempo es importante.', pace: 'slow' },
+      { text: 'Un asesor licenciado puede ayudarle a entender cómo VA y TRICARE coordinan con Medicare y qué opciones pueden ser adecuadas para su situación.', pace: 'slow' },
+      {
+        text: '¿Quiere que un asesor revise su situación?',
+        options: [
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
+    edu_disability: [
+      { text: 'Si recibe el Seguro de Discapacidad del Seguro Social (SSDI), generalmente se vuelve elegible para Medicare después de un período de espera de 24 meses desde que comienzan sus beneficios por discapacidad.', pace: 'slow' },
+      { text: 'Algunas condiciones califican para Medicare sin la espera de 24 meses: ELA (enfermedad de Lou Gehrig) califica de inmediato, y la Enfermedad Renal en Etapa Terminal (ESRD) tiene sus propias reglas separadas.', pace: 'slow' },
+      { text: 'Durante el período de espera de 24 meses, es posible que necesite otras opciones de cobertura. Un asesor licenciado puede revisar qué puede estar disponible en su área.', pace: 'slow' },
+      { text: 'Una vez que tenga Medicare por discapacidad, también puede calificar para Ayuda Extra / LIS para reducir los costos de medicamentos recetados, u otros programas de asistencia dependiendo de sus ingresos y recursos.', pace: 'slow' },
+      { text: 'A los 65 años, su cobertura de Medicare continúa automáticamente — no necesita reinscribirse.', pace: 'slow' },
+      {
+        text: '¿Quiere saber más o hablar con un asesor?',
+        options: [
+          { label: 'Ayuda Extra / LIS', value: 'edu_extra_help' },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
+        ],
+        pace: 'slow',
+      },
+    ],
   };
 
   const messages = language === 'es' ? es[topic] : en[topic];
@@ -2304,6 +2432,10 @@ export function ChatBot() {
         edu_medicaid: 'Medicaid',
         edu_msp: 'Medicare Savings Program',
         edu_spap: 'State Prescription Assistance',
+        edu_special_benefits: 'Special Benefits',
+        edu_union_retiree: 'Union/Retiree Benefits',
+        edu_va_tricare: 'VA/TRICARE Benefits',
+        edu_disability: 'Disability Benefits',
         edu_snp: 'SNP Plans',
         edu_enrollment: 'Enrollment Periods',
         edu_advantage_types: 'HMO vs PPO',
@@ -2801,7 +2933,7 @@ export function ChatBot() {
                 >
                   <div className="whitespace-pre-line">{message.text}</div>
                   {message.options && (
-                    <div className={`mt-2.5 ${message.options.length >= 6 ? 'grid grid-cols-2 gap-1.5' : 'space-y-1.5'}`}>
+                    <div className={`mt-2.5 ${message.options.length >= 6 ? 'grid grid-cols-1 sm:grid-cols-2 gap-2' : 'space-y-1.5'}`}>
                       {message.options.map((option) => {
                         const optionDisabled = message.id !== activeOptionMessageId || isTyping;
                         const isGrid = message.options!.length >= 6;
@@ -2810,7 +2942,7 @@ export function ChatBot() {
                           key={option.value}
                           onClick={() => handleOption(option.value)}
                           disabled={optionDisabled}
-                          className={`w-full flex items-center gap-1.5 bg-cream-50 text-earth-800 leading-snug rounded-lg border border-cream-200 transition-all text-left ${isGrid ? 'px-2.5 py-2 text-[12px] min-h-[40px]' : 'px-4 py-3 text-[14px] min-h-[48px] gap-2.5'} ${
+                          className={`w-full flex items-center gap-1.5 bg-cream-50 text-earth-800 leading-snug rounded-lg border border-cream-200 transition-all text-left ${isGrid ? 'px-3 py-2.5 text-[13px] min-h-[44px]' : 'px-4 py-3 text-[14px] min-h-[48px] gap-2.5'} ${
                             optionDisabled
                               ? 'opacity-60 cursor-not-allowed'
                               : 'hover:bg-gold-100 hover:border-gold-300'
