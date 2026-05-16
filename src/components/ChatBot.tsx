@@ -2801,15 +2801,16 @@ export function ChatBot() {
                 >
                   <div className="whitespace-pre-line">{message.text}</div>
                   {message.options && (
-                    <div className="mt-2.5 space-y-1.5">
+                    <div className={`mt-2.5 ${message.options.length >= 6 ? 'grid grid-cols-2 gap-1.5' : 'space-y-1.5'}`}>
                       {message.options.map((option) => {
                         const optionDisabled = message.id !== activeOptionMessageId || isTyping;
+                        const isGrid = message.options!.length >= 6;
                         return (
                         <button
                           key={option.value}
                           onClick={() => handleOption(option.value)}
                           disabled={optionDisabled}
-                          className={`w-full flex items-center gap-2.5 px-4 py-3 bg-cream-50 text-earth-800 text-[14px] leading-snug rounded-lg border border-cream-200 transition-all text-left min-h-[48px] ${
+                          className={`w-full flex items-center gap-1.5 bg-cream-50 text-earth-800 leading-snug rounded-lg border border-cream-200 transition-all text-left ${isGrid ? 'px-2.5 py-2 text-[12px] min-h-[40px]' : 'px-4 py-3 text-[14px] min-h-[48px] gap-2.5'} ${
                             optionDisabled
                               ? 'opacity-60 cursor-not-allowed'
                               : 'hover:bg-gold-100 hover:border-gold-300'
@@ -2817,7 +2818,7 @@ export function ChatBot() {
                         >
                           {option.icon && <span className="flex-shrink-0">{option.icon}</span>}
                           <span className="flex-1">{option.label}</span>
-                          <ChevronRight className="w-4 h-4 text-gold-400 flex-shrink-0" />
+                          {!isGrid && <ChevronRight className="w-4 h-4 text-gold-400 flex-shrink-0" />}
                         </button>
                         );
                       })}
