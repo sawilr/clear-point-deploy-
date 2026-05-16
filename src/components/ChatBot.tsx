@@ -123,54 +123,86 @@ const MEDICARE_INTRO: Record<ChatLanguage, QueuedBotMessage[]> = {
   ],
 };
 
-/* ---- Post-state topic menu (same for all states, only language differs) ---- */
+/* ---- Post-state topic menu — 3 grouped pages (replaces flat 13-item menu) ---- */
 
-const TOPIC_MENU_EN: Option[] = [
-  { label: 'Medicare Basics', value: 'edu_parts_ab' },
-  { label: 'Enrollment Periods', value: 'edu_enrollment' },
-  { label: 'HMO vs PPO', value: 'edu_advantage_types' },
-  { label: 'SNP Plans', value: 'edu_snp' },
-  { label: 'Part D Drug Plans', value: 'edu_part_d' },
-  { label: 'Extra Help / LIS', value: 'edu_extra_help' },
-  { label: 'Medicaid', value: 'edu_medicaid' },
-  { label: 'Medicare Savings Programs', value: 'edu_msp' },
-  { label: 'State Prescription Assistance', value: 'edu_spap' },
-  { label: 'Medicare Supplement', value: 'edu_supplement' },
-  { label: 'Special Benefits (Union / VA / Disability)', value: 'edu_special_benefits' },
-  { label: 'Disability / SSI / SSDI / Medicare Premium Help', value: 'edu_ssdi_ssi' },
-  { label: 'Talk to an Advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+const TOPIC_GROUPS_EN: Option[][] = [
+  // Group 1 of 3
+  [
+    { label: 'Lower my Medicare costs', value: 'edu_cost_help' },
+    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
+    { label: 'Medicare Advantage', value: 'edu_part_c' },
+    { label: 'Medicare Supplement / Medigap', value: 'edu_supplement' },
+    { label: 'New to Medicare', value: 'edu_parts_ab' },
+    { label: 'More options →', value: 'topic_page_2' },
+    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
+  // Group 2 of 3
+  [
+    { label: 'Part D / prescription drugs', value: 'edu_part_d' },
+    { label: 'HMO vs PPO', value: 'edu_advantage_types' },
+    { label: 'SNP plans', value: 'edu_snp' },
+    { label: 'Disability / SSI / SSDI', value: 'edu_ssdi_ssi' },
+    { label: 'Retiree / union / VA / TRICARE', value: 'edu_special_benefits' },
+    { label: 'More options →', value: 'topic_page_3' },
+    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
+  // Group 3 of 3
+  [
+    { label: 'Enrollment periods', value: 'edu_enrollment' },
+    { label: 'Doctors and medications', value: 'edu_medication' },
+    { label: 'State prescription help', value: 'edu_spap' },
+    { label: 'I am not sure', value: 'edu_parts_ab' },
+    { label: 'Start over', value: 'start_over' },
+    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
 ];
 
-const TOPIC_MENU_ES: Option[] = [
-  { label: 'Conceptos Básicos de Medicare', value: 'edu_parts_ab' },
-  { label: 'Períodos de Inscripción', value: 'edu_enrollment' },
-  { label: 'HMO vs PPO', value: 'edu_advantage_types' },
-  { label: 'Planes SNP', value: 'edu_snp' },
-  { label: 'Planes de Medicinas Parte D', value: 'edu_part_d' },
-  { label: 'Extra Help / LIS', value: 'edu_extra_help' },
-  { label: 'Medicaid', value: 'edu_medicaid' },
-  { label: 'Programa de Ahorro de Medicare', value: 'edu_msp' },
-  { label: 'Ayuda Estatal para Medicinas', value: 'edu_spap' },
-  { label: 'Planes Suplementarios de Medicare', value: 'edu_supplement' },
-  { label: 'Beneficios Especiales (Unión / VA / Discapacidad)', value: 'edu_special_benefits' },
-  { label: 'Discapacidad / SSI / SSDI / ayuda con primas Medicare', value: 'edu_ssdi_ssi' },
-  { label: 'Hablar con un Asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+const TOPIC_GROUPS_ES: Option[][] = [
+  // Group 1 of 3
+  [
+    { label: 'Reducir costos de Medicare', value: 'edu_cost_help' },
+    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
+    { label: 'Medicare Advantage', value: 'edu_part_c' },
+    { label: 'Medicare Supplement / Medigap', value: 'edu_supplement' },
+    { label: 'Nuevo en Medicare', value: 'edu_parts_ab' },
+    { label: 'Más opciones →', value: 'topic_page_2' },
+    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
+  // Group 2 of 3
+  [
+    { label: 'Parte D / medicamentos recetados', value: 'edu_part_d' },
+    { label: 'HMO vs PPO', value: 'edu_advantage_types' },
+    { label: 'Planes SNP', value: 'edu_snp' },
+    { label: 'Discapacidad / SSI / SSDI', value: 'edu_ssdi_ssi' },
+    { label: 'Retiro / unión / VA / TRICARE', value: 'edu_special_benefits' },
+    { label: 'Más opciones →', value: 'topic_page_3' },
+    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
+  // Group 3 of 3
+  [
+    { label: 'Períodos de inscripción', value: 'edu_enrollment' },
+    { label: 'Doctores y medicamentos', value: 'edu_medication' },
+    { label: 'Ayuda estatal para medicamentos', value: 'edu_spap' },
+    { label: 'No estoy seguro', value: 'edu_parts_ab' },
+    { label: 'Empezar de nuevo', value: 'start_over' },
+    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+  ],
 ];
 
 const STATE_CONFIRMATION: Record<ChatLanguage, Record<string, QueuedBotMessage[]>> = {
   en: {
-    NY: [{ text: "Thank you. I'll keep New York in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
-    NJ: [{ text: "Thank you. I'll keep New Jersey in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
-    CT: [{ text: "Thank you. I'll keep Connecticut in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
-    FL: [{ text: "Thank you. I'll keep Florida in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
-    other: [{ text: "I can give you general Medicare guidance, but for Medicaid, MSP, or prescription assistance specific to your state, I would need to verify that state's current rules.", pace: 'slow' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
+    NY: [{ text: "Thank you. I'll keep New York in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    NJ: [{ text: "Thank you. I'll keep New Jersey in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    CT: [{ text: "Thank you. I'll keep Connecticut in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    FL: [{ text: "Thank you. I'll keep Florida in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    other: [{ text: "I can give you general Medicare guidance, but for Medicaid, MSP, or prescription assistance specific to your state, I would need to verify that state's current rules.", pace: 'slow' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
   },
   es: {
-    NY: [{ text: 'Gracias. Tendré New York en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
-    NJ: [{ text: 'Gracias. Tendré New Jersey en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
-    CT: [{ text: 'Gracias. Tendré Connecticut en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
-    FL: [{ text: 'Gracias. Tendré Florida en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
-    other: [{ text: 'Puedo darle orientación general de Medicare, pero para Medicaid, MSP o ayuda de medicamentos específica de su estado, tendría que verificar las reglas actuales de ese estado.', pace: 'slow' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
+    NY: [{ text: 'Gracias. Tendré New York en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    NJ: [{ text: 'Gracias. Tendré New Jersey en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    CT: [{ text: 'Gracias. Tendré Connecticut en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    FL: [{ text: 'Gracias. Tendré Florida en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    other: [{ text: 'Puedo darle orientación general de Medicare, pero para Medicaid, MSP o ayuda de medicamentos específica de su estado, tendría que verificar las reglas actuales de ese estado.', pace: 'slow' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
   },
 };
 
@@ -2175,7 +2207,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
           ? 'Puedo ayudarle con educación general sobre Medicare. Puede escoger un tema abajo o preguntarme sobre Medicare, Medicaid, cobertura de medicinas, ayuda con costos o hablar con un asesor.'
           : 'I can help with general Medicare education. You can choose a topic below, or ask me about Medicare, Medicaid, drug coverage, help with costs, or speaking with an advisor.',
         pace: 'short',
-        options: language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN,
+        options: language === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0],
       },
     ],
   };
@@ -2204,6 +2236,7 @@ export function ChatBot() {
   const [memory, setMemory] = useState<ChatMemory>(() => getStoredMemory(initialLanguage));
   const [isTyping, setIsTyping] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
+  const [topicPage, setTopicPage] = useState<0 | 1 | 2>(0);
 
   const queueRef = useRef<QueuedBotMessage[]>([]);
   const processingRef = useRef(false);
@@ -2296,6 +2329,7 @@ export function ChatBot() {
   /* ---------- Welcome ---------- */
 
   function startWelcome(clearExisting = false, langOverride?: ChatLanguage) {
+    setTopicPage(0);
     const welcomeLang = langOverride ?? memory.language;
     setStep('language');
     enqueueBot(
@@ -2317,6 +2351,7 @@ export function ChatBot() {
   }
 
   function resetChat() {
+    setTopicPage(0);
     generationRef.current += 1;
     queueRef.current = [];
     processingRef.current = false;
@@ -2629,6 +2664,20 @@ export function ChatBot() {
       return;
     }
 
+    /* Topic page navigation */
+    if (value === 'topic_page_2') {
+      setTopicPage(1);
+      const opts = memory.language === 'es' ? TOPIC_GROUPS_ES[1] : TOPIC_GROUPS_EN[1];
+      enqueueBot([{ text: memory.language === 'es' ? 'Aquí hay más temas:' : 'Here are more topics:', options: opts, pace: 'short' }], true);
+      return;
+    }
+    if (value === 'topic_page_3') {
+      setTopicPage(2);
+      const opts = memory.language === 'es' ? TOPIC_GROUPS_ES[2] : TOPIC_GROUPS_EN[2];
+      enqueueBot([{ text: memory.language === 'es' ? 'Y algunos temas adicionales:' : 'And a few more topics:', options: opts, pace: 'short' }], true);
+      return;
+    }
+
     /* State selection */
     if (value.startsWith('state_')) {
       const state = value.replace('state_', '');
@@ -2690,7 +2739,7 @@ export function ChatBot() {
       if (value === 'edu_back_to_topics') {
         // Go back to topic menu
         setStep('question');
-        const topicOptions = memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN;
+        const topicOptions = memory.language === 'es' ? TOPIC_GROUPS_ES[topicPage] : TOPIC_GROUPS_EN[topicPage];
         enqueueBot([{ text: memory.language === 'es' ? '¿Qué tema le gustaría aprender hoy?' : 'What would you like to learn about today?', options: topicOptions, pace: 'short' }]);
         return;
       }
