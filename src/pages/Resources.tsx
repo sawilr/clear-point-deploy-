@@ -301,31 +301,49 @@ export default function Resources() {
       />
 
       {activeGuide !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-earth-900/60 backdrop-blur-sm" onClick={() => setActiveGuide(null)}>
-          <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[85vh] overflow-y-auto p-8 relative" onClick={e => e.stopPropagation()}>
-            <button onClick={() => setActiveGuide(null)} className="absolute top-4 right-4 w-8 h-8 rounded-full bg-cream-100 flex items-center justify-center hover:bg-cream-200 transition-colors text-earth-600 text-lg leading-none" aria-label="Close guide">
-              ×
-            </button>
-            <span className="inline-block text-[10px] font-bold tracking-wider uppercase text-gold-500 bg-gold-100 px-2.5 py-1 rounded-full mb-4">
-              {t(resources[activeGuide].tag, resources[activeGuide].tagEs)}
-            </span>
-            <h2 className="font-serif text-2xl sm:text-3xl font-normal text-earth-900 leading-snug mb-6">
-              {t(resources[activeGuide].title, resources[activeGuide].titleEs)}
-            </h2>
-            <div className="space-y-3 text-earth-700 text-base leading-relaxed mb-8">
-              {(lang === 'es' ? guideContent[activeGuide].es : guideContent[activeGuide].en).map((line: string, j: number) => (
-                line === '' ? <div key={j} className="h-3" /> :
-                <p key={j}>{line}</p>
-              ))}
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-earth-900/60" onClick={() => setActiveGuide(null)}>
+          <div
+            className="bg-white sm:rounded-2xl rounded-t-2xl shadow-xl max-w-2xl w-full max-h-[92dvh] sm:max-h-[88dvh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Sticky header — close button always visible */}
+            <div className="flex items-start justify-between px-6 pt-5 pb-4 flex-shrink-0 border-b border-cream-100">
+              <span className="inline-block text-[10px] font-bold tracking-wider uppercase text-gold-500 bg-gold-100 px-2.5 py-1 rounded-full mt-0.5">
+                {t(resources[activeGuide].tag, resources[activeGuide].tagEs)}
+              </span>
+              <button
+                onClick={() => setActiveGuide(null)}
+                className="w-8 h-8 rounded-full bg-cream-100 flex items-center justify-center hover:bg-cream-200 transition-colors text-earth-600 text-lg leading-none flex-shrink-0 ml-3"
+                aria-label="Close guide"
+              >
+                ×
+              </button>
             </div>
-            <p className="text-[11px] text-earth-400 leading-relaxed border-t border-cream-200 pt-4">
-              {lang === 'es'
-                ? 'Esta guía es solo para educación general. No es una recomendación de plan ni una confirmación de elegibilidad. La disponibilidad de planes, beneficios, costos, redes y medicamentos puede variar por condado, plan y situación personal.'
-                : 'This guide is for general education only. It is not a plan recommendation or eligibility confirmation. Plan availability, benefits, costs, networks, and medications may vary by county, plan, and individual situation.'}
-            </p>
-            <button onClick={() => setActiveGuide(null)} className="mt-6 text-sm font-semibold text-gold-500 hover:text-gold-400 transition-colors">
-              {lang === 'es' ? 'Cerrar guía' : 'Close guide'}
-            </button>
+
+            {/* Scrollable content */}
+            <div className="overflow-y-auto flex-1 px-6 py-5" style={{ WebkitOverflowScrolling: 'touch' }}>
+              <h2 className="font-serif text-2xl sm:text-3xl font-normal text-earth-900 leading-snug mb-5">
+                {t(resources[activeGuide].title, resources[activeGuide].titleEs)}
+              </h2>
+              <div className="space-y-3 text-earth-700 text-base leading-relaxed mb-8">
+                {(lang === 'es' ? guideContent[activeGuide].es : guideContent[activeGuide].en).map((line: string, j: number) => (
+                  line === '' ? <div key={j} className="h-3" /> :
+                  <p key={j}>{line}</p>
+                ))}
+              </div>
+              <p className="text-[11px] text-earth-400 leading-relaxed border-t border-cream-200 pt-4">
+                {lang === 'es'
+                  ? 'Esta guía es solo para educación general. No es una recomendación de plan ni una confirmación de elegibilidad. La disponibilidad de planes, beneficios, costos, redes y medicamentos puede variar por condado, plan y situación personal.'
+                  : 'This guide is for general education only. It is not a plan recommendation or eligibility confirmation. Plan availability, benefits, costs, networks, and medications may vary by county, plan, and individual situation.'}
+              </p>
+            </div>
+
+            {/* Sticky footer */}
+            <div className="flex-shrink-0 px-6 py-4 border-t border-cream-100">
+              <button onClick={() => setActiveGuide(null)} className="text-sm font-semibold text-gold-500 hover:text-gold-400 transition-colors">
+                {lang === 'es' ? 'Cerrar guía' : 'Close guide'}
+              </button>
+            </div>
           </div>
         </div>
       )}
