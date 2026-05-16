@@ -110,12 +110,12 @@ export function Header() {
             </a>
 
             {/* Desktop Nav */}
-            <div className="hidden lg:flex items-center gap-6">
+            <div className="hidden lg:flex items-center gap-4 xl:gap-6">
               {/* Services dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setServicesOpen(!servicesOpen)}
-                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1"
+                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap"
                 >
                   {t('Services', 'Servicios')}
                   <ChevronDown className={`w-3 h-3 transition-transform ${servicesOpen ? 'rotate-180' : ''}`} />
@@ -135,7 +135,7 @@ export function Header() {
                   <button
                     key={link.href}
                     onClick={() => handleScrollNav(link.href)}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors"
+                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap"
                   >
                     {t(link.label, link.labelEs)}
                   </button>
@@ -143,7 +143,7 @@ export function Header() {
                   <Link
                     key={link.href}
                     to={link.href}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors"
+                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap"
                     onClick={closeNav}
                   >
                     {t(link.label, link.labelEs)}

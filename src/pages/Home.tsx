@@ -122,22 +122,24 @@ interface Carrier {
   className: string;
 }
 
+const LOGO_CLASS = 'max-w-[150px] max-h-[52px]';
+
 const carriers: Carrier[] = [
-  { name: 'Aetna', logo: '/carriers/aetna.png', alt: 'Aetna logo', className: 'max-w-[132px] max-h-[42px]' },
-  { name: 'AARP', logo: '/carriers/aarp.png', alt: 'AARP logo', className: 'max-w-[128px] max-h-[40px]' },
-  { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png', alt: 'Anthem Blue Cross Blue Shield logo', className: 'max-w-[160px] max-h-[46px]' },
-  { name: 'Cigna Healthcare', logo: '/carriers/cigna.png', alt: 'Cigna Healthcare logo', className: 'max-w-[118px] max-h-[76px]' },
-  { name: 'Clover Health', logo: '/carriers/clover.png', alt: 'Clover Health logo', className: 'max-w-[154px] max-h-[34px]' },
-  { name: 'EmblemHealth', logo: '/carriers/emblemhealth.png', alt: 'EmblemHealth logo', className: 'max-w-[156px] max-h-[42px]' },
-  { name: 'Empire BlueCross BlueShield', logo: '/carriers/empire.png', alt: 'Empire BlueCross BlueShield logo', className: 'max-w-[162px] max-h-[52px]' },
-  { name: 'Fidelis Care', logo: '/carriers/fidelis.png', alt: 'Fidelis Care logo', className: 'max-w-[140px] max-h-[62px]' },
-  { name: 'Healthfirst', logo: '/carriers/healthfirst.png', alt: 'Healthfirst logo', className: 'max-w-[176px] max-h-[48px]' },
-  { name: 'Humana', logo: '/carriers/humana.png', alt: 'Humana logo', className: 'max-w-[142px] max-h-[44px]' },
-  { name: 'UnitedHealthcare', logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo', className: 'max-w-[156px] max-h-[58px]' },
-  { name: 'Wellcare', logo: '/carriers/wellcare.png', alt: 'Wellcare logo', className: 'max-w-[78px] max-h-[78px]' },
-  { name: 'Wellpoint', logo: '/carriers/wellpoint.png', alt: 'Wellpoint logo', className: 'max-w-[148px] max-h-[52px]' },
-  { name: 'Centene', logo: '/carriers/centene.png', alt: 'Centene logo', className: 'max-w-[146px] max-h-[56px]' },
-  { name: 'VNS Health', logo: '/carriers/vns-health.svg', alt: 'VNS Health logo', className: 'max-w-[160px] max-h-[60px]' },
+  { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo',                         className: LOGO_CLASS },
+  { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo',                          className: LOGO_CLASS },
+  { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo', className: LOGO_CLASS },
+  { name: 'Cigna Healthcare',             logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',              className: LOGO_CLASS },
+  { name: 'Clover Health',                logo: '/carriers/clover.png',           alt: 'Clover Health logo',                 className: LOGO_CLASS },
+  { name: 'EmblemHealth',                 logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                  className: LOGO_CLASS },
+  { name: 'Empire BlueCross BlueShield',  logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo',   className: LOGO_CLASS },
+  { name: 'Fidelis Care',                 logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                  className: LOGO_CLASS },
+  { name: 'Healthfirst',                  logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo',                   className: LOGO_CLASS },
+  { name: 'Humana',                       logo: '/carriers/humana.png',           alt: 'Humana logo',                        className: LOGO_CLASS },
+  { name: 'UnitedHealthcare',             logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo',              className: LOGO_CLASS },
+  { name: 'Wellcare',                     logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                      className: LOGO_CLASS },
+  { name: 'Wellpoint',                    logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                     className: LOGO_CLASS },
+  { name: 'Centene',                      logo: '/carriers/centene.png',          alt: 'Centene logo',                       className: LOGO_CLASS },
+  { name: 'VNS Health',                   logo: '/carriers/vns-health.png',       alt: 'VNS Health logo',                    className: LOGO_CLASS },
 ];
 
 export default function Home() {
@@ -368,7 +370,7 @@ export default function Home() {
             {carriers.map((carrier) => (
               <div
                 key={carrier.name}
-                className="h-[112px] sm:h-[118px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-5 py-5 overflow-hidden"
+                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4 overflow-hidden"
               >
                 <img
                   src={carrier.logo}

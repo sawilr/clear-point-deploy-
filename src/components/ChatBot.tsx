@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
-import { Calendar, ChevronRight, Phone, RotateCcw, Send, User, X } from 'lucide-react';
+import { Calendar, ChevronRight, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
 
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone } from '../lib/validation';
@@ -2198,6 +2198,7 @@ export function ChatBot() {
   const initialLanguage = lang === 'es' ? 'es' : 'en';
 
   const [isOpen, setIsOpen] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [step, setStep] = useState<ChatStep>('language');
   const [memory, setMemory] = useState<ChatMemory>(() => getStoredMemory(initialLanguage));
@@ -3094,12 +3095,15 @@ export function ChatBot() {
   const lastMessage = messages[messages.length - 1];
   const activeOptionMessageId = lastMessage?.type === 'bot' && lastMessage.options?.length ? lastMessage.id : '';
 
+  const minimizeLabel = t('Minimize chat', 'Minimizar chat');
+
   return (
     <>
+      {/* Launcher — shown only when chat is fully closed */}
       {!isOpen && (
         <button
           onClick={openChat}
-          className="fixed bottom-5 right-4 sm:bottom-6 sm:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
+          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
           aria-label={t('Open Zara, Clear Point virtual assistant', 'Abrir Zara, asistente virtual de Clear Point')}
         >
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -3112,8 +3116,31 @@ export function ChatBot() {
         </button>
       )}
 
-      {isOpen && (
-        <div className="fixed bottom-3 right-3 sm:bottom-6 sm:right-6 z-50 w-[calc(100vw-12px)] sm:w-[420px] md:w-[480px] lg:w-[520px] max-w-[calc(100vw-12px)] h-[80dvh] sm:h-[650px] md:h-[700px] max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+      {/* Minimized strip — shown when chat is open but minimized */}
+      {isOpen && isMinimized && (
+        <button
+          onClick={() => setIsMinimized(false)}
+          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-earth-900 transition-all"
+          aria-label={t('Expand Zara chat', 'Expandir chat de Zara')}
+        >
+          <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
+            <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+          </div>
+          <div className="text-left leading-tight">
+            <div className="text-[14px] font-semibold">Zara</div>
+            <div className="text-[10px] text-cream-200">{t('Chat minimized — tap to expand', 'Chat minimizado — toca para expandir')}</div>
+          </div>
+          <X
+            className="w-4 h-4 ml-1 text-cream-300 hover:text-cream-50"
+            onClick={(e) => { e.stopPropagation(); setIsOpen(false); setIsMinimized(false); resetChat(); }}
+            aria-label={closeLabel}
+          />
+        </button>
+      )}
+
+      {/* Full chat window */}
+      {isOpen && !isMinimized && (
+        <div className="fixed bottom-[72px] right-3 md:bottom-6 md:right-6 z-50 w-[calc(100vw-12px)] md:w-[480px] lg:w-[520px] max-w-[calc(100vw-12px)] h-[calc(100dvh-88px)] md:h-[700px] max-h-[calc(100dvh-88px)] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -3132,7 +3159,10 @@ export function ChatBot() {
               <button onClick={resetChat} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={resetLabel} title={resetLabel}>
                 <RotateCcw className="w-4 h-4" />
               </button>
-              <button onClick={() => setIsOpen(false)} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
+              <button onClick={() => setIsMinimized(true)} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
+                <Minus className="w-4 h-4" />
+              </button>
+              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
                 <X className="w-5 h-5" />
               </button>
             </div>
