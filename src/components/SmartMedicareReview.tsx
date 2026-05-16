@@ -15,7 +15,7 @@ const concernsEN = [
   'Compare Medicare Advantage plans',
   'Understand Medicare Supplement / Medigap',
   'Enrollment Periods',
-  'Federal / State / Union / Retiree Benefits',
+  'Federal / State / Union / Retiree / VA / TRICARE / Disability Benefits',
   'I am new to Medicare',
   'I am not sure',
 ];
@@ -28,7 +28,7 @@ const concernsES = [
   'Comparar planes Medicare Advantage',
   'Entender Medicare Supplement / Medigap',
   'Períodos de Inscripción',
-  'Beneficios Federales / Estatales / Sindicales / Jubilación',
+  'Beneficios Federales / Estatales / Unión / Retiro / VA / TRICARE / Discapacidad',
   'Soy nuevo en Medicare',
   'No estoy seguro',
 ];
