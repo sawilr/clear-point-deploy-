@@ -22,6 +22,7 @@ export default function MedicareAdvantage() {
         subheadline="Learn how Medicare Advantage plans combine hospital, medical, and often prescription drug coverage into one simple plan — sometimes with $0 premium."
         subheadlineEs="Aprenda cómo los planes Medicare Advantage combinan cobertura hospitalaria, médica y frecuentemente de medicamentos en un solo plan simple — a veces con prima de $0."
         variant="page"
+        compact
       />
 
       <section ref={eduReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${eduReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>

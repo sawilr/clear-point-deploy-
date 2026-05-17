@@ -9,29 +9,40 @@ export function Footer() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Resources & Blog — always lands at top of /resources regardless of current page
+  // Resources & Blog — always lands at top of /resources regardless of current page.
+  // Double rAF after navigate() ensures scroll fires AFTER React commits the new route,
+  // eliminating the race condition where ScrollToTop fires before the page renders.
   const handleResources = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     if (location.pathname === '/resources') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      navigate('/resources');
+      return;
     }
+    navigate('/resources');
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }));
   };
 
-  // How It Works — programmatic navigation like Header, works cross-page in all browsers
+  // How It Works — double rAF: waits for React to commit new route DOM,
+  // then retries until #how element exists. Eliminates double-click issue.
   const handleHowItWorks = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
-    const scrollToSection = () => {
+    if (location.pathname === '/') {
       const el = document.querySelector('#how');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    };
-    if (location.pathname === '/') {
-      scrollToSection();
-    } else {
-      navigate('/');
-      setTimeout(scrollToSection, 300);
+      return;
     }
+    navigate('/');
+    const tryScroll = (attemptsLeft: number) => {
+      const el = document.querySelector('#how');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (attemptsLeft > 0) {
+        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
   };
 
   return (

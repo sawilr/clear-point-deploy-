@@ -62,6 +62,27 @@ export function Header() {
     setMobileMenuOpen(false);
   };
 
+  // Free Review — navigates to /contact and scrolls to the contact form section.
+  // rAF retry waits for React to commit /contact route before querying #contact-form.
+  const handleFreeReview = () => {
+    closeNav();
+    navigate('/contact');
+    const tryScroll = (attemptsLeft: number) => {
+      const el = document.querySelector('#contact-form');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Focus first name field so cursor lands in the form immediately
+        setTimeout(() => {
+          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+          if (firstInput) firstInput.focus();
+        }, 500);
+      } else if (attemptsLeft > 0) {
+        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+  };
+
   const isHome = location.pathname === '/';
 
   /* Navigate to home then scroll to section — fixes broken nav from non-home pages */
@@ -70,13 +91,21 @@ export function Header() {
     const id = href.replace('/#', '#');
     if (isHome) {
       scrollTo(id);
-    } else {
-      navigate('/');
-      setTimeout(() => {
-        const el = document.querySelector(id);
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 150);
+      return;
     }
+    navigate('/');
+    // Double rAF: first fires before React commits new route,
+    // second fires after. Then retries up to 10 frames until the
+    // target element exists — eliminates blind-timeout wrong-landing.
+    const tryScroll = (attemptsLeft: number) => {
+      const el = document.querySelector(id);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (attemptsLeft > 0) {
+        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
   };
 
   return (
@@ -164,12 +193,12 @@ export function Header() {
               >
                 {t('Smart Review', 'Revisión Inteligente')}
               </button>
-              <Link
-                to="/contact"
+              <button
+                onClick={handleFreeReview}
                 className="bg-earth-800 text-cream-50 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft"
               >
                 {t('Free Review', 'Revisión Gratis')}
-              </Link>
+              </button>
             </div>
 
             {/* Mobile Toggle */}
@@ -206,9 +235,9 @@ export function Header() {
             >
               {t('Smart Review', 'Revisión Inteligente')}
             </button>
-            <Link to="/contact" className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-2" onClick={closeNav}>
+            <button onClick={handleFreeReview} className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-2">
               {t('Free Review', 'Revisión Gratis')}
-            </Link>
+            </button>
           </div>
         )}
       </nav>

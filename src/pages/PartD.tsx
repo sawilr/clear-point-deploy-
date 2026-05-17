@@ -21,6 +21,7 @@ export default function PartD() {
         subheadline="Medicare Part D helps cover the cost of prescription drugs. We compare plans based on your specific medications to find the best fit."
         subheadlineEs="Medicare Parte D ayuda a cubrir el costo de medicamentos con receta. Comparamos planes según sus medicamentos específicos para encontrar el mejor ajuste."
         variant="page"
+        compact
       />
 
       <section ref={eduReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${eduReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>

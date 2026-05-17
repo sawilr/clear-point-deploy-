@@ -3226,7 +3226,7 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed bottom-[78px] left-2 right-2 md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] h-[calc(100dvh-88px)] md:h-[700px] max-h-[calc(100dvh-88px)] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div className="fixed top-[80px] bottom-[82px] left-2 right-2 md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">

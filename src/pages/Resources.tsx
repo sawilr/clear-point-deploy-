@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { CTASection } from '../components/CTASection';
@@ -229,6 +229,12 @@ const externalLinks = [
 ];
 
 export default function Resources() {
+  // Belt-and-suspenders: scroll to top on mount in case ScrollToTop's
+  // useLayoutEffect fired before this component was added to the DOM.
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, []);
+
   const { t, lang } = useLanguage();
   const gridReveal = useScrollReveal();
   const externalReveal = useScrollReveal();

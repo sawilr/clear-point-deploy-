@@ -21,6 +21,8 @@ export default function ExtraHelp() {
         subheadline="You may qualify for federal and state programs that reduce or eliminate your Medicare prescription drug costs. We help you check eligibility at no charge."
         subheadlineEs="Puede calificar para programas federales y estatales que reducen o eliminan sus costos de medicamentos de Medicare. Le ayudamos a verificar elegibilidad sin cargo."
         variant="page"
+        compact
+        tighter
       />
 
       <section ref={eduReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${eduReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>

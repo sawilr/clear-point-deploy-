@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -8,6 +9,24 @@ import { CheckIcon } from '../components/icons';
 
 export default function MedicareSupplement() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
+
+  const handleFreeReview = () => {
+    navigate('/contact');
+    const tryScroll = (attemptsLeft: number) => {
+      const el = document.querySelector('#contact-form');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => {
+          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+          if (firstInput) firstInput.focus();
+        }, 500);
+      } else if (attemptsLeft > 0) {
+        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+  };
   const eduReveal = useScrollReveal();
   const plansReveal = useScrollReveal();
 
@@ -22,6 +41,7 @@ export default function MedicareSupplement() {
         subheadline="Medicare Supplement plans (Medigap) help cover costs that Original Medicare doesn't — like copays, coinsurance, and deductibles."
         subheadlineEs="Los planes Suplemento de Medicare (Medigap) ayudan a cubrir costos que el Medicare Original no cubre — como copagos, coseguros y deducibles."
         variant="page"
+        compact
       />
 
       <section ref={eduReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${eduReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
@@ -164,12 +184,12 @@ export default function MedicareSupplement() {
                 'ClearPoint Senior Advisors puede ayudarle a entender las letras de los planes, las primas y la disponibilidad en su área.'
               )}
             </p>
-            <a
-              href="#/contact"
+            <button
+              onClick={handleFreeReview}
               className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-7 py-3.5 rounded-xl hover:bg-earth-900 transition-all hover:shadow-soft"
             >
               {t('Request a Free Review', 'Solicitar una Revisión Gratuita')}
-            </a>
+            </button>
           </div>
         </div>
       </section>

@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -7,7 +8,19 @@ import { PhoneIcon, MailIcon, MapPinIcon, CalendarIcon, GlobeIcon } from '../com
 
 export default function Contact() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const infoReveal = useScrollReveal();
+
+  const handleScrollToForm = () => {
+    const el = document.querySelector('#contact-form');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(() => {
+        const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+        if (firstInput) firstInput.focus();
+      }, 500);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-cream-50">
@@ -20,9 +33,10 @@ export default function Contact() {
         subheadline="Book a free consultation, call us directly, or send a message. A licensed Medicare advisor will respond within 15 minutes during business hours."
         subheadlineEs="Reserve una consulta gratuita, llámenos directamente o envíe un mensaje. Un asesor de Medicare licenciado responderá en 15 minutos durante horas de oficina."
         variant="page"
+        compact
       />
 
-      <section ref={infoReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${infoReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section id="contact-form" ref={infoReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${infoReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-[1fr_380px] gap-12 items-start">
             <div className="space-y-10">
@@ -86,6 +100,7 @@ export default function Contact() {
         subheadline="Speak with a licensed Medicare advisor today. No robots. No hold music. Just real help."
         subheadlineEs="Hable con un asesor de Medicare licenciado hoy. Sin robots. Sin música de espera. Solo ayuda real."
         variant="dark"
+        onPrimaryClick={handleScrollToForm}
       />
     </div>
   );

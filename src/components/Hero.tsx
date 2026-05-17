@@ -13,6 +13,8 @@ interface HeroProps {
   subheadlineEs: string;
   showForm?: boolean;
   variant?: 'home' | 'page';
+  compact?: boolean;
+  tighter?: boolean;
 }
 
 export function Hero({
@@ -24,18 +26,20 @@ export function Hero({
   subheadline,
   subheadlineEs,
   showForm = false,
-  variant = 'home'
+  variant = 'home',
+  compact = false,
+  tighter = false
 }: HeroProps) {
   const { t } = useLanguage();
 
   if (variant === 'page') {
     return (
-      <section className="relative min-h-[400px] lg:min-h-[480px] flex items-center overflow-hidden">
+      <section className={`relative overflow-hidden flex ${compact ? tighter ? 'min-h-[200px] lg:min-h-[240px] items-start' : 'min-h-[220px] lg:min-h-[260px] items-start' : 'min-h-[300px] lg:min-h-[360px] items-center'}`}>
         <div className="absolute inset-0">
           <img src={image} alt="" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         </div>
-        <div className="relative z-10 max-w-6xl mx-auto px-5 py-16 lg:py-24 w-full">
+        <div className={`relative z-10 max-w-6xl mx-auto px-5 w-full ${compact ? tighter ? 'pt-3 pb-8 lg:pt-4 lg:pb-10' : 'pt-8 pb-8 lg:pt-10 lg:pb-10' : 'pt-10 pb-12 lg:pt-14 lg:pb-16'}`}>
           <div className="max-w-2xl">
             <div className="flex items-center gap-2.5 mb-5">
               <div className="w-2 h-2 rounded-full bg-gold-400" />

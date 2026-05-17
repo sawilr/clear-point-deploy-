@@ -126,16 +126,16 @@ const carriers: Carrier[] = [
   { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo'                         },
   { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo'                          },
   { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo' },
-  { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',             logoClass: 'scale-[1.38]' },
-  { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo',                logoClass: 'scale-[1.20]' },
-  { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                 logoClass: 'scale-[1.25]' },
+  { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',             logoClass: 'scale-[2.10]' },
+  { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo',                logoClass: 'scale-[1.38]' },
+  { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                 logoClass: 'scale-[1.52]' },
   { name: 'Empire BlueCross BlueShield',   logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo'   },
-  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.38]' },
+  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.55]' },
   { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo'                   },
   { name: 'Humana',                        logo: '/carriers/humana.png',           alt: 'Humana logo'                        },
-  { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo'              },
-  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                     logoClass: 'scale-[1.28]' },
-  { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                    logoClass: 'scale-[1.15]' },
+  { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo',              logoClass: 'scale-[1.42]' },
+  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                     logoClass: 'scale-[1.68]' },
+  { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                    logoClass: 'scale-[1.38]' },
   { name: 'Centene',                       logo: '/carriers/centene.png',          alt: 'Centene logo'                       },
   { name: 'VNS Health',                    logo: '/carriers/vns-health.svg',       alt: 'VNS Health logo',                   logoClass: 'scale-[1.15]' },
 ];
@@ -185,7 +185,7 @@ export default function Home() {
       </section>
 
       {/* Services */}
-      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
