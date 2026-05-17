@@ -119,24 +119,25 @@ interface Carrier {
   name: string;
   logo: string;
   alt: string;
+  logoClass?: string;
 }
 
 const carriers: Carrier[] = [
   { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo'                         },
   { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo'                          },
   { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo' },
-  { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo'              },
-  { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo'                 },
-  { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo'                  },
+  { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',             logoClass: 'scale-[1.15]' },
+  { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo',                logoClass: 'scale-[1.15]' },
+  { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                 logoClass: 'scale-[1.15]' },
   { name: 'Empire BlueCross BlueShield',   logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo'   },
-  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo'                  },
+  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.15]' },
   { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo'                   },
   { name: 'Humana',                        logo: '/carriers/humana.png',           alt: 'Humana logo'                        },
   { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo'              },
-  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo'                      },
-  { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo'                     },
+  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                     logoClass: 'scale-[1.15]' },
+  { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                    logoClass: 'scale-[1.15]' },
   { name: 'Centene',                       logo: '/carriers/centene.png',          alt: 'Centene logo'                       },
-  { name: 'VNS Health',                    logo: '/carriers/vns-health.svg',       alt: 'VNS Health logo'                    },
+  { name: 'VNS Health',                    logo: '/carriers/vns-health.svg',       alt: 'VNS Health logo',                   logoClass: 'scale-[1.15]' },
 ];
 
 export default function Home() {
@@ -273,7 +274,7 @@ export default function Home() {
       </section>
 
       {/* How It Works */}
-      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-20 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-24 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
@@ -375,7 +376,7 @@ export default function Home() {
                     alt={carrier.alt}
                     loading="lazy"
                     decoding="async"
-                    className="block object-contain max-w-full max-h-full"
+                    className={`block object-contain max-w-full max-h-full transition-transform${carrier.logoClass ? ' ' + carrier.logoClass : ''}`}
                   />
                 </div>
               </div>

@@ -149,7 +149,6 @@ const TOPIC_GROUPS_EN: Option[][] = [
   // Group 3 of 3
   [
     { label: 'Enrollment periods', value: 'edu_enrollment' },
-    { label: 'Doctors and medications', value: 'edu_medication' },
     { label: 'State prescription help', value: 'edu_spap' },
     { label: 'I am not sure', value: 'edu_parts_ab' },
     { label: 'Start over', value: 'start_over' },
@@ -181,7 +180,6 @@ const TOPIC_GROUPS_ES: Option[][] = [
   // Group 3 of 3
   [
     { label: 'Períodos de inscripción', value: 'edu_enrollment' },
-    { label: 'Doctores y medicamentos', value: 'edu_medication' },
     { label: 'Ayuda estatal para medicamentos', value: 'edu_spap' },
     { label: 'No estoy seguro', value: 'edu_parts_ab' },
     { label: 'Empezar de nuevo', value: 'start_over' },
