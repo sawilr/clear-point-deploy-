@@ -37,7 +37,6 @@ export function Footer() {
               <li><Link to="/medicare-supplement" className="hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li>
               <li><Link to="/part-d" className="hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Parte D Medicamentos')}</Link></li>
               <li><Link to="/extra-help" className="hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
-              <li><Link to="/contact" className="hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</Link></li>
             </ul>
           </div>
 
