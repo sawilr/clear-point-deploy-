@@ -368,7 +368,7 @@ export default function Home() {
             {carriers.map((carrier) => (
               <div
                 key={carrier.name}
-                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4 overflow-hidden"
+                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4"
               >
                 <div className="flex items-center justify-center w-[130px] h-[44px]">
                   <img

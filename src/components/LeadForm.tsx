@@ -138,7 +138,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
-          <div className="grid grid-cols-2 gap-3.5">
+          <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
               <input type="text" name="first_name" required value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="John / Juan" />
