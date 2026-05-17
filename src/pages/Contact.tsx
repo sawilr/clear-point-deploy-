@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -8,7 +7,6 @@ import { PhoneIcon, MailIcon, MapPinIcon, CalendarIcon, GlobeIcon } from '../com
 
 export default function Contact() {
   const { t } = useLanguage();
-  const navigate = useNavigate();
   const infoReveal = useScrollReveal();
 
   const handleScrollToForm = () => {
