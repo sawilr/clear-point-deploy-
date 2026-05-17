@@ -12,11 +12,11 @@ export default async function handler(req, res) {
     // req.body getter failed - read raw stream
     try {
       body = await new Promise(function (resolve, reject) {
-        var chunks = []; 
+        var chunks = [];
         req.on('data', function (c) { chunks.push(c); });
-        req.on('end', function () { 
+        req.on('end', function () {
           var raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {}); 
+          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
         });
         req.on('error', reject);
       });
@@ -48,17 +48,20 @@ export default async function handler(req, res) {
 
     if (!first_name || !phone) return res.status(400).json({ error: 'Missing required fields' });
 
+    // Normalize phone to E.164 format (+1XXXXXXXXXX) for US numbers
+    var rawDigits = (phone || '').replace(/\D/g, '');
+    var phone10 = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
+    var phoneE164 = phone10.length === 10 ? '+1' + phone10 : rawDigits;
+
     var contact = {
       locationId, firstName: first_name, lastName: last_name || '',
-      phone: (phone || '').replace(/\D/g, '').slice(0, 10), email: email || undefined,
-      // Standard GHL flat fields (confirmed working 2026-05-13)
+      phone: phoneE164, email: email || undefined,
       city: city || undefined,
       state: derived_state || undefined,
       postalCode: zip || undefined,
       dateOfBirth: date_of_birth || undefined,
       country: 'US',
       source: 'ClearPoint Website',
-      // County as address1 (no standard county field in GHL)
       address1: county || undefined,
       customFields: [
         { id: 'QULAmkAuVNCQrAMZ487K', key: 'contact.preferred_language', value: preferred_language || 'en' },
@@ -82,11 +85,11 @@ export default async function handler(req, res) {
       headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
       body: JSON.stringify(contact)
     });
-    if (!ghlRes.ok) { var t=''; try{t=await ghlRes.text()}catch(e){} return res.status(502).json({error:'CRM error',detail:ghlRes.status}); }
+    if (!ghlRes.ok) { var t=''; try{t=await ghlRes.text()}catch(e){} console.error('[GHL] Contact creation failed: HTTP '+ghlRes.status+' body='+t); return res.status(502).json({error:'CRM error',detail:ghlRes.status}); }
     var ghlData = await ghlRes.json(); var contactId = ghlData.contact && ghlData.contact.id;
+    console.log('[GHL] Contact created: id='+contactId+' name="'+first_name+' '+(last_name||'')+'" phone='+phoneE164+' source='+(lead_source||''));
 
     if (contactId) {
-      // Combine lead_notes + conversation_summary for the GHL note
       var noteBody = '';
       if (lead_notes && lead_notes.trim()) { noteBody += lead_notes.trim(); }
       if (conversation_summary && conversation_summary.trim()) {
@@ -104,7 +107,7 @@ export default async function handler(req, res) {
             body:JSON.stringify({body:noteBody})
           });
         } catch(e) {
-          console.error('GHL note creation failed: ' + (e && e.message ? e.message : String(e)));
+          console.error('[GHL] Note creation exception: ' + (e && e.message ? e.message : String(e)));
         }
       }
     }
@@ -113,13 +116,15 @@ export default async function handler(req, res) {
     var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' - Smart Review';
     if (contactId) {
       try {
-        await fetch('https://services.leadconnectorhq.com/opportunities/',{
+        var oppRes = await fetch('https://services.leadconnectorhq.com/opportunities/',{
           method:'POST',
           headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
           body:JSON.stringify({ locationId:locationId, pipelineId:pipelineId, pipelineStageId:pipelineStageId, contactId:contactId, name:oppName, status:'open' })
         });
+        if (!oppRes.ok) { var ot=''; try{ot=await oppRes.text()}catch(e){} console.error('[GHL] Opportunity creation failed: HTTP '+oppRes.status+' pipeline='+pipelineId+' stage='+pipelineStageId+' body='+ot); }
+        else { console.log('[GHL] Opportunity created: contactId='+contactId+' pipeline='+pipelineId); }
       } catch(e) {
-        console.error('GHL opportunity creation failed: ' + (e && e.message ? e.message : String(e)));
+        console.error('[GHL] Opportunity creation exception: ' + (e && e.message ? e.message : String(e)));
       }
     }
     return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId });
