@@ -16,6 +16,7 @@ type ChatStep =
   | 'medicare_education'
   | 'lead_name'
   | 'lead_last_name'
+  | 'lead_state'
   | 'lead_zip'
   | 'lead_dob'
   | 'lead_coverage'
@@ -2060,12 +2061,12 @@ function getMemoryForStorage(memory: ChatMemory) {
 }
 
 function getTypingDelay(text: string, pace: MessagePace = 'short') {
-  const shortMin = 800;
-  const shortMax = 1400;
-  const longMin = 1400;
-  const longMax = 2200;
-  const slowMin = 2200;
-  const slowMax = 3200;
+  const shortMin = 1000;
+  const shortMax = 1800;
+  const longMin = 2200;
+  const longMax = 3400;
+  const slowMin = 3600;
+  const slowMax = 5000;
   if (pace === 'slow') {
     return Math.floor(Math.random() * (slowMax - slowMin + 1)) + slowMin;
   }
@@ -2317,10 +2318,10 @@ export function ChatBot() {
       setIsTyping(false);
       addMessage('bot', next.text, next.options);
       const postGap = next.pace === 'short'
-        ? 600 + Math.floor(Math.random() * 400)
+        ? 1200 + Math.floor(Math.random() * 600)
         : next.pace === 'slow'
-          ? 1800 + Math.floor(Math.random() * 400)
-          : 1200 + Math.floor(Math.random() * 400);
+          ? 3200 + Math.floor(Math.random() * 800)
+          : 2200 + Math.floor(Math.random() * 600);
       await sleep(postGap);
     }
 
@@ -2445,9 +2446,16 @@ export function ChatBot() {
   /* ---------- Plan review flow (unchanged) ---------- */
 
   function startPlanReview(interestType = memory.interestType || 'Plan review') {
-    updateMemory({ wantsPlanReview: true, interestType, currentCoverage: '', phone: '', preferredLanguage: '', preferredContactTime: '', email: '', consentGiven: false, skippedEmail: false, submitted: false });
-    const freshMem = { ...memory, wantsPlanReview: true, interestType, currentCoverage: '', phone: '', preferredLanguage: '', preferredContactTime: '', email: '', consentGiven: false, skippedEmail: false, submitted: false };
-    enqueueBot([{ text: memory.language === 'es' ? 'Claro. Puedo ayudarte a solicitar una revisión gratuita.' : 'Of course. I can help you request a free plan review.', pace: 'short' }]);
+    const leadReset = {
+      wantsPlanReview: true, interestType,
+      firstName: '', lastName: '', phone: '',
+      zip: '', city: '', county: '', derivedState: '',
+      dob: '', calculatedAge: 0,
+      currentCoverage: '', preferredLanguage: '', preferredContactTime: '',
+      email: '', consentGiven: false, skippedEmail: false, submitted: false,
+    };
+    updateMemory(leadReset);
+    const freshMem = { ...memory, ...leadReset };
     askNextQuestion(freshMem);
   }
 
@@ -2710,6 +2718,12 @@ export function ChatBot() {
     /* State selection */
     if (value.startsWith('state_')) {
       const state = value.replace('state_', '');
+      if (step === 'lead_state') {
+        // Mid-lead-flow state selection: set state and continue lead intake
+        updateMemory({ state });
+        askNextQuestion({ ...memory, state });
+        return;
+      }
       if (state === 'other') {
         handleStateSelection('other');
       } else {
@@ -2879,10 +2893,11 @@ export function ChatBot() {
   function getNextMissingStep(mem: ChatMemory): string {
     if (!mem.firstName) return 'firstName';
     if (!mem.lastName) return 'lastName';
+    if (!mem.phone) return 'phone';
+    if (!mem.state || mem.state === 'other') return 'leadState';
     if (!mem.zip) return 'zipCode';
     if (!mem.dob) return 'dob';
     if (!mem.currentCoverage) return 'currentCoverage';
-    if (!mem.phone) return 'phone';
     if (!mem.preferredLanguage) return 'preferredLanguage';
     if (!mem.preferredContactTime) return 'bestTime';
     if (!mem.email && !mem.skippedEmail) return 'emailOptional';
@@ -2901,27 +2916,52 @@ export function ChatBot() {
     switch (next) {
       case 'firstName':
         setStep('lead_name');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es tu primer nombre?' : 'What is your first name?', pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es'
+          ? '¿Cuál es su primer nombre?'
+          : 'What is your first name?', pace: 'short' }]);
         break;
       case 'lastName':
         setStep('lead_last_name');
-        enqueueBot([{ text: mem.language === 'es' ? `Gracias, ${mem.firstName}. ¿Cuál es tu apellido?` : `Thank you, ${mem.firstName}. What is your last name?`, pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es'
+          ? '¿Cuál es su apellido?'
+          : 'What is your last name?', pace: 'short' }]);
         break;
-      case 'zipCode':
+      case 'phone':
+        setStep('lead_phone');
+        enqueueBot([{ text: mem.language === 'es'
+          ? `Gracias, ${mem.firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`
+          : `Thank you, ${mem.firstName}. What is the best phone number to reach you?`, pace: 'short' }]);
+        break;
+      case 'leadState':
+        setStep('lead_state');
+        enqueueBot([{ text: mem.language === 'es'
+          ? '¿En qué estado vive usted?'
+          : 'Which state do you live in?',
+          options: [
+            { label: 'New York', value: 'state_NY' },
+            { label: 'New Jersey', value: 'state_NJ' },
+            { label: 'Connecticut', value: 'state_CT' },
+            { label: 'Florida', value: 'state_FL' },
+          ], pace: 'short' }]);
+        break;
+      case 'zipCode': {
         setStep('lead_zip');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es tu código postal?' : 'What is your ZIP code?', pace: 'short' }]);
+        const stateNames: Record<string,string> = { NY:'New York', NJ:'New Jersey', CT:'Connecticut', FL:'Florida' };
+        const stateNameLabel = mem.state && stateNames[mem.state] ? stateNames[mem.state] : null;
+        enqueueBot([{ text: mem.language === 'es'
+          ? (stateNameLabel ? `¿Cuál es su código postal de ${stateNameLabel}?` : '¿Cuál es su código postal?')
+          : (stateNameLabel ? `What is your ${stateNameLabel} ZIP code?` : 'What is your ZIP code?'), pace: 'short' }]);
         break;
+      }
       case 'dob':
         setStep('lead_dob');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es su fecha de nacimiento?' : 'What is your date of birth?', pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es'
+          ? '¿Cuál es su fecha de nacimiento? Escríbala como MM/DD/YYYY. Ejemplo: 06/09/1983.'
+          : 'What is your date of birth? Please enter it as MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }]);
         break;
       case 'currentCoverage':
         setStep('lead_coverage');
         enqueueBot([{ text: mem.language === 'es' ? 'Ahora dime, ¿tienes Medicare Original, Medicare Advantage o no estás seguro?' : 'Now, do you currently have Original Medicare, Medicare Advantage, or are you not sure?', options: [{ label: 'Original Medicare', value: 'coverage_original' }, { label: 'Medicare Advantage', value: 'coverage_advantage' }, { label: mem.language === 'es' ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' }], pace: 'short' }]);
-        break;
-      case 'phone':
-        setStep('lead_phone');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor número de teléfono para contactarte?' : 'What is the best phone number to reach you?', pace: 'short' }]);
         break;
       case 'preferredLanguage':
         setStep('lead_preferred_language');
@@ -2956,13 +2996,32 @@ export function ChatBot() {
 
     // Process by current step
     if (step === 'lead_name') {
-      updateMemory({ firstName: text });
-      askNextQuestion({ ...memory, firstName: text });
+      const firstName = text.trim();
+      if (!firstName) {
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Por favor ingrese su primer nombre.'
+          : 'Please enter your first name.', pace: 'short' }]);
+        return true;
+      }
+      updateMemory({ firstName });
+      askNextQuestion({ ...memory, firstName });
       return true;
     }
     if (step === 'lead_last_name') {
       updateMemory({ lastName: text });
       askNextQuestion({ ...memory, lastName: text });
+      return true;
+    }
+    if (step === 'lead_state') {
+      const detectedState = detectState(text);
+      if (detectedState && ['NY','NJ','CT','FL'].includes(detectedState)) {
+        updateMemory({ state: detectedState });
+        askNextQuestion({ ...memory, state: detectedState });
+      } else {
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Por favor seleccione New York, New Jersey, Connecticut o Florida.'
+          : 'Please select New York, New Jersey, Connecticut, or Florida.', pace: 'short' }]);
+      }
       return true;
     }
     if (step === 'lead_zip') {
@@ -2971,26 +3030,60 @@ export function ChatBot() {
         enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese un código postal válido de 5 dígitos.' : 'Please enter a valid 5-digit ZIP code.', pace: 'short' }]);
         return true;
       }
+      const stateNames: Record<string,string> = { NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida' };
+      const expectedState = memory.state && stateNames[memory.state] ? memory.state : null;
+      const expectedStateName = expectedState ? stateNames[expectedState] : null;
       const zipInfo = getZipInfo(cleanZip);
       if (zipInfo) {
-        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
-        if (!zipInfo.supported) {
-          enqueueBot([{ text: memory.language === 'es' ? `Gracias. Detecté ${zipInfo.city}, ${zipInfo.state}. Clear Point Senior Advisors actualmente se enfoca en NY, NJ, CT y FL. Aún puedo darle información educativa general.` : `Thank you. I detected ${zipInfo.city}, ${zipInfo.state}. Clear Point Senior Advisors currently focuses on NY, NJ, CT, and FL. I can still provide general educational information.`, pace: 'slow' }]);
+        if (expectedState && zipInfo.stateCode !== expectedState) {
+          enqueueBot([{ text: memory.language === 'es'
+            ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
+            : `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`, pace: 'short' }]);
+          return true;
         }
+        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
         askNextQuestion({ ...memory, zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
       } else {
-        enqueueBot([{ text: memory.language === 'es' ? 'No pude identificar esa área. Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.' : "I couldn't identify that area. Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.", pace: 'short' }]);
+        if (expectedStateName) {
+          enqueueBot([{ text: memory.language === 'es'
+            ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
+            : `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`, pace: 'short' }]);
+        } else {
+          enqueueBot([{ text: memory.language === 'es' ? 'No pude identificar esa área. Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.' : 'I could not identify that area. Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.', pace: 'short' }]);
+        }
       }
       return true;
     }
     if (step === 'lead_dob') {
-      const dobValidation = validateDOB(text.trim());
+      // Parse flexible DOB: YYYY-MM-DD checked first (prevents 8-digit collision), then MM/DD/YYYY, then MMDDYYYY
+      const rawDob = text.trim();
+      let isoDate: string | null = null;
+      const ymdFallback = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (ymdFallback) {
+        // YYYY-MM-DD — accepted as fallback, not prompted
+        isoDate = rawDob;
+      } else {
+        // MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY
+        const mdy = rawDob.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        if (mdy) {
+          isoDate = `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
+        } else {
+          // 8-digit MMDDYYYY (e.g. 06091983)
+          const digits = rawDob.replace(/\D/g, '');
+          if (digits.length === 8) {
+            isoDate = `${digits.slice(4,8)}-${digits.slice(0,2)}-${digits.slice(2,4)}`;
+          }
+        }
+      }
+      const dobValidation = isoDate ? validateDOB(isoDate) : { valid: false, age: null, flags: [] };
       if (!dobValidation.valid) {
-        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese una fecha de nacimiento válida (YYYY-MM-DD).' : 'Please enter a valid date of birth (YYYY-MM-DD).', pace: 'short' }]);
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Por favor ingrese una fecha de nacimiento válida como MM/DD/YYYY. Ejemplo: 06/09/1983.'
+          : 'Please enter a valid date of birth as MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }]);
         return true;
       }
-      updateMemory({ dob: text.trim(), calculatedAge: dobValidation.age ?? 0 });
-      askNextQuestion({ ...memory, dob: text.trim(), calculatedAge: dobValidation.age ?? 0 });
+      updateMemory({ dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
+      askNextQuestion({ ...memory, dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
       return true;
     }
     if (step === 'lead_coverage') {
@@ -2999,10 +3092,13 @@ export function ChatBot() {
       return true;
     }
     if (step === 'lead_phone') {
-      const cleaned = text.replace(/\D/g, '').slice(0, 10);
+      const rawDigits = text.replace(/\D/g, '');
+      const cleaned = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
       const validation = validatePhone(cleaned);
       if (!validation.valid) {
-        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese un número de teléfono válido de 10 dígitos para que un agente licenciado pueda contactarle.' : 'Please enter a valid 10-digit phone number so a licensed agent can contact you.', pace: 'short' }]);
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Por favor ingrese un número de teléfono válido de 10 dígitos.'
+          : 'Please enter a valid 10-digit U.S. phone number.', pace: 'short' }]);
         return true;
       }
       updateMemory({ phone: validation.cleaned });
