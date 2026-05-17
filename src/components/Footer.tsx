@@ -1,5 +1,5 @@
 import { useLanguage } from '../hooks/useLanguage';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useLocation } from 'react-router';
 import { LogoSvg } from './LogoSvg';
 import { DisclaimerBlock } from './DisclaimerBlock';
 import { ExternalLinkIcon } from './icons';
@@ -7,6 +7,32 @@ import { ExternalLinkIcon } from './icons';
 export function Footer() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Resources & Blog — always lands at top of /resources regardless of current page
+  const handleResources = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    if (location.pathname === '/resources') {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else {
+      navigate('/resources');
+    }
+  };
+
+  // How It Works — programmatic navigation like Header, works cross-page in all browsers
+  const handleHowItWorks = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const scrollToSection = () => {
+      const el = document.querySelector('#how');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    if (location.pathname === '/') {
+      scrollToSection();
+    } else {
+      navigate('/');
+      setTimeout(scrollToSection, 300);
+    }
+  };
 
   return (
     <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
@@ -46,8 +72,8 @@ export function Footer() {
             <ul className="space-y-2 text-sm">
               <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><Link to="/resources" className="hover:text-cream-50 transition-colors">{t('Resources & Blog', 'Recursos y Blog')}</Link></li>
-              <li><a href="/#how" className="hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
+              <li><a href="/resources" onClick={handleResources} className="hover:text-cream-50 transition-colors">{t('Resources & Blog', 'Recursos y Blog')}</a></li>
+              <li><a href="/#how" onClick={handleHowItWorks} className="hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
             </ul>
           </div>
 
