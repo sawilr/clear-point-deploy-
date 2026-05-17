@@ -119,27 +119,24 @@ interface Carrier {
   name: string;
   logo: string;
   alt: string;
-  className: string;
 }
 
-const LOGO_CLASS = 'max-w-[150px] max-h-[52px]';
-
 const carriers: Carrier[] = [
-  { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo',                         className: LOGO_CLASS },
-  { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo',                          className: LOGO_CLASS },
-  { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo', className: LOGO_CLASS },
-  { name: 'Cigna Healthcare',             logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',              className: LOGO_CLASS },
-  { name: 'Clover Health',                logo: '/carriers/clover.png',           alt: 'Clover Health logo',                 className: LOGO_CLASS },
-  { name: 'EmblemHealth',                 logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                  className: LOGO_CLASS },
-  { name: 'Empire BlueCross BlueShield',  logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo',   className: LOGO_CLASS },
-  { name: 'Fidelis Care',                 logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                  className: LOGO_CLASS },
-  { name: 'Healthfirst',                  logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo',                   className: LOGO_CLASS },
-  { name: 'Humana',                       logo: '/carriers/humana.png',           alt: 'Humana logo',                        className: LOGO_CLASS },
-  { name: 'UnitedHealthcare',             logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo',              className: LOGO_CLASS },
-  { name: 'Wellcare',                     logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                      className: LOGO_CLASS },
-  { name: 'Wellpoint',                    logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                     className: LOGO_CLASS },
-  { name: 'Centene',                      logo: '/carriers/centene.png',          alt: 'Centene logo',                       className: LOGO_CLASS },
-  { name: 'VNS Health',                   logo: '/carriers/vns-health.png',       alt: 'VNS Health logo',                    className: LOGO_CLASS },
+  { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo'                         },
+  { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo'                          },
+  { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo' },
+  { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo'              },
+  { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo'                 },
+  { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo'                  },
+  { name: 'Empire BlueCross BlueShield',   logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo'   },
+  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo'                  },
+  { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo'                   },
+  { name: 'Humana',                        logo: '/carriers/humana.png',           alt: 'Humana logo'                        },
+  { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo'              },
+  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo'                      },
+  { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo'                     },
+  { name: 'Centene',                       logo: '/carriers/centene.png',          alt: 'Centene logo'                       },
+  { name: 'VNS Health',                    logo: '/carriers/vns-health.svg',       alt: 'VNS Health logo'                    },
 ];
 
 export default function Home() {
@@ -276,7 +273,7 @@ export default function Home() {
       </section>
 
       {/* How It Works */}
-      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-20 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
@@ -321,7 +318,7 @@ export default function Home() {
       </section>
 
       {/* Why Independent */}
-      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
@@ -372,13 +369,15 @@ export default function Home() {
                 key={carrier.name}
                 className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4 overflow-hidden"
               >
-                <img
-                  src={carrier.logo}
-                  alt={carrier.alt}
-                  loading="lazy"
-                  decoding="async"
-                  className={`block object-contain w-auto h-auto max-w-full max-h-full ${carrier.className}`}
-                />
+                <div className="flex items-center justify-center w-[130px] h-[44px]">
+                  <img
+                    src={carrier.logo}
+                    alt={carrier.alt}
+                    loading="lazy"
+                    decoding="async"
+                    className="block object-contain max-w-full max-h-full"
+                  />
+                </div>
               </div>
             ))}
           </div>
@@ -448,7 +447,7 @@ export default function Home() {
       </section>
 
       {/* FAQ */}
-      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50">
+      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-20">
         <div className="max-w-6xl mx-auto px-5">
           <FAQ items={faqItems} title="Common Questions" titleEs="Preguntas Frecuentes" />
         </div>

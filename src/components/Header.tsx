@@ -110,7 +110,7 @@ export function Header() {
             </a>
 
             {/* Desktop Nav */}
-            <div className="hidden lg:flex items-center gap-4 xl:gap-6">
+            <div className="hidden xl:flex items-center gap-3 2xl:gap-5">
               {/* Services dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
@@ -153,8 +153,8 @@ export function Header() {
             </div>
 
             {/* Desktop CTA */}
-            <div className="hidden lg:flex items-center gap-3">
-              <a href="tel:18663108702" className="text-sm font-bold text-earth-900 flex items-center gap-1.5 hover:text-gold-500 transition-colors">
+            <div className="hidden xl:flex items-center gap-3">
+              <a href="tel:18663108702" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors">
                 <PhoneIcon className="w-4 h-4" />
                 1-866-310-8702
               </a>
@@ -174,7 +174,7 @@ export function Header() {
 
             {/* Mobile Toggle */}
             <button
-              className="lg:hidden p-2 text-earth-800"
+              className="xl:hidden p-2 text-earth-800"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label={t('Toggle menu', 'Alternar menú')}
             >
@@ -185,7 +185,7 @@ export function Header() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100vh-70px)] overflow-y-auto">
+          <div className="xl:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100vh-70px)] overflow-y-auto">
             <Link to="/medicare-advantage" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
             <Link to="/part-d" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Parte D Medicamentos')}</Link>
