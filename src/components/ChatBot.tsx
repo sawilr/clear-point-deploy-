@@ -4,7 +4,7 @@ import { submitLeadToGHL } from '../lib/ghl';
 import { Calendar, ChevronRight, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
 
 import { getZipInfo } from '../lib/zipLookup';
-import { validateDOB, validatePhone } from '../lib/validation';
+import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
 
 type ChatLanguage = 'en' | 'es';
 type MessageType = 'bot' | 'user';
@@ -75,6 +75,8 @@ interface QueuedBotMessage {
 }
 
 const SESSION_KEY = 'clear_point_chat_session_memory';
+
+
 
 const SUPPORTED_STATES = ['NY', 'NJ', 'CT', 'FL'];
 
@@ -2997,10 +2999,11 @@ export function ChatBot() {
     // Process by current step
     if (step === 'lead_name') {
       const firstName = text.trim();
-      if (!firstName) {
+      const nameCheck = validatePersonName(firstName);
+      if (!nameCheck.valid) {
         enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor ingrese su primer nombre.'
-          : 'Please enter your first name.', pace: 'short' }]);
+          ? 'Por favor ingrese un primer nombre válido sin números, símbolos ni palabras inapropiadas.'
+          : 'Please enter a valid first name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
         return true;
       }
       updateMemory({ firstName });
@@ -3008,8 +3011,16 @@ export function ChatBot() {
       return true;
     }
     if (step === 'lead_last_name') {
-      updateMemory({ lastName: text });
-      askNextQuestion({ ...memory, lastName: text });
+      const lastName = text.trim();
+      const lastNameCheck = validatePersonName(lastName);
+      if (!lastNameCheck.valid) {
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Por favor ingrese un apellido válido sin números, símbolos ni palabras inapropiadas.'
+          : 'Please enter a valid last name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
+        return true;
+      }
+      updateMemory({ lastName });
+      askNextQuestion({ ...memory, lastName });
       return true;
     }
     if (step === 'lead_state') {
@@ -3025,32 +3036,51 @@ export function ChatBot() {
       return true;
     }
     if (step === 'lead_zip') {
-      const cleanZip = text.replace(/\D/g, '').slice(0, 5);
-      if (cleanZip.length !== 5 || !/^\d{5}$/.test(cleanZip)) {
-        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese un código postal válido de 5 dígitos.' : 'Please enter a valid 5-digit ZIP code.', pace: 'short' }]);
-        return true;
-      }
+      // ── State-locked ZIP validation ──────────────────────────────────────────
+      // State is determined by the user's earlier selection — never inferred from ZIP.
       const stateNames: Record<string,string> = { NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida' };
       const expectedState = memory.state && stateNames[memory.state] ? memory.state : null;
       const expectedStateName = expectedState ? stateNames[expectedState] : null;
+
+      // Unified reject helper — uses state-specific message when state is known
+      const rejectZip = () => {
+        const msgEn = expectedStateName
+          ? `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`
+          : 'Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.';
+        const msgEs = expectedStateName
+          ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
+          : 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.';
+        enqueueBot([{ text: memory.language === 'es' ? msgEs : msgEn, pace: 'short' }]);
+      };
+
+      // Strip non-digits. Check EXACT length — never truncate.
+      const rawDigits = text.replace(/\D/g, '');
+      if (rawDigits.length !== 5 || !/^\d{5}$/.test(rawDigits)) {
+        rejectZip();
+        return true;
+      }
+
+      // Block obviously fake ZIP patterns
+      const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
+        '66666','77777','88888','99999','12345','54321','11223','00001']);
+      if (FAKE_ZIPS.has(rawDigits) || /^(\d)\1{4}$/.test(rawDigits)) {
+        rejectZip();
+        return true;
+      }
+
+      const cleanZip = rawDigits;
       const zipInfo = getZipInfo(cleanZip);
       if (zipInfo) {
+        // ZIP found in database — enforce state lock: reject any ZIP not in selected state
         if (expectedState && zipInfo.stateCode !== expectedState) {
-          enqueueBot([{ text: memory.language === 'es'
-            ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
-            : `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`, pace: 'short' }]);
+          rejectZip();
           return true;
         }
         updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
         askNextQuestion({ ...memory, zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
       } else {
-        if (expectedStateName) {
-          enqueueBot([{ text: memory.language === 'es'
-            ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
-            : `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`, pace: 'short' }]);
-        } else {
-          enqueueBot([{ text: memory.language === 'es' ? 'No pude identificar esa área. Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.' : 'I could not identify that area. Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.', pace: 'short' }]);
-        }
+        // ZIP not in database — always reject
+        rejectZip();
       }
       return true;
     }
@@ -3092,17 +3122,17 @@ export function ChatBot() {
       return true;
     }
     if (step === 'lead_phone') {
-      const rawDigits = text.replace(/\D/g, '');
-      const cleaned = rawDigits.length >= 10 ? rawDigits.slice(-10) : rawDigits;
-      const validation = validatePhone(cleaned);
-      if (!validation.valid) {
+      // Use shared validatePhone() from src/lib/validation.ts (US area code allowlist)
+      const phoneResult = validatePhone(text);
+      if (!phoneResult.valid) {
         enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor ingrese un número de teléfono válido de 10 dígitos.'
+          ? 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.'
           : 'Please enter a valid 10-digit U.S. phone number.', pace: 'short' }]);
         return true;
       }
-      updateMemory({ phone: validation.cleaned });
-      askNextQuestion({ ...memory, phone: validation.cleaned });
+      // Store cleaned 10-digit form; E.164 (+1XXXXXXXXXX) sent to GHL at submission
+      updateMemory({ phone: phoneResult.cleaned });
+      askNextQuestion({ ...memory, phone: phoneResult.cleaned });
       return true;
     }
     if (step === 'lead_preferred_language') {
@@ -3121,8 +3151,16 @@ export function ChatBot() {
         updateMemory({ skippedEmail: true });
         askNextQuestion({ ...memory, skippedEmail: true });
       } else {
-        updateMemory({ email: text, skippedEmail: false });
-        askNextQuestion({ ...memory, email: text, skippedEmail: false });
+        // Validate entered email before accepting
+        const emailCheck = validateEmail(text.trim());
+        if (!emailCheck.valid) {
+          enqueueBot([{ text: memory.language === 'es'
+            ? 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.'
+            : 'Please enter a valid email address, or leave it blank if you prefer.', pace: 'short' }]);
+          return true;
+        }
+        updateMemory({ email: text.trim(), skippedEmail: false });
+        askNextQuestion({ ...memory, email: text.trim(), skippedEmail: false });
       }
       return true;
     }

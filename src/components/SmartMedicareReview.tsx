@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
-import { validateDOB, validatePhone, validateEmail } from '../lib/validation';
+import { validateDOB, validatePhone, validateEmail, validatePersonName } from '../lib/validation';
 import { CheckIcon, ChevronRight } from './icons';
 
 const TOTAL_STEPS = 6;
@@ -90,7 +90,10 @@ export function SmartMedicareReview() {
   };
 
   const handlePhone = (val: string) => {
-    setPhone(val.replace(/\D/g, '').slice(0, 10));
+    const digits = val.replace(/\D/g, '');
+    // Strip US country code prefix if 11 digits starting with 1 (e.g. +1 718 285 3366)
+    const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
+    setPhone(national.slice(0, 10));
   };
 
   const canAdvanceStep = (): boolean => {
@@ -98,7 +101,7 @@ export function SmartMedicareReview() {
       case 1: return !!concern;
       case 2: return zip.length === 5 && !!zipInfo;
       case 3: return validateDOB(dob).valid;
-      case 4: return !!firstName && !!lastName && validatePhone(phone).valid;
+      case 4: return validatePersonName(firstName).valid && validatePersonName(lastName).valid && validatePhone(phone).valid;
       case 5: return !!prefLang;
       default: return true;
     }
@@ -156,7 +159,7 @@ export function SmartMedicareReview() {
       setSubmitted(true);
       setStep(TOTAL_STEPS + 1);
     } else {
-      setError(isEs ? 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-866-310-8702.' : 'We could not send your request right now. Please try again or call 1-866-310-8702.');
+      setError(isEs ? 'Error al enviar. Intente de nuevo o llámenos.' : 'Submission failed. Please try again or call us.');
     }
   };
 
@@ -198,20 +201,12 @@ export function SmartMedicareReview() {
     return (
       <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="max-w-2xl mx-auto px-5 text-center">
-          <div className="w-20 h-20 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckIcon className="w-10 h-10 text-sage-600" />
+          <div className="w-16 h-16 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckIcon className="w-8 h-8 text-sage-500" />
           </div>
-          <h2 className="font-serif text-2xl sm:text-3xl text-earth-900 mb-4">
-            {t(
-              'Thank you — your review request was sent successfully.',
-              'Gracias — su solicitud fue enviada correctamente.'
-            )}
-          </h2>
-          <p className="text-earth-600 text-base leading-relaxed max-w-lg mx-auto">
-            {t(
-              'A licensed Clear Point Senior Advisors advisor will review your information and contact you during business hours.',
-              'Un asesor licenciado de Clear Point Senior Advisors revisará su información y se comunicará con usted durante horas laborables.'
-            )}
+          <h2 className="font-serif text-2xl text-earth-900 mb-3">{t('Thank You!', '¡Gracias!')}</h2>
+          <p className="text-earth-600 text-base">
+            {t('Your request was received. A licensed Medicare advisor will contact you during business hours.', 'Su solicitud fue recibida. Un asesor licenciado de Medicare le contactará durante horas laborables.')}
           </p>
         </div>
       </section>
@@ -435,12 +430,14 @@ export function SmartMedicareReview() {
               </p>
               <div className="space-y-3.5">
                 <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {firstName.length > 1 && !validatePersonName(firstName).valid && <p className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {lastName.length > 1 && !validatePersonName(lastName).valid && <p className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="numeric" pattern="[0-9]*" autoComplete="tel" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {phone.length > 0 && phone.length < 10 && <p className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
-                {phone.length === 10 && !validatePhone(phone).valid && <p className="text-xs text-red-500">{t('Please enter a valid phone number.', 'Por favor ingrese un número válido.')}</p>}
+                {phone.length === 10 && !validatePhone(phone).valid && <p className="text-xs text-red-500">{t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>}
                 <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {email && !validateEmail(email).valid && <p className="text-xs text-red-500">{t('Please enter a valid email or leave blank.', 'Ingrese un correo válido o déjelo en blanco.')}</p>}
+                {email && !validateEmail(email).valid && <p className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
