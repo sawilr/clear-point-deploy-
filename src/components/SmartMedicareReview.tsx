@@ -156,7 +156,7 @@ export function SmartMedicareReview() {
       setSubmitted(true);
       setStep(TOTAL_STEPS + 1);
     } else {
-      setError(isEs ? 'Error al enviar. Intente de nuevo o llámenos.' : 'Submission failed. Please try again or call us.');
+      setError(isEs ? 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-866-310-8702.' : 'We could not send your request right now. Please try again or call 1-866-310-8702.');
     }
   };
 
@@ -198,12 +198,20 @@ export function SmartMedicareReview() {
     return (
       <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="max-w-2xl mx-auto px-5 text-center">
-          <div className="w-16 h-16 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckIcon className="w-8 h-8 text-sage-500" />
+          <div className="w-20 h-20 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-6">
+            <CheckIcon className="w-10 h-10 text-sage-600" />
           </div>
-          <h2 className="font-serif text-2xl text-earth-900 mb-3">{t('Thank You!', '¡Gracias!')}</h2>
-          <p className="text-earth-600 text-base">
-            {t('Your request was received. A licensed Medicare advisor will contact you during business hours.', 'Su solicitud fue recibida. Un asesor licenciado de Medicare le contactará durante horas laborables.')}
+          <h2 className="font-serif text-2xl sm:text-3xl text-earth-900 mb-4">
+            {t(
+              'Thank you — your review request was sent successfully.',
+              'Gracias — su solicitud fue enviada correctamente.'
+            )}
+          </h2>
+          <p className="text-earth-600 text-base leading-relaxed max-w-lg mx-auto">
+            {t(
+              'A licensed Clear Point Senior Advisors advisor will review your information and contact you during business hours.',
+              'Un asesor licenciado de Clear Point Senior Advisors revisará su información y se comunicará con usted durante horas laborables.'
+            )}
           </p>
         </div>
       </section>
@@ -244,6 +252,17 @@ export function SmartMedicareReview() {
 
         {/* Step Content */}
         <div className="bg-white rounded-2xl shadow-lifted p-6 sm:p-8 border border-cream-200">
+          {/* Back button — hidden on Step 1 */}
+          {step > 1 && (
+            <button
+              onClick={() => setStep(s => Math.max(s - 1, 1))}
+              className="inline-flex items-center gap-2 text-sm text-earth-500 hover:text-earth-800 transition-colors mb-5 py-1 pr-3"
+              aria-label={isEs ? 'Volver al paso anterior' : 'Go back to previous step'}
+            >
+              <span aria-hidden="true" className="text-base leading-none">←</span>
+              <span>{isEs ? 'Atrás' : 'Back'}</span>
+            </button>
+          )}
           {/* Step 1 — Main Concern */}
           {step === 1 && ssdiSubStep === 0 && (
             <div>
@@ -258,7 +277,7 @@ export function SmartMedicareReview() {
                       setConcern(c);
                       setSsdiAnswers({});
                       const isSSdi = c === SSDI_CONCERN_EN || c === SSDI_CONCERN_ES;
-                      if (isSSdi) { setSsdiSubStep(1); } else { setSsdiSubStep(0); nextStep(); }
+                      if (isSSdi) { setSsdiSubStep(1); } else { setSsdiSubStep(0); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }
                     }}
                     className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
                       concern === c
@@ -439,7 +458,7 @@ export function SmartMedicareReview() {
                 {['English', 'Español', t('Either', 'Cualquiera')].map((l) => (
                   <button
                     key={l}
-                    onClick={() => { setPrefLang(l); nextStep(); }}
+                    onClick={() => { setPrefLang(l); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }}
                     className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
                       prefLang === l
                         ? 'border-gold-400 bg-gold-50 text-earth-900'

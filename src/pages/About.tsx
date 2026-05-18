@@ -93,15 +93,15 @@ export default function About() {
             ].map((c, i) => (
               <div key={i} className="bg-cream-50 rounded-xl p-7 text-center shadow-xs">
                 <div className="w-14 h-14 rounded-lg bg-gold-100 text-gold-500 flex items-center justify-center mx-auto mb-4">{c.icon}</div>
-                <h3 className="font-serif text-sm font-semibold text-earth-900 mb-1">{t(c.title, c.titleEs)}</h3>
-                <p className="text-earth-600 text-xs">{t(c.desc, c.descEs)}</p>
+                <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">{t(c.title, c.titleEs)}</h3>
+                <p className="text-earth-600 text-sm leading-relaxed">{t(c.desc, c.descEs)}</p>
               </div>
             ))}
           </div>
           {/* Team section */}
           <div className="mt-10 bg-cream-50 rounded-xl p-6 border border-cream-200">
-            <h3 className="font-serif text-base font-semibold text-earth-900 mb-2 text-center">{t('Our Advisory Team', 'Nuestro Equipo Asesor')}</h3>
-            <p className="text-earth-600 text-xs leading-relaxed text-center max-w-2xl mx-auto mb-6">
+            <h3 className="font-serif text-2xl font-semibold text-earth-900 mb-3 text-center">{t('Our Advisory Team', 'Nuestro Equipo Asesor')}</h3>
+            <p className="text-earth-600 text-base leading-relaxed text-center max-w-2xl mx-auto mb-6">
               {t(
                 'Clear Point Senior Advisors is built around licensed Medicare guidance, bilingual education, and no-pressure support. As the agency grows, team profiles will be updated to reflect our expanding licensed advisory network.',
                 'Clear Point Senior Advisors se construye sobre orientación de Medicare con licencia, educación bilingüe y apoyo sin presión. A medida que la agencia crece, los perfiles del equipo se actualizarán para reflejar nuestra red asesora licenciada en expansión.'
@@ -134,12 +134,12 @@ export default function About() {
                   <BookOpen key="bo" className="w-7 h-7 text-gold-500" strokeWidth={1.5} />,
                 ];
                 return (
-                  <div key={i} className="bg-white/50 rounded-lg p-4 text-center border border-dashed border-cream-300">
+                  <div key={i} className="bg-white/50 rounded-lg p-5 text-center border border-dashed border-cream-300">
                     <div className="w-14 h-14 rounded-full bg-cream-100 flex items-center justify-center mx-auto mb-3">
                       {icons[i]}
                     </div>
-                    <div className="text-sm font-semibold text-earth-900">{t(m.roleEn, m.roleEs)}</div>
-                    <div className="text-[10px] text-gold-500 mt-2 font-medium leading-relaxed">{t(m.textEn, m.textEs)}</div>
+                    <div className="text-base font-semibold text-earth-900 mb-1">{t(m.roleEn, m.roleEs)}</div>
+                    <div className="text-sm text-earth-600 mt-2 leading-relaxed">{t(m.textEn, m.textEs)}</div>
                   </div>
                 );
               })}
