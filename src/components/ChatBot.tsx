@@ -1994,8 +1994,26 @@ const OUT_OF_SCOPE_KEYWORDS = [
   'impuestos',
 ];
 
-const INTERRUPT_KEYWORDS_EN = ['stop', 'wait', 'hold on', 'pause', 'hang on', 'one moment'];
-const INTERRUPT_KEYWORDS_ES = ['espera', 'para', 'detente', 'un momento', 'alto', 'pausa', 'esperate'];
+// ─── Clarification / interruption phrase detection ──────────────────────────
+// These are phrases that signal the user is confused or asking a question,
+// NOT entering form data. Detected in handleText BEFORE any validation.
+const CLARIFICATION_PHRASES_EN: string[] = [
+  'stop','wait','hold on','pause','hang on','one moment',
+  'what do you mean','i dont understand',"i don't understand","i don't get it",
+  'why','help','explain','what is this','what should i enter','what should i put',
+  'why do you need this','what do i put',"i'm confused",'confused','not sure',
+  'how','what for','what is that','what does that mean','i need help',
+];
+const CLARIFICATION_PHRASES_ES: string[] = [
+  'espera','para','detente','un momento','alto','pausa','esperate',
+  'como asi','cómo así','como así','cómo asi',
+  'no entiendo','que significa','qué significa',
+  'ayuda','explícame','explicame','por qué','porque','porqué',
+  'para qué','para que','no se','no sé','qué pongo','que pongo',
+  'por que me pides eso','eso para que es','eso para qué es',
+  'no comprendo','cómo','no se que poner','no sé qué poner',
+  'que pongo ahí','qué pongo ahí','para que es esto','para qué es esto',
+];
 
 const DEFAULT_MEMORY: ChatMemory = {
   language: 'en',
@@ -2081,6 +2099,34 @@ function getTypingDelay(text: string, pace: MessagePace = 'short') {
 function containsAny(text: string, keywords: string[]) {
   const normalized = text.toLowerCase();
   return keywords.some((keyword) => normalized.includes(keyword));
+}
+
+// Strip diacritics + punctuation and return a lowercase normalized form.
+function normalizePhrase(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[¿¡?!.,;:]/g, '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+// Returns true when the user input is a clarification/confusion phrase,
+// not real form data. Works for both English and Spanish.
+function isClarification(text: string, lang: ChatLanguage): boolean {
+  if (!text || text.trim().length === 0) return false;
+  const norm = normalizePhrase(text);
+  for (const p of CLARIFICATION_PHRASES_EN) {
+    const pn = normalizePhrase(p);
+    if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
+  }
+  if (lang === 'es') {
+    for (const p of CLARIFICATION_PHRASES_ES) {
+      const pn = normalizePhrase(p);
+      if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
+    }
+  }
+  return false;
 }
 
 function detectState(text: string): string {
@@ -2269,10 +2315,100 @@ export function ChatBot() {
   const processingRef = useRef(false);
   const generationRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
+  const chatBodyRef = useRef<HTMLDivElement>(null);
+  // Ref attached to the FIRST message of the current step block.
+  // The step block = the preceding bot context message (if any) + the bot message with options.
+  // Scrolling to currentStepRef shows the question/title at the top of the chat body.
+  const currentStepRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the chat text input is focused (keyboard open on iOS).
+  // Using a ref (not state) so focus/blur events never trigger re-renders.
+  // The scroll useEffect checks this to skip scroll when keyboard is open.
+  const chatInputFocusedRef = useRef(false);
+  // Synchronous mirror of the `step` state — updated atomically in setStepSync.
+  // handleLeadText reads stepRef.current instead of the closure `step` to avoid
+  // stale-closure bugs caused by React batching of state updates.
+  const stepRef = useRef<ChatStep>('language');
+  // Education scroll anchor: true once we have scrolled to the first paragraph of
+  // the current education response. Reset to false at the start of each new topic.
+  // Prevents the scroll useEffect from re-anchoring to the old topic menu on every
+  // subsequent paragraph — which caused the visible backward scroll jump.
+  const hasScrolledForCurrentEducationRef = useRef(false);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+    // Keyboard guard: iOS Safari raises the viewport when the soft keyboard opens,
+    // which changes element rects and fires this effect. Scrolling during keyboard-open
+    // causes the chat body to jump unexpectedly. Skip entirely when input is focused.
+    if (chatInputFocusedRef.current) return;
+
+    requestAnimationFrame(() => {
+      const container = chatBodyRef.current;
+      if (!container) return;
+
+      // FORM MODE — lead_ steps and complete.
+      // currentStepRef still points to the topic-menu from before the form started;
+      // ignore it and keep the bottom visible so the active input stays in view.
+      if (step.startsWith('lead_') || step === 'complete') {
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
+
+      // EDUCATION MODE — medicare_education step.
+      // Each paragraph of an education response triggers this effect via isTyping/messages,
+      // but currentStepRef still anchors to the PREVIOUS topic menu (no options in edu
+      // messages, so activeStepMsgIdx never advances). Scrolling to that stale anchor
+      // pulls the old menu buttons back into view on every paragraph — the visible bug.
+      //
+      // Fix: anchor ONCE to the first education paragraph, then only follow the user
+      // to the bottom if they are already close to it. Never re-anchor to the old menu.
+      if (step === 'medicare_education') {
+        const distFromBottom =
+          container.scrollHeight - container.scrollTop - container.clientHeight;
+        const nearBottom = distFromBottom < 160;
+
+        if (!hasScrolledForCurrentEducationRef.current && !isTyping) {
+          // First education paragraph just landed — scroll it into view.
+          const lastMsg = messages[messages.length - 1];
+          if (lastMsg?.type === 'bot') {
+            const anchorEl = container.querySelector(
+              `[data-msg-id="${lastMsg.id}"]`,
+            ) as HTMLElement | null;
+            if (anchorEl) {
+              const containerRect = container.getBoundingClientRect();
+              const targetRect = anchorEl.getBoundingClientRect();
+              const targetTop =
+                container.scrollTop + (targetRect.top - containerRect.top) - 10;
+              container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+              hasScrolledForCurrentEducationRef.current = true;
+              return;
+            }
+          }
+        }
+
+        // Subsequent paragraphs / typing indicator: follow the bottom only if
+        // the user has not manually scrolled up to read earlier content.
+        if (nearBottom) {
+          container.scrollTop = container.scrollHeight;
+        }
+        return;
+      }
+
+      // MENU MODE — language, choice, state, question steps.
+      // Scroll so the question/title (currentStepRef) sits at the top of the visible
+      // chat body, keeping both the question and its option buttons in view.
+      // Never uses scrollIntoView — it scrolls ancestor/page containers on iOS Safari.
+      const target = currentStepRef.current;
+      if (!isTyping && target && messages.length > 1) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const targetTop = container.scrollTop + (targetRect.top - containerRect.top) - 10;
+        container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+        return;
+      }
+
+      // Default: scroll to bottom (typing indicator, user messages, text-only steps)
+      container.scrollTop = container.scrollHeight;
+    });
+  }, [messages, isTyping, step]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2347,6 +2483,14 @@ export function ChatBot() {
     setMemory((prev) => ({ ...prev, ...patch }));
   }
 
+  // Single point of truth for step changes.
+  // Updates both React state (triggers re-render) and stepRef (immediate,
+  // readable inside async/event handlers without closure staleness).
+  function setStepSync(s: ChatStep) {
+    stepRef.current = s;
+    setStep(s);
+  }
+
   function languageLabel(language: ChatLanguage) {
     return language === 'es' ? 'Español' : 'English';
   }
@@ -2363,7 +2507,7 @@ export function ChatBot() {
   function startWelcome(clearExisting = false, langOverride?: ChatLanguage) {
     setTopicPage(0);
     const welcomeLang = langOverride ?? memory.language;
-    setStep('language');
+    setStepSync('language');
     enqueueBot(
       [
         {
@@ -2389,7 +2533,7 @@ export function ChatBot() {
     processingRef.current = false;
     setIsTyping(false);
     setMessages([]);
-    setStep('language');
+    setStepSync('language');
     // Sync to current page language on reset so close+reopen uses active site language
     const newLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
     const resetMemory = { ...DEFAULT_MEMORY, language: newLang };
@@ -2423,7 +2567,7 @@ export function ChatBot() {
   /* ---------- Medicare intake (NEW) - warm, state-first ---------- */
 
   function showMedicareIntake(langOverride?: ChatLanguage) {
-    setStep('state');
+    setStepSync('state');
     const effectiveLang = langOverride ?? memory.language;
     const messages = MEDICARE_INTRO[effectiveLang];
     enqueueBot(messages);
@@ -2431,7 +2575,7 @@ export function ChatBot() {
 
   function handleStateSelection(state: string) {
     updateMemory({ state });
-    setStep('question');
+    setStepSync('question');
 
     if (!SUPPORTED_STATES.includes(state)) {
       const messages = STATE_CONFIRMATION[memory.language].other;
@@ -2527,7 +2671,7 @@ export function ChatBot() {
   }
 
   async function submitLead(finalMemory: ChatMemory) {
-    setStep('complete');
+    setStepSync('complete');
     const conversationSummary = buildConversationSummary(finalMemory);
     const payload = {
       source: 'Website Chatbot',
@@ -2586,7 +2730,7 @@ export function ChatBot() {
   /* ---------- Boundaries ---------- */
 
   function showPersonalizedBoundary() {
-    setStep('choice');
+    setStepSync('choice');
     enqueueBot([
       {
         text:
@@ -2653,6 +2797,9 @@ export function ChatBot() {
   function handleOption(value: string) {
     const selected = messages[messages.length - 1]?.options?.find((option) => option.value === value);
     if (selected) addUserMessage(selected.label);
+    // Cancel any pending bot queue so new step messages arrive cleanly
+    // and no stale queued prompt can appear after step has changed.
+    cancelBotQueue();
 
     /* Language */
     if (value === 'lang_en' || value === 'lang_es') {
@@ -2671,7 +2818,7 @@ export function ChatBot() {
 
     /* Quick topic options */
     if (value.startsWith('quick_')) {
-      setStep('medicare_education');
+      setStepSync('medicare_education');
       if (value === 'quick_basics') {
         updateMemory({ educationTopic: 'edu_parts_ab' });
         enqueueBot(getMedicareEducation('edu_parts_ab', memory.language, memory.state));
@@ -2736,7 +2883,7 @@ export function ChatBot() {
 
     /* Medicare education topics */
     if (value.startsWith('edu_')) {
-      setStep('medicare_education');
+      setStepSync('medicare_education');
       updateMemory({ educationTopic: value, educationStep: 1 });
 
       // Track discussed topic
@@ -2777,19 +2924,21 @@ export function ChatBot() {
 
       if (value === 'edu_state_programs') {
         const programs = getStatePrograms(memory.state, memory.language);
+        hasScrolledForCurrentEducationRef.current = false;
         enqueueBot(programs);
         return;
       }
 
       if (value === 'edu_back_to_topics') {
         // Go back to topic menu
-        setStep('question');
+        setStepSync('question');
         const topicOptions = memory.language === 'es' ? TOPIC_GROUPS_ES[topicPage] : TOPIC_GROUPS_EN[topicPage];
         enqueueBot([{ text: memory.language === 'es' ? '¿Qué tema le gustaría aprender hoy?' : 'What would you like to learn about today?', options: topicOptions, pace: 'short' }]);
         return;
       }
 
       const education = getMedicareEducation(value, memory.language, memory.state);
+      hasScrolledForCurrentEducationRef.current = false;
       enqueueBot(education);
       return;
     }
@@ -2819,7 +2968,7 @@ export function ChatBot() {
           pace: 'short',
         },
       ]);
-      setStep('question');
+      setStepSync('question');
       return;
     }
 
@@ -2843,7 +2992,7 @@ export function ChatBot() {
 
     if (value === 'consent_no') {
       updateMemory({ consentGiven: false });
-      setStep('choice');
+      setStepSync('choice');
       enqueueBot([
         { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
         { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: memory.language === 'es' ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: memory.language === 'es' ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
@@ -2917,25 +3066,25 @@ export function ChatBot() {
     const next = getNextMissingStep(mem);
     switch (next) {
       case 'firstName':
-        setStep('lead_name');
+        setStepSync('lead_name');
         enqueueBot([{ text: mem.language === 'es'
           ? '¿Cuál es su primer nombre?'
           : 'What is your first name?', pace: 'short' }]);
         break;
       case 'lastName':
-        setStep('lead_last_name');
+        setStepSync('lead_last_name');
         enqueueBot([{ text: mem.language === 'es'
           ? '¿Cuál es su apellido?'
           : 'What is your last name?', pace: 'short' }]);
         break;
       case 'phone':
-        setStep('lead_phone');
+        setStepSync('lead_phone');
         enqueueBot([{ text: mem.language === 'es'
           ? `Gracias, ${mem.firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`
           : `Thank you, ${mem.firstName}. What is the best phone number to reach you?`, pace: 'short' }]);
         break;
       case 'leadState':
-        setStep('lead_state');
+        setStepSync('lead_state');
         enqueueBot([{ text: mem.language === 'es'
           ? '¿En qué estado vive usted?'
           : 'Which state do you live in?',
@@ -2947,7 +3096,7 @@ export function ChatBot() {
           ], pace: 'short' }]);
         break;
       case 'zipCode': {
-        setStep('lead_zip');
+        setStepSync('lead_zip');
         const stateNames: Record<string,string> = { NY:'New York', NJ:'New Jersey', CT:'Connecticut', FL:'Florida' };
         const stateNameLabel = mem.state && stateNames[mem.state] ? stateNames[mem.state] : null;
         enqueueBot([{ text: mem.language === 'es'
@@ -2956,29 +3105,29 @@ export function ChatBot() {
         break;
       }
       case 'dob':
-        setStep('lead_dob');
+        setStepSync('lead_dob');
         enqueueBot([{ text: mem.language === 'es'
           ? '¿Cuál es su fecha de nacimiento? Escríbala como MM/DD/YYYY. Ejemplo: 06/09/1983.'
           : 'What is your date of birth? Please enter it as MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }]);
         break;
       case 'currentCoverage':
-        setStep('lead_coverage');
+        setStepSync('lead_coverage');
         enqueueBot([{ text: mem.language === 'es' ? 'Ahora dime, ¿tienes Medicare Original, Medicare Advantage o no estás seguro?' : 'Now, do you currently have Original Medicare, Medicare Advantage, or are you not sure?', options: [{ label: 'Original Medicare', value: 'coverage_original' }, { label: 'Medicare Advantage', value: 'coverage_advantage' }, { label: mem.language === 'es' ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' }], pace: 'short' }]);
         break;
       case 'preferredLanguage':
-        setStep('lead_preferred_language');
+        setStepSync('lead_preferred_language');
         enqueueBot([{ text: mem.language === 'es' ? '¿Prefieres que te contacten en inglés o español?' : 'Do you prefer to be contacted in English or Spanish?', options: [{ label: 'English', value: 'preferred_en' }, { label: 'Español', value: 'preferred_es' }, { label: mem.language === 'es' ? 'Cualquiera' : 'Either', value: 'preferred_either' }], pace: 'short' }]);
         break;
       case 'bestTime':
-        setStep('lead_time');
+        setStepSync('lead_time');
         enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor horario para contactarte?' : 'What is the best time to contact you?', options: [{ label: mem.language === 'es' ? 'Mañana' : 'Morning', value: 'time_morning' }, { label: mem.language === 'es' ? 'Tarde' : 'Afternoon', value: 'time_afternoon' }, { label: mem.language === 'es' ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' }, { label: mem.language === 'es' ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' }], pace: 'short' }]);
         break;
       case 'emailOptional':
-        setStep('lead_email');
+        setStepSync('lead_email');
         enqueueBot([{ text: mem.language === 'es' ? 'Si quieres, puedes compartir un correo electrónico. También puedes escribir "saltar".' : 'If you would like, you can share an email address. You can also type "skip".', options: [{ label: mem.language === 'es' ? 'Saltar' : 'Skip', value: 'skip_email' }], pace: 'short' }]);
         break;
       case 'consent':
-        setStep('lead_consent');
+        setStepSync('lead_consent');
         enqueueBot([{ text: mem.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent, options: [{ label: mem.language === 'es' ? 'Sí, acepto' : 'Yes, I agree', value: 'consent_yes' }, { label: mem.language === 'es' ? 'Ahora no' : 'Not now', value: 'consent_no' }], pace: 'long' }]);
         break;
       case 'readyToSubmit':
@@ -2988,16 +3137,113 @@ export function ChatBot() {
     }
   }
 
+  // Returns step-specific clarification + reprompt messages.
+  // Called when user types a clarification phrase during advisor intake.
+  // Always returns 2 messages: explanation + reprompt. Never advances step.
+  function getStepClarificationMessages(currentStep: ChatStep, mem: ChatMemory): QueuedBotMessage[] {
+    const es = mem.language === 'es';
+    const stateNames: Record<string, string> = {
+      NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida',
+    };
+    const stateName = mem.state ? (stateNames[mem.state] || mem.state) : null;
+    const firstName = mem.firstName || (es ? 'usted' : 'you');
+
+    switch (currentStep) {
+      case 'lead_name':
+        return [
+          { text: es
+            ? 'Claro. Estoy pidiendo su primer nombre para identificar su solicitud de revisión. Por favor escriba solo su primer nombre, por ejemplo: María.'
+            : "Of course. I'm asking for your first name so an advisor can identify your review request. Please enter only your first name, for example: Maria.",
+            pace: 'short' },
+          { text: es ? '¿Cuál es su primer nombre?' : 'What is your first name?', pace: 'short' },
+        ];
+      case 'lead_last_name':
+        return [
+          { text: es
+            ? 'Claro. Estoy pidiendo su apellido para completar su solicitud. Por favor escriba solo su apellido.'
+            : "Of course. I need your last name to complete your review request. Please enter only your last name.",
+            pace: 'short' },
+          { text: es ? '¿Cuál es su apellido?' : 'What is your last name?', pace: 'short' },
+        ];
+      case 'lead_phone':
+        return [
+          { text: es
+            ? 'Estoy pidiendo su número de teléfono para que un asesor licenciado pueda contactarle sobre su revisión. Por favor escriba un número válido de 10 dígitos, como 2125551234.'
+            : "I'm asking for your phone number so a licensed advisor can contact you about your review. Please enter a valid 10-digit number, like 2125551234.",
+            pace: 'short' },
+          { text: es
+            ? `Gracias, ${firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`
+            : `Thank you, ${firstName}. What is the best phone number to reach you?`,
+            pace: 'short' },
+        ];
+      case 'lead_zip':
+        return [
+          { text: es
+            ? `Claro. Estoy pidiendo su código postal porque los planes y beneficios de Medicare varían por condado y área de servicio.${stateName ? ` Por favor escriba un código postal válido de 5 dígitos de ${stateName}.` : ' Por favor escriba un código postal válido de 5 dígitos.'}`
+            : `Of course. I'm asking for your ZIP code because Medicare plan availability and benefits vary by county and service area.${stateName ? ` Please enter a valid 5-digit ZIP code from ${stateName}.` : ' Please enter a valid 5-digit ZIP code.'}`,
+            pace: 'short' },
+        ];
+      case 'lead_dob':
+        return [
+          { text: es
+            ? 'Estoy pidiendo su fecha de nacimiento porque algunas reglas de Medicare dependen de la edad o elegibilidad. Use el formato MM/DD/YYYY, por ejemplo: 06/09/1983.'
+            : "I'm asking for your date of birth because some Medicare rules depend on age or eligibility. Please use MM/DD/YYYY, for example: 06/09/1983.",
+            pace: 'short' },
+          { text: es
+            ? '¿Cuál es su fecha de nacimiento? Escríbala como MM/DD/YYYY. Ejemplo: 06/09/1983.'
+            : 'What is your date of birth? Please enter it as MM/DD/YYYY. Example: 06/09/1983.',
+            pace: 'short' },
+        ];
+      case 'lead_coverage':
+        return [
+          { text: es
+            ? 'Estoy preguntando sobre su cobertura actual para que el asesor entienda mejor su situación de Medicare. Puede elegir una de las opciones.'
+            : "I'm asking about your current coverage so the advisor can better understand your Medicare situation. Please choose one of the options.",
+            pace: 'short' },
+        ];
+      case 'lead_email':
+        return [
+          { text: es
+            ? 'El correo electrónico es opcional. Si prefiere no darlo, escriba "saltar" para continuar.'
+            : 'Email is optional. If you prefer not to provide it, type "skip" to continue.',
+            pace: 'short' },
+        ];
+      case 'lead_consent':
+        return [
+          { text: es
+            ? 'Necesito su autorización para que un asesor licenciado pueda contactarle. Puede responder "Sí, acepto" o "Ahora no".'
+            : 'I need your authorization so a licensed advisor can contact you. You can respond "Yes, I agree" or "Not now".',
+            pace: 'short' },
+        ];
+      default:
+        return [
+          { text: es
+            ? '¿Tiene alguna pregunta? Estoy aquí para ayudar.'
+            : 'Do you have a question? I am here to help.',
+            pace: 'short' },
+        ];
+    }
+  }
+
   function handleLeadText(text: string) {
-    // Detect and save out-of-order fields (doesn't matter which step we're on)
-    if (isEmail(text)) {
-      updateMemory({ email: text, skippedEmail: false });
-      askNextQuestion({ ...memory, email: text, skippedEmail: false });
+    // Use stepRef.current — always the current step without stale-closure risk.
+    // stepRef is updated synchronously in setStepSync before any React re-render.
+    const currentStep = stepRef.current;
+
+    // Email pre-capture: if user provides email out of order, save it but
+    // do NOT advance the flow — just acknowledge and repeat the current prompt.
+    if (isEmail(text) && currentStep !== 'lead_email') {
+      updateMemory({ email: text.trim(), skippedEmail: false });
+      const repromptMsgs = getStepClarificationMessages(currentStep, memory);
+      const ack: QueuedBotMessage = { text: memory.language === 'es'
+        ? 'Guardé su correo electrónico.'
+        : 'Got your email address.', pace: 'short' };
+      enqueueBot([ack, ...repromptMsgs]);
       return true;
     }
 
-    // Process by current step
-    if (step === 'lead_name') {
+    // Process by current step — use currentStep (from stepRef) not closure `step`
+    if (currentStep === 'lead_name') {
       const firstName = text.trim();
       const nameCheck = validatePersonName(firstName);
       if (!nameCheck.valid) {
@@ -3010,7 +3256,7 @@ export function ChatBot() {
       askNextQuestion({ ...memory, firstName });
       return true;
     }
-    if (step === 'lead_last_name') {
+    if (currentStep === 'lead_last_name') {
       const lastName = text.trim();
       const lastNameCheck = validatePersonName(lastName);
       if (!lastNameCheck.valid) {
@@ -3023,7 +3269,7 @@ export function ChatBot() {
       askNextQuestion({ ...memory, lastName });
       return true;
     }
-    if (step === 'lead_state') {
+    if (currentStep === 'lead_state') {
       const detectedState = detectState(text);
       if (detectedState && ['NY','NJ','CT','FL'].includes(detectedState)) {
         updateMemory({ state: detectedState });
@@ -3035,7 +3281,7 @@ export function ChatBot() {
       }
       return true;
     }
-    if (step === 'lead_zip') {
+    if (currentStep === 'lead_zip') {
       // ── State-locked ZIP validation ──────────────────────────────────────────
       // State is determined by the user's earlier selection — never inferred from ZIP.
       const stateNames: Record<string,string> = { NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida' };
@@ -3084,7 +3330,7 @@ export function ChatBot() {
       }
       return true;
     }
-    if (step === 'lead_dob') {
+    if (currentStep === 'lead_dob') {
       // Parse flexible DOB: YYYY-MM-DD checked first (prevents 8-digit collision), then MM/DD/YYYY, then MMDDYYYY
       const rawDob = text.trim();
       let isoDate: string | null = null;
@@ -3116,12 +3362,12 @@ export function ChatBot() {
       askNextQuestion({ ...memory, dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
       return true;
     }
-    if (step === 'lead_coverage') {
+    if (currentStep === 'lead_coverage') {
       updateMemory({ currentCoverage: text });
       askNextQuestion({ ...memory, currentCoverage: text });
       return true;
     }
-    if (step === 'lead_phone') {
+    if (currentStep === 'lead_phone') {
       // Use shared validatePhone() from src/lib/validation.ts (US area code allowlist)
       const phoneResult = validatePhone(text);
       if (!phoneResult.valid) {
@@ -3135,17 +3381,17 @@ export function ChatBot() {
       askNextQuestion({ ...memory, phone: phoneResult.cleaned });
       return true;
     }
-    if (step === 'lead_preferred_language') {
+    if (currentStep === 'lead_preferred_language') {
       updateMemory({ preferredLanguage: text });
       askNextQuestion({ ...memory, preferredLanguage: text });
       return true;
     }
-    if (step === 'lead_time') {
+    if (currentStep === 'lead_time') {
       updateMemory({ preferredContactTime: text });
       askNextQuestion({ ...memory, preferredContactTime: text });
       return true;
     }
-    if (step === 'lead_email') {
+    if (currentStep === 'lead_email') {
       const skipped = text.toLowerCase() === 'skip' || text.toLowerCase() === 'saltar';
       if (skipped) {
         updateMemory({ skippedEmail: true });
@@ -3164,14 +3410,14 @@ export function ChatBot() {
       }
       return true;
     }
-    if (step === 'lead_consent') {
+    if (currentStep === 'lead_consent') {
       const yes = text.toLowerCase().includes('yes') || text.toLowerCase().includes('sí') || text.toLowerCase().includes('si');
       if (yes) {
         updateMemory({ consentGiven: true });
         askNextQuestion({ ...memory, consentGiven: true });
       } else {
         updateMemory({ consentGiven: false });
-        setStep('choice');
+        setStepSync('choice');
         enqueueBot([
           { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
           { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, pace: 'short' },
@@ -3194,27 +3440,20 @@ export function ChatBot() {
     // Always cancel any pending bot queue when user sends a message
     cancelBotQueue();
 
-    // Detect interruption keywords
-    const lowText = text.toLowerCase().replace(/[^a-záéíóúüñ ]/g, '').trim();
-    const isInterruptEN = INTERRUPT_KEYWORDS_EN.some(k => k === lowText || lowText.startsWith(k) || lowText.endsWith(k));
-    const isInterruptES = INTERRUPT_KEYWORDS_ES.some(k => k === lowText || lowText.startsWith(k) || lowText.endsWith(k));
-    const isInterrupt = isInterruptEN || (memory.language === 'es' && isInterruptES) || (!memory.language && isInterruptES);
-
-    if (isInterrupt && text.length < 25) {
-      const ack = memory.language === 'es'
-        ? 'Claro. Me detengo. Avísame cuando quieras continuar.'
-        : "Of course. I'll pause. Tell me when you're ready.";
-      enqueueBot([{ text: ack, pace: 'short' }]);
-      return;
-    }
-
-    /* Safety filters */
+    /* Safety filters — run before anything else */
     if (containsAny(text, SENSITIVE_KEYWORDS)) {
       showPrivacyReminder();
       return;
     }
 
+    /* Advisor intake — clarification detection runs FIRST, before any validation.
+       If user typed a clarification phrase (como asi / why / no entiendo / etc.),
+       respond with a step-specific explanation and reprompt. Do NOT validate or advance. */
     if (step.startsWith('lead_')) {
+      if (isClarification(text, memory.language)) {
+        enqueueBot(getStepClarificationMessages(stepRef.current, memory));
+        return;
+      }
       if (handleLeadText(text)) return;
     }
 
@@ -3292,9 +3531,10 @@ export function ChatBot() {
         'Enrollment': 'edu_enrollment',
       };
       const eduKey = topicMap[medicareTopic] || 'edu_parts_ab';
-      setStep('medicare_education');
+      setStepSync('medicare_education');
       updateMemory({ educationTopic: eduKey, educationStep: 1 });
       const education = getMedicareEducation(eduKey, memory.language, memory.state);
+      hasScrolledForCurrentEducationRef.current = false;
       enqueueBot(education);
       return;
     }
@@ -3302,7 +3542,8 @@ export function ChatBot() {
     /* Fallback: legacy education */
     const education = getEducationMessages(text, memory.language);
     updateMemory({ lastTopic: education.topic, interestType: education.topic });
-    setStep('question');
+    setStepSync('question');
+    hasScrolledForCurrentEducationRef.current = false;
     enqueueBot(education.messages);
   }
 
@@ -3314,6 +3555,19 @@ export function ChatBot() {
   const resetLabel = t('Start over', 'Empezar de nuevo');
   const lastMessage = messages[messages.length - 1];
   const activeOptionMessageId = lastMessage?.type === 'bot' && lastMessage.options?.length ? lastMessage.id : '';
+
+  // Determine the index of the first message in the current step block.
+  // A step block = (preceding bot text-only message, if any) + (bot message with options).
+  // This ensures currentStepRef anchors to the QUESTION TEXT, not just the option buttons,
+  // so seniors always see the question and its options together when a new menu renders.
+  const activeStepMsgIdx = messages.reduce(
+    (last, m, i) => (m.type === 'bot' && (m.options?.length ?? 0) > 0 ? i : last), -1
+  );
+  const precedingStepMsg = activeStepMsgIdx > 0 ? messages[activeStepMsgIdx - 1] : null;
+  const stepBlockStartIdx =
+    precedingStepMsg?.type === 'bot' && !(precedingStepMsg.options?.length)
+      ? activeStepMsgIdx - 1
+      : activeStepMsgIdx;
 
   const minimizeLabel = t('Minimize chat', 'Minimizar chat');
 
@@ -3360,7 +3614,7 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed top-[80px] bottom-[82px] left-2 right-2 md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div className="fixed bottom-[max(82px,calc(env(safe-area-inset-bottom)+76px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -3388,14 +3642,21 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 flex-shrink-0 space-y-1">
-            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
-            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
-          </div>
-
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
-            {messages.map((message) => (
-              <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+            {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
+                as conversation progresses; does not permanently consume chat height */}
+            <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
+              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
+              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
+            </div>
+            <div className="px-3 py-3 space-y-3">
+            {messages.map((message, msgIdx) => (
+              <div
+                key={message.id}
+                data-msg-id={message.id}
+                ref={msgIdx === stepBlockStartIdx ? currentStepRef : undefined}
+                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 <div
                   className={`max-w-[88%] rounded-xl px-4 py-3 text-[14px] leading-[1.55] ${
                     message.type === 'user'
@@ -3451,6 +3712,7 @@ export function ChatBot() {
               </div>
             )}
             <div ref={endRef} />
+            </div>
           </div>
 
           <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center justify-between gap-2">
@@ -3468,8 +3730,8 @@ export function ChatBot() {
             </button>
           </div>
 
-          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0">
-            <div className="flex gap-2">
+          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
+            <div className="flex gap-2 min-w-0">
               <input
                 name="chatInput"
                 type="text"
@@ -3478,7 +3740,9 @@ export function ChatBot() {
                 autoCapitalize="sentences"
                 spellCheck="true"
                 placeholder={inputPlaceholder}
-                className="flex-1 px-4 py-3 bg-white border border-cream-300 rounded-lg text-[14px] text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
+                className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
+                onFocus={() => { chatInputFocusedRef.current = true; }}
+                onBlur={() => { chatInputFocusedRef.current = false; }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
