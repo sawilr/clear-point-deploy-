@@ -41,7 +41,9 @@ export function CTASection({
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#contact-form');
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
         setTimeout(() => {
           const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
           if (firstInput) firstInput.focus();

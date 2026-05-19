@@ -364,7 +364,7 @@ export default function Home() {
             {t('Carrier participation and plan availability vary by county, state, eligibility, and appointment status.', 'La participación de aseguradoras y la disponibilidad de planes varían por condado, estado, elegibilidad y estado de cita.')}
           </p>
 
-          <div className="grid grid-cols-1 min-[430px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {carriers.map((carrier) => (
               <div
                 key={carrier.name}

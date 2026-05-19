@@ -54,9 +54,9 @@ export function Footer() {
   return (
     <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
       <div className="max-w-6xl mx-auto px-5">
-        <div className="grid md:grid-cols-[1.8fr_1fr_1fr_1fr] gap-10 mb-10">
+        <div className="grid grid-cols-2 md:grid-cols-[1.8fr_1fr_1fr_1fr] gap-8 md:gap-10 mb-10">
           {/* Brand */}
-          <div>
+          <div className="col-span-2 md:col-span-1">
             <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
@@ -95,7 +95,7 @@ export function Footer() {
           </div>
 
           {/* Contact */}
-          <div>
+          <div className="col-span-2 md:col-span-1">
             <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h4>
             <ul className="space-y-2 text-sm">
               <li><a href="tel:18663108702" className="hover:text-cream-50 transition-colors">1-866-310-8702</a></li>

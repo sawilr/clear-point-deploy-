@@ -145,7 +145,7 @@ export function Header() {
             </a>
 
             {/* Desktop Nav */}
-            <div className="hidden xl:flex items-center gap-3 2xl:gap-5">
+            <div className="hidden lg:flex items-center gap-2 lg:gap-3 2xl:gap-5">
               {/* Services dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
@@ -188,20 +188,20 @@ export function Header() {
             </div>
 
             {/* Desktop CTA */}
-            <div className="hidden xl:flex items-center gap-3">
-              <a href="tel:18663108702" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors">
+            <div className="hidden lg:flex items-center gap-2">
+              <a href="tel:18663108702" className="hidden xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors">
                 <PhoneIcon className="w-4 h-4" />
                 1-866-310-8702
               </a>
               <button
                 onClick={() => handleScrollNav('/#smart-medicare-review')}
-                className="bg-gold-400 text-earth-900 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-gold-300 transition-all hover:shadow-soft"
+                className="bg-gold-400 text-earth-900 text-sm font-semibold px-3.5 py-2 lg:px-4 lg:py-2 xl:px-5 xl:py-2.5 rounded-lg hover:bg-gold-300 transition-all hover:shadow-soft"
               >
                 {t('Smart Review', 'Revisión Inteligente')}
               </button>
               <button
                 onClick={handleFreeReview}
-                className="bg-earth-800 text-cream-50 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft"
+                className="bg-earth-800 text-cream-50 text-sm font-semibold px-3.5 py-2 lg:px-4 lg:py-2 xl:px-5 xl:py-2.5 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft"
               >
                 {t('Free Review', 'Revisión Gratis')}
               </button>
@@ -209,7 +209,7 @@ export function Header() {
 
             {/* Mobile Toggle */}
             <button
-              className="xl:hidden p-2 text-earth-800"
+              className="lg:hidden p-2 text-earth-800"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label={t('Toggle menu', 'Alternar menú')}
             >
@@ -220,12 +220,14 @@ export function Header() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="xl:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-70px)] overflow-y-auto">
+          <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-70px)] overflow-y-auto">
+            <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
             <Link to="/medicare-advantage" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
             <Link to="/part-d" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Parte D Medicamentos')}</Link>
             <Link to="/extra-help" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
             <div className="border-t border-cream-200 pt-4 space-y-4">
+              <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Explore', 'Explorar')}</p>
               {navLinks.filter(l => l.scroll).map((link) => (
                 <button key={link.href} onClick={() => handleScrollNav(link.href)} className="block text-base font-medium text-earth-800 w-full text-left">
                   {t(link.label, link.labelEs)}

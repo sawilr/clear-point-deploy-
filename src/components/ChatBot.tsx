@@ -3323,7 +3323,7 @@ export function ChatBot() {
       {!isOpen && (
         <button
           onClick={openChat}
-          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
+          className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
           aria-label={t('Open Zara, Clear Point virtual assistant', 'Abrir Zara, asistente virtual de Clear Point')}
         >
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -3340,7 +3340,7 @@ export function ChatBot() {
       {isOpen && isMinimized && (
         <button
           onClick={() => setIsMinimized(false)}
-          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-earth-900 transition-all"
+          className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-earth-900 transition-all"
           aria-label={t('Expand Zara chat', 'Expandir chat de Zara')}
         >
           <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
