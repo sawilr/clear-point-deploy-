@@ -307,8 +307,15 @@ export default function Resources() {
       />
 
       {activeGuide !== null && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-earth-900/60" onClick={() => setActiveGuide(null)}>
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-earth-900/60"
+          onClick={() => setActiveGuide(null)}
+          role="presentation"
+        >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="guide-modal-title"
             className="bg-white sm:rounded-2xl rounded-t-2xl shadow-xl max-w-2xl w-full max-h-[92dvh] sm:max-h-[88dvh] flex flex-col"
             onClick={e => e.stopPropagation()}
           >
@@ -328,7 +335,7 @@ export default function Resources() {
 
             {/* Scrollable content */}
             <div className="overflow-y-auto flex-1 px-6 py-5" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <h2 className="font-serif text-2xl sm:text-3xl font-normal text-earth-900 leading-snug mb-5">
+              <h2 id="guide-modal-title" className="font-serif text-2xl sm:text-3xl font-normal text-earth-900 leading-snug mb-5">
                 {t(resources[activeGuide].title, resources[activeGuide].titleEs)}
               </h2>
               <div className="space-y-3 text-earth-700 text-base leading-relaxed mb-8">

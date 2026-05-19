@@ -104,6 +104,20 @@ export function SmartMedicareReview() {
     setPhone(national.slice(0, 10));
   };
 
+  // DOB input mask — auto-inserts slashes for MM/DD/YYYY format (Task #120).
+  // Strips non-numeric, keeps up to 8 digits, inserts separators on the fly.
+  // validateDOB() accepts MM/DD/YYYY via new Date(), so no downstream changes needed.
+  const handleDob = (val: string) => {
+    const digits = val.replace(/\D/g, '').slice(0, 8);
+    let masked = digits;
+    if (digits.length > 4) {
+      masked = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4);
+    } else if (digits.length > 2) {
+      masked = digits.slice(0, 2) + '/' + digits.slice(2);
+    }
+    setDob(masked);
+  };
+
   const canAdvanceStep = (): boolean => {
     switch (step) {
       case 1: return !!concern;
@@ -380,6 +394,7 @@ export function SmartMedicareReview() {
                 pattern="[0-9]*"
                 autoComplete="postal-code"
                 maxLength={5}
+                aria-describedby={zip.length === 5 && !zipInfo ? 'zip-error' : undefined}
                 className="w-full px-4 py-4 sm:py-3.5 bg-cream-50 border border-cream-300 rounded-xl text-lg text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all"
               />
               {zipInfo && (
@@ -390,7 +405,7 @@ export function SmartMedicareReview() {
                 </p>
               )}
               {zip.length === 5 && !zipInfo && (
-                <p className="text-sm text-red-500 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.')}</p>
+                <p id="zip-error" role="alert" className="text-sm text-red-500 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.')}</p>
               )}
               <button
                 onClick={nextStep}
@@ -409,11 +424,14 @@ export function SmartMedicareReview() {
                 {t('What is your date of birth?', '¿Cuál es su fecha de nacimiento?')}
               </p>
               <input
-                type="date"
+                type="text"
                 value={dob}
-                onChange={(e) => setDob(e.target.value)}
-                max={new Date().toISOString().split('T')[0]}
-                min="1906-01-01"
+                onChange={(e) => handleDob(e.target.value)}
+                placeholder="MM/DD/YYYY"
+                inputMode="numeric"
+                maxLength={10}
+                autoComplete="bday"
+                aria-label={isEs ? 'Fecha de nacimiento MM/DD/AAAA' : 'Date of birth MM/DD/YYYY'}
                 className="w-full px-4 py-4 sm:py-3.5 bg-cream-50 border border-cream-300 rounded-xl text-lg text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all"
               />
               {dob && validateDOB(dob).age !== null && (
