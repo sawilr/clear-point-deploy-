@@ -2269,9 +2269,16 @@ export function ChatBot() {
   const processingRef = useRef(false);
   const generationRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
+  const chatBodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Scroll inside the chat body only — never scrollIntoView (which can pull the page).
+    // rAF waits for the new message/options to paint before measuring scrollHeight.
+    requestAnimationFrame(() => {
+      if (chatBodyRef.current) {
+        chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+      }
+    });
   }, [messages, isTyping]);
 
   useEffect(() => {
@@ -3360,7 +3367,7 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed top-[80px] bottom-[82px] left-2 right-2 md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div className="fixed bottom-[max(82px,calc(env(safe-area-inset-bottom)+76px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -3393,7 +3400,7 @@ export function ChatBot() {
             <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
+          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 space-y-3 min-h-0">
             {messages.map((message) => (
               <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
