@@ -2270,35 +2270,30 @@ export function ChatBot() {
   const generationRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
+  // Ref attached to the FIRST message of the current step block.
+  // The step block = the preceding bot context message (if any) + the bot message with options.
+  // Scrolling to currentStepRef shows the question/title at the top of the chat body.
+  const currentStepRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Smart scroll strategy:
-    // When Zara finishes typing and the last message has options (a new step/question),
-    // scroll the chat body so that message starts near the TOP — keeping the question
-    // visible with its options below. For all other updates (typing indicator, user
-    // messages, text-only bot messages) scroll to the bottom.
-    // Uses getBoundingClientRect for reliable position in fixed containers on iOS Safari.
-    // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS.
+    // currentStepRef points to the first message of the current step block —
+    // the preceding bot context/question message (e.g. "Great. Which state do you live in?")
+    // that sits immediately before the bot message that carries the options.
+    // Scrolling to currentStepRef.current brings BOTH the question title AND the
+    // option buttons into view from the top of the chat body.
+    // Falls back to scroll-to-bottom for typing indicator and text-only steps.
+    // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS Safari.
     requestAnimationFrame(() => {
       const container = chatBodyRef.current;
       if (!container) return;
-
-      if (!isTyping && messages.length > 1) {
-        const lastMsg = messages[messages.length - 1];
-        if (lastMsg.type === 'bot' && lastMsg.options?.length) {
-          const target = container.querySelector<HTMLElement>(`[data-msg-id="${lastMsg.id}"]`);
-          if (target) {
-            const containerRect = container.getBoundingClientRect();
-            const targetRect = target.getBoundingClientRect();
-            const delta = targetRect.top - containerRect.top - 8;
-            if (Math.abs(delta) > 2) {
-              container.scrollBy({ top: delta, behavior: 'smooth' });
-              return;
-            }
-          }
-        }
+      const target = currentStepRef.current;
+      if (!isTyping && target && messages.length > 1) {
+        const containerRect = container.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const targetTop = container.scrollTop + (targetRect.top - containerRect.top) - 10;
+        container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+        return;
       }
-
       // Default: scroll to bottom (typing indicator, user messages, text-only steps)
       container.scrollTop = container.scrollHeight;
     });
@@ -3345,6 +3340,19 @@ export function ChatBot() {
   const lastMessage = messages[messages.length - 1];
   const activeOptionMessageId = lastMessage?.type === 'bot' && lastMessage.options?.length ? lastMessage.id : '';
 
+  // Determine the index of the first message in the current step block.
+  // A step block = (preceding bot text-only message, if any) + (bot message with options).
+  // This ensures currentStepRef anchors to the QUESTION TEXT, not just the option buttons,
+  // so seniors always see the question and its options together when a new menu renders.
+  const activeStepMsgIdx = messages.reduce(
+    (last, m, i) => (m.type === 'bot' && (m.options?.length ?? 0) > 0 ? i : last), -1
+  );
+  const precedingStepMsg = activeStepMsgIdx > 0 ? messages[activeStepMsgIdx - 1] : null;
+  const stepBlockStartIdx =
+    precedingStepMsg?.type === 'bot' && !(precedingStepMsg.options?.length)
+      ? activeStepMsgIdx - 1
+      : activeStepMsgIdx;
+
   const minimizeLabel = t('Minimize chat', 'Minimizar chat');
 
   return (
@@ -3426,8 +3434,13 @@ export function ChatBot() {
               <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
             </div>
             <div className="px-3 py-3 space-y-3">
-            {messages.map((message) => (
-              <div key={message.id} data-msg-id={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {messages.map((message, msgIdx) => (
+              <div
+                key={message.id}
+                data-msg-id={message.id}
+                ref={msgIdx === stepBlockStartIdx ? currentStepRef : undefined}
+                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
                 <div
                   className={`max-w-[88%] rounded-xl px-4 py-3 text-[14px] leading-[1.55] ${
                     message.type === 'user'
