@@ -2274,18 +2274,33 @@ export function ChatBot() {
   // The step block = the preceding bot context message (if any) + the bot message with options.
   // Scrolling to currentStepRef shows the question/title at the top of the chat body.
   const currentStepRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the chat text input is focused (keyboard open on iOS).
+  // Using a ref (not state) so focus/blur events never trigger re-renders.
+  // The scroll useEffect checks this to skip scroll when keyboard is open.
+  const chatInputFocusedRef = useRef(false);
 
   useEffect(() => {
-    // currentStepRef points to the first message of the current step block —
-    // the preceding bot context/question message (e.g. "Great. Which state do you live in?")
-    // that sits immediately before the bot message that carries the options.
-    // Scrolling to currentStepRef.current brings BOTH the question title AND the
-    // option buttons into view from the top of the chat body.
-    // Falls back to scroll-to-bottom for typing indicator and text-only steps.
-    // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS Safari.
+    // Keyboard guard: iOS Safari raises the viewport when the soft keyboard opens,
+    // which changes element rects and fires this effect. Scrolling during keyboard-open
+    // causes the chat body to jump unexpectedly. Skip entirely when input is focused.
+    if (chatInputFocusedRef.current) return;
+
     requestAnimationFrame(() => {
       const container = chatBodyRef.current;
       if (!container) return;
+
+      // During lead/form steps the "currentStepRef" still points to the topic-menu
+      // message from before the form started — a stale anchor. For all lead_ steps
+      // and after completion, just keep the bottom visible so the active input stays
+      // in view as the user submits each field.
+      if (step.startsWith('lead_') || step === 'complete') {
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
+
+      // For menu steps: scroll so the question/title (currentStepRef) sits at the
+      // top of the visible chat body, keeping both the question and options visible.
+      // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS Safari.
       const target = currentStepRef.current;
       if (!isTyping && target && messages.length > 1) {
         const containerRect = container.getBoundingClientRect();
@@ -2294,10 +2309,11 @@ export function ChatBot() {
         container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
         return;
       }
+
       // Default: scroll to bottom (typing indicator, user messages, text-only steps)
       container.scrollTop = container.scrollHeight;
     });
-  }, [messages, isTyping]);
+  }, [messages, isTyping, step]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -3514,8 +3530,8 @@ export function ChatBot() {
             </button>
           </div>
 
-          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0">
-            <div className="flex gap-2">
+          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
+            <div className="flex gap-2 min-w-0">
               <input
                 name="chatInput"
                 type="text"
@@ -3524,7 +3540,9 @@ export function ChatBot() {
                 autoCapitalize="sentences"
                 spellCheck="true"
                 placeholder={inputPlaceholder}
-                className="flex-1 px-4 py-3 bg-white border border-cream-300 rounded-lg text-[14px] text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
+                className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
+                onFocus={() => { chatInputFocusedRef.current = true; }}
+                onBlur={() => { chatInputFocusedRef.current = false; }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
