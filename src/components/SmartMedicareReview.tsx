@@ -7,6 +7,9 @@ import { CheckIcon, ChevronRight } from './icons';
 
 const TOTAL_STEPS = 6;
 
+// Same fake-ZIP set as ChatBot.tsx and LeadForm.tsx — rejects obviously invalid entries.
+const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555','66666','77777','88888','99999','12345','54321','11223','00001']);
+
 const SSDI_CONCERN_EN = 'I have disability, SSI, SSDI, or need help with Medicare premiums';
 const SSDI_CONCERN_ES = 'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare';
 
@@ -82,6 +85,11 @@ export function SmartMedicareReview() {
     const clean = val.replace(/\D/g, '').slice(0, 5);
     setZip(clean);
     if (clean.length === 5) {
+      // Reject fake/sequential ZIPs (same check as ChatBot.tsx and LeadForm.tsx)
+      if (FAKE_ZIPS.has(clean) || /^(\d)\1{4}$/.test(clean)) {
+        setZipInfo(null);
+        return;
+      }
       const info = getZipInfo(clean);
       setZipInfo(info);
     } else {

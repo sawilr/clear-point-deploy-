@@ -51,7 +51,9 @@ export function Header() {
   const scrollTo = (id: string) => {
     const el = document.querySelector(id);
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const headerOffset = 80;
+      const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+      window.scrollTo({ top: y, behavior: 'smooth' });
       setServicesOpen(false);
       setMobileMenuOpen(false);
     }
@@ -70,7 +72,9 @@ export function Header() {
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#contact-form');
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
         // Focus first name field so cursor lands in the form immediately
         setTimeout(() => {
           const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
@@ -100,7 +104,9 @@ export function Header() {
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector(id);
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
       } else if (attemptsLeft > 0) {
         requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
       }

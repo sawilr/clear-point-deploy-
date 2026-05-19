@@ -30,14 +30,20 @@ export function Footer() {
     e.preventDefault();
     if (location.pathname === '/') {
       const el = document.querySelector('#how');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (el) {
+        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      }
       return;
     }
     navigate('/');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#how');
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
       } else if (attemptsLeft > 0) {
         requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
       }
@@ -107,6 +113,16 @@ export function Footer() {
 
         {/* Bottom */}
         <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-cream-50/30">
+          {/*
+            TODO OWNER — LICENSING DISCLOSURE (required before scaled Medicare marketing):
+            Add verified NPN (National Producer Number) and state license numbers here.
+            CMS requires NPN display for Medicare Advantage marketing materials.
+            Most states require license numbers in insurance marketing.
+            Do NOT publish placeholder or invented numbers.
+            Once verified, replace this comment with:
+              NPN: [VERIFIED NPN] | Licensed in NY · NJ · CT · FL
+            Example: <span>NPN: 12345678 | Licensed in NY · NJ · CT · FL</span>
+          */}
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center gap-3">
             <Link to="/privacy-policy" className="hover:text-cream-50/60 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>

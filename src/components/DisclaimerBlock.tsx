@@ -40,16 +40,17 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
           </svg>
           {t('Privacy Notice', 'Aviso de Privacidad')}
         </p>
+        {/* Compliance-safe draft — owner/legal review recommended before scaled marketing */}
         <p className="mb-1.5">
           {t(
-            'ClearPoint Senior Advisors respects your privacy and uses the information you provide to respond to your request and connect you with licensed insurance support. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical information through this website or chat. Information submitted through this site may be transmitted to our secure CRM for follow-up. Final privacy, HIPAA, TCPA, and Medicare compliance language should be reviewed by qualified legal/compliance counsel.',
-            'ClearPoint Senior Advisors respeta tu privacidad y utiliza la información que proporcionas para responder a tu solicitud y conectarte con apoyo de seguros licenciado. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni información médica detallada a través de este sitio web o chat. La información enviada por este sitio puede transmitirse a nuestro CRM seguro para seguimiento. El lenguaje final de privacidad, HIPAA, TCPA y cumplimiento de Medicare debe ser revisado por un abogado o especialista de cumplimiento calificado.'
+            'ClearPoint Senior Advisors uses the information you provide only to respond to your request and connect you with licensed insurance support. We apply reasonable administrative and technical safeguards to protect the information you submit. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical records through this website or chat.',
+            'ClearPoint Senior Advisors utiliza la información que proporcionas únicamente para responder a tu solicitud y conectarte con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que envías. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
           )}
         </p>
         <p className="text-[11px] text-amber-700">
           {t(
-            'We do not claim full HIPAA compliance. This is a privacy-conscious notice. For questions about how your information is handled, contact us at 1-866-310-8702.',
-            'No afirmamos cumplimiento total de HIPAA. Este es un aviso consciente de la privacidad. Para preguntas sobre cómo se maneja tu información, contáctanos al 1-866-310-8702.'
+            'For questions about how your information is handled, contact us at 1-866-310-8702.',
+            'Para preguntas sobre cómo se maneja tu información, contáctanos al 1-866-310-8702.'
           )}
         </p>
       </div>

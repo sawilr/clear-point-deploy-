@@ -162,7 +162,28 @@ export default async function handler(req, res) {
     }
     var pipelineId = 'puGDpLJLyeTSXQqutzsm';
     var pipelineStageId = '3c52bf0b-2d8f-4174-8a0a-211a3637d02c';
-    var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' - Smart Review';
+    // Derive a clean opportunity source label from the form_name sent by each form.
+    // ChatBot sends 'Website Chatbot - Medicare Plan Review Request'
+    // SmartMedicareReview sends 'Smart Medicare Review'
+    // LeadForm sends '{source} Form' (e.g. 'contact-page Form', 'homepage-hero Form')
+    var rawFormName = (body.form_name || body.lead_source || '').toLowerCase();
+    var sourceLabel;
+    if (rawFormName.indexOf('chatbot') !== -1 || rawFormName.indexOf('zara') !== -1) {
+      sourceLabel = 'Zara ChatBot';
+    } else if (rawFormName.indexOf('smart') !== -1) {
+      sourceLabel = 'Smart Medicare Review';
+    } else if (rawFormName.indexOf('contact') !== -1 || rawFormName.indexOf('free review') !== -1) {
+      sourceLabel = 'Free Plan Review';
+    } else if (rawFormName.indexOf('hero') !== -1 || rawFormName.indexOf('homepage') !== -1) {
+      sourceLabel = 'Homepage Form';
+    } else if (rawFormName.indexOf('extra') !== -1) {
+      sourceLabel = 'Extra Help';
+    } else if (rawFormName.length > 0) {
+      sourceLabel = (body.form_name || body.lead_source || 'Website Lead').trim();
+    } else {
+      sourceLabel = 'Website Lead';
+    }
+    var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' — ' + sourceLabel;
     if (contactId) {
       try {
         var oppRes = await fetch('https://services.leadconnectorhq.com/opportunities/',{
