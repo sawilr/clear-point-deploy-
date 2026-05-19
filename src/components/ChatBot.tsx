@@ -2272,12 +2272,35 @@ export function ChatBot() {
   const chatBodyRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Scroll inside the chat body only — never scrollIntoView (which can pull the page).
-    // rAF waits for the new message/options to paint before measuring scrollHeight.
+    // Smart scroll strategy:
+    // When Zara finishes typing and the last message has options (a new step/question),
+    // scroll the chat body so that message starts near the TOP — keeping the question
+    // visible with its options below. For all other updates (typing indicator, user
+    // messages, text-only bot messages) scroll to the bottom.
+    // Uses getBoundingClientRect for reliable position in fixed containers on iOS Safari.
+    // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS.
     requestAnimationFrame(() => {
-      if (chatBodyRef.current) {
-        chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+      const container = chatBodyRef.current;
+      if (!container) return;
+
+      if (!isTyping && messages.length > 1) {
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg.type === 'bot' && lastMsg.options?.length) {
+          const target = container.querySelector<HTMLElement>(`[data-msg-id="${lastMsg.id}"]`);
+          if (target) {
+            const containerRect = container.getBoundingClientRect();
+            const targetRect = target.getBoundingClientRect();
+            const delta = targetRect.top - containerRect.top - 8;
+            if (Math.abs(delta) > 2) {
+              container.scrollBy({ top: delta, behavior: 'smooth' });
+              return;
+            }
+          }
+        }
       }
+
+      // Default: scroll to bottom (typing indicator, user messages, text-only steps)
+      container.scrollTop = container.scrollHeight;
     });
   }, [messages, isTyping]);
 
@@ -3395,14 +3418,16 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 flex-shrink-0 space-y-1">
-            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
-            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
-          </div>
-
-          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 space-y-3 min-h-0">
+          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+            {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
+                as conversation progresses; does not permanently consume chat height */}
+            <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
+              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
+              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
+            </div>
+            <div className="px-3 py-3 space-y-3">
             {messages.map((message) => (
-              <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div key={message.id} data-msg-id={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[88%] rounded-xl px-4 py-3 text-[14px] leading-[1.55] ${
                     message.type === 'user'
@@ -3458,6 +3483,7 @@ export function ChatBot() {
               </div>
             )}
             <div ref={endRef} />
+            </div>
           </div>
 
           <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center justify-between gap-2">
