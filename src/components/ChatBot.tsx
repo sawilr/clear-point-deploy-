@@ -4,7 +4,7 @@ import { submitLeadToGHL } from '../lib/ghl';
 import { Calendar, ChevronRight, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
 
 import { getZipInfo } from '../lib/zipLookup';
-import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
+import { validateDOB, validatePhone } from '../lib/validation';
 
 type ChatLanguage = 'en' | 'es';
 type MessageType = 'bot' | 'user';
@@ -16,7 +16,6 @@ type ChatStep =
   | 'medicare_education'
   | 'lead_name'
   | 'lead_last_name'
-  | 'lead_state'
   | 'lead_zip'
   | 'lead_dob'
   | 'lead_coverage'
@@ -26,43 +25,6 @@ type ChatStep =
   | 'lead_time'
   | 'lead_email'
   | 'complete';
-
-// ─── Zara Core Engine: Mode and Intent types ─────────────────────────────────
-// ZaraMode drives which handler set processes user input.
-// Extending to a new mode (e.g. 'followup') requires: new mode value +
-// new handler + entry in MODE_ROUTER switch. No other changes needed.
-type ZaraMode =
-  | 'guide'           // Default: Medicare education + topic navigation
-  | 'advisor_intake'  // Lead form collection — sequential field validation
-  | 'customer_service'// CS mode — plan issues, card, OTC (stub; expandable)
-  | 'followup';       // Future: post-submission follow-up flow
-
-// UserIntent is set each input cycle by the Human Intent Router.
-// Enables intent-aware responses and confusion tracking per intent type.
-type UserIntent =
-  | 'lang_switch'       // User requested language change
-  | 'advisor_request'   // User wants to speak with a human advisor
-  | 'clarification'     // User asked for help / expressed confusion
-  | 'restart'           // User wants to start over or go back to menu
-  | 'cs_intent'         // Customer service issue (card, benefits, plan)
-  | 'medicare_question' // Educational Medicare query
-  | 'form_input'        // Normal form field answer
-  | 'out_of_scope'      // Medical, legal, tax, or unsafe request
-  | 'none';             // Not yet classified
-
-// CSIntent classifies customer service inputs for future CS mode routing.
-// Stub only — full handler not built yet. Add new cases here to extend.
-type CSIntent =
-  | 'card_replacement'    // Lost/replacement Medicare card
-  | 'otc_issue'           // OTC benefit / card issues
-  | 'medication_cost'     // Drug cost / formulary issue
-  | 'provider_issue'      // Doctor not in network / PCP issue
-  | 'dental_vision_hearing' // DVH benefit question
-  | 'transportation'      // Transportation benefit
-  | 'plan_letter'         // Received letter about plan/coverage
-  | 'benefit_question'    // General benefit inquiry
-  | 'unknown';            // Unclassified CS input
-
 type MessagePace = 'short' | 'long' | 'slow';
 
 interface Option {
@@ -103,32 +65,8 @@ interface ChatMemory {
   submitted: boolean;
   skippedEmail: boolean;
   discussedTopics: string[];
-  // ─── Zara Core Engine: session context ───────────────────────────────────
-  // These fields are session-only. Never stored in GHL payload or server.
-  // No sensitive data. Reset on resetChat().
-  mode: ZaraMode;               // Current conversation mode
-  userIntent: UserIntent;       // Last detected intent (per input cycle)
-  confusionCount: number;       // Consecutive unresolved inputs in current step
-  hasAskedForHuman: boolean;    // Whether user has requested an advisor
-  isCustomerServiceIntent: boolean; // Whether current flow was CS-triggered
-  // Extended context tracking for loop prevention and resume-after-interrupt
-  lastValidUserInput: string;   // Last input successfully processed (not rejected, not clarification)
-  pendingAction: string;        // Action deferred by interruption (e.g. 'continue_education')
-  previousStep: string;         // Step before current (for back/resume logic)
-  // ─── Navigation context (enterprise spec: back/menu/mode routing) ──────────
-  // All fields are session-only. Reset on resetChat(). No sensitive data.
-  previousMode: ZaraMode;       // Mode before current (for back/resume after interrupt)
-  previousTopic: string;        // Education topic before current (for back-from-education)
-  lastEducationTopic: string;   // Last education topic discussed (alias for lang-switch resume)
-  lastPromptShown: string;      // Last bot message shown (clarification context)
-  lastOptionsShown: string;     // Last options set key shown (menu resume key)
-  lastBotIntent: string;        // Last bot intent classification (architecture reference)
-  lastQuestionAsked: string;    // Last question Zara asked (clarification context)
-  activeMenu: string;           // Current menu context ('guide_topics', 'cs_menu', 'edu_topic')
-  previousMenu: string;         // Previous menu context (for back-to-menu navigation)
-  activeEducationGroup: number; // Topic group page index (0–2; mirrors topicPage state)
-  activeFormStepId: string;     // Active lead form step ID (mirrors stepRef when in advisor_intake)
-  collectedLeadFields: string[];// Lead fields successfully collected in this session
+  pausedStep: ChatStep | null;
+  pausedContext: string;
 }
 
 interface QueuedBotMessage {
@@ -138,8 +76,6 @@ interface QueuedBotMessage {
 }
 
 const SESSION_KEY = 'clear_point_chat_session_memory';
-
-
 
 const SUPPORTED_STATES = ['NY', 'NJ', 'CT', 'FL'];
 
@@ -189,84 +125,54 @@ const MEDICARE_INTRO: Record<ChatLanguage, QueuedBotMessage[]> = {
   ],
 };
 
-/* ---- Post-state topic menu — 3 grouped pages (replaces flat 13-item menu) ---- */
+/* ---- Post-state topic menu (same for all states, only language differs) ---- */
 
-const TOPIC_GROUPS_EN: Option[][] = [
-  // Group 1 of 3
-  [
-    { label: 'Lower my Medicare costs', value: 'edu_cost_help' },
-    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
-    { label: 'Medicare Advantage', value: 'edu_part_c' },
-    { label: 'Medicare Supplement / Medigap', value: 'edu_supplement' },
-    { label: 'New to Medicare', value: 'edu_parts_ab' },
-    { label: 'More options →', value: 'topic_page_2' },
-    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
-  // Group 2 of 3
-  [
-    { label: 'Part D / prescription drugs', value: 'edu_part_d' },
-    { label: 'HMO vs PPO', value: 'edu_advantage_types' },
-    { label: 'SNP plans', value: 'edu_snp' },
-    { label: 'Disability / SSI / SSDI', value: 'edu_ssdi_ssi' },
-    { label: 'Retiree / union / VA / TRICARE', value: 'edu_special_benefits' },
-    { label: 'More options →', value: 'topic_page_3' },
-    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
-  // Group 3 of 3
-  [
-    { label: 'Enrollment periods', value: 'edu_enrollment' },
-    { label: 'State prescription help', value: 'edu_spap' },
-    { label: 'I am not sure', value: 'edu_parts_ab' },
-    { label: 'Start over', value: 'start_over' },
-    { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
+const TOPIC_MENU_EN: Option[] = [
+  { label: 'Medicare Basics', value: 'edu_parts_ab' },
+  { label: 'Enrollment Periods', value: 'edu_enrollment' },
+  { label: 'HMO vs PPO', value: 'edu_advantage_types' },
+  { label: 'SNP Plans', value: 'edu_snp' },
+  { label: 'Part D Drug Plans', value: 'edu_part_d' },
+  { label: 'Extra Help / LIS', value: 'edu_extra_help' },
+  { label: 'Medicaid', value: 'edu_medicaid' },
+  { label: 'Medicare Savings Programs', value: 'edu_msp' },
+  { label: 'State Prescription Assistance', value: 'edu_spap' },
+  { label: 'Medicare Supplement', value: 'edu_supplement' },
+  { label: 'Special Benefits (Union / VA / Disability)', value: 'edu_special_benefits' },
+  { label: 'Disability / SSI / SSDI / Medicare Premium Help', value: 'edu_ssdi_ssi' },
+  { label: 'Talk to an Advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
-const TOPIC_GROUPS_ES: Option[][] = [
-  // Group 1 of 3
-  [
-    { label: 'Reducir costos de Medicare', value: 'edu_cost_help' },
-    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
-    { label: 'Medicare Advantage', value: 'edu_part_c' },
-    { label: 'Medicare Supplement / Medigap', value: 'edu_supplement' },
-    { label: 'Nuevo en Medicare', value: 'edu_parts_ab' },
-    { label: 'Más opciones →', value: 'topic_page_2' },
-    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
-  // Group 2 of 3
-  [
-    { label: 'Parte D / medicamentos recetados', value: 'edu_part_d' },
-    { label: 'HMO vs PPO', value: 'edu_advantage_types' },
-    { label: 'Planes SNP', value: 'edu_snp' },
-    { label: 'Discapacidad / SSI / SSDI', value: 'edu_ssdi_ssi' },
-    { label: 'Retiro / unión / VA / TRICARE', value: 'edu_special_benefits' },
-    { label: 'Más opciones →', value: 'topic_page_3' },
-    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
-  // Group 3 of 3
-  [
-    { label: 'Períodos de inscripción', value: 'edu_enrollment' },
-    { label: 'Ayuda estatal para medicamentos', value: 'edu_spap' },
-    { label: 'No estoy seguro', value: 'edu_parts_ab' },
-    { label: 'Empezar de nuevo', value: 'start_over' },
-    { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-  ],
+const TOPIC_MENU_ES: Option[] = [
+  { label: 'Conceptos Básicos de Medicare', value: 'edu_parts_ab' },
+  { label: 'Períodos de Inscripción', value: 'edu_enrollment' },
+  { label: 'HMO vs PPO', value: 'edu_advantage_types' },
+  { label: 'Planes SNP', value: 'edu_snp' },
+  { label: 'Planes de Medicinas Parte D', value: 'edu_part_d' },
+  { label: 'Extra Help / LIS', value: 'edu_extra_help' },
+  { label: 'Medicaid', value: 'edu_medicaid' },
+  { label: 'Programa de Ahorro de Medicare', value: 'edu_msp' },
+  { label: 'Ayuda Estatal para Medicinas', value: 'edu_spap' },
+  { label: 'Planes Suplementarios de Medicare', value: 'edu_supplement' },
+  { label: 'Beneficios Especiales (Unión / VA / Discapacidad)', value: 'edu_special_benefits' },
+  { label: 'Discapacidad / SSI / SSDI / ayuda con primas Medicare', value: 'edu_ssdi_ssi' },
+  { label: 'Hablar con un Asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
 ];
 
 const STATE_CONFIRMATION: Record<ChatLanguage, Record<string, QueuedBotMessage[]>> = {
   en: {
-    NY: [{ text: "Thank you. I'll keep New York in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    NJ: [{ text: "Thank you. I'll keep New Jersey in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    CT: [{ text: "Thank you. I'll keep Connecticut in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    FL: [{ text: "Thank you. I'll keep Florida in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    other: [{ text: "I can give you general Medicare guidance, but for Medicaid, MSP, or prescription assistance specific to your state, I would need to verify that state's current rules.", pace: 'slow' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    NY: [{ text: "Thank you. I'll keep New York in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
+    NJ: [{ text: "Thank you. I'll keep New Jersey in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
+    CT: [{ text: "Thank you. I'll keep Connecticut in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
+    FL: [{ text: "Thank you. I'll keep Florida in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
+    other: [{ text: "I can give you general Medicare guidance, but for Medicaid, MSP, or prescription assistance specific to your state, I would need to verify that state's current rules.", pace: 'slow' }, { text: 'What would you like to learn about today?', options: TOPIC_MENU_EN, pace: 'short' }],
   },
   es: {
-    NY: [{ text: 'Gracias. Tendré New York en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    NJ: [{ text: 'Gracias. Tendré New Jersey en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    CT: [{ text: 'Gracias. Tendré Connecticut en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    FL: [{ text: 'Gracias. Tendré Florida en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    other: [{ text: 'Puedo darle orientación general de Medicare, pero para Medicaid, MSP o ayuda de medicamentos específica de su estado, tendría que verificar las reglas actuales de ese estado.', pace: 'slow' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    NY: [{ text: 'Gracias. Tendré New York en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
+    NJ: [{ text: 'Gracias. Tendré New Jersey en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
+    CT: [{ text: 'Gracias. Tendré Connecticut en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
+    FL: [{ text: 'Gracias. Tendré Florida en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
+    other: [{ text: 'Puedo darle orientación general de Medicare, pero para Medicaid, MSP o ayuda de medicamentos específica de su estado, tendría que verificar las reglas actuales de ese estado.', pace: 'slow' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_MENU_ES, pace: 'short' }],
   },
 };
 
@@ -279,10 +185,10 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
 
   const en: Record<string, QueuedBotMessage[]> = {
     edu_parts_ab: [
-      { text: 'Medicare has two main parts that work together.', pace: 'long' },
+      { text: 'Medicare has two main parts that work together.', pace: 'slow' },
       { text: `Part A helps cover hospital stays, skilled nursing facility care, and some home health care. In 2026, the Part A hospital deductible is $${D.partA.deductible.toLocaleString()} per benefit period. Most people do not pay a premium for Part A if they or their spouse worked and paid Medicare taxes for at least 10 years.`, pace: 'slow' },
       { text: `Part B helps cover doctor visits, outpatient care, medical supplies, and preventive services. The standard Part B monthly premium is $${D.partB.standardPremium.toFixed(2)} in 2026, and the annual deductible is $${D.partB.annualDeductible}.`, pace: 'slow' },
-      { text: 'Together, Parts A and B are called Original Medicare. You can go to any doctor or hospital in the U.S. that accepts Medicare.', pace: 'long' },
+      { text: 'Together, Parts A and B are called Original Medicare. You can go to any doctor or hospital in the U.S. that accepts Medicare.', pace: 'slow' },
       {
         text: 'Would you like to know more about costs, or would you like me to explain Medicare Advantage (Part C)?',
         options: [
@@ -291,14 +197,14 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Help with costs', value: 'edu_cost_help' },
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_part_c: [
-      { text: 'Medicare Advantage, also called Part C, is another way to receive your Medicare benefits.', pace: 'long' },
-      { text: 'These are plans offered by private insurance companies approved by Medicare. They must cover everything Original Medicare covers, and many include extra benefits like dental, vision, hearing, or fitness programs.', pace: 'long' },
-      { text: `Availability and costs depend on your county in ${stateLabel}. Each plan has its own network of doctors and hospitals.`, pace: 'long' },
-      { text: 'I can help you request a free review to see what plans are available in your area. A licensed advisor would check your doctors and prescriptions.', pace: 'long' },
+      { text: 'Medicare Advantage, also called Part C, is another way to receive your Medicare benefits.', pace: 'slow' },
+      { text: 'These are plans offered by private insurance companies approved by Medicare. They must cover everything Original Medicare covers, and many include extra benefits like dental, vision, hearing, or fitness programs.', pace: 'slow' },
+      { text: `Availability and costs depend on your county in ${stateLabel}. Each plan has its own network of doctors and hospitals.`, pace: 'slow' },
+      { text: 'I can help you request a free review to see what plans are available in your area. A licensed advisor would check your doctors and prescriptions.', pace: 'slow' },
       {
         text: 'What would you like to do?',
         options: [
@@ -307,12 +213,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Part D prescriptions', value: 'edu_part_d' },
           { label: 'Go back', value: 'edu_parts_ab' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_supplement: [
-      { text: 'Medicare Supplement, also called Medigap, is a separate policy that helps pay some of the costs that Original Medicare does not cover - like deductibles and coinsurance.', pace: 'long' },
-      { text: 'You must have Original Medicare (Parts A and B) to get a Medigap policy. Medigap plans are labeled by letters (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
+      { text: 'Medicare Supplement, also called Medigap, is a separate policy that helps pay some of the costs that Original Medicare does not cover - like deductibles and coinsurance.', pace: 'slow' },
+      { text: 'You must have Original Medicare (Parts A and B) to get a Medigap policy. Medigap plans are labeled by letters (A, B, C, D, F, G, K, L, M, N).', pace: 'slow' },
       { text: 'In most states, if you apply during your Medigap Open Enrollment Period - the 6-month window starting when you turn 65 and enroll in Part B - insurance companies cannot deny you or charge more based on health.', pace: 'slow' },
       {
         text: isSupported
@@ -323,13 +229,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Tell me about Part D', value: 'edu_part_d' },
           { label: 'Help with costs', value: 'edu_cost_help' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_part_d: [
-      { text: 'Part D helps cover the cost of prescription drugs. Each Part D plan has its own list of covered drugs (called a formulary) and network of pharmacies.', pace: 'long' },
-      { text: 'If you do not enroll when first eligible and go without creditable drug coverage, you may have to pay a late enrollment penalty - unless you qualify for Extra Help.', pace: 'long' },
-      { text: 'I cannot check specific prescriptions here. A licensed advisor can review your medications to find a plan that covers them.', pace: 'long' },
+      { text: 'Part D helps cover the cost of prescription drugs. Each Part D plan has its own list of covered drugs (called a formulary) and network of pharmacies.', pace: 'slow' },
+      { text: 'If you do not enroll when first eligible and go without creditable drug coverage, you may have to pay a late enrollment penalty - unless you qualify for Extra Help.', pace: 'slow' },
+      { text: 'I cannot check specific prescriptions here. A licensed advisor can review your medications to find a plan that covers them.', pace: 'slow' },
       {
         text: isSupported
           ? `In ${stateLabel}, there are also programs that may help with drug costs. Would you like to learn about them?`
@@ -339,38 +245,38 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Tell me about Extra Help', value: 'edu_extra_help' },
           { label: 'Help with costs', value: 'edu_cost_help' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_cost_help: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Several programs can help lower Medicare costs if your income and resources are limited. Let me walk you through them.', pace: 'long' },
+        { text: 'Several programs can help lower Medicare costs if your income and resources are limited. Let me walk you through them.', pace: 'slow' },
       ];
       if (state === 'NY') {
-        msgs.push({ text: 'New York Medicare Savings Program — NY does NOT use an asset/resource limit. Two main categories:', pace: 'long' });
+        msgs.push({ text: 'New York Medicare Savings Program — NY does NOT use an asset/resource limit. Two main categories:', pace: 'slow' });
         msgs.push({ text: `• QMB (Qualified Medicare Beneficiary) — may help pay Part B premium, Part A premium if applicable, Medicare deductibles, coinsurance, and copayments. QMB is not retroactive in NY. 2026 income limit: about $${D.msp.NY.QMB.singleIncome.toLocaleString()}/mo single, $${D.msp.NY.QMB.coupleIncome.toLocaleString()}/mo couple (138% FPL with $20 disregard).`, pace: 'slow' });
         msgs.push({ text: `• QI-1 (Qualifying Individual-1) — may help pay Part B premium only. May be retroactive up to 3 months within the same calendar year. Cannot be received with Medicaid. 2026 income limit: about $${D.msp.NY.QI1.singleIncome.toLocaleString()}/mo single, $${D.msp.NY.QI1.coupleIncome.toLocaleString()}/mo couple (186% FPL with $20 disregard).`, pace: 'slow' });
         msgs.push({ text: '• EPIC (Elderly Pharmaceutical Insurance Coverage) — NY\'s SPAP. Helps eligible seniors 65+ with Part D drug costs. Income guidelines: up to about $75,000 single / $100,000 married. Separate from Extra Help.', pace: 'slow' });
       } else if (state === 'NJ') {
-        msgs.push({ text: 'New Jersey Medicare Savings Programs — QMB, SLMB, and QI (annual limits):', pace: 'long' });
+        msgs.push({ text: 'New Jersey Medicare Savings Programs — QMB, SLMB, and QI (annual limits):', pace: 'slow' });
         msgs.push({ text: `• QMB — may help pay Part A/B premiums, deductibles, coinsurance, copayments. Income: $15,960/yr single, $21,640/yr couple. Resources: $9,950 single, $14,910 couple.`, pace: 'slow' });
         msgs.push({ text: `• SLMB — may help pay Part B premium only. Income: $19,152/yr single, $25,968/yr couple. Resources: $9,950 single, $14,910 couple.`, pace: 'slow' });
         msgs.push({ text: `• QI — may help pay Part B premium only. Income: $21,546/yr single, $29,214/yr couple. First-come, first-served.`, pace: 'slow' });
       } else if (state === 'CT') {
-        msgs.push({ text: 'Connecticut Medicare Savings Program — QMB, SLMB, and ALMB (effective March 1, 2026):', pace: 'long' });
+        msgs.push({ text: 'Connecticut Medicare Savings Program — QMB, SLMB, and ALMB (effective March 1, 2026):', pace: 'slow' });
         msgs.push({ text: `• QMB — may help pay Part B premium, deductibles, coinsurance, copayments. Similar to a Medigap policy per CT description. Income: $2,807/mo single, $3,806/mo couple.`, pace: 'slow' });
         msgs.push({ text: `• SLMB — may help pay Part B premium only. Income: $3,073/mo single, $4,166/mo couple.`, pace: 'slow' });
         msgs.push({ text: `• ALMB (Additional Low-Income Medicare Beneficiary) — may help pay Part B premium only. Subject to funding. Not available with Medicaid. Income: $3,272/mo single, $4,437/mo couple.`, pace: 'slow' });
       } else if (state === 'FL') {
-        msgs.push({ text: 'Florida Medicare Savings Programs — use 2026 federal baseline (verify with FL Medicaid/DCF):', pace: 'long' });
+        msgs.push({ text: 'Florida Medicare Savings Programs — use 2026 federal baseline (verify with FL Medicaid/DCF):', pace: 'slow' });
         msgs.push({ text: `• QMB — may help pay Part A/B premiums, deductibles, coinsurance. Income: $${D.msp.FL.QMB.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.QMB.coupleIncome.toLocaleString()}/mo couple. Resources: $${D.msp.FL.QMB.singleAsset.toLocaleString()} single, $${D.msp.FL.QMB.coupleAsset.toLocaleString()} couple.`, pace: 'slow' });
         msgs.push({ text: `• SLMB — may help pay Part B premium. Income: $${D.msp.FL.SLMB.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.SLMB.coupleIncome.toLocaleString()}/mo couple.`, pace: 'slow' });
         msgs.push({ text: `• QI — may help pay Part B premium. Income: $${D.msp.FL.QI.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.QI.coupleIncome.toLocaleString()}/mo couple. First-come, first-served.`, pace: 'slow' });
       } else {
-        msgs.push({ text: 'Medicare Savings Programs (MSP) help pay Medicare premiums and sometimes deductibles and coinsurance. 2026 federal income guidelines:', pace: 'long' });
+        msgs.push({ text: 'Medicare Savings Programs (MSP) help pay Medicare premiums and sometimes deductibles and coinsurance. 2026 federal income guidelines:', pace: 'slow' });
         msgs.push({ text: `• QMB (Qualified Medicare Beneficiary) — may help pay Part A/B premiums, deductibles, coinsurance. Federal baseline: $1,350/mo single, $1,824/mo couple. Resources: $9,950 single, $14,910 couple.\n• SLMB (Specified Low-Income Medicare Beneficiary) — may help pay Part B premium. Federal baseline: $1,616/mo single, $2,184/mo couple.\n• QI (Qualifying Individual) — may help pay Part B premium. Federal baseline: $1,816/mo single, $2,455/mo couple.\n• QDWI (Qualified Disabled and Working Individual) — may help pay Part A premium for certain disabled working individuals under 65.`, pace: 'slow' });
       }
-      msgs.push({ text: `Medicaid is a separate program administered by each state. It can provide additional help — from paying Part B premiums to covering services Medicare does not. Some people qualify for both Medicare and Medicaid (dual eligible).`, pace: 'long' });
+      msgs.push({ text: `Medicaid is a separate program administered by each state. It can provide additional help — from paying Part B premiums to covering services Medicare does not. Some people qualify for both Medicare and Medicaid (dual eligible).`, pace: 'slow' });
       msgs.push({
         text: isSupported
           ? `${stateLabel} also has state-specific programs. Would you like to know about programs in ${stateLabel}?`
@@ -380,17 +286,17 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Tell me about Extra Help', value: 'edu_extra_help' },
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_extra_help: [
-      { text: 'Extra Help - also called the Low-Income Subsidy or LIS - is a federal program that helps pay for Medicare Part D prescription drug costs.', pace: 'long' },
+      { text: 'Extra Help - also called the Low-Income Subsidy or LIS - is a federal program that helps pay for Medicare Part D prescription drug costs.', pace: 'slow' },
       { text: `In 2026, the income limit is about $${D.extraHelp.incomeLimitSingle.toLocaleString()}/month for a single person and $${D.extraHelp.incomeLimitCouple.toLocaleString()}/month for a couple. The asset limit is about $${D.extraHelp.assetLimitSingle.toLocaleString()} for a single person and $${D.extraHelp.assetLimitCouple.toLocaleString()} for a couple (does not count your home, one car, or burial funds).`, pace: 'slow' },
       { text: `With Extra Help, generic drug copays are as low as $${D.extraHelp.genericCopay.toFixed(2)} and brand-name copays as low as $${D.extraHelp.brandCopay.toFixed(2)} per prescription in 2026.`, pace: 'slow' },
-      { text: 'Some people qualify automatically - for example, if you have both Medicare and full Medicaid, Supplemental Security Income (SSI), or qualify through a Medicare Savings Program.', pace: 'long' },
-      { text: 'Important: People who receive Extra Help do not pay the Part D late enrollment penalty while they have Extra Help.', pace: 'long' },
-      { text: 'This is only a pre-check. Final eligibility is determined by Social Security or your state.', pace: 'short' },
+      { text: 'Some people qualify automatically - for example, if you have both Medicare and full Medicaid, Supplemental Security Income (SSI), or qualify through a Medicare Savings Program.', pace: 'slow' },
+      { text: 'Important: People who receive Extra Help do not pay the Part D late enrollment penalty while they have Extra Help.', pace: 'slow' },
+      { text: 'This is only a pre-check. Final eligibility is determined by Social Security or your state.', pace: 'slow' },
       {
         text: 'Would you like a licensed advisor to help you check if you may qualify?',
         options: [
@@ -398,83 +304,78 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Help with Medicare costs', value: 'edu_cost_help' },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_penalties: [
-      { text: 'Medicare has late enrollment penalties for Part B and Part D if you delay enrollment without having other creditable coverage.', pace: 'long' },
+      { text: 'Medicare has late enrollment penalties for Part B and Part D if you delay enrollment without having other creditable coverage.', pace: 'slow' },
       { text: 'Part B penalty: Generally 10% is added to your monthly Part B premium for each full 12-month period you could have had Part B but did not enroll. This penalty is usually permanent and continues for as long as you have Part B.', pace: 'slow' },
       { text: 'Part D penalty: May apply if you go 63 or more days in a row without Part D or other creditable prescription drug coverage. The penalty amount is calculated based on how many months you were without coverage and is added to your Part D premium.', pace: 'slow' },
-      { text: 'Important: People who receive Extra Help (LIS) do not pay the Part D late enrollment penalty while they have Extra Help.', pace: 'long' },
+      { text: 'Important: People who receive Extra Help (LIS) do not pay the Part D late enrollment penalty while they have Extra Help.', pace: 'slow' },
       { text: 'If you have employer, union, federal, state, retiree, VA, TRICARE, or FEHB coverage: do not cancel any current coverage without first checking with your benefits administrator and a licensed advisor. Some types of coverage count as creditable and can help you avoid penalties.', pace: 'slow' },
-      { text: 'I cannot calculate a final penalty without knowing exact dates. A licensed advisor can review your timeline.', pace: 'short' },
+      { text: 'I cannot calculate a final penalty without knowing exact dates. A licensed advisor can review your timeline.', pace: 'slow' },
       {
         text: 'Would you like an advisor to review your situation?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_employer: [
-      { text: 'If you have coverage through an employer, union, federal job, state job, retiree plan, VA, TRICARE, or FEHB (Federal Employees Health Benefits), it is important to understand how it works with Medicare.', pace: 'long' },
-      { text: 'For many people, employer coverage can be creditable - meaning it counts as valid coverage and may help you avoid late enrollment penalties if you delay Part B or Part D.', pace: 'long' },
+      { text: 'If you have coverage through an employer, union, federal job, state job, retiree plan, VA, TRICARE, or FEHB (Federal Employees Health Benefits), it is important to understand how it works with Medicare.', pace: 'slow' },
+      { text: 'For many people, employer coverage can be creditable - meaning it counts as valid coverage and may help you avoid late enrollment penalties if you delay Part B or Part D.', pace: 'slow' },
       { text: '⚠️ Important: Never cancel employer, union, federal, state, retiree, VA, TRICARE, or FEHB coverage without first speaking with your benefits administrator AND a licensed advisor. Canceling could leave you without coverage or trigger penalties.', pace: 'slow' },
-      { text: 'The rules depend on the size of the employer, whether you are actively working or retired, and the type of coverage you have. A licensed advisor can review your specific situation.', pace: 'long' },
+      { text: 'The rules depend on the size of the employer, whether you are actively working or retired, and the type of coverage you have. A licensed advisor can review your specific situation.', pace: 'slow' },
       {
         text: 'Would you like an advisor to review how your coverage works with Medicare?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_plan_loss: [
-      { text: 'If you lost your Medicare Advantage or Part D plan - for example, because the plan left your area or you moved - you may qualify for a Special Enrollment Period.', pace: 'long' },
-      { text: 'A Special Enrollment Period lets you enroll in a new plan outside the regular enrollment windows.', pace: 'long' },
-      { text: 'The time you have depends on the reason - for example, moving out of your plan\'s service area, losing other coverage, or your plan ending its contract with Medicare.', pace: 'long' },
-      { text: 'An advisor can check your situation and help you find a new plan that fits your needs.', pace: 'short' },
+      { text: 'If you lost your Medicare Advantage or Part D plan - for example, because the plan left your area or you moved - you may qualify for a Special Enrollment Period.', pace: 'slow' },
+      { text: 'A Special Enrollment Period lets you enroll in a new plan outside the regular enrollment windows.', pace: 'slow' },
+      { text: 'The time you have depends on the reason - for example, moving out of your plan\'s service area, losing other coverage, or your plan ending its contract with Medicare.', pace: 'slow' },
+      { text: 'An advisor can check your situation and help you find a new plan that fits your needs.', pace: 'slow' },
       {
         text: 'Would you like help finding a new plan?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_linet: [
-      { text: 'LI NET stands for Limited Income Newly Eligible Transition. It is a temporary Medicare Part D prescription drug coverage program.', pace: 'long' },
+      { text: 'LI NET stands for Limited Income Newly Eligible Transition. It is a temporary Medicare Part D prescription drug coverage program.', pace: 'slow' },
       { text: 'LI NET provides immediate, temporary Part D coverage for certain low-income Medicare beneficiaries who are not yet enrolled in a Medicare drug plan. It helps bridge the gap when someone newly qualifies for Medicaid or Extra Help and needs their prescriptions right away.', pace: 'slow' },
-      { text: 'This is not a permanent plan - it provides temporary coverage until a regular Part D or Medicare Advantage plan with drug coverage takes effect.', pace: 'long' },
-      { text: 'I cannot promise LI NET eligibility, but if this situation sounds like yours, a licensed advisor can help verify if LI NET applies and get you connected.', pace: 'short' },
+      { text: 'This is not a permanent plan - it provides temporary coverage until a regular Part D or Medicare Advantage plan with drug coverage takes effect.', pace: 'slow' },
+      { text: 'I cannot promise LI NET eligibility, but if this situation sounds like yours, a licensed advisor can help verify if LI NET applies and get you connected.', pace: 'slow' },
       {
         text: 'Would you like an advisor to check your situation?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_medication: [
-      { text: 'To check medications correctly, I would need the medication name, dosage, how often you take it, your pharmacy, and your ZIP code.', pace: 'long' },
+      { text: 'To check medications correctly, I would need the medication name, dosage, how often you take it, your pharmacy, and your ZIP code.', pace: 'slow' },
       { text: 'Drug coverage can change by plan, pharmacy, tier, prior authorization, step therapy, and quantity limits. Even within the same insurance company, different plans may cover the same drug differently.', pace: 'slow' },
-      { text: 'I cannot confirm whether a specific medication is covered without real plan formulary data. A licensed advisor can check your medications against available plans in your area.', pace: 'long' },
+      { text: 'I cannot confirm whether a specific medication is covered without real plan formulary data. A licensed advisor can check your medications against available plans in your area.', pace: 'slow' },
       {
         text: 'Would you like a licensed advisor to check your medications?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_prequalify: [
@@ -482,25 +383,24 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: 'First: What state do you live in?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, { label: 'Florida', value: 'state_FL' }, { label: 'Other', value: 'state_other' }], pace: 'slow' },
     ],
     edu_enrollment: [
-      { text: 'Medicare has specific times when you can enroll, switch, or review your coverage. The right period depends on your situation.', pace: 'long' },
+      { text: 'Medicare has specific times when you can enroll, switch, or review your coverage. The right period depends on your situation.', pace: 'slow' },
       { text: 'Initial Enrollment: Usually begins 3 months before the month you turn 65, includes your birthday month, and ends 3 months after that month.', pace: 'slow' },
       { text: 'Annual Enrollment: October 15 to December 7. You can review or change Medicare Advantage and Part D coverage for the following year.', pace: 'slow' },
       { text: 'Medicare Advantage Open Enrollment: January 1 to March 31. If already in a Medicare Advantage plan, you may switch to another or return to Original Medicare.', pace: 'slow' },
       { text: 'General Enrollment: January 1 to March 31. This may apply if you missed your first chance to sign up for Part A or B and do not qualify for a Special Enrollment Period. Penalties may apply.', pace: 'slow' },
       { text: 'Special Enrollment: Certain life events - such as moving, losing coverage, qualifying for Medicaid, or getting Extra Help - may let you enroll or change plans outside the usual periods.', pace: 'slow' },
-      { text: 'Medicare Supplement rules can be different from Advantage and Part D. They may depend on state rules, timing of Part B enrollment, and whether health underwriting applies.', pace: 'long' },
+      { text: 'Medicare Supplement rules can be different from Advantage and Part D. They may depend on state rules, timing of Part B enrollment, and whether health underwriting applies.', pace: 'slow' },
       {
         text: 'Would you like help checking which enrollment period may apply to you?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_advantage_types: [
-      { text: 'Medicare Advantage plans are offered by private insurance companies approved by Medicare. There are several types, and availability varies by county, state, and carrier.', pace: 'long' },
+      { text: 'Medicare Advantage plans are offered by private insurance companies approved by Medicare. There are several types, and availability varies by county, state, and carrier.', pace: 'slow' },
       { text: 'HMO: Usually requires using in-network doctors and hospitals. Many require a primary care doctor and referrals for specialists. May have lower costs depending on the plan.', pace: 'slow' },
       { text: 'PPO: Usually gives more flexibility to see out-of-network providers, but it may cost more. Generally no referrals needed for specialists.', pace: 'slow' },
       { text: 'PFFS (Private Fee-for-Service): The plan decides payment rates. Always confirm the provider accepts the plan before receiving services.', pace: 'slow' },
@@ -509,71 +409,68 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'The right type depends on your doctors, prescriptions, county, and how you prefer to receive care. Would you like an advisor to review your options?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_comparison: [
-      { text: 'Here is a simple comparison of the main Medicare coverage types:', pace: 'short' },
-      { text: 'Original Medicare: Parts A and B run by the federal government. Covers hospital and medical services. You can see any doctor who accepts Medicare. Does not cover everything - you may have deductibles and coinsurance.', pace: 'long' },
-      { text: 'Medicare Advantage (Part C): Offered by private companies approved by Medicare. Replaces how you receive Part A and B benefits. May include extras like dental, vision, hearing, and Part D. Rules, networks, and costs vary by plan.', pace: 'long' },
-      { text: 'Medicare Supplement (Medigap): Works with Original Medicare. Helps pay deductibles, coinsurance, and copayments. Does not replace Original Medicare. Usually does not include Part D.', pace: 'long' },
-      { text: 'Part D: Standalone prescription drug plans or included in some Medicare Advantage plans. Each plan has its own formulary and pharmacy network.', pace: 'long' },
-      { text: 'Which combination is right for you depends on your health, budget, doctors, prescriptions, and location. A licensed advisor can review your specific situation.', pace: 'long' },
+      { text: 'Here is a simple comparison of the main Medicare coverage types:', pace: 'slow' },
+      { text: 'Original Medicare: Parts A and B run by the federal government. Covers hospital and medical services. You can see any doctor who accepts Medicare. Does not cover everything - you may have deductibles and coinsurance.', pace: 'slow' },
+      { text: 'Medicare Advantage (Part C): Offered by private companies approved by Medicare. Replaces how you receive Part A and B benefits. May include extras like dental, vision, hearing, and Part D. Rules, networks, and costs vary by plan.', pace: 'slow' },
+      { text: 'Medicare Supplement (Medigap): Works with Original Medicare. Helps pay deductibles, coinsurance, and copayments. Does not replace Original Medicare. Usually does not include Part D.', pace: 'slow' },
+      { text: 'Part D: Standalone prescription drug plans or included in some Medicare Advantage plans. Each plan has its own formulary and pharmacy network.', pace: 'slow' },
+      { text: 'Which combination is right for you depends on your health, budget, doctors, prescriptions, and location. A licensed advisor can review your specific situation.', pace: 'slow' },
       {
         text: 'Would you like an advisor to help you compare your options?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_snp: [
-      { text: 'Special Needs Plans (SNPs) are a type of Medicare Advantage plan for people with certain specific needs.', pace: 'long' },
-      { text: 'There are three main types:', pace: 'short' },
+      { text: 'Special Needs Plans (SNPs) are a type of Medicare Advantage plan for people with certain specific needs.', pace: 'slow' },
+      { text: 'There are three main types:', pace: 'slow' },
       { text: '• D-SNP (Dual Eligible SNP) — for people who have both Medicare and Medicaid. These plans coordinate Medicare and Medicaid benefits.', pace: 'slow' },
       { text: '• C-SNP (Chronic Condition SNP) — for people with certain chronic conditions like diabetes, heart disease, or chronic lung disorders.', pace: 'slow' },
       { text: '• I-SNP (Institutional SNP) — for people who live in a nursing home or require nursing care at home.', pace: 'slow' },
-      { text: 'SNP availability depends on your county and plan availability. Not every county has every type of SNP. A licensed advisor can check what SNPs are available in your area.', pace: 'long' },
+      { text: 'SNP availability depends on your county and plan availability. Not every county has every type of SNP. A licensed advisor can check what SNPs are available in your area.', pace: 'slow' },
       {
         text: 'Would you like to learn about other topics or request a review?',
         options: [
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'More options', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_medicaid: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Medicaid is a state and federal program that may help people with limited income and resources pay medical costs. For people with Medicare, Medicaid may sometimes help with premiums, cost-sharing, and services Medicare does not fully cover.', pace: 'long' },
+        { text: 'Medicaid is a state and federal program that may help people with limited income and resources pay medical costs. For people with Medicare, Medicaid may sometimes help with premiums, cost-sharing, and services Medicare does not fully cover.', pace: 'slow' },
       ];
       if (state === 'NY') {
-        msgs.push({ text: 'Since you selected New York, Medicaid rules are handled under New York State guidelines.', pace: 'long' });
+        msgs.push({ text: 'Since you selected New York, Medicaid rules are handled under New York State guidelines.', pace: 'slow' });
         msgs.push({ text: 'For 2026, New York\'s general Medicaid income guideline for many aged, blind, or disabled adults is about $1,836/month for one person or $2,489/month for a couple, after the standard disregard. Resource limits may be about $33,038 for one person or $44,796 for a couple for many non-MAGI Medicaid categories, but some programs and budgeting rules can differ.', pace: 'slow' });
         msgs.push({ text: 'New York also has Medicare Savings Programs, and New York MSP does not use an asset/resource test. People with Medicaid or MSP may also be connected to Extra Help/LIS for Part D drug costs.', pace: 'slow' });
       } else if (state === 'NJ') {
-        msgs.push({ text: 'Since you selected New Jersey, Medicaid for aged, blind, or disabled individuals may be reviewed through New Jersey Medicaid / NJ FamilyCare rules.', pace: 'long' });
+        msgs.push({ text: 'Since you selected New Jersey, Medicaid for aged, blind, or disabled individuals may be reviewed through New Jersey Medicaid / NJ FamilyCare rules.', pace: 'slow' });
         msgs.push({ text: 'For 2026, New Jersey\'s Aged, Blind, Disabled Medicaid brochure lists certain special Medicaid programs at 100% of the Federal Poverty Level: about $1,330/month for a single person with a $4,000 resource maximum, and about $1,804/month for a couple with a $6,000 resource maximum. These numbers can change and different Medicaid categories may use different rules.', pace: 'slow' });
-        msgs.push({ text: 'New Jersey also has NJSave, Medicare Savings Programs, PAAD, and Senior Gold depending on the person\'s situation.', pace: 'long' });
+        msgs.push({ text: 'New Jersey also has NJSave, Medicare Savings Programs, PAAD, and Senior Gold depending on the person\'s situation.', pace: 'slow' });
       } else if (state === 'CT') {
-        msgs.push({ text: 'Since you selected Connecticut, Medicaid is generally handled through HUSKY Health. HUSKY C is the Medicaid category commonly connected to people who are aged, blind, disabled, or need long-term services and supports.', pace: 'long' });
+        msgs.push({ text: 'Since you selected Connecticut, Medicaid is generally handled through HUSKY Health. HUSKY C is the Medicaid category commonly connected to people who are aged, blind, disabled, or need long-term services and supports.', pace: 'slow' });
         msgs.push({ text: 'Connecticut HUSKY C rules are category-specific. Official Connecticut DSS materials show HUSKY C asset limits can apply, including $1,600 for a single person in certain categories, and married couple rules can depend on the specific category or community spouse rules. Connecticut also has Medicare Savings Programs with higher income limits than regular HUSKY C in many cases.', pace: 'slow' });
-        msgs.push({ text: 'Because Connecticut Medicaid categories are complex, the safest guidance is to review HUSKY C, MSP, Extra Help/LIS, and any spend-down rules with Connecticut DSS or a licensed advisor.', pace: 'long' });
+        msgs.push({ text: 'Because Connecticut Medicaid categories are complex, the safest guidance is to review HUSKY C, MSP, Extra Help/LIS, and any spend-down rules with Connecticut DSS or a licensed advisor.', pace: 'slow' });
       } else if (state === 'FL') {
-        msgs.push({ text: 'Since you selected Florida, Medicaid eligibility for aged or disabled people is generally determined by Florida DCF, while AHCA administers the Medicaid program.', pace: 'long' });
+        msgs.push({ text: 'Since you selected Florida, Medicaid eligibility for aged or disabled people is generally determined by Florida DCF, while AHCA administers the Medicaid program.', pace: 'slow' });
         msgs.push({ text: 'Florida has different Medicaid categories. For some SSI-related or aged/disabled coverage groups, income and resource rules can be strict. For long-term care Medicaid, Florida financial rules commonly reference an income limit around $2,982/month in 2026 with asset limits that depend on the category and marital situation.', pace: 'slow' });
-        msgs.push({ text: 'Because Florida Medicaid categories vary, please review SSI-related Medicaid, Medicare Savings Programs, Extra Help/LIS, long-term care Medicaid if applicable, and Florida SHINE or DCF resources with a licensed advisor.', pace: 'long' });
+        msgs.push({ text: 'Because Florida Medicaid categories vary, please review SSI-related Medicaid, Medicare Savings Programs, Extra Help/LIS, long-term care Medicaid if applicable, and Florida SHINE or DCF resources with a licensed advisor.', pace: 'slow' });
       } else {
-        msgs.push({ text: 'Medicaid eligibility depends on income, resources, age, disability, household situation, and program category. Each state has its own Medicaid rules and income limits.', pace: 'long' });
+        msgs.push({ text: 'Medicaid eligibility depends on income, resources, age, disability, household situation, and program category. Each state has its own Medicaid rules and income limits.', pace: 'slow' });
       }
-      msgs.push({ text: 'This is general education, not a final eligibility decision. The state agency or a licensed advisor must verify the person\'s category, income, resources, household situation, and program rules.', pace: 'short' });
+      msgs.push({ text: 'This is general education, not a final eligibility decision. The state agency or a licensed advisor must verify the person\'s category, income, resources, household situation, and program rules.', pace: 'slow' });
       msgs.push({
         text: 'You may also want to learn about:',
         options: [
@@ -582,13 +479,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_msp: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Medicare Savings Programs (MSP) are state-run programs that may help people with limited income and resources pay Medicare premiums, deductibles, coinsurance, and copayments. Each state administers these programs, and income and resource limits can vary.', pace: 'long' },
+        { text: 'Medicare Savings Programs (MSP) are state-run programs that may help people with limited income and resources pay Medicare premiums, deductibles, coinsurance, and copayments. Each state administers these programs, and income and resource limits can vary.', pace: 'slow' },
       ];
       if (state === 'NY') {
         msgs.push({ text: 'New York Medicare Savings Program:\n• New York does NOT use an asset/resource limit for MSP.\n• QMB (Qualified Medicare Beneficiary) — may help pay Part B premium, Part A premium if applicable, Medicare deductibles, coinsurance, and copayments. QMB is not retroactive in NY. Income limit: about $1,856/month single or $2,509/month couple (138% FPL with $20 disregard).\n• QI-1 (Qualifying Individual-1) — may help pay Part B premium only. May be retroactive up to 3 months same calendar year. Cannot combine with Medicaid. Income limit: about $2,494/month single or $3,375/month couple (186% FPL with $20 disregard).\n• People who get MSP in NY are generally connected to Extra Help/LIS for Part D drug costs.', pace: 'slow' });
@@ -601,7 +498,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       } else {
         msgs.push({ text: 'Federal 2026 baseline MSP income limits:\n• QMB — about $1,350/mo single, $1,824/mo couple. Resources: $9,950 single, $14,910 couple.\n• SLMB — about $1,616/mo single, $2,184/mo couple.\n• QI — about $1,816/mo single, $2,455/mo couple.\n• QDWI — about $5,405/mo single, $7,299/mo couple. Resources: $4,000 single, $6,000 couple.', pace: 'slow' });
       }
-      msgs.push({ text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'short' });
+      msgs.push({ text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'slow' });
       msgs.push({
         text: 'You may also want to learn about:',
         options: [
@@ -610,33 +507,33 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_spap: (() => {
       const msgs: QueuedBotMessage[] = [];
       if (state === 'NY') {
-        msgs.push({ text: 'Since you selected New York, the main state prescription assistance program to know is EPIC, the Elderly Pharmaceutical Insurance Coverage program. EPIC may help eligible New York seniors with Medicare Part D drug costs.', pace: 'long' });
+        msgs.push({ text: 'Since you selected New York, the main state prescription assistance program to know is EPIC, the Elderly Pharmaceutical Insurance Coverage program. EPIC may help eligible New York seniors with Medicare Part D drug costs.', pace: 'slow' });
         msgs.push({ text: 'General 2026 EPIC guidance:\n• New York resident\n• Age 65 or older\n• Enrolled in or eligible for Medicare Part D\n• Annual income up to $75,000 if single or $100,000 if married\n• EPIC works with Medicare Part D\n• People with full Medicaid generally may not use EPIC the same way, but people with Medicaid spend-down may need review.', pace: 'slow' });
-        msgs.push({ text: 'Official resource: New York State Department of Health EPIC program.', pace: 'short' });
+        msgs.push({ text: 'Official resource: New York State Department of Health EPIC program.', pace: 'slow' });
       } else if (state === 'NJ') {
-        msgs.push({ text: 'Since you selected New Jersey, the main state prescription assistance programs are PAAD and Senior Gold.', pace: 'long' });
+        msgs.push({ text: 'Since you selected New Jersey, the main state prescription assistance programs are PAAD and Senior Gold.', pace: 'slow' });
         msgs.push({ text: 'PAAD 2026 general guidance:\n• New Jersey resident\n• Age 65 or older, or age 18–64 receiving Social Security Disability benefits\n• Annual income less than $54,943 if single or less than $62,390 if married\n• Must be enrolled in Medicare Part D\n• PAAD can reduce covered prescription costs — plan formulary and pharmacy rules still matter.', pace: 'slow' });
         msgs.push({ text: 'Senior Gold 2026 general guidance:\n• New Jersey resident\n• Same age/disability requirements as PAAD\n• Generally for people above PAAD limits\n• Annual income range: $54,943–$64,943 if single, or $62,390–$72,390 if married\n• Different cost-sharing structure than PAAD.', pace: 'slow' });
-        msgs.push({ text: 'Official resource: NJSave / New Jersey Division of Aging Services.', pace: 'short' });
+        msgs.push({ text: 'Official resource: NJSave / New Jersey Division of Aging Services.', pace: 'slow' });
       } else if (state === 'CT') {
-        msgs.push({ text: 'Since you selected Connecticut, it is important not to present ConnPACE as an active current prescription assistance program. Official Connecticut information states ConnPACE is no longer a supported benefit plan as of January 1, 2014.', pace: 'long' });
+        msgs.push({ text: 'Since you selected Connecticut, it is important not to present ConnPACE as an active current prescription assistance program. Official Connecticut information states ConnPACE is no longer a supported benefit plan as of January 1, 2014.', pace: 'slow' });
         msgs.push({ text: 'For prescription help in Connecticut, the main options to review are:\n• Extra Help/LIS\n• Medicare Savings Programs\n• Medicaid/HUSKY if applicable\n• Part D formulary review\n• Preferred pharmacy review\n• Manufacturer assistance programs when appropriate.', pace: 'slow' });
-        msgs.push({ text: 'Official resource: Connecticut DSS / HUSKY Health.', pace: 'short' });
+        msgs.push({ text: 'Official resource: Connecticut DSS / HUSKY Health.', pace: 'slow' });
       } else if (state === 'FL') {
-        msgs.push({ text: 'Since you selected Florida, Florida does not have a verified EPIC/PAAD-style statewide prescription assistance program in this knowledge base.', pace: 'long' });
+        msgs.push({ text: 'Since you selected Florida, Florida does not have a verified EPIC/PAAD-style statewide prescription assistance program in this knowledge base.', pace: 'slow' });
         msgs.push({ text: 'For prescription help in Florida, the main options to review are:\n• Extra Help/LIS\n• Medicare Savings Programs\n• Medicaid if applicable\n• Part D formulary review\n• Preferred pharmacy review\n• Florida SHINE counseling\n• Manufacturer assistance programs when appropriate.', pace: 'slow' });
-        msgs.push({ text: 'Official resource: Florida DCF / Florida SHINE.', pace: 'short' });
+        msgs.push({ text: 'Official resource: Florida DCF / Florida SHINE.', pace: 'slow' });
       } else {
-        msgs.push({ text: 'State prescription assistance programs (SPAPs) vary by state. Not every state has an active SPAP. Some states have strong programs, while others do not. A licensed advisor can help review what may be available in your state.', pace: 'long' });
+        msgs.push({ text: 'State prescription assistance programs (SPAPs) vary by state. Not every state has an active SPAP. Some states have strong programs, while others do not. A licensed advisor can help review what may be available in your state.', pace: 'slow' });
       }
-      msgs.push({ text: 'This is general education, not a final eligibility decision.', pace: 'short' });
+      msgs.push({ text: 'This is general education, not a final eligibility decision.', pace: 'slow' });
       msgs.push({
         text: 'You may also want to learn about:',
         options: [
@@ -645,12 +542,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_special_benefits: [
-      { text: 'Some people have benefits beyond standard Medicare — such as union or retiree plans, VA or TRICARE coverage, or disability benefits. These can affect how Medicare works for you.', pace: 'long' },
+      { text: 'Some people have benefits beyond standard Medicare — such as union or retiree plans, VA or TRICARE coverage, or disability benefits. These can affect how Medicare works for you.', pace: 'slow' },
       {
         text: 'Which situation applies to you?',
         options: [
@@ -661,46 +558,46 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_union_retiree: [
-      { text: 'Union and employer retiree plans can vary widely. Some plans continue as your primary coverage when you turn 65. Others become secondary to Medicare and require you to enroll in Medicare Parts A and B to keep your union or retiree benefits active.', pace: 'long' },
-      { text: 'The rules depend on your specific union contract or employer retiree plan. Plans differ on whether they cover prescriptions, dental, vision, and how they coordinate with Medicare.', pace: 'long' },
+      { text: 'Union and employer retiree plans can vary widely. Some plans continue as your primary coverage when you turn 65. Others become secondary to Medicare and require you to enroll in Medicare Parts A and B to keep your union or retiree benefits active.', pace: 'slow' },
+      { text: 'The rules depend on your specific union contract or employer retiree plan. Plans differ on whether they cover prescriptions, dental, vision, and how they coordinate with Medicare.', pace: 'slow' },
       { text: '⚠️ Never cancel union or retiree coverage without first speaking with your plan administrator and a licensed advisor. Canceling could cause you to lose benefits permanently or trigger Medicare late enrollment penalties.', pace: 'slow' },
-      { text: 'A licensed advisor can review how your specific union or retiree plan coordinates with Medicare and whether any changes make sense for your situation.', pace: 'long' },
+      { text: 'A licensed advisor can review how your specific union or retiree plan coordinates with Medicare and whether any changes make sense for your situation.', pace: 'slow' },
       {
         text: 'Would you like an advisor to review your situation?',
         options: [
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_va_tricare: [
-      { text: 'If you have VA or TRICARE benefits, Medicare works differently for you than for most people.', pace: 'long' },
+      { text: 'If you have VA or TRICARE benefits, Medicare works differently for you than for most people.', pace: 'slow' },
       { text: 'VA Benefits: The VA health system is separate from Medicare. VA coverage does not replace a Medicare Advantage or Part D plan. You can have both VA and Medicare, but they do not automatically coordinate — the VA covers care at VA facilities, while Medicare covers care outside the VA system. Having Medicare Part B gives you more flexibility if you ever need non-VA care.', pace: 'slow' },
       { text: 'TRICARE: If you are a retired service member or dependent with TRICARE, you generally need to enroll in Medicare Part B to keep your TRICARE coverage active. TRICARE for Life requires both Medicare Part A and Part B enrollment. Failing to enroll in Part B can cause you to lose TRICARE coverage.', pace: 'slow' },
       { text: '⚠️ Important: If you lose VA or TRICARE benefits, you may qualify for a Special Enrollment Period for Medicare. Do not delay — timing matters.', pace: 'slow' },
-      { text: 'A licensed advisor can help you understand how VA and TRICARE coordinate with Medicare and what options may make sense for your situation.', pace: 'long' },
+      { text: 'A licensed advisor can help you understand how VA and TRICARE coordinate with Medicare and what options may make sense for your situation.', pace: 'slow' },
       {
         text: 'Would you like an advisor to review your situation?',
         options: [
+          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_disability: [
-      { text: 'If you receive Social Security Disability Insurance (SSDI), you generally become eligible for Medicare after a 24-month waiting period from when your disability benefits begin.', pace: 'long' },
-      { text: 'Some conditions qualify for Medicare without the 24-month wait: ALS (Lou Gehrig\'s disease) qualifies immediately, and End-Stage Renal Disease (ESRD) has its own separate rules.', pace: 'long' },
-      { text: 'During the 24-month waiting period, you may need other coverage options. A licensed advisor can review what may be available in your area.', pace: 'long' },
-      { text: 'Once you have Medicare due to disability, you may also qualify for Extra Help / LIS to lower prescription drug costs, or other assistance programs depending on your income and resources.', pace: 'long' },
-      { text: 'At age 65, your Medicare coverage continues automatically — you do not need to re-enroll.', pace: 'long' },
+      { text: 'If you receive Social Security Disability Insurance (SSDI), you generally become eligible for Medicare after a 24-month waiting period from when your disability benefits begin.', pace: 'slow' },
+      { text: 'Some conditions qualify for Medicare without the 24-month wait: ALS (Lou Gehrig\'s disease) qualifies immediately, and End-Stage Renal Disease (ESRD) has its own separate rules.', pace: 'slow' },
+      { text: 'During the 24-month waiting period, you may need other coverage options. A licensed advisor can review what may be available in your area.', pace: 'slow' },
+      { text: 'Once you have Medicare due to disability, you may also qualify for Extra Help / LIS to lower prescription drug costs, or other assistance programs depending on your income and resources.', pace: 'slow' },
+      { text: 'At age 65, your Medicare coverage continues automatically — you do not need to re-enroll.', pace: 'slow' },
       {
         text: 'Would you like to learn more or speak with an advisor?',
         options: [
@@ -709,15 +606,15 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Back to Special Benefits', value: 'edu_special_benefits' },
           { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi: [
-      { text: 'This is an important area because SSI, SSDI, Medicaid, disability benefits, and Medicare do not all work the same way.', pace: 'long' },
+      { text: 'This is an important area because SSI, SSDI, Medicaid, disability benefits, and Medicare do not all work the same way.', pace: 'slow' },
       { text: 'SSI by itself usually does not mean someone has Medicare. Many people with SSI may have Medicaid, depending on state rules. Medicare before age 65 usually depends on SSDI after the required waiting period, or special conditions such as ALS or ESRD.', pace: 'slow' },
       { text: 'If someone has SSDI, Medicare may start after the required disability waiting period. If someone is 65 or older, Medicare rules also depend on work history. Many people get premium-free Part A if they or a spouse have about 40 work quarters, usually around 10 years.', pace: 'slow' },
       { text: 'If someone does not have enough quarters for premium-free Part A, they may be able to buy Part A. If income and resources are limited, the state may help pay Part A and/or Part B through Medicare Savings Programs such as QMB.', pace: 'slow' },
-      { text: 'Clear Point can help you understand what questions to ask, but final eligibility must be confirmed with Social Security, Medicare, Medicaid, or the state agency.', pace: 'long' },
+      { text: 'Clear Point can help you understand what questions to ask, but final eligibility must be confirmed with Social Security, Medicare, Medicaid, or the state agency.', pace: 'slow' },
       {
         text: 'Which of these applies to you?',
         options: [
@@ -731,7 +628,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_ssi: [
@@ -739,11 +636,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_ssdi: [
@@ -751,11 +648,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_medicaid: [
@@ -763,11 +660,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_under65: [
@@ -775,11 +672,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_over65: [
@@ -787,11 +684,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_quarters: [
@@ -799,11 +696,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to continue or speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_partab: [
@@ -811,21 +708,21 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'Would you like to speak with an advisor?',
         options: [
+          { label: 'I want to speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Back to SSI / SSDI topic', value: 'edu_ssdi_ssi' },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-          { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to Medicare topics', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
   };
 
   const es: Record<string, QueuedBotMessage[]> = {
     edu_parts_ab: [
-      { text: 'Medicare tiene dos partes principales que trabajan juntas.', pace: 'long' },
+      { text: 'Medicare tiene dos partes principales que trabajan juntas.', pace: 'slow' },
       { text: `La Parte A ayuda a cubrir estadías en el hospital, cuidado en centros de enfermería especializada y algo de cuidado en el hogar. En 2026, el deducible hospitalario de la Parte A es $${D.partA.deductible.toLocaleString()} por período de beneficio. La mayoría de las personas no pagan prima por la Parte A si ellos o su cónyuge trabajaron y pagaron impuestos de Medicare por al menos 10 años.`, pace: 'slow' },
       { text: `La Parte B ayuda a cubrir visitas al doctor, cuidado ambulatorio, suministros médicos y servicios preventivos. La prima mensual estándar de la Parte B es $${D.partB.standardPremium.toFixed(2)} en 2026, y el deducible anual es $${D.partB.annualDeductible}.`, pace: 'slow' },
-      { text: 'Juntas, las Partes A y B se llaman Medicare Original. Puedes ir a cualquier doctor u hospital en EE.UU. que acepte Medicare.', pace: 'long' },
+      { text: 'Juntas, las Partes A y B se llaman Medicare Original. Puedes ir a cualquier doctor u hospital en EE.UU. que acepte Medicare.', pace: 'slow' },
       {
         text: '¿Quieres saber más sobre costos, o te explico Medicare Advantage (Parte C)?',
         options: [
@@ -834,14 +731,14 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Ayuda con costos', value: 'edu_cost_help' },
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_part_c: [
-      { text: 'Medicare Advantage, también llamada Parte C, es otra forma de recibir tus beneficios de Medicare.', pace: 'long' },
-      { text: 'Estos son planes ofrecidos por compañías de seguros privadas aprobadas por Medicare. Deben cubrir todo lo que Medicare Original cubre, y muchos incluyen beneficios adicionales como dental, visión, audición o programas de ejercicio.', pace: 'long' },
-      { text: `La disponibilidad y costos dependen de tu condado en ${stateLabel}. Cada plan tiene su propia red de doctores y hospitales.`, pace: 'long' },
-      { text: 'Puedo ayudarte a solicitar una revisión gratuita para ver qué planes hay en tu área. Un asesor licenciado revisaría tus doctores y medicamentos.', pace: 'long' },
+      { text: 'Medicare Advantage, también llamada Parte C, es otra forma de recibir tus beneficios de Medicare.', pace: 'slow' },
+      { text: 'Estos son planes ofrecidos por compañías de seguros privadas aprobadas por Medicare. Deben cubrir todo lo que Medicare Original cubre, y muchos incluyen beneficios adicionales como dental, visión, audición o programas de ejercicio.', pace: 'slow' },
+      { text: `La disponibilidad y costos dependen de tu condado en ${stateLabel}. Cada plan tiene su propia red de doctores y hospitales.`, pace: 'slow' },
+      { text: 'Puedo ayudarte a solicitar una revisión gratuita para ver qué planes hay en tu área. Un asesor licenciado revisaría tus doctores y medicamentos.', pace: 'slow' },
       {
         text: '¿Qué te gustaría hacer?',
         options: [
@@ -850,12 +747,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Parte D - recetas', value: 'edu_part_d' },
           { label: 'Volver', value: 'edu_parts_ab' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_supplement: [
-      { text: 'Medicare Supplement, también llamado Medigap, es una póliza separada que ayuda a pagar algunos costos que Medicare Original no cubre - como deducibles y coaseguros.', pace: 'long' },
-      { text: 'Debes tener Medicare Original (Partes A y B) para obtener una póliza Medigap. Los planes Medigap se identifican por letras (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
+      { text: 'Medicare Supplement, también llamado Medigap, es una póliza separada que ayuda a pagar algunos costos que Medicare Original no cubre - como deducibles y coaseguros.', pace: 'slow' },
+      { text: 'Debes tener Medicare Original (Partes A y B) para obtener una póliza Medigap. Los planes Medigap se identifican por letras (A, B, C, D, F, G, K, L, M, N).', pace: 'slow' },
       { text: 'En la mayoría de los estados, si solicitas durante tu Período de Inscripción Abierta de Medigap - los 6 meses que empiezan cuando cumples 65 y te inscribes en Parte B - las aseguradoras no pueden negarte ni cobrarte más por tu salud.', pace: 'slow' },
       {
         text: isSupported
@@ -866,13 +763,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Explicar Parte D', value: 'edu_part_d' },
           { label: 'Ayuda con costos', value: 'edu_cost_help' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_part_d: [
-      { text: 'La Parte D ayuda a cubrir el costo de medicamentos recetados. Cada plan de Parte D tiene su propia lista de medicamentos cubiertos (llamada formulario) y red de farmacias.', pace: 'long' },
-      { text: 'Si no te inscribes cuando eres elegible por primera vez y no tienes otra cobertura de medicamentos acreditable, podrías pagar una penalidad por inscripción tardía - a menos que califiques para Ayuda Extra.', pace: 'long' },
-      { text: 'No puedo revisar medicamentos específicos aquí. Un asesor licenciado puede revisar tus medicinas para encontrar un plan que las cubra.', pace: 'long' },
+      { text: 'La Parte D ayuda a cubrir el costo de medicamentos recetados. Cada plan de Parte D tiene su propia lista de medicamentos cubiertos (llamada formulario) y red de farmacias.', pace: 'slow' },
+      { text: 'Si no te inscribes cuando eres elegible por primera vez y no tienes otra cobertura de medicamentos acreditable, podrías pagar una penalidad por inscripción tardía - a menos que califiques para Ayuda Extra.', pace: 'slow' },
+      { text: 'No puedo revisar medicamentos específicos aquí. Un asesor licenciado puede revisar tus medicinas para encontrar un plan que las cubra.', pace: 'slow' },
       {
         text: isSupported
           ? `En ${stateLabel}, también hay programas que pueden ayudar con costos de medicamentos. ¿Quieres aprender sobre ellos?`
@@ -882,38 +779,38 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
           { label: 'Ayuda con costos', value: 'edu_cost_help' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_cost_help: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Varios programas pueden ayudar a reducir los costos de Medicare si tus ingresos y recursos son limitados. Déjame explicarte.', pace: 'long' },
+        { text: 'Varios programas pueden ayudar a reducir los costos de Medicare si tus ingresos y recursos son limitados. Déjame explicarte.', pace: 'slow' },
       ];
       if (state === 'NY') {
-        msgs.push({ text: 'Programa de Ahorros de Medicare de New York — NY NO usa límite de assets/recursos. Dos categorías principales:', pace: 'long' });
+        msgs.push({ text: 'Programa de Ahorros de Medicare de New York — NY NO usa límite de assets/recursos. Dos categorías principales:', pace: 'slow' });
         msgs.push({ text: `• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar prima de Parte B, prima de Parte A si aplica, deducibles, coaseguros y copagos de Medicare. QMB no es retroactivo en NY. Límite de ingreso 2026: alrededor de $${D.msp.NY.QMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.NY.QMB.coupleIncome.toLocaleString()}/mes pareja (138% FPL con disregard de $20).`, pace: 'slow' });
         msgs.push({ text: `• QI-1 (Individuo Calificado-1) — puede ayudar a pagar solo la prima de Parte B. Puede ser retroactivo hasta 3 meses dentro del mismo año calendario. No se puede recibir junto con Medicaid. Límite de ingreso 2026: alrededor de $${D.msp.NY.QI1.singleIncome.toLocaleString()}/mes soltero, $${D.msp.NY.QI1.coupleIncome.toLocaleString()}/mes pareja (186% FPL con disregard de $20).`, pace: 'slow' });
         msgs.push({ text: '• EPIC (Cobertura de Seguro Farmacéutico para Personas Mayores) — SPAP de NY. Ayuda a seniors elegibles 65+ con costos de medicamentos de Parte D. Guía de ingresos: hasta $75,000 soltero / $100,000 casado. Separado de Extra Help.', pace: 'slow' });
       } else if (state === 'NJ') {
-        msgs.push({ text: 'Programas de Ahorros de Medicare de New Jersey — QMB, SLMB y QI (límites anuales):', pace: 'long' });
+        msgs.push({ text: 'Programas de Ahorros de Medicare de New Jersey — QMB, SLMB y QI (límites anuales):', pace: 'slow' });
         msgs.push({ text: '• QMB — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros, copagos. Ingreso: $15,960/año soltero, $21,640/año pareja. Recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' });
         msgs.push({ text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Ingreso: $19,152/año soltero, $25,968/año pareja. Recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' });
         msgs.push({ text: '• QI — puede ayudar a pagar solo la prima de Parte B. Ingreso: $21,546/año soltero, $29,214/año pareja. Por orden de llegada.', pace: 'slow' });
       } else if (state === 'CT') {
-        msgs.push({ text: 'Programa de Ahorros de Medicare de Connecticut — QMB, SLMB y ALMB (efectivo 1 de marzo de 2026):', pace: 'long' });
+        msgs.push({ text: 'Programa de Ahorros de Medicare de Connecticut — QMB, SLMB y ALMB (efectivo 1 de marzo de 2026):', pace: 'slow' });
         msgs.push({ text: '• QMB — puede ayudar a pagar prima de Parte B, deducibles, coaseguros, copagos. Similar a póliza Medigap según CT. Ingreso: $2,807/mes soltero, $3,806/mes pareja.', pace: 'slow' });
         msgs.push({ text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Ingreso: $3,073/mes soltero, $4,166/mes pareja.', pace: 'slow' });
         msgs.push({ text: '• ALMB (Beneficiario de Medicare de Bajos Ingresos Adicional) — puede ayudar a pagar solo la prima de Parte B. Sujeto a fondos. No disponible con Medicaid. Ingreso: $3,272/mes soltero, $4,437/mes pareja.', pace: 'slow' });
       } else if (state === 'FL') {
-        msgs.push({ text: 'Programas de Ahorros de Medicare de Florida — use la base federal 2026 (verifique con FL Medicaid/DCF):', pace: 'long' });
+        msgs.push({ text: 'Programas de Ahorros de Medicare de Florida — use la base federal 2026 (verifique con FL Medicaid/DCF):', pace: 'slow' });
         msgs.push({ text: `• QMB — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros. Ingreso: $${D.msp.FL.QMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.QMB.coupleIncome.toLocaleString()}/mes pareja. Recursos: $${D.msp.FL.QMB.singleAsset.toLocaleString()} soltero, $${D.msp.FL.QMB.coupleAsset.toLocaleString()} pareja.`, pace: 'slow' });
         msgs.push({ text: `• SLMB — puede ayudar a pagar prima de Parte B. Ingreso: $${D.msp.FL.SLMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.SLMB.coupleIncome.toLocaleString()}/mes pareja.`, pace: 'slow' });
         msgs.push({ text: `• QI — puede ayudar a pagar prima de Parte B. Ingreso: $${D.msp.FL.QI.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.QI.coupleIncome.toLocaleString()}/mes pareja. Por orden de llegada.`, pace: 'slow' });
       } else {
-        msgs.push({ text: 'Los Programas de Ahorros de Medicare (MSP) ayudan a pagar las primas de Medicare y a veces deducibles y coaseguros. Pautas federales 2026:', pace: 'long' });
+        msgs.push({ text: 'Los Programas de Ahorros de Medicare (MSP) ayudan a pagar las primas de Medicare y a veces deducibles y coaseguros. Pautas federales 2026:', pace: 'slow' });
         msgs.push({ text: '• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros. Base federal: $1,350/mes soltero, $1,824/mes pareja. Recursos: $9,950 soltero, $14,910 pareja.\n• SLMB (Beneficiario de Medicare de Bajos Ingresos Especificado) — puede ayudar a pagar prima de Parte B. Base federal: $1,616/mes soltero, $2,184/mes pareja.\n• QI (Individuo Calificado) — puede ayudar a pagar prima de Parte B. Base federal: $1,816/mes soltero, $2,455/mes pareja.\n• QDWI (Individuo Discapacitado y Trabajador Calificado) — puede ayudar a pagar prima de Parte A para ciertos trabajadores discapacitados menores de 65.', pace: 'slow' });
       }
-      msgs.push({ text: 'Medicaid es un programa separado administrado por cada estado. Puede ofrecer ayuda adicional — desde pagar primas de Parte B hasta cubrir servicios que Medicare no cubre. Algunas personas califican para ambos, Medicare y Medicaid (elegibilidad dual).', pace: 'long' });
+      msgs.push({ text: 'Medicaid es un programa separado administrado por cada estado. Puede ofrecer ayuda adicional — desde pagar primas de Parte B hasta cubrir servicios que Medicare no cubre. Algunas personas califican para ambos, Medicare y Medicaid (elegibilidad dual).', pace: 'slow' });
       msgs.push({
         text: isSupported
           ? `${stateLabel} también tiene programas específicos. ¿Quieres saber sobre programas en ${stateLabel}?`
@@ -923,17 +820,17 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_extra_help: [
-      { text: 'Ayuda Extra - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'long' },
+      { text: 'Ayuda Extra - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'slow' },
       { text: `En 2026, el límite de ingresos es aproximadamente $${D.extraHelp.incomeLimitSingle.toLocaleString()}/mes para una persona soltera y $${D.extraHelp.incomeLimitCouple.toLocaleString()}/mes para una pareja. El límite de recursos es aproximadamente $${D.extraHelp.assetLimitSingle.toLocaleString()} para soltero y $${D.extraHelp.assetLimitCouple.toLocaleString()} para pareja (no cuenta tu casa, un auto ni fondos funerarios).`, pace: 'slow' },
       { text: `Con Ayuda Extra, los copagos de medicamentos genéricos bajan hasta $${D.extraHelp.genericCopay.toFixed(2)} y los de marca hasta $${D.extraHelp.brandCopay.toFixed(2)} por receta en 2026.`, pace: 'slow' },
-      { text: 'Algunas personas califican automáticamente - por ejemplo, si tienes ambos Medicare y Medicaid completo, Seguridad de Ingreso Suplementario (SSI), o calificas a través de un Programa de Ahorros de Medicare.', pace: 'long' },
-      { text: 'Importante: Las personas que reciben Ayuda Extra no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
-      { text: 'Esto es solo una revisión preliminar. La elegibilidad final la determina el Seguro Social o tu estado.', pace: 'short' },
+      { text: 'Algunas personas califican automáticamente - por ejemplo, si tienes ambos Medicare y Medicaid completo, Seguridad de Ingreso Suplementario (SSI), o calificas a través de un Programa de Ahorros de Medicare.', pace: 'slow' },
+      { text: 'Importante: Las personas que reciben Ayuda Extra no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'slow' },
+      { text: 'Esto es solo una revisión preliminar. La elegibilidad final la determina el Seguro Social o tu estado.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor licenciado te ayude a verificar si podrías calificar?',
         options: [
@@ -941,109 +838,103 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Ayuda con costos de Medicare', value: 'edu_cost_help' },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_penalties: [
-      { text: 'Medicare tiene penalidades por inscripción tardía en la Parte B y Parte D si retrasas la inscripción sin tener otra cobertura acreditable.', pace: 'long' },
+      { text: 'Medicare tiene penalidades por inscripción tardía en la Parte B y Parte D si retrasas la inscripción sin tener otra cobertura acreditable.', pace: 'slow' },
       { text: 'Penalidad de Parte B: Generalmente se añade un 10% a tu prima mensual de Parte B por cada período completo de 12 meses que pudiste haber tenido Parte B pero no te inscribiste. Esta penalidad generalmente es permanente y continúa mientras tengas Parte B.', pace: 'slow' },
       { text: 'Penalidad de Parte D: Puede aplicar si pasas 63 días o más seguidos sin Parte D u otra cobertura de medicamentos acreditable. El monto se calcula según cuántos meses estuviste sin cobertura y se suma a tu prima de Parte D.', pace: 'slow' },
-      { text: 'Importante: Las personas que reciben Ayuda Extra (LIS) no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
+      { text: 'Importante: Las personas que reciben Ayuda Extra (LIS) no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'slow' },
       { text: 'Si tienes cobertura de empleador, sindicato, gobierno federal, estatal, plan de retiro, VA, TRICARE o FEHB: no canceles ninguna cobertura actual sin antes consultar con tu administrador de beneficios Y un asesor licenciado. Cancelar podría dejarte sin cobertura o generar penalidades.', pace: 'slow' },
-      { text: 'No puedo calcular una penalidad final sin saber las fechas exactas. Un asesor licenciado puede revisar tu cronograma.', pace: 'short' },
+      { text: 'No puedo calcular una penalidad final sin saber las fechas exactas. Un asesor licenciado puede revisar tu cronograma.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor revise tu situación?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_employer: [
-      { text: 'Si tienes cobertura a través de un empleador, sindicato, trabajo federal, estatal, plan de retiro, VA, TRICARE o FEHB (Beneficios de Salud para Empleados Federales), es importante entender cómo funciona con Medicare.', pace: 'long' },
-      { text: 'Para muchas personas, la cobertura del empleador puede ser acreditable - lo que significa que cuenta como cobertura válida y puede ayudarte a evitar penalidades por inscripción tardía si retrasas la Parte B o Parte D.', pace: 'long' },
+      { text: 'Si tienes cobertura a través de un empleador, sindicato, trabajo federal, estatal, plan de retiro, VA, TRICARE o FEHB (Beneficios de Salud para Empleados Federales), es importante entender cómo funciona con Medicare.', pace: 'slow' },
+      { text: 'Para muchas personas, la cobertura del empleador puede ser acreditable - lo que significa que cuenta como cobertura válida y puede ayudarte a evitar penalidades por inscripción tardía si retrasas la Parte B o Parte D.', pace: 'slow' },
       { text: '⚠️ Importante: Nunca canceles cobertura de empleador, sindicato, federal, estatal, de retiro, VA, TRICARE o FEHB sin antes hablar con tu administrador de beneficios Y un asesor licenciado. Cancelar podría dejarte sin cobertura o generar penalidades.', pace: 'slow' },
-      { text: 'Las reglas dependen del tamaño del empleador, si estás trabajando activamente o jubilado, y el tipo de cobertura que tienes. Un asesor licenciado puede revisar tu situación específica.', pace: 'long' },
+      { text: 'Las reglas dependen del tamaño del empleador, si estás trabajando activamente o jubilado, y el tipo de cobertura que tienes. Un asesor licenciado puede revisar tu situación específica.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor revise cómo funciona tu cobertura con Medicare?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_plan_loss: [
-      { text: 'Si perdiste tu plan de Medicare Advantage o Parte D - por ejemplo, porque el plan salió de tu área o te mudaste - podrías calificar para un Período Especial de Inscripción.', pace: 'long' },
-      { text: 'Un Período Especial de Inscripción te permite inscribirte en un nuevo plan fuera de los períodos regulares de inscripción.', pace: 'long' },
-      { text: 'El tiempo que tienes depende de la razón - por ejemplo, mudarte fuera del área de servicio del plan, perder otra cobertura, o que tu plan termine su contrato con Medicare.', pace: 'long' },
-      { text: 'Un asesor puede revisar tu situación y ayudarte a encontrar un nuevo plan que se ajuste a tus necesidades.', pace: 'short' },
+      { text: 'Si perdiste tu plan de Medicare Advantage o Parte D - por ejemplo, porque el plan salió de tu área o te mudaste - podrías calificar para un Período Especial de Inscripción.', pace: 'slow' },
+      { text: 'Un Período Especial de Inscripción te permite inscribirte en un nuevo plan fuera de los períodos regulares de inscripción.', pace: 'slow' },
+      { text: 'El tiempo que tienes depende de la razón - por ejemplo, mudarte fuera del área de servicio del plan, perder otra cobertura, o que tu plan termine su contrato con Medicare.', pace: 'slow' },
+      { text: 'Un asesor puede revisar tu situación y ayudarte a encontrar un nuevo plan que se ajuste a tus necesidades.', pace: 'slow' },
       {
         text: '¿Quieres ayuda para encontrar un nuevo plan?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_linet: [
-      { text: 'LI NET significa Transición para Recién Elegibles de Bajos Ingresos. Es un programa temporal de cobertura de medicamentos recetados de la Parte D de Medicare.', pace: 'long' },
-      { text: 'LI NET proporciona cobertura temporal inmediata de Parte D para ciertos beneficiarios de Medicare de bajos ingresos que aún no están inscritos en un plan de medicamentos de Medicare. Ayuda a cubrir el vacío cuando alguien recién califica para Medicaid o Ayuda Extra y necesita sus medicamentos de inmediato.', pace: 'long' },
-      { text: 'Este no es un plan permanente - brinda cobertura temporal hasta que un plan regular de Parte D o Medicare Advantage con cobertura de medicamentos entre en vigor.', pace: 'long' },
-      { text: 'No puedo prometer elegibilidad para LI NET, pero si esta situación se parece a la tuya, un asesor licenciado puede ayudar a verificar si LI NET aplica y conectarte.', pace: 'short' },
+      { text: 'LI NET significa Transición para Recién Elegibles de Bajos Ingresos. Es un programa temporal de cobertura de medicamentos recetados de la Parte D de Medicare.', pace: 'slow' },
+      { text: 'LI NET proporciona cobertura temporal inmediata de Parte D para ciertos beneficiarios de Medicare de bajos ingresos que aún no están inscritos en un plan de medicamentos de Medicare. Ayuda a cubrir el vacío cuando alguien recién califica para Medicaid o Ayuda Extra y necesita sus medicamentos de inmediato.', pace: 'slow' },
+      { text: 'Este no es un plan permanente - brinda cobertura temporal hasta que un plan regular de Parte D o Medicare Advantage con cobertura de medicamentos entre en vigor.', pace: 'slow' },
+      { text: 'No puedo prometer elegibilidad para LI NET, pero si esta situación se parece a la tuya, un asesor licenciado puede ayudar a verificar si LI NET aplica y conectarte.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor revise tu situación?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_medication: [
-      { text: 'Para revisar medicamentos correctamente, necesitaría el nombre del medicamento, dosis, frecuencia, farmacia y código postal.', pace: 'long' },
+      { text: 'Para revisar medicamentos correctamente, necesitaría el nombre del medicamento, dosis, frecuencia, farmacia y código postal.', pace: 'slow' },
       { text: 'La cobertura de medicamentos puede cambiar por plan, farmacia, nivel/tier, autorización previa, terapia escalonada y límites de cantidad. Incluso dentro de la misma compañía de seguros, diferentes planes pueden cubrir el mismo medicamento de forma distinta.', pace: 'slow' },
-      { text: 'No puedo confirmar si un medicamento específico está cubierto sin datos reales del formulario del plan. Un asesor licenciado puede revisar tus medicamentos contra los planes disponibles en tu área.', pace: 'long' },
+      { text: 'No puedo confirmar si un medicamento específico está cubierto sin datos reales del formulario del plan. Un asesor licenciado puede revisar tus medicamentos contra los planes disponibles en tu área.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor licenciado revise tus medicamentos?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_prequalify: [
-      { text: 'Puedo ayudarte con una pre-evaluación para ver qué programas valdría la pena revisar. Vamos paso a paso. Te haré una pregunta a la vez.', pace: 'long' },
-      { text: 'Primero: ¿En qué estado vives?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, { label: 'Florida', value: 'state_FL' }, { label: 'Otro', value: 'state_other' }], pace: 'short' },
+      { text: 'Puedo ayudarte con una pre-evaluación para ver qué programas valdría la pena revisar. Vamos paso a paso. Te haré una pregunta a la vez.', pace: 'slow' },
+      { text: 'Primero: ¿En qué estado vives?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, { label: 'Florida', value: 'state_FL' }, { label: 'Otro', value: 'state_other' }], pace: 'slow' },
     ],
     edu_enrollment: [
-      { text: 'Medicare tiene momentos específicos en los que puedes inscribirte, cambiar o revisar tu cobertura. El período correcto depende de tu situación.', pace: 'long' },
+      { text: 'Medicare tiene momentos específicos en los que puedes inscribirte, cambiar o revisar tu cobertura. El período correcto depende de tu situación.', pace: 'slow' },
       { text: 'Inscripción Inicial: Normalmente comienza 3 meses antes del mes en que cumples 65 años, incluye el mes de tu cumpleaños y termina 3 meses después.', pace: 'slow' },
       { text: 'Inscripción Anual: Del 15 de octubre al 7 de diciembre. Puedes revisar o cambiar tu cobertura de Medicare Advantage y Parte D para el año siguiente.', pace: 'slow' },
       { text: 'Inscripción Abierta de Medicare Advantage: Del 1 de enero al 31 de marzo. Si ya tienes un plan Medicare Advantage, puedes cambiarte a otro o regresar a Medicare Original.', pace: 'slow' },
       { text: 'Inscripción General: Del 1 de enero al 31 de marzo. Puede aplicar si no te inscribiste en la Parte A o B cuando eras elegible por primera vez y no calificas para un Período Especial. Pueden aplicar penalidades.', pace: 'slow' },
       { text: 'Período Especial: Ciertos eventos de vida - como mudarte, perder cobertura, calificar para Medicaid u obtener Ayuda Extra - pueden permitirte inscribirte o cambiar planes fuera de los períodos normales.', pace: 'slow' },
-      { text: 'Las reglas de Medicare Supplement pueden ser diferentes a las de Advantage y Parte D. Pueden depender del estado, cuándo te inscribiste en Parte B y si aplican preguntas de salud.', pace: 'long' },
+      { text: 'Las reglas de Medicare Supplement pueden ser diferentes a las de Advantage y Parte D. Pueden depender del estado, cuándo te inscribiste en Parte B y si aplican preguntas de salud.', pace: 'slow' },
       {
         text: '¿Quieres ayuda para verificar qué período de inscripción puede aplicar en tu caso?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_advantage_types: [
-      { text: 'Los planes Medicare Advantage son ofrecidos por compañías de seguros privadas aprobadas por Medicare. Hay varios tipos, y la disponibilidad varía por condado, estado y aseguradora.', pace: 'long' },
+      { text: 'Los planes Medicare Advantage son ofrecidos por compañías de seguros privadas aprobadas por Medicare. Hay varios tipos, y la disponibilidad varía por condado, estado y aseguradora.', pace: 'slow' },
       { text: 'HMO: Normalmente requiere usar médicos y hospitales dentro de la red del plan. Muchos requieren un médico primario y referidos para especialistas. Puede tener costos más bajos.', pace: 'slow' },
       { text: 'PPO: Normalmente ofrece más flexibilidad para ver proveedores fuera de la red, pero puede costar más. Generalmente no se necesitan referidos para especialistas.', pace: 'slow' },
       { text: 'PFFS (Pago por Servicio Privado): El plan decide las tarifas de pago. Siempre confirma que el proveedor acepte el plan antes de recibir servicios.', pace: 'slow' },
@@ -1052,71 +943,68 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: 'El tipo correcto depende de tus médicos, medicamentos, condado y cómo prefieres recibir atención. ¿Quieres que un asesor revise tus opciones?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_comparison: [
-      { text: 'Aquí tienes una comparación simple de los principales tipos de cobertura de Medicare:', pace: 'short' },
-      { text: 'Medicare Original: Partes A y B administradas por el gobierno federal. Cubre servicios hospitalarios y médicos. Puedes ver a cualquier médico que acepte Medicare. No cubre todo - puedes tener deducibles y coseguros.', pace: 'long' },
-      { text: 'Medicare Advantage (Parte C): Ofrecido por compañías privadas aprobadas por Medicare. Cambia cómo recibes tus beneficios de Parte A y B. Puede incluir extras como dental, visión, audición y Parte D. Reglas, redes y costos varían.', pace: 'long' },
-      { text: 'Medicare Supplement (Medigap): Funciona con Medicare Original. Ayuda a pagar deducibles, coseguros y copagos. No reemplaza Medicare Original. Normalmente no incluye Parte D.', pace: 'long' },
-      { text: 'Parte D: Planes independientes de medicamentos recetados o incluidos en algunos planes Medicare Advantage. Cada plan tiene su propio formulario y red de farmacias.', pace: 'long' },
-      { text: 'Qué combinación es adecuada para ti depende de tu salud, presupuesto, médicos, medicamentos y ubicación. Un asesor licenciado puede revisar tu situación específica.', pace: 'long' },
+      { text: 'Aquí tienes una comparación simple de los principales tipos de cobertura de Medicare:', pace: 'slow' },
+      { text: 'Medicare Original: Partes A y B administradas por el gobierno federal. Cubre servicios hospitalarios y médicos. Puedes ver a cualquier médico que acepte Medicare. No cubre todo - puedes tener deducibles y coseguros.', pace: 'slow' },
+      { text: 'Medicare Advantage (Parte C): Ofrecido por compañías privadas aprobadas por Medicare. Cambia cómo recibes tus beneficios de Parte A y B. Puede incluir extras como dental, visión, audición y Parte D. Reglas, redes y costos varían.', pace: 'slow' },
+      { text: 'Medicare Supplement (Medigap): Funciona con Medicare Original. Ayuda a pagar deducibles, coseguros y copagos. No reemplaza Medicare Original. Normalmente no incluye Parte D.', pace: 'slow' },
+      { text: 'Parte D: Planes independientes de medicamentos recetados o incluidos en algunos planes Medicare Advantage. Cada plan tiene su propio formulario y red de farmacias.', pace: 'slow' },
+      { text: 'Qué combinación es adecuada para ti depende de tu salud, presupuesto, médicos, medicamentos y ubicación. Un asesor licenciado puede revisar tu situación específica.', pace: 'slow' },
       {
         text: '¿Quieres que un asesor te ayude a comparar tus opciones?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_snp: [
-      { text: 'Los Planes de Necesidades Especiales (SNP) son un tipo de plan Medicare Advantage para personas con ciertas necesidades específicas.', pace: 'long' },
-      { text: 'Hay tres tipos principales:', pace: 'short' },
+      { text: 'Los Planes de Necesidades Especiales (SNP) son un tipo de plan Medicare Advantage para personas con ciertas necesidades específicas.', pace: 'slow' },
+      { text: 'Hay tres tipos principales:', pace: 'slow' },
       { text: '• D-SNP (SNP de Doble Elegibilidad) — para personas con Medicare y Medicaid. Estos planes coordinan beneficios de Medicare y Medicaid.', pace: 'slow' },
       { text: '• C-SNP (SNP de Condición Crónica) — para personas con ciertas condiciones crónicas como diabetes, enfermedad cardíaca o trastornos pulmonares crónicos.', pace: 'slow' },
       { text: '• I-SNP (SNP Institucional) — para personas que viven en un hogar de ancianos o requieren cuidado de enfermería en casa.', pace: 'slow' },
-      { text: 'La disponibilidad de SNP depende de tu condado y planes disponibles. No todos los condados tienen todos los tipos de SNP. Un asesor licenciado puede verificar qué SNP están disponibles en tu área.', pace: 'long' },
+      { text: 'La disponibilidad de SNP depende de tu condado y planes disponibles. No todos los condados tienen todos los tipos de SNP. Un asesor licenciado puede verificar qué SNP están disponibles en tu área.', pace: 'slow' },
       {
         text: '¿Quieres aprender sobre otros temas o solicitar una revisión?',
         options: [
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Más opciones', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_medicaid: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Medicaid es un programa estatal y federal que puede ayudar a personas con ingresos y recursos limitados a pagar costos médicos. Para personas con Medicare, Medicaid a veces puede ayudar con primas, costos compartidos y servicios que Medicare no cubre completamente.', pace: 'long' },
+        { text: 'Medicaid es un programa estatal y federal que puede ayudar a personas con ingresos y recursos limitados a pagar costos médicos. Para personas con Medicare, Medicaid a veces puede ayudar con primas, costos compartidos y servicios que Medicare no cubre completamente.', pace: 'slow' },
       ];
       if (state === 'NY') {
-        msgs.push({ text: 'Como seleccionó New York, las reglas se manejan bajo las guías del estado de New York.', pace: 'long' });
+        msgs.push({ text: 'Como seleccionó New York, las reglas se manejan bajo las guías del estado de New York.', pace: 'slow' });
         msgs.push({ text: 'Para 2026, la guía general de ingreso de Medicaid para muchos adultos aged, blind, or disabled en New York es aproximadamente $1,836 al mes para una persona o $2,489 al mes para pareja, después del disregard estándar. Los límites de recursos pueden estar alrededor de $33,038 para una persona o $44,796 para pareja en muchas categorías non-MAGI, pero algunas reglas y categorías pueden variar.', pace: 'slow' });
-        msgs.push({ text: 'New York también tiene Medicare Savings Programs, y el MSP de New York no usa prueba de assets/resources. Personas con Medicaid o MSP también pueden conectarse con Extra Help/LIS para costos de medicinas Part D.', pace: 'long' });
+        msgs.push({ text: 'New York también tiene Medicare Savings Programs, y el MSP de New York no usa prueba de assets/resources. Personas con Medicaid o MSP también pueden conectarse con Extra Help/LIS para costos de medicinas Part D.', pace: 'slow' });
       } else if (state === 'NJ') {
-        msgs.push({ text: 'Como seleccionó New Jersey, Medicaid para personas aged, blind, or disabled puede revisarse bajo las reglas de New Jersey Medicaid / NJ FamilyCare.', pace: 'long' });
+        msgs.push({ text: 'Como seleccionó New Jersey, Medicaid para personas aged, blind, or disabled puede revisarse bajo las reglas de New Jersey Medicaid / NJ FamilyCare.', pace: 'slow' });
         msgs.push({ text: 'Para 2026, la guía de New Jersey para ciertos programas especiales de Medicaid aged, blind, disabled usa 100% del Federal Poverty Level: aproximadamente $1,330 al mes para una persona con máximo de recursos de $4,000, y aproximadamente $1,804 al mes para pareja con máximo de recursos de $6,000. Estos números pueden cambiar y diferentes categorías de Medicaid pueden usar reglas distintas.', pace: 'slow' });
-        msgs.push({ text: 'New Jersey también tiene NJSave, Medicare Savings Programs, PAAD y Senior Gold dependiendo de la situación.', pace: 'long' });
+        msgs.push({ text: 'New Jersey también tiene NJSave, Medicare Savings Programs, PAAD y Senior Gold dependiendo de la situación.', pace: 'slow' });
       } else if (state === 'CT') {
-        msgs.push({ text: 'Como seleccionó Connecticut, Medicaid normalmente se maneja a través de HUSKY Health. HUSKY C es la categoría comúnmente relacionada con personas aged, blind, disabled o que necesitan servicios de long-term care.', pace: 'long' });
+        msgs.push({ text: 'Como seleccionó Connecticut, Medicaid normalmente se maneja a través de HUSKY Health. HUSKY C es la categoría comúnmente relacionada con personas aged, blind, disabled o que necesitan servicios de long-term care.', pace: 'slow' });
         msgs.push({ text: 'Las reglas de HUSKY C son específicas por categoría. Materiales oficiales de Connecticut DSS muestran que pueden aplicar límites de assets, incluyendo $1,600 para una persona en ciertas categorías, y las reglas para parejas pueden depender de la categoría o reglas de community spouse. Connecticut también tiene Medicare Savings Programs con límites de ingreso más altos que regular HUSKY C en muchos casos.', pace: 'slow' });
-        msgs.push({ text: 'Como las categorías de Connecticut Medicaid son complejas, lo correcto es revisar HUSKY C, MSP, Extra Help/LIS y posibles reglas de spend-down con Connecticut DSS o un asesor licenciado.', pace: 'long' });
+        msgs.push({ text: 'Como las categorías de Connecticut Medicaid son complejas, lo correcto es revisar HUSKY C, MSP, Extra Help/LIS y posibles reglas de spend-down con Connecticut DSS o un asesor licenciado.', pace: 'slow' });
       } else if (state === 'FL') {
-        msgs.push({ text: 'Como seleccionó Florida, la elegibilidad de Medicaid para personas aged or disabled normalmente la determina Florida DCF, mientras AHCA administra el programa Medicaid.', pace: 'long' });
+        msgs.push({ text: 'Como seleccionó Florida, la elegibilidad de Medicaid para personas aged or disabled normalmente la determina Florida DCF, mientras AHCA administra el programa Medicaid.', pace: 'slow' });
         msgs.push({ text: 'Florida tiene diferentes categorías de Medicaid. Para algunas categorías SSI-related o aged/disabled, las reglas de ingreso y recursos pueden ser estrictas. Para Medicaid de long-term care, las reglas financieras de Florida comúnmente usan un límite de ingreso alrededor de $2,982 al mes en 2026, con límites de assets que dependen de la categoría y situación matrimonial.', pace: 'slow' });
-        msgs.push({ text: 'Como las categorías de Florida Medicaid varían, la persona puede revisar SSI-related Medicaid, Medicare Savings Programs, Extra Help/LIS, long-term care Medicaid si aplica, y recursos de Florida SHINE o DCF con un asesor licenciado.', pace: 'long' });
+        msgs.push({ text: 'Como las categorías de Florida Medicaid varían, la persona puede revisar SSI-related Medicaid, Medicare Savings Programs, Extra Help/LIS, long-term care Medicaid si aplica, y recursos de Florida SHINE o DCF con un asesor licenciado.', pace: 'slow' });
       } else {
-        msgs.push({ text: 'La elegibilidad de Medicaid depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa. Cada estado tiene sus propias reglas y límites.', pace: 'long' });
+        msgs.push({ text: 'La elegibilidad de Medicaid depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa. Cada estado tiene sus propias reglas y límites.', pace: 'slow' });
       }
-      msgs.push({ text: 'Esto es información educativa general, no una determinación final de elegibilidad. La agencia estatal o un asesor licenciado debe verificar categoría, ingresos, recursos, situación del hogar y reglas del programa.', pace: 'short' });
+      msgs.push({ text: 'Esto es información educativa general, no una determinación final de elegibilidad. La agencia estatal o un asesor licenciado debe verificar categoría, ingresos, recursos, situación del hogar y reglas del programa.', pace: 'slow' });
       msgs.push({
         text: 'También puede interesarle:',
         options: [
@@ -1125,13 +1013,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_msp: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Los Programas de Ahorros de Medicare (MSP) son programas estatales que pueden ayudar a personas con ingresos y recursos limitados a pagar primas, deducibles, coaseguros y copagos de Medicare. Cada estado administra estos programas, y los límites de ingresos y recursos pueden variar.', pace: 'long' },
+        { text: 'Los Programas de Ahorros de Medicare (MSP) son programas estatales que pueden ayudar a personas con ingresos y recursos limitados a pagar primas, deducibles, coaseguros y copagos de Medicare. Cada estado administra estos programas, y los límites de ingresos y recursos pueden variar.', pace: 'slow' },
       ];
       if (state === 'NY') {
         msgs.push({ text: 'Programa de Ahorros de Medicare de New York:\n• New York NO usa límite de assets/recursos para MSP.\n• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar prima de Parte B, prima de Parte A si aplica, deducibles, coaseguros y copagos. QMB no es retroactivo en NY. Límite: alrededor de $1,856/mes soltero o $2,509/mes pareja (138% FPL con disregard de $20).\n• QI-1 (Individuo Calificado-1) — puede ayudar a pagar solo prima de Parte B. Retroactivo hasta 3 meses mismo año. No se puede con Medicaid. Límite: alrededor de $2,494/mes soltero o $3,375/mes pareja (186% FPL con disregard de $20).\n• Las personas con MSP en NY generalmente se conectan con Extra Help/LIS para costos de medicamentos Part D.', pace: 'slow' });
@@ -1144,7 +1032,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       } else {
         msgs.push({ text: 'Límites federales MSP 2026:\n• QMB — alrededor de $1,350/mes soltero, $1,824/mes pareja. Recursos: $9,950 soltero, $14,910 pareja.\n• SLMB — alrededor de $1,616/mes soltero, $2,184/mes pareja.\n• QI — alrededor de $1,816/mes soltero, $2,455/mes pareja.\n• QDWI — alrededor de $5,405/mes soltero, $7,299/mes pareja. Recursos: $4,000 soltero, $6,000 pareja.', pace: 'slow' });
       }
-      msgs.push({ text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'short' });
+      msgs.push({ text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'slow' });
       msgs.push({
         text: 'También puede interesarle:',
         options: [
@@ -1153,7 +1041,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
@@ -1162,24 +1050,24 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       if (state === 'NY') {
         msgs.push({ text: 'Como seleccionó New York, el programa estatal principal de ayuda con medicinas es EPIC, Elderly Pharmaceutical Insurance Coverage. EPIC puede ayudar a seniors elegibles de New York con costos de medicamentos de Medicare Part D.', pace: 'slow' });
         msgs.push({ text: 'Guía general EPIC 2026:\n• Residente de New York\n• 65 años o más\n• Inscrito o elegible para Medicare Part D\n• Ingreso anual hasta $75,000 si es soltero o $100,000 si es casado\n• EPIC trabaja con Medicare Part D\n• Personas con Medicaid completo generalmente pueden tener reglas diferentes, pero personas con Medicaid spend-down pueden necesitar revisión.', pace: 'slow' });
-        msgs.push({ text: 'Recurso oficial: New York State Department of Health EPIC program.', pace: 'short' });
+        msgs.push({ text: 'Recurso oficial: New York State Department of Health EPIC program.', pace: 'slow' });
       } else if (state === 'NJ') {
         msgs.push({ text: 'Como seleccionó New Jersey, los programas estatales principales de ayuda con medicinas son PAAD y Senior Gold.', pace: 'slow' });
         msgs.push({ text: 'Guía general PAAD 2026:\n• Residente de New Jersey\n• 65 años o más, o entre 18–64 recibiendo beneficios de Discapacidad del Seguro Social\n• Ingreso anual menor de $54,943 si es soltero o menor de $62,390 si es casado\n• Debe estar inscrito en Medicare Part D\n• PAAD puede reducir costos de medicinas cubiertas — el formulario del plan y reglas de farmacia todavía importan.', pace: 'slow' });
         msgs.push({ text: 'Guía general Senior Gold 2026:\n• Residente de New Jersey\n• Mismos requisitos de edad/discapacidad que PAAD\n• Generalmente para personas por encima de los límites de PAAD\n• Rango anual: $54,943–$64,943 si es soltero, o $62,390–$72,390 si es casado\n• Estructura de costos diferente a PAAD.', pace: 'slow' });
-        msgs.push({ text: 'Recurso oficial: NJSave / New Jersey Division of Aging Services.', pace: 'short' });
+        msgs.push({ text: 'Recurso oficial: NJSave / New Jersey Division of Aging Services.', pace: 'slow' });
       } else if (state === 'CT') {
         msgs.push({ text: 'Como seleccionó Connecticut, es importante no presentar ConnPACE como un programa activo actual para beneficiarios de Medicare. Información oficial de Connecticut indica que ConnPACE dejó de ser un benefit plan soportado desde el 1 de enero de 2014.', pace: 'slow' });
         msgs.push({ text: 'Para ayuda con medicinas en Connecticut, las opciones principales a revisar son:\n• Extra Help/LIS\n• Medicare Savings Programs\n• Medicaid/HUSKY si aplica\n• Revisión del formulario Part D\n• Revisión de farmacia preferida\n• Programas de fabricantes cuando aplique.', pace: 'slow' });
-        msgs.push({ text: 'Recurso oficial: Connecticut DSS / HUSKY Health.', pace: 'short' });
+        msgs.push({ text: 'Recurso oficial: Connecticut DSS / HUSKY Health.', pace: 'slow' });
       } else if (state === 'FL') {
         msgs.push({ text: 'Como seleccionó Florida, Florida no tiene un programa estatal verificado tipo EPIC o PAAD dentro de esta base de conocimiento.', pace: 'slow' });
         msgs.push({ text: 'Para ayuda con medicinas en Florida, las opciones principales a revisar son:\n• Extra Help/LIS\n• Medicare Savings Programs\n• Medicaid si aplica\n• Revisión del formulario Part D\n• Revisión de farmacia preferida\n• Florida SHINE\n• Programas de fabricantes cuando aplique.', pace: 'slow' });
-        msgs.push({ text: 'Recurso oficial: Florida DCF / Florida SHINE.', pace: 'short' });
+        msgs.push({ text: 'Recurso oficial: Florida DCF / Florida SHINE.', pace: 'slow' });
       } else {
         msgs.push({ text: 'Los programas estatales de asistencia con medicamentos (SPAP) varían por estado. No todos los estados tienen un SPAP activo. Algunos estados tienen programas fuertes, otros no. Un asesor licenciado puede ayudar a revisar lo que pueda estar disponible en su estado.', pace: 'slow' });
       }
-      msgs.push({ text: 'Esto es información educativa general, no una determinación final de elegibilidad.', pace: 'short' });
+      msgs.push({ text: 'Esto es información educativa general, no una determinación final de elegibilidad.', pace: 'slow' });
       msgs.push({
         text: 'También puede interesarle:',
         options: [
@@ -1188,12 +1076,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       });
       return msgs;
     })(),
     edu_special_benefits: [
-      { text: 'Algunas personas tienen beneficios más allá del Medicare estándar — como planes de sindicato o retiro, cobertura de VA o TRICARE, o beneficios por discapacidad. Estos pueden afectar cómo funciona Medicare para usted.', pace: 'long' },
+      { text: 'Algunas personas tienen beneficios más allá del Medicare estándar — como planes de sindicato o retiro, cobertura de VA o TRICARE, o beneficios por discapacidad. Estos pueden afectar cómo funciona Medicare para usted.', pace: 'slow' },
       {
         text: '¿Cuál situación aplica a usted?',
         options: [
@@ -1204,46 +1092,46 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_union_retiree: [
-      { text: 'Los planes de sindicato y de retiro de empleadores pueden variar mucho. Algunos planes continúan como su cobertura principal cuando cumple 65 años. Otros se vuelven secundarios a Medicare y requieren que usted se inscriba en las Partes A y B de Medicare para mantener sus beneficios de sindicato o retiro activos.', pace: 'long' },
-      { text: 'Las reglas dependen de su contrato sindical específico o del plan de retiro del empleador. Los planes varían en si cubren medicamentos, dental, visión y cómo coordinan con Medicare.', pace: 'long' },
+      { text: 'Los planes de sindicato y de retiro de empleadores pueden variar mucho. Algunos planes continúan como su cobertura principal cuando cumple 65 años. Otros se vuelven secundarios a Medicare y requieren que usted se inscriba en las Partes A y B de Medicare para mantener sus beneficios de sindicato o retiro activos.', pace: 'slow' },
+      { text: 'Las reglas dependen de su contrato sindical específico o del plan de retiro del empleador. Los planes varían en si cubren medicamentos, dental, visión y cómo coordinan con Medicare.', pace: 'slow' },
       { text: '⚠️ Nunca cancele su cobertura de sindicato o retiro sin antes hablar con el administrador de su plan y un asesor licenciado. Cancelar podría hacerle perder beneficios permanentemente o generar penalidades de inscripción tardía en Medicare.', pace: 'slow' },
-      { text: 'Un asesor licenciado puede revisar cómo su plan específico de sindicato o retiro coordina con Medicare y si algún cambio tiene sentido para su situación.', pace: 'long' },
+      { text: 'Un asesor licenciado puede revisar cómo su plan específico de sindicato o retiro coordina con Medicare y si algún cambio tiene sentido para su situación.', pace: 'slow' },
       {
         text: '¿Quiere que un asesor revise su situación?',
         options: [
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_va_tricare: [
-      { text: 'Si tiene beneficios de VA o TRICARE, Medicare funciona de manera diferente para usted que para la mayoría de las personas.', pace: 'long' },
-      { text: 'Beneficios de VA: El sistema de salud de VA es separado de Medicare. La cobertura de VA no reemplaza un plan Medicare Advantage o Parte D. Puede tener tanto VA como Medicare, pero no coordinan automáticamente — el VA cubre atención en instalaciones del VA, mientras que Medicare cubre atención fuera del sistema del VA. Tener la Parte B de Medicare le da más flexibilidad si alguna vez necesita atención fuera del VA.', pace: 'long' },
-      { text: 'TRICARE: Si usted es un militar retirado o dependiente con TRICARE, generalmente necesita inscribirse en la Parte B de Medicare para mantener su cobertura de TRICARE activa. TRICARE for Life requiere inscripción en ambas, Parte A y Parte B de Medicare. No inscribirse en la Parte B puede hacer que pierda su cobertura de TRICARE.', pace: 'long' },
+      { text: 'Si tiene beneficios de VA o TRICARE, Medicare funciona de manera diferente para usted que para la mayoría de las personas.', pace: 'slow' },
+      { text: 'Beneficios de VA: El sistema de salud de VA es separado de Medicare. La cobertura de VA no reemplaza un plan Medicare Advantage o Parte D. Puede tener tanto VA como Medicare, pero no coordinan automáticamente — el VA cubre atención en instalaciones del VA, mientras que Medicare cubre atención fuera del sistema del VA. Tener la Parte B de Medicare le da más flexibilidad si alguna vez necesita atención fuera del VA.', pace: 'slow' },
+      { text: 'TRICARE: Si usted es un militar retirado o dependiente con TRICARE, generalmente necesita inscribirse en la Parte B de Medicare para mantener su cobertura de TRICARE activa. TRICARE for Life requiere inscripción en ambas, Parte A y Parte B de Medicare. No inscribirse en la Parte B puede hacer que pierda su cobertura de TRICARE.', pace: 'slow' },
       { text: '⚠️ Importante: Si pierde sus beneficios de VA o TRICARE, puede calificar para un Período de Inscripción Especial de Medicare. No espere — el tiempo es importante.', pace: 'slow' },
-      { text: 'Un asesor licenciado puede ayudarle a entender cómo VA y TRICARE coordinan con Medicare y qué opciones pueden ser adecuadas para su situación.', pace: 'long' },
+      { text: 'Un asesor licenciado puede ayudarle a entender cómo VA y TRICARE coordinan con Medicare y qué opciones pueden ser adecuadas para su situación.', pace: 'slow' },
       {
         text: '¿Quiere que un asesor revise su situación?',
         options: [
+          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_disability: [
-      { text: 'Si recibe el Seguro de Discapacidad del Seguro Social (SSDI), generalmente se vuelve elegible para Medicare después de un período de espera de 24 meses desde que comienzan sus beneficios por discapacidad.', pace: 'long' },
-      { text: 'Algunas condiciones califican para Medicare sin la espera de 24 meses: ELA (enfermedad de Lou Gehrig) califica de inmediato, y la Enfermedad Renal en Etapa Terminal (ESRD) tiene sus propias reglas separadas.', pace: 'long' },
-      { text: 'Durante el período de espera de 24 meses, es posible que necesite otras opciones de cobertura. Un asesor licenciado puede revisar qué puede estar disponible en su área.', pace: 'long' },
-      { text: 'Una vez que tenga Medicare por discapacidad, también puede calificar para Ayuda Extra / LIS para reducir los costos de medicamentos recetados, u otros programas de asistencia dependiendo de sus ingresos y recursos.', pace: 'long' },
-      { text: 'A los 65 años, su cobertura de Medicare continúa automáticamente — no necesita reinscribirse.', pace: 'long' },
+      { text: 'Si recibe el Seguro de Discapacidad del Seguro Social (SSDI), generalmente se vuelve elegible para Medicare después de un período de espera de 24 meses desde que comienzan sus beneficios por discapacidad.', pace: 'slow' },
+      { text: 'Algunas condiciones califican para Medicare sin la espera de 24 meses: ELA (enfermedad de Lou Gehrig) califica de inmediato, y la Enfermedad Renal en Etapa Terminal (ESRD) tiene sus propias reglas separadas.', pace: 'slow' },
+      { text: 'Durante el período de espera de 24 meses, es posible que necesite otras opciones de cobertura. Un asesor licenciado puede revisar qué puede estar disponible en su área.', pace: 'slow' },
+      { text: 'Una vez que tenga Medicare por discapacidad, también puede calificar para Ayuda Extra / LIS para reducir los costos de medicamentos recetados, u otros programas de asistencia dependiendo de sus ingresos y recursos.', pace: 'slow' },
+      { text: 'A los 65 años, su cobertura de Medicare continúa automáticamente — no necesita reinscribirse.', pace: 'slow' },
       {
         text: '¿Quiere saber más o hablar con un asesor?',
         options: [
@@ -1252,15 +1140,15 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi: [
-      { text: 'Esta área es importante porque SSI, SSDI, Medicaid, beneficios por discapacidad y Medicare no funcionan igual.', pace: 'long' },
-      { text: 'SSI por sí solo normalmente no significa que alguien tenga Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo de las reglas del estado. Medicare antes de los 65 años normalmente depende de SSDI después del período requerido, o de condiciones especiales como ALS o ESRD.', pace: 'long' },
-      { text: 'Si alguien tiene SSDI, Medicare puede comenzar después del período requerido por discapacidad. Si alguien tiene 65 años o más, las reglas de Medicare también dependen del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años.', pace: 'long' },
-      { text: 'Si alguien no tiene suficientes quarters para Parte A sin prima, puede que pueda comprar Parte A. Si tiene ingresos y recursos limitados, el estado puede ayudar a pagar Parte A y/o Parte B mediante Medicare Savings Programs como QMB.', pace: 'long' },
-      { text: 'Clear Point puede ayudarle a entender qué preguntas hacer, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.', pace: 'short' },
+      { text: 'Esta área es importante porque SSI, SSDI, Medicaid, beneficios por discapacidad y Medicare no funcionan igual.', pace: 'slow' },
+      { text: 'SSI por sí solo normalmente no significa que alguien tenga Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo de las reglas del estado. Medicare antes de los 65 años normalmente depende de SSDI después del período requerido, o de condiciones especiales como ALS o ESRD.', pace: 'slow' },
+      { text: 'Si alguien tiene SSDI, Medicare puede comenzar después del período requerido por discapacidad. Si alguien tiene 65 años o más, las reglas de Medicare también dependen del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años.', pace: 'slow' },
+      { text: 'Si alguien no tiene suficientes quarters para Parte A sin prima, puede que pueda comprar Parte A. Si tiene ingresos y recursos limitados, el estado puede ayudar a pagar Parte A y/o Parte B mediante Medicare Savings Programs como QMB.', pace: 'slow' },
+      { text: 'Clear Point puede ayudarle a entender qué preguntas hacer, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.', pace: 'slow' },
       {
         text: '¿Cuál de estas situaciones aplica a usted?',
         options: [
@@ -1274,67 +1162,67 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
           { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_ssi: [
-      { text: 'SSI por sí solo no significa automáticamente Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo del estado. Si tiene menos de 65 años, Medicare normalmente requiere SSDI después del período requerido, o una condición especial como ALS o ESRD. La elegibilidad debe confirmarse con Social Security o Medicaid.', pace: 'long' },
+      { text: 'SSI por sí solo no significa automáticamente Medicare. Muchas personas con SSI pueden tener Medicaid, dependiendo del estado. Si tiene menos de 65 años, Medicare normalmente requiere SSDI después del período requerido, o una condición especial como ALS o ESRD. La elegibilidad debe confirmarse con Social Security o Medicaid.', pace: 'slow' },
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_ssdi: [
-      { text: 'Personas aprobadas para SSDI pueden ser elegibles para Medicare después del período requerido por discapacidad. Deben confirmar el tiempo exacto con Social Security. Algunas condiciones como ALS o ESRD pueden tener reglas diferentes.', pace: 'long' },
+      { text: 'Personas aprobadas para SSDI pueden ser elegibles para Medicare después del período requerido por discapacidad. Deben confirmar el tiempo exacto con Social Security. Algunas condiciones como ALS o ESRD pueden tener reglas diferentes.', pace: 'slow' },
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_medicaid: [
-      { text: 'Tener Medicaid no significa automáticamente que tenga Medicare. Medicaid y Medicare son programas separados. Algunas personas tienen ambos, lo que se llama elegibilidad dual. Si tiene menos de 65 años y tiene Medicaid pero no Medicare, es posible que necesite verificar si aplica SSDI, ALS o ESRD. La elegibilidad debe confirmarse con Medicaid o Social Security.', pace: 'long' },
+      { text: 'Tener Medicaid no significa automáticamente que tenga Medicare. Medicaid y Medicare son programas separados. Algunas personas tienen ambos, lo que se llama elegibilidad dual. Si tiene menos de 65 años y tiene Medicaid pero no Medicare, es posible que necesite verificar si aplica SSDI, ALS o ESRD. La elegibilidad debe confirmarse con Medicaid o Social Security.', pace: 'slow' },
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_under65: [
-      { text: 'Personas menores de 65 años pueden calificar para Medicare por SSDI después del período requerido, ESRD o ALS. SSI por sí solo no es lo mismo que SSDI y no lleva automáticamente a Medicare. Debe verificar su situación con Social Security para entender cuándo comenzaría Medicare si tiene SSDI.', pace: 'long' },
+      { text: 'Personas menores de 65 años pueden calificar para Medicare por SSDI después del período requerido, ESRD o ALS. SSI por sí solo no es lo mismo que SSDI y no lleva automáticamente a Medicare. Debe verificar su situación con Social Security para entender cuándo comenzaría Medicare si tiene SSDI.', pace: 'slow' },
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_over65: [
-      { text: 'A los 65 años o más, la elegibilidad de Medicare depende en parte del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si no tiene suficientes quarters, todavía puede obtener Parte A pagando una prima. Los Medicare Savings Programs del estado pueden ayudar en algunos casos.', pace: 'long' },
+      { text: 'A los 65 años o más, la elegibilidad de Medicare depende en parte del historial de trabajo. Muchas personas reciben Parte A sin prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si no tiene suficientes quarters, todavía puede obtener Parte A pagando una prima. Los Medicare Savings Programs del estado pueden ayudar en algunos casos.', pace: 'slow' },
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_quarters: [
@@ -1342,31 +1230,31 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       {
         text: '¿Quiere continuar o hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
     edu_ssdi_ssi_partab: [
-      { text: 'Programas como QMB pueden ayudar a pagar la prima de Parte A si aplica, la prima de Parte B, y a veces deducibles, coaseguro y copagos. La elegibilidad depende de ingresos, recursos, reglas del estado y estatus de Medicare. Tendría que solicitar a través de la agencia estatal de Medicaid para ver si puede calificar. Clear Point no puede determinar elegibilidad, pero un asesor puede ayudarle a entender qué preguntas hacer.', pace: 'long' },
+      { text: 'Programas como QMB pueden ayudar a pagar la prima de Parte A si aplica, la prima de Parte B, y a veces deducibles, coaseguro y copagos. La elegibilidad depende de ingresos, recursos, reglas del estado y estatus de Medicare. Tendría que solicitar a través de la agencia estatal de Medicaid para ver si puede calificar. Clear Point no puede determinar elegibilidad, pero un asesor puede ayudarle a entender qué preguntas hacer.', pace: 'slow' },
       {
         text: '¿Quiere hablar con un asesor?',
         options: [
+          { label: 'Quiero hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al tema SSI / SSDI', value: 'edu_ssdi_ssi' },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver a temas de Medicare', value: 'edu_back_to_topics' },
         ],
-        pace: 'short',
+        pace: 'slow',
       },
     ],
   };
 
   const messages = language === 'es' ? es[topic] : en[topic];
   return messages || (language === 'es'
-    ? [{ text: 'Vamos paso a paso. ¿Qué parte de Medicare te gustaría entender?', pace: 'long' }]
-    : [{ text: "Let's go step by step. What part of Medicare would you like to understand?", pace: 'long' }]);
+    ? [{ text: 'Vamos paso a paso. ¿Qué parte de Medicare te gustaría entender?', pace: 'slow' }]
+    : [{ text: "Let's go step by step. What part of Medicare would you like to understand?", pace: 'slow' }]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1469,171 +1357,163 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
   const programs: Record<string, Record<ChatLanguage, QueuedBotMessage[]>> = {
     NY: {
       en: [
-        { text: 'New York has several programs to help Medicare beneficiaries. Here are the 2026 details:', pace: 'long' },
-        { text: 'Medicare Savings Program — New York does NOT use an asset/resource limit for MSP. There are two main categories:', pace: 'long' },
+        { text: 'New York has several programs to help Medicare beneficiaries. Here are the 2026 details:', pace: 'slow' },
+        { text: 'Medicare Savings Program — New York does NOT use an asset/resource limit for MSP. There are two main categories:', pace: 'slow' },
         { text: `• QMB (Qualified Medicare Beneficiary) — may help pay Part B premium, Part A premium if applicable, Medicare deductibles, coinsurance, and copayments. QMB is not retroactive in NY. Benefits generally begin the month after the application month. For 2026, income limit is around $1,856/month for one person or $2,509/month for a couple (138% FPL with $20 disregard).`, pace: 'slow' },
         { text: `• QI-1 (Qualifying Individual-1) — may help pay Part B premium only. May be retroactive up to 3 months within the same calendar year. Cannot be received together with Medicaid. For 2026, income limit is around $2,494/month for one person or $3,375/month for a couple (186% FPL with $20 disregard).`, pace: 'slow' },
         { text: `• EPIC (Elderly Pharmaceutical Insurance Coverage) — New York's State Pharmaceutical Assistance Program. Helps eligible NY seniors 65+ with Part D prescription drug costs. Income guidelines: up to about $${D.spap.NY_EPIC.incomeSingle.toLocaleString()} single / $${D.spap.NY_EPIC.incomeCouple.toLocaleString()} married. Must be enrolled in or eligible for Medicare Part D. EPIC is separate from Extra Help — some people may have both, depending on eligibility.`, pace: 'slow' },
-        { text: '• Extra Help/LIS — If someone gets an MSP in New York, they are generally connected to Extra Help/LIS for Part D drug costs.', pace: 'long' },
-        { text: '• New York Medicaid — can help people with limited income and resources, but eligibility depends on category, income, resources, household situation, age, disability status, immigration status, and state rules.', pace: 'long' },
-        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'short' },
+        { text: '• Extra Help/LIS — If someone gets an MSP in New York, they are generally connected to Extra Help/LIS for Part D drug costs.', pace: 'slow' },
+        { text: '• New York Medicaid — can help people with limited income and resources, but eligibility depends on category, income, resources, household situation, age, disability status, immigration status, and state rules.', pace: 'slow' },
+        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'slow' },
         {
           text: 'Would you like a free review?',
           options: [
-            { label: 'Ask another question', value: 'edu_back_to_topics' },
-            { label: 'More options', value: 'edu_back_to_topics' },
-            { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Go back to topics', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
       es: [
-        { text: 'New York tiene varios programas para ayudar a beneficiarios de Medicare. Aquí los detalles de 2026:', pace: 'long' },
-        { text: 'Medicare Savings Program — New York NO usa límite de assets/recursos para MSP. Hay dos categorías principales:', pace: 'long' },
+        { text: 'New York tiene varios programas para ayudar a beneficiarios de Medicare. Aquí los detalles de 2026:', pace: 'slow' },
+        { text: 'Medicare Savings Program — New York NO usa límite de assets/recursos para MSP. Hay dos categorías principales:', pace: 'slow' },
         { text: `• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar la prima de Parte B, prima de Parte A si aplica, deducibles, coaseguros y copagos de Medicare. QMB no es retroactivo en NY. Los beneficios generalmente comienzan el mes después de la solicitud. Para 2026, el límite de ingreso es alrededor de $1,856/mes para una persona o $2,509/mes para pareja (138% FPL con disregard de $20).`, pace: 'slow' },
         { text: `• QI-1 (Individuo Calificado-1) — puede ayudar a pagar solo la prima de Parte B. Puede ser retroactivo hasta 3 meses dentro del mismo año calendario. No se puede recibir junto con Medicaid. Para 2026, el límite de ingreso es alrededor de $2,494/mes para una persona o $3,375/mes para pareja (186% FPL con disregard de $20).`, pace: 'slow' },
         { text: `• EPIC (Cobertura de Seguro Farmacéutico para Personas Mayores) — programa estatal de asistencia farmacéutica de New York. Ayuda a seniors elegibles de 65+ con costos de medicamentos de Parte D. Guía de ingresos: hasta aproximadamente $${D.spap.NY_EPIC.incomeSingle.toLocaleString()} soltero / $${D.spap.NY_EPIC.incomeCouple.toLocaleString()} casado. Debe estar inscrito o ser elegible para Medicare Parte D. EPIC es separado de Extra Help — algunas personas pueden tener ambos, dependiendo de elegibilidad.`, pace: 'slow' },
-        { text: '• Extra Help/LIS — Si alguien recibe MSP en New York, generalmente se conecta con Extra Help/LIS para costos de medicamentos de Parte D.', pace: 'long' },
-        { text: '• Medicaid de New York — puede ayudar a personas con ingresos y recursos limitados, pero la elegibilidad depende de categoría, ingresos, recursos, situación del hogar, edad, estatus de discapacidad, estatus migratorio y reglas estatales.', pace: 'long' },
-        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'short' },
+        { text: '• Extra Help/LIS — Si alguien recibe MSP en New York, generalmente se conecta con Extra Help/LIS para costos de medicamentos de Parte D.', pace: 'slow' },
+        { text: '• Medicaid de New York — puede ayudar a personas con ingresos y recursos limitados, pero la elegibilidad depende de categoría, ingresos, recursos, situación del hogar, edad, estatus de discapacidad, estatus migratorio y reglas estatales.', pace: 'slow' },
+        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'slow' },
         {
           text: '¿Quieres una revisión gratuita?',
           options: [
-            { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-            { label: 'Más opciones', value: 'edu_back_to_topics' },
-            { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Volver a temas', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
     },
     NJ: {
       en: [
-        { text: 'New Jersey has several programs to help Medicare beneficiaries. Here are the 2026 details:', pace: 'long' },
-        { text: 'Medicare Savings Programs — QMB, SLMB, and QI:', pace: 'long' },
+        { text: 'New Jersey has several programs to help Medicare beneficiaries. Here are the 2026 details:', pace: 'slow' },
+        { text: 'Medicare Savings Programs — QMB, SLMB, and QI:', pace: 'slow' },
         { text: `• QMB — may help pay Part A and/or Part B premiums, deductibles, coinsurance, and copayments. 2026 income limits: $15,960/year single, $21,640/year couple. Resource limits: $9,950 single, $14,910 couple.`, pace: 'slow' },
         { text: `• SLMB — may help pay Part B premium only. 2026 income limits: $19,152/year single, $25,968/year couple. Resource limits: $9,950 single, $14,910 couple.`, pace: 'slow' },
         { text: `• QI — may help pay Part B premium only. Must apply every year. Usually first-come, first-served. 2026 income limits: $21,546/year single, $29,214/year couple. Resource limits: $9,950 single, $14,910 couple.`, pace: 'slow' },
         { text: `• PAAD (Pharmaceutical Assistance to the Aged and Disabled) — helps with prescription costs. 2026 income limits: under $${D.spap.NJ_PAAD.incomeSingle.toLocaleString()} single / $${D.spap.NJ_PAAD.incomeCouple.toLocaleString()} couple. Copays: $5 generics, $7 brand. NJ resident 65+ or 18-64 on SSDI. Must enroll in Part D.`, pace: 'slow' },
         { text: `• Senior Gold Prescription Discount Program — for income above PAAD limits. 2026: $${D.spap.NJ_SeniorGold.incomeSingleMin.toLocaleString()}–$${D.spap.NJ_SeniorGold.incomeSingleMax.toLocaleString()} single / $${D.spap.NJ_SeniorGold.incomeCoupleMin.toLocaleString()}–$${D.spap.NJ_SeniorGold.incomeCoupleMax.toLocaleString()} couple. No resource limit. Copay: $15 + 50% of remaining drug cost. After $2,000 OOP single / $3,000 couple → flat $15.`, pace: 'slow' },
-        { text: '• NJSave is commonly used to apply for QMB, SLMB, QI, PAAD, and Senior Gold. NJ Division of Aging Services hotline: 1-800-792-9745.', pace: 'long' },
-        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'short' },
+        { text: '• NJSave is commonly used to apply for QMB, SLMB, QI, PAAD, and Senior Gold. NJ Division of Aging Services hotline: 1-800-792-9745.', pace: 'slow' },
+        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or the state agency can help verify your situation.', pace: 'slow' },
         {
           text: 'Would you like a free review?',
           options: [
-            { label: 'Ask another question', value: 'edu_back_to_topics' },
-            { label: 'More options', value: 'edu_back_to_topics' },
-            { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Go back to topics', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
       es: [
-        { text: 'New Jersey tiene varios programas para ayudar a beneficiarios de Medicare. Aquí los detalles de 2026:', pace: 'long' },
-        { text: 'Programas de Ahorros de Medicare — QMB, SLMB y QI:', pace: 'long' },
+        { text: 'New Jersey tiene varios programas para ayudar a beneficiarios de Medicare. Aquí los detalles de 2026:', pace: 'slow' },
+        { text: 'Programas de Ahorros de Medicare — QMB, SLMB y QI:', pace: 'slow' },
         { text: '• QMB — puede ayudar a pagar primas de Parte A y/o B, deducibles, coaseguros y copagos. Límites de ingreso 2026: $15,960/año soltero, $21,640/año pareja. Límites de recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' },
         { text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Límites de ingreso 2026: $19,152/año soltero, $25,968/año pareja. Límites de recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' },
         { text: '• QI — puede ayudar a pagar solo la prima de Parte B. Debe aplicar cada año. Generalmente por orden de llegada. Límites de ingreso 2026: $21,546/año soltero, $29,214/año pareja. Límites de recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' },
         { text: `• PAAD (Asistencia Farmacéutica para Personas Mayores y Discapacitadas) — ayuda con costos de medicamentos. Límites 2026: menos de $${D.spap.NJ_PAAD.incomeSingle.toLocaleString()} soltero / $${D.spap.NJ_PAAD.incomeCouple.toLocaleString()} casado. Copagos: $5 genéricos, $7 marca. Residente de NJ 65+ o 18-64 en SSDI. Debe inscribirse en Parte D.`, pace: 'slow' },
         { text: `• Senior Gold — para ingresos por encima de PAAD. 2026: $${D.spap.NJ_SeniorGold.incomeSingleMin.toLocaleString()}–$${D.spap.NJ_SeniorGold.incomeSingleMax.toLocaleString()} soltero / $${D.spap.NJ_SeniorGold.incomeCoupleMin.toLocaleString()}–$${D.spap.NJ_SeniorGold.incomeCoupleMax.toLocaleString()} casado. Sin límite de recursos. Copago: $15 + 50% del costo restante. Después de $2,000 OOP soltero / $3,000 pareja → $15 fijo.`, pace: 'slow' },
-        { text: '• NJSave se usa comúnmente para aplicar a QMB, SLMB, QI, PAAD y Senior Gold. Línea de NJ Division of Aging Services: 1-800-792-9745.', pace: 'long' },
-        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'short' },
+        { text: '• NJSave se usa comúnmente para aplicar a QMB, SLMB, QI, PAAD y Senior Gold. Línea de NJ Division of Aging Services: 1-800-792-9745.', pace: 'slow' },
+        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'slow' },
         {
           text: '¿Quieres una revisión gratuita?',
           options: [
-            { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-            { label: 'Más opciones', value: 'edu_back_to_topics' },
-            { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Volver a temas', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
     },
     CT: {
       en: [
-        { text: 'Connecticut has programs that may help Medicare beneficiaries. Effective March 1, 2026:', pace: 'long' },
-        { text: 'Medicare Savings Programs — Connecticut has three MSP levels (QMB, SLMB, ALMB):', pace: 'long' },
+        { text: 'Connecticut has programs that may help Medicare beneficiaries. Effective March 1, 2026:', pace: 'slow' },
+        { text: 'Medicare Savings Programs — Connecticut has three MSP levels (QMB, SLMB, ALMB):', pace: 'slow' },
         { text: `• QMB — may help pay Part B premium, Medicare deductibles, coinsurance, copayments, and Part A premium if applicable. Connecticut describes QMB as similar to a Medigap policy because it helps with Medicare cost-sharing. Monthly income: $2,807 single / $3,806 couple.`, pace: 'slow' },
         { text: `• SLMB — may help pay Part B premium only. Monthly income: $3,073 single / $4,166 couple.`, pace: 'slow' },
         { text: `• ALMB (Additional Low-Income Medicare Beneficiary) — may help pay Part B premium only. Subject to available program funding. Not available if the person receives Medicaid. Monthly income: $3,272 single / $4,437 couple.`, pace: 'slow' },
-        { text: '• All three Connecticut MSP levels also automatically connect people to Extra Help/LIS for Part D drug costs.', pace: 'long' },
-        { text: '• Important: ConnPACE is no longer an active supported benefit plan as of January 1, 2014. For prescription help, the main options to review are Extra Help/LIS, Medicaid if applicable, MSP, Part D formulary review, and pharmacy network review.', pace: 'long' },
-        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or Connecticut DSS can help verify your situation.', pace: 'short' },
+        { text: '• All three Connecticut MSP levels also automatically connect people to Extra Help/LIS for Part D drug costs.', pace: 'slow' },
+        { text: '• Important: ConnPACE is no longer an active supported benefit plan as of January 1, 2014. For prescription help, the main options to review are Extra Help/LIS, Medicaid if applicable, MSP, Part D formulary review, and pharmacy network review.', pace: 'slow' },
+        { text: 'This is general educational information, not a final eligibility decision. A licensed advisor or Connecticut DSS can help verify your situation.', pace: 'slow' },
         {
           text: 'Would you like a free review?',
           options: [
-            { label: 'Ask another question', value: 'edu_back_to_topics' },
-            { label: 'More options', value: 'edu_back_to_topics' },
-            { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Go back to topics', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
       es: [
-        { text: 'Connecticut tiene programas que pueden ayudar a beneficiarios de Medicare. Efectivo el 1 de marzo de 2026:', pace: 'long' },
-        { text: 'Programas de Ahorros de Medicare — Connecticut tiene tres niveles MSP (QMB, SLMB, ALMB):', pace: 'long' },
+        { text: 'Connecticut tiene programas que pueden ayudar a beneficiarios de Medicare. Efectivo el 1 de marzo de 2026:', pace: 'slow' },
+        { text: 'Programas de Ahorros de Medicare — Connecticut tiene tres niveles MSP (QMB, SLMB, ALMB):', pace: 'slow' },
         { text: '• QMB — puede ayudar a pagar la prima de Parte B, deducibles, coaseguros, copagos de Medicare y prima de Parte A si aplica. Connecticut describe QMB como similar a una póliza Medigap porque ayuda con el costo compartido. Ingreso mensual: $2,807 soltero / $3,806 pareja.', pace: 'slow' },
         { text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Ingreso mensual: $3,073 soltero / $4,166 pareja.', pace: 'slow' },
         { text: '• ALMB (Beneficiario de Medicare de Bajos Ingresos Adicional) — puede ayudar a pagar solo la prima de Parte B. Sujeto a fondos disponibles. No disponible si recibe Medicaid. Ingreso mensual: $3,272 soltero / $4,437 pareja.', pace: 'slow' },
-        { text: '• Los tres niveles MSP de Connecticut también conectan automáticamente con Extra Help/LIS para costos de medicamentos de Parte D.', pace: 'long' },
-        { text: '• Importante: ConnPACE ya no es un plan de beneficios activo desde el 1 de enero de 2014. Para ayuda con medicamentos, las opciones principales son Extra Help/LIS, Medicaid si aplica, MSP, revisión de formulario de Parte D y red de farmacias.', pace: 'long' },
-        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o DSS de Connecticut puede ayudar a verificar su situación.', pace: 'short' },
+        { text: '• Los tres niveles MSP de Connecticut también conectan automáticamente con Extra Help/LIS para costos de medicamentos de Parte D.', pace: 'slow' },
+        { text: '• Importante: ConnPACE ya no es un plan de beneficios activo desde el 1 de enero de 2014. Para ayuda con medicamentos, las opciones principales son Extra Help/LIS, Medicaid si aplica, MSP, revisión de formulario de Parte D y red de farmacias.', pace: 'slow' },
+        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o DSS de Connecticut puede ayudar a verificar su situación.', pace: 'slow' },
         {
           text: '¿Quieres una revisión gratuita?',
           options: [
-            { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-            { label: 'Más opciones', value: 'edu_back_to_topics' },
-            { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Volver a temas', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
     },
     FL: {
       en: [
-        { text: 'Florida has several resources for Medicare beneficiaries, but unlike New York or New Jersey, Florida does not have a clearly verified statewide SPAP equivalent to NY EPIC or NJ PAAD/Senior Gold.', pace: 'long' },
-        { text: 'Here is what is available in Florida:', pace: 'short' },
-        { text: '• SHINE (Serving Health Insurance Needs of Elders) — free, unbiased Medicare counseling from trained volunteers who can help you understand your options.', pace: 'long' },
-        { text: '• Medicare Savings Programs — for 2026, use the federal baseline: QMB around $1,350/month single / $1,824 couple; SLMB around $1,616/month single / $2,184 couple; QI around $1,816/month single / $2,455 couple. Federal resource limits: $9,950 single / $14,910 married for QMB/SLMB/QI. Exact Florida rules must be verified through the state agency, SHINE, Medicaid, or a licensed advisor.', pace: 'long' },
-        { text: '• Extra Help / LIS — federal program that may help with Part D prescription drug costs.', pace: 'long' },
-        { text: '• Florida Medicaid — for dual-eligible beneficiaries. Eligibility depends on income, resources, age, disability, household situation, and program category.', pace: 'long' },
-        { text: 'The best approach in Florida is usually to review Extra Help eligibility, MSP eligibility, and find a Part D plan with a formulary that covers your prescriptions at the lowest total cost. A licensed advisor can help with all of this.', pace: 'long' },
-        { text: 'This is general educational information, not a final eligibility decision. Florida SHINE and a licensed advisor can help verify your situation.', pace: 'short' },
+        { text: 'Florida has several resources for Medicare beneficiaries, but unlike New York or New Jersey, Florida does not have a clearly verified statewide SPAP equivalent to NY EPIC or NJ PAAD/Senior Gold.', pace: 'slow' },
+        { text: 'Here is what is available in Florida:', pace: 'slow' },
+        { text: '• SHINE (Serving Health Insurance Needs of Elders) — free, unbiased Medicare counseling from trained volunteers who can help you understand your options.', pace: 'slow' },
+        { text: '• Medicare Savings Programs — for 2026, use the federal baseline: QMB around $1,350/month single / $1,824 couple; SLMB around $1,616/month single / $2,184 couple; QI around $1,816/month single / $2,455 couple. Federal resource limits: $9,950 single / $14,910 married for QMB/SLMB/QI. Exact Florida rules must be verified through the state agency, SHINE, Medicaid, or a licensed advisor.', pace: 'slow' },
+        { text: '• Extra Help / LIS — federal program that may help with Part D prescription drug costs.', pace: 'slow' },
+        { text: '• Florida Medicaid — for dual-eligible beneficiaries. Eligibility depends on income, resources, age, disability, household situation, and program category.', pace: 'slow' },
+        { text: 'The best approach in Florida is usually to review Extra Help eligibility, MSP eligibility, and find a Part D plan with a formulary that covers your prescriptions at the lowest total cost. A licensed advisor can help with all of this.', pace: 'slow' },
+        { text: 'This is general educational information, not a final eligibility decision. Florida SHINE and a licensed advisor can help verify your situation.', pace: 'slow' },
         {
           text: 'Would you like a free review?',
           options: [
-            { label: 'Ask another question', value: 'edu_back_to_topics' },
-            { label: 'More options', value: 'edu_back_to_topics' },
-            { label: 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Go back to topics', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
       es: [
-        { text: 'Florida tiene varios recursos para beneficiarios de Medicare, pero a diferencia de New York o New Jersey, Florida no tiene un SPAP estatal verificado equivalente a NY EPIC o NJ PAAD/Senior Gold.', pace: 'long' },
-        { text: 'Esto es lo que está disponible en Florida:', pace: 'short' },
-        { text: '• SHINE (Sirviendo las Necesidades de Seguro de Salud de Personas Mayores) — consejería gratuita e imparcial de Medicare por voluntarios entrenados.', pace: 'long' },
-        { text: '• Programas de Ahorros de Medicare — para 2026, use la base federal: QMB alrededor de $1,350/mes soltero / $1,824 pareja; SLMB alrededor de $1,616/mes soltero / $2,184 pareja; QI alrededor de $1,816/mes soltero / $2,455 pareja. Límites federales de recursos: $9,950 soltero / $14,910 casado para QMB/SLMB/QI. Las reglas exactas de Florida deben verificarse con la agencia estatal, SHINE, Medicaid o un asesor licenciado.', pace: 'long' },
-        { text: '• Ayuda Extra / LIS — programa federal que puede ayudar con costos de medicamentos de Parte D.', pace: 'long' },
-        { text: '• Medicaid de Florida — para beneficiarios con doble elegibilidad. La elegibilidad depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa.', pace: 'long' },
-        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Extra, MSP, y encontrar un plan de Parte D con un formulario que cubra tus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'long' },
-        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Florida SHINE y un asesor licenciado pueden ayudar a verificar su situación.', pace: 'short' },
+        { text: 'Florida tiene varios recursos para beneficiarios de Medicare, pero a diferencia de New York o New Jersey, Florida no tiene un SPAP estatal verificado equivalente a NY EPIC o NJ PAAD/Senior Gold.', pace: 'slow' },
+        { text: 'Esto es lo que está disponible en Florida:', pace: 'slow' },
+        { text: '• SHINE (Sirviendo las Necesidades de Seguro de Salud de Personas Mayores) — consejería gratuita e imparcial de Medicare por voluntarios entrenados.', pace: 'slow' },
+        { text: '• Programas de Ahorros de Medicare — para 2026, use la base federal: QMB alrededor de $1,350/mes soltero / $1,824 pareja; SLMB alrededor de $1,616/mes soltero / $2,184 pareja; QI alrededor de $1,816/mes soltero / $2,455 pareja. Límites federales de recursos: $9,950 soltero / $14,910 casado para QMB/SLMB/QI. Las reglas exactas de Florida deben verificarse con la agencia estatal, SHINE, Medicaid o un asesor licenciado.', pace: 'slow' },
+        { text: '• Ayuda Extra / LIS — programa federal que puede ayudar con costos de medicamentos de Parte D.', pace: 'slow' },
+        { text: '• Medicaid de Florida — para beneficiarios con doble elegibilidad. La elegibilidad depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa.', pace: 'slow' },
+        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Extra, MSP, y encontrar un plan de Parte D con un formulario que cubra tus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'slow' },
+        { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Florida SHINE y un asesor licenciado pueden ayudar a verificar su situación.', pace: 'slow' },
         {
           text: '¿Quieres una revisión gratuita?',
           options: [
-            { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-            { label: 'Más opciones', value: 'edu_back_to_topics' },
-            { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+            { label: 'Volver a temas', value: 'edu_back_to_topics' },
           ],
-          pace: 'short',
+          pace: 'slow',
         },
       ],
     },
   };
 
   return programs[state]?.[language] || (language === 'es'
-    ? [{ text: 'En este momento no tengo programas específicos para ese estado, pero un asesor puede revisar las opciones disponibles.', options: [{ label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'long' }]
-    : [{ text: 'I do not have state-specific programs for that state at this moment, but an advisor can review available options.', options: [{ label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'long' }]);
+    ? [{ text: 'En este momento no tengo programas específicos para ese estado, pero un asesor puede revisar las opciones disponibles.', options: [{ label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'slow' }]
+    : [{ text: 'I do not have state-specific programs for that state at this moment, but an advisor can review available options.', options: [{ label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> }], pace: 'slow' }]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2057,26 +1937,110 @@ const OUT_OF_SCOPE_KEYWORDS = [
   'impuestos',
 ];
 
-// ─── Clarification / interruption phrase detection ──────────────────────────
-// These are phrases that signal the user is confused or asking a question,
-// NOT entering form data. Detected in handleText BEFORE any validation.
-const CLARIFICATION_PHRASES_EN: string[] = [
-  'stop','wait','hold on','pause','hang on','one moment',
-  'what do you mean','i dont understand',"i don't understand","i don't get it",
-  'why','help','explain','what is this','what should i enter','what should i put',
-  'why do you need this','what do i put',"i'm confused",'confused','not sure',
-  'how','what for','what is that','what does that mean','i need help',
+const INTERRUPT_KEYWORDS_EN = ['stop', 'wait', 'hold on', 'pause', 'hang on', 'one moment'];
+const INTERRUPT_KEYWORDS_ES = ['espera', 'para', 'detente', 'un momento', 'alto', 'pausa', 'esperate'];
+
+/* ------------------------------------------------------------------ */
+/*  INTENT CLASSIFIER — runs before any step-based routing            */
+/* ------------------------------------------------------------------ */
+
+type ZaraIntent =
+  | 'INTERRUPT'
+  | 'PRIVACY_CONCERN'
+  | 'EXIT_LEAD_CAPTURE'
+  | 'LANGUAGE_SWITCH_EN'
+  | 'LANGUAGE_SWITCH_ES'
+  | 'ADVISOR_REQUEST'
+  | 'OUT_OF_SCOPE'
+  | 'IDENTITY_QUESTION'
+  | 'GREETING'
+  | 'MEDICARE_QUESTION'
+  | 'LEAD_INPUT';
+
+const EXIT_LEAD_KEYWORDS = [
+  'stop', 'cancel', 'nevermind', 'never mind', 'go back', 'start over', 'restart', 'quit', 'exit',
+  'para', 'cancelar', 'volver', 'empezar de nuevo', 'reiniciar', 'salir', 'regresar', 'no quiero',
+  'no gracias', 'no thanks', 'forget it', 'olvídalo', 'olvidalo',
 ];
-const CLARIFICATION_PHRASES_ES: string[] = [
-  'espera','para','detente','un momento','alto','pausa','esperate',
-  'como asi','cómo así','como así','cómo asi',
-  'no entiendo','que significa','qué significa',
-  'ayuda','explícame','explicame','por qué','porque','porqué',
-  'para qué','para que','no se','no sé','qué pongo','que pongo',
-  'por que me pides eso','eso para que es','eso para qué es',
-  'no comprendo','cómo','no se que poner','no sé qué poner',
-  'que pongo ahí','qué pongo ahí','para que es esto','para qué es esto',
+
+const GREETING_KEYWORDS = [
+  'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'good evening',
+  'hola', 'buenos días', 'buenos dias', 'buenas tardes', 'buenas noches', 'buenas',
 ];
+
+const IDENTITY_KEYWORDS = [
+  'who are you', 'what are you', 'are you a robot', 'are you human', 'are you real', 'are you ai',
+  'quién eres', 'quien eres', 'qué eres', 'que eres', 'eres un robot', 'eres humano', 'eres real',
+];
+
+function classifyIntent(
+  text: string,
+  currentLanguage: ChatLanguage,
+  currentStep: ChatStep,
+): ZaraIntent {
+  const low = text.toLowerCase().trim();
+
+  // Privacy concern — highest priority
+  if (SENSITIVE_KEYWORDS.some((k) => low.includes(k))) return 'PRIVACY_CONCERN';
+
+  // Exit lead capture — only relevant during lead steps
+  if (currentStep.startsWith('lead_')) {
+    if (EXIT_LEAD_KEYWORDS.some((k) => low.includes(k))) return 'EXIT_LEAD_CAPTURE';
+  }
+
+  // Language switch
+  if (/\b(english|en\s+english|speak\s+english|in\s+english)\b/i.test(low)) return 'LANGUAGE_SWITCH_EN';
+  if (/\b(español|espanol|en\s+español|en\s+espanol|hablar\s+español|hablar\s+espanol|spanish)\b/i.test(low)) return 'LANGUAGE_SWITCH_ES';
+
+  // Identity question
+  if (IDENTITY_KEYWORDS.some((k) => low.includes(k))) return 'IDENTITY_QUESTION';
+
+  // Greeting — only short messages
+  if (text.length < 40 && GREETING_KEYWORDS.some((k) => low === k || low.startsWith(k + ' ') || low.startsWith(k + '!'))) return 'GREETING';
+
+  // Out of scope
+  if (OUT_OF_SCOPE_KEYWORDS.some((k) => low.includes(k))) return 'OUT_OF_SCOPE';
+
+  // Advisor request
+  if (REVIEW_KEYWORDS.some((k) => low.includes(k))) return 'ADVISOR_REQUEST';
+
+  // Medicare question — especially important when in lead steps
+  if (currentStep.startsWith('lead_')) {
+    const hasTopic = detectMedicareTopic(text, currentLanguage) !== '';
+    const hasPersonalized = PERSONALIZED_KEYWORDS.some((k) => low.includes(k));
+    if (hasTopic || hasPersonalized) return 'MEDICARE_QUESTION';
+  }
+
+  return 'LEAD_INPUT';
+}
+
+/* ------------------------------------------------------------------ */
+/*  LANGUAGE AUTO-DETECTOR — detects language of typed text           */
+/* ------------------------------------------------------------------ */
+
+const SPANISH_INDICATORS = [
+  'qué', 'que', 'cómo', 'como', 'tengo', 'quiero', 'necesito', 'ayuda', 'también', 'tambien',
+  'por favor', 'gracias', 'quisiera', 'puedo', 'puede', 'información', 'informacion',
+  'médico', 'medico', 'años', 'asesor', 'seguro', 'cobertura', 'medicinas', 'estoy', 'tiene',
+  'cuál', 'cual', 'dónde', 'donde', 'cuándo', 'cuando', 'quién', 'quien',
+];
+
+const ENGLISH_INDICATORS = [
+  'what', 'how', 'when', 'where', 'need', 'want', 'help', 'please', 'thank',
+  'about', 'coverage', 'insurance', 'doctor', 'prescription', 'medicare', 'have',
+  'looking', 'would', 'could', 'should', 'available', 'eligible',
+];
+
+function detectInputLanguage(text: string): ChatLanguage | null {
+  if (text.length < 8) return null;
+  const low = text.toLowerCase();
+  const words = low.split(/\s+/);
+  const spanishCount = SPANISH_INDICATORS.filter((w) => low.includes(w)).length;
+  const englishCount = ENGLISH_INDICATORS.filter((w) => words.includes(w)).length;
+  if (spanishCount >= 2 && spanishCount > englishCount) return 'es';
+  if (englishCount >= 2 && englishCount > spanishCount) return 'en';
+  return null;
+}
 
 const DEFAULT_MEMORY: ChatMemory = {
   language: 'en',
@@ -2103,29 +2067,8 @@ const DEFAULT_MEMORY: ChatMemory = {
   submitted: false,
   skippedEmail: false,
   discussedTopics: [],
-  // Zara Core Engine session fields
-  mode: 'guide',
-  userIntent: 'none',
-  confusionCount: 0,
-  hasAskedForHuman: false,
-  isCustomerServiceIntent: false,
-  // Extended context fields
-  lastValidUserInput: '',
-  pendingAction: '',
-  previousStep: '',
-  // Navigation context fields (enterprise spec)
-  previousMode: 'guide',
-  previousTopic: '',
-  lastEducationTopic: '',
-  lastPromptShown: '',
-  lastOptionsShown: '',
-  lastBotIntent: '',
-  lastQuestionAsked: '',
-  activeMenu: '',
-  previousMenu: '',
-  activeEducationGroup: 0,
-  activeFormStepId: '',
-  collectedLeadFields: [],
+  pausedStep: null,
+  pausedContext: '',
 };
 
 function uid() {
@@ -2167,12 +2110,12 @@ function getMemoryForStorage(memory: ChatMemory) {
 }
 
 function getTypingDelay(text: string, pace: MessagePace = 'short') {
-  const shortMin = 1000;
-  const shortMax = 1800;
+  const shortMin = 1500;
+  const shortMax = 2200;
   const longMin = 2200;
-  const longMax = 3400;
-  const slowMin = 3600;
-  const slowMax = 5000;
+  const longMax = 3200;
+  const slowMin = 3000;
+  const slowMax = 4500;
   if (pace === 'slow') {
     return Math.floor(Math.random() * (slowMax - slowMin + 1)) + slowMin;
   }
@@ -2186,274 +2129,6 @@ function containsAny(text: string, keywords: string[]) {
   const normalized = text.toLowerCase();
   return keywords.some((keyword) => normalized.includes(keyword));
 }
-
-// Strip diacritics + punctuation and return a lowercase normalized form.
-// Handles: lowercase, trim, duplicate spaces, punctuation, accent normalization.
-// Used by ALL intent detection — must be consistent across layers.
-function normalizePhrase(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[¿¡?!.,;:'"]/g, '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Returns true when the user input is a clarification/confusion phrase,
-// not real form data. Works for both English and Spanish.
-function isClarification(text: string, lang: ChatLanguage): boolean {
-  if (!text || text.trim().length === 0) return false;
-  const norm = normalizePhrase(text);
-  for (const p of CLARIFICATION_PHRASES_EN) {
-    const pn = normalizePhrase(p);
-    if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
-  }
-  if (lang === 'es') {
-    for (const p of CLARIFICATION_PHRASES_ES) {
-      const pn = normalizePhrase(p);
-      if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
-    }
-  }
-  return false;
-}
-
-// ─── Human Intent Router: module-level phrase tables ────────────────────────
-
-// Language switch — detected before ANY form/step validation
-const LANG_SWITCH_ES_PHRASES: string[] = [
-  'español', 'espanol', 'quiero español', 'quiero espanol',
-  'habla español', 'habla espanol', 'cambiar a español', 'cambiar a espanol',
-  'en español', 'en espanol', 'hablo español', 'hablo espanol',
-  'prefiero español', 'prefiero espanol', 'quiero hablar en español',
-  'quiero hablar en espanol', 'spanish',
-];
-const LANG_SWITCH_EN_PHRASES: string[] = [
-  'english', 'speak english', 'switch to english', 'change to english',
-  'in english', 'i prefer english', 'prefer english', 'continue in english',
-  'quiero inglés', 'quiero ingles', 'en inglés', 'en ingles',
-];
-
-// Advisor / human agent request
-const ADVISOR_REQUEST_PHRASES: string[] = [
-  'talk to someone', 'speak with advisor', 'speak to advisor', 'speak to someone',
-  'i want to speak to someone', 'i want to talk to someone', 'call me',
-  'i want a person', 'i want a human', 'representative', 'human agent',
-  'connect me with someone', 'transfer me',
-  'quiero hablar con alguien', 'quiero un asesor', 'llamame', 'llamame por favor',
-  'que me llamen', 'hablar con una persona', 'hablar con representante',
-  'necesito un asesor', 'quiero hablar con una persona',
-  'quiero hablar con representante', 'quiero hablar con alguien',
-  'hablar con alguien', 'un asesor', 'asesor humano',
-];
-
-// ─── Navigation phrase tables (enterprise spec) ──────────────────────────────
-// These four arrays are strictly separated — no phrase appears in more than one.
-// Detection priority in handleText: back → menu → change_state → restart.
-
-// BACK — context-aware: preserves memory, returns to previous step/menu/state.
-// Does NOT reset selectedState. Uses exact match for precision.
-const BACK_PHRASES: string[] = [
-  'back', 'go back', 'volver', 'atras', 'atrás', 'regresar',
-  'volver atras', 'volver atrás', 'volver al menu', 'volver al menú',
-  'anterior', 'paso anterior', 'ir atras', 'ir atrás',
-];
-
-// MENU — shows topic menu for current state. Does NOT reset selectedState.
-const MENU_PHRASES: string[] = [
-  'menu', 'menú', 'main menu', 'menu principal',
-  'ver menu', 'ver menú', 'opciones', 'topics', 'temas',
-];
-
-// OTHER TOPIC — "otro tema/topic/another topic" → topic menu, preserve state.
-// If in advisor flow: show advisor choice menu instead of direct topic menu.
-const OTHER_TOPIC_PHRASES: string[] = [
-  'otro topic', 'otro tema', 'otro topico', 'otro tópico',
-  'another topic', 'other topic', 'different topic',
-  'ver otro tema', 'quiero otro tema', 'otra opcion', 'otra opción',
-];
-
-// CHANGE STATE — clears selected state and asks again, keeps other context.
-const CHANGE_STATE_PHRASES: string[] = [
-  'cambiar estado', 'otro estado', 'vivo en otro estado', 'cambiar mi estado',
-  'change state', 'different state', 'i live in another state', 'update my state',
-  'vivir en otro estado', 'quiero cambiar estado',
-];
-
-// RESTART — full memory reset only. Only explicit "start over" intent triggers this.
-const RESTART_PHRASES: string[] = [
-  'restart', 'start over', 'reset', 'clear everything', 'begin again',
-  'empezar de nuevo', 'reiniciar', 'comenzar otra vez', 'borrar todo', 'resetear',
-];
-
-// Customer service / plan issue intent
-const CS_INTENT_PHRASES: string[] = [
-  'lost my card', 'lost card', 'otc issue', 'my doctor', 'no aparece mi doctor',
-  'received a letter', 'got a letter', 'problem with my plan', 'plan problem',
-  'transportation', 'dental', 'vision', 'hearing aid', 'audifono',
-  'perdi mi tarjeta', 'perdí mi tarjeta', 'no recibi otc', 'no recibí otc',
-  'mi medicina esta cara', 'mi medicina está cara', 'mi doctor no aparece',
-  'me llego una carta', 'me llegó una carta', 'problema con mi plan',
-  'necesito transportacion', 'necesito transportación',
-  'audífonos', 'audifonos', 'card replacement', 'replace my card',
-  'pharmacy issue', 'farmacia', 'medicamento caro', 'medicamentos caros',
-];
-
-// ─── Human Intent Router: module-level detection functions ───────────────────
-
-function detectLangSwitch(norm: string): 'en' | 'es' | null {
-  for (const p of LANG_SWITCH_ES_PHRASES) {
-    const pn = normalizePhrase(p);
-    if (norm === pn || norm.includes(pn)) return 'es';
-  }
-  for (const p of LANG_SWITCH_EN_PHRASES) {
-    const pn = normalizePhrase(p);
-    if (norm === pn || norm.includes(pn)) return 'en';
-  }
-  return null;
-}
-
-function detectAdvisorRequest(norm: string): boolean {
-  return ADVISOR_REQUEST_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn || norm.includes(pn);
-  });
-}
-
-// Back — context-aware, preserves state. Exact match.
-function detectBackIntent(norm: string): boolean {
-  return BACK_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn;
-  });
-}
-
-// Menu — shows topic menu, preserves state. Exact match.
-function detectMenuIntent(norm: string): boolean {
-  return MENU_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn;
-  });
-}
-
-// Other topic — exact or startsWith match.
-function detectOtherTopicIntent(norm: string): boolean {
-  return OTHER_TOPIC_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn || norm.startsWith(pn);
-  });
-}
-
-// Change state — asks state only, keeps everything else. Contains match.
-function detectChangeStateIntent(norm: string): boolean {
-  return CHANGE_STATE_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn || norm.includes(pn);
-  });
-}
-
-// Restart — full memory reset only. Exact or startsWith match.
-function detectRestartIntent(norm: string): boolean {
-  return RESTART_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn || norm.startsWith(pn);
-  });
-}
-
-function detectCSIntent(norm: string): boolean {
-  return CS_INTENT_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn || norm.includes(pn);
-  });
-}
-
-// ─── Zara Core Engine: Architecture Maps ────────────────────────────────────
-
-// CLARIFICATION_RESPONSE_MAP — canonical source of truth for per-step
-// clarification messages. getStepClarificationMessages() implements this map.
-// To add a new lead step: add an entry here and a case in the switch.
-const CLARIFICATION_RESPONSE_MAP_META: Partial<Record<string, {
-  fieldLabel: string;
-  whyNeeded: string;
-  format?: string;
-  optional?: boolean;
-}>> = {
-  lead_name:      { fieldLabel: 'First name',   whyNeeded: 'Advisor identification', format: 'Text only, e.g. Maria' },
-  lead_last_name: { fieldLabel: 'Last name',    whyNeeded: 'Full name for review request', format: 'Text only' },
-  lead_phone:     { fieldLabel: 'Phone number', whyNeeded: 'Advisor contact',        format: '10-digit US number' },
-  lead_zip:       { fieldLabel: 'ZIP code',     whyNeeded: 'Plan availability by county', format: '5-digit ZIP in selected state' },
-  lead_dob:       { fieldLabel: 'Date of birth', whyNeeded: 'Medicare eligibility depends on age', format: 'MM/DD/YYYY' },
-  lead_email:     { fieldLabel: 'Email',         whyNeeded: 'Optional follow-up',    optional: true },
-  lead_coverage:  { fieldLabel: 'Current coverage', whyNeeded: 'Understand Medicare situation' },
-  lead_consent:   { fieldLabel: 'Authorization', whyNeeded: 'Advisor contact authorization' },
-};
-
-// STEP_VALIDATOR_META — defines validation contract for each lead step.
-// The inline validators in handleLeadText implement these contracts.
-// Use this map to audit validators and to generate error messages consistently.
-type StepValidatorMeta = {
-  required: boolean;
-  validationType: 'name' | 'phone' | 'zip' | 'dob' | 'email' | 'state' | 'coverage' | 'consent' | 'time' | 'language';
-  description: string;
-};
-const STEP_VALIDATOR_META: Partial<Record<string, StepValidatorMeta>> = {
-  lead_name:       { required: true,  validationType: 'name',     description: 'First name — no numbers, symbols, profanity, or fake words' },
-  lead_last_name:  { required: true,  validationType: 'name',     description: 'Last name — no numbers or symbols' },
-  lead_phone:      { required: true,  validationType: 'phone',    description: '10-digit US phone number, digits only' },
-  lead_zip:        { required: true,  validationType: 'zip',      description: '5-digit ZIP within selected state — state-locked' },
-  lead_dob:        { required: true,  validationType: 'dob',      description: 'Date of birth MM/DD/YYYY — must resolve to age 64–89' },
-  lead_email:      { required: false, validationType: 'email',    description: 'Valid email address or blank/skip' },
-  lead_coverage:   { required: true,  validationType: 'coverage', description: 'Current Medicare coverage type from option buttons' },
-  lead_consent:    { required: true,  validationType: 'consent',  description: 'Yes/no advisor contact authorization' },
-  lead_state:      { required: true,  validationType: 'state',    description: 'State selection from NY, NJ, CT, FL' },
-};
-
-// CS_INTENT_MAP — maps normalized CS phrases to intent type.
-// classifyCSIntent() uses this to categorize CS inputs.
-// Extend by adding entries here — no other changes needed.
-const CS_INTENT_MAP: Array<[string, CSIntent]> = [
-  ['lost my card',      'card_replacement'],
-  ['lost card',         'card_replacement'],
-  ['perdi mi tarjeta',  'card_replacement'],
-  ['replace my card',   'card_replacement'],
-  ['card replacement',  'card_replacement'],
-  ['otc',               'otc_issue'],
-  ['no recibi otc',     'otc_issue'],
-  ['medication cost',   'medication_cost'],
-  ['mi medicina',       'medication_cost'],
-  ['medicamento caro',  'medication_cost'],
-  ['my doctor',         'provider_issue'],
-  ['mi doctor',         'provider_issue'],
-  ['no aparece',        'provider_issue'],
-  ['dental',            'dental_vision_hearing'],
-  ['vision',            'dental_vision_hearing'],
-  ['hearing',           'dental_vision_hearing'],
-  ['audifono',          'dental_vision_hearing'],
-  ['transportation',    'transportation'],
-  ['transportacion',    'transportation'],
-  ['letter',            'plan_letter'],
-  ['carta',             'plan_letter'],
-  ['received a letter', 'plan_letter'],
-  ['me llego una carta','plan_letter'],
-  ['benefit',           'benefit_question'],
-  ['beneficio',         'benefit_question'],
-  ['problem with my plan', 'benefit_question'],
-  ['problema con mi plan', 'benefit_question'],
-];
-
-function classifyCSIntent(norm: string): CSIntent {
-  for (const [phrase, intent] of CS_INTENT_MAP) {
-    if (norm.includes(phrase)) return intent;
-  }
-  return 'unknown';
-}
-
-// SAFE_FALLBACK — used when no other handler matches.
-// Keeps Zara on-topic without losing the user.
-const SAFE_FALLBACK: Record<ChatLanguage, string> = {
-  en: "I'm here to help with Medicare questions and connect you with a licensed advisor. What would you like to know?",
-  es: 'Estoy aquí para ayudarle con preguntas sobre Medicare y conectarle con un asesor autorizado. ¿En qué puedo ayudarle?',
-};
 
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
@@ -2606,7 +2281,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
           ? 'Puedo ayudarle con educación general sobre Medicare. Puede escoger un tema abajo o preguntarme sobre Medicare, Medicaid, cobertura de medicinas, ayuda con costos o hablar con un asesor.'
           : 'I can help with general Medicare education. You can choose a topic below, or ask me about Medicare, Medicaid, drug coverage, help with costs, or speaking with an advisor.',
         pace: 'short',
-        options: language === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0],
+        options: language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN,
       },
     ],
   };
@@ -2624,94 +2299,6 @@ function getFailMessage(language: ChatLanguage) {
     : "I'm sorry, I couldn't send the request right now. You can call us directly at 1-866-310-8702.";
 }
 
-// ─── Lead form back-navigation helpers (module-level — no component state needed) ──
-
-// Ordered list of lead steps for back-navigation in advisor_intake mode.
-// Steps match the sequence in askNextQuestion() / getNextMissingStep().
-const LEAD_STEP_ORDER: ChatStep[] = [
-  'lead_name', 'lead_last_name', 'lead_phone', 'lead_state',
-  'lead_zip', 'lead_dob', 'lead_coverage', 'lead_preferred_language',
-  'lead_time', 'lead_email', 'lead_consent',
-];
-
-// Returns the previous step in the lead flow, or null if at the first step.
-function getPreviousLeadStep(currentStep: string): ChatStep | null {
-  const idx = LEAD_STEP_ORDER.indexOf(currentStep as ChatStep);
-  if (idx <= 0) return null;
-  return LEAD_STEP_ORDER[idx - 1];
-}
-
-// Returns the re-prompt messages for a specific lead step (used by back navigation).
-// Mirrors the prompts in askNextQuestion() without resetting or advancing the flow.
-function promptLeadStep(step: string, lang: ChatLanguage, firstName: string): QueuedBotMessage[] {
-  const es = lang === 'es';
-  switch (step) {
-    case 'lead_name':
-      return [{ text: es ? '¿Cuál es su primer nombre?' : 'What is your first name?', pace: 'short' }];
-    case 'lead_last_name':
-      return [{ text: es ? '¿Cuál es su apellido?' : 'What is your last name?', pace: 'short' }];
-    case 'lead_phone':
-      return [{
-        text: es
-          ? `Gracias${firstName ? `, ${firstName}` : ''}. ¿Cuál es el mejor número de teléfono para contactarle?`
-          : `Thank you${firstName ? `, ${firstName}` : ''}. What is the best phone number to reach you?`,
-        pace: 'short',
-      }];
-    case 'lead_state':
-      return [{
-        text: es ? '¿En qué estado vive?' : 'What state do you live in?',
-        options: [
-          { label: 'New York', value: 'state_NY' },
-          { label: 'New Jersey', value: 'state_NJ' },
-          { label: 'Connecticut', value: 'state_CT' },
-          { label: 'Florida', value: 'state_FL' },
-        ],
-        pace: 'short',
-      }];
-    case 'lead_zip':
-      return [{ text: es ? 'Por favor ingrese su código postal de 5 dígitos.' : 'Please enter your 5-digit ZIP code.', pace: 'short' }];
-    case 'lead_dob':
-      return [{ text: es ? '¿Cuál es su fecha de nacimiento? Use el formato MM/DD/YYYY, ejemplo: 06/09/1983.' : 'What is your date of birth? Please use MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }];
-    case 'lead_coverage':
-      return [{
-        text: es ? '¿Cuál es su cobertura actual de Medicare?' : 'What is your current Medicare coverage?',
-        options: [
-          { label: es ? 'Medicare Original' : 'Original Medicare', value: 'coverage_original' },
-          { label: 'Medicare Advantage', value: 'coverage_advantage' },
-          { label: es ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' },
-        ],
-        pace: 'short',
-      }];
-    case 'lead_preferred_language':
-      return [{
-        text: es ? '¿En qué idioma prefiere hablar con el asesor?' : 'What language do you prefer to speak with the advisor?',
-        options: [
-          { label: 'English', value: 'preferred_en' },
-          { label: 'Español', value: 'preferred_es' },
-          { label: es ? 'Cualquiera' : 'Either', value: 'preferred_either' },
-        ],
-        pace: 'short',
-      }];
-    case 'lead_time':
-      return [{
-        text: es ? '¿Cuál es el mejor horario para contactarle?' : 'What is the best time to contact you?',
-        options: [
-          { label: es ? 'Mañana' : 'Morning', value: 'time_morning' },
-          { label: es ? 'Tarde' : 'Afternoon', value: 'time_afternoon' },
-          { label: es ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' },
-          { label: es ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' },
-        ],
-        pace: 'short',
-      }];
-    case 'lead_email':
-      return [{ text: es ? '¿Cuál es su correo electrónico? (opcional — escriba "saltar" para omitir)' : 'What is your email address? (optional — type "skip" to continue)', pace: 'short' }];
-    case 'lead_consent':
-      return [{ text: es ? 'Necesito su autorización para que un asesor le contacte. ¿Acepta?' : 'I need your authorization so a licensed advisor can contact you. Do you agree?', pace: 'short' }];
-    default:
-      return [{ text: es ? '¿Cómo puedo ayudarle?' : 'How can I help you?', pace: 'short' }];
-  }
-}
-
 export function ChatBot() {
   const { lang, setLang, t } = useLanguage();
   const initialLanguage = lang === 'es' ? 'es' : 'en';
@@ -2723,106 +2310,15 @@ export function ChatBot() {
   const [memory, setMemory] = useState<ChatMemory>(() => getStoredMemory(initialLanguage));
   const [isTyping, setIsTyping] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
-  const [topicPage, setTopicPage] = useState<0 | 1 | 2>(0);
 
   const queueRef = useRef<QueuedBotMessage[]>([]);
   const processingRef = useRef(false);
   const generationRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
-  const chatBodyRef = useRef<HTMLDivElement>(null);
-  // Ref attached to the FIRST message of the current step block.
-  // The step block = the preceding bot context message (if any) + the bot message with options.
-  // Scrolling to currentStepRef shows the question/title at the top of the chat body.
-  const currentStepRef = useRef<HTMLDivElement>(null);
-  // Tracks whether the chat text input is focused (keyboard open on iOS).
-  // Using a ref (not state) so focus/blur events never trigger re-renders.
-  // The scroll useEffect checks this to skip scroll when keyboard is open.
-  const chatInputFocusedRef = useRef(false);
-  // Synchronous mirror of the `step` state — updated atomically in setStepSync.
-  // handleLeadText reads stepRef.current instead of the closure `step` to avoid
-  // stale-closure bugs caused by React batching of state updates.
-  const stepRef = useRef<ChatStep>('language');
-  // Education scroll anchor: true once we have scrolled to the first paragraph of
-  // the current education response. Reset to false at the start of each new topic.
-  // Prevents the scroll useEffect from re-anchoring to the old topic menu on every
-  // subsequent paragraph — which caused the visible backward scroll jump.
-  const hasScrolledForCurrentEducationRef = useRef(false);
 
   useEffect(() => {
-    // Keyboard guard: iOS Safari raises the viewport when the soft keyboard opens,
-    // which changes element rects and fires this effect. Scrolling during keyboard-open
-    // causes the chat body to jump unexpectedly. Skip entirely when input is focused.
-    if (chatInputFocusedRef.current) return;
-
-    requestAnimationFrame(() => {
-      const container = chatBodyRef.current;
-      if (!container) return;
-
-      // FORM MODE — lead_ steps and complete.
-      // currentStepRef still points to the topic-menu from before the form started;
-      // ignore it and keep the bottom visible so the active input stays in view.
-      if (step.startsWith('lead_') || step === 'complete') {
-        container.scrollTop = container.scrollHeight;
-        return;
-      }
-
-      // EDUCATION MODE — medicare_education step.
-      // Each paragraph of an education response triggers this effect via isTyping/messages,
-      // but currentStepRef still anchors to the PREVIOUS topic menu (no options in edu
-      // messages, so activeStepMsgIdx never advances). Scrolling to that stale anchor
-      // pulls the old menu buttons back into view on every paragraph — the visible bug.
-      //
-      // Fix: anchor ONCE to the first education paragraph, then only follow the user
-      // to the bottom if they are already close to it. Never re-anchor to the old menu.
-      if (step === 'medicare_education') {
-        const distFromBottom =
-          container.scrollHeight - container.scrollTop - container.clientHeight;
-        const nearBottom = distFromBottom < 160;
-
-        if (!hasScrolledForCurrentEducationRef.current && !isTyping) {
-          // First education paragraph just landed — scroll it into view.
-          const lastMsg = messages[messages.length - 1];
-          if (lastMsg?.type === 'bot') {
-            const anchorEl = container.querySelector(
-              `[data-msg-id="${lastMsg.id}"]`,
-            ) as HTMLElement | null;
-            if (anchorEl) {
-              const containerRect = container.getBoundingClientRect();
-              const targetRect = anchorEl.getBoundingClientRect();
-              const targetTop =
-                container.scrollTop + (targetRect.top - containerRect.top) - 10;
-              container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-              hasScrolledForCurrentEducationRef.current = true;
-              return;
-            }
-          }
-        }
-
-        // Subsequent paragraphs / typing indicator: follow the bottom only if
-        // the user has not manually scrolled up to read earlier content.
-        if (nearBottom) {
-          container.scrollTop = container.scrollHeight;
-        }
-        return;
-      }
-
-      // MENU MODE — language, choice, state, question steps.
-      // Scroll so the question/title (currentStepRef) sits at the top of the visible
-      // chat body, keeping both the question and its option buttons in view.
-      // Never uses scrollIntoView — it scrolls ancestor/page containers on iOS Safari.
-      const target = currentStepRef.current;
-      if (!isTyping && target && messages.length > 1) {
-        const containerRect = container.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const targetTop = container.scrollTop + (targetRect.top - containerRect.top) - 10;
-        container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
-        return;
-      }
-
-      // Default: scroll to bottom (typing indicator, user messages, text-only steps)
-      container.scrollTop = container.scrollHeight;
-    });
-  }, [messages, isTyping, step]);
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, isTyping]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -2869,12 +2365,7 @@ export function ChatBot() {
 
       setIsTyping(false);
       addMessage('bot', next.text, next.options);
-      const postGap = next.pace === 'short'
-        ? 1200 + Math.floor(Math.random() * 600)
-        : next.pace === 'slow'
-          ? 3200 + Math.floor(Math.random() * 800)
-          : 2200 + Math.floor(Math.random() * 600);
-      await sleep(postGap);
+      await sleep(2500 + Math.floor(Math.random() * 1000));
     }
 
     processingRef.current = false;
@@ -2897,14 +2388,6 @@ export function ChatBot() {
     setMemory((prev) => ({ ...prev, ...patch }));
   }
 
-  // Single point of truth for step changes.
-  // Updates both React state (triggers re-render) and stepRef (immediate,
-  // readable inside async/event handlers without closure staleness).
-  function setStepSync(s: ChatStep) {
-    stepRef.current = s;
-    setStep(s);
-  }
-
   function languageLabel(language: ChatLanguage) {
     return language === 'es' ? 'Español' : 'English';
   }
@@ -2919,9 +2402,8 @@ export function ChatBot() {
   /* ---------- Welcome ---------- */
 
   function startWelcome(clearExisting = false, langOverride?: ChatLanguage) {
-    setTopicPage(0);
     const welcomeLang = langOverride ?? memory.language;
-    setStepSync('language');
+    setStep('language');
     enqueueBot(
       [
         {
@@ -2941,13 +2423,12 @@ export function ChatBot() {
   }
 
   function resetChat() {
-    setTopicPage(0);
     generationRef.current += 1;
     queueRef.current = [];
     processingRef.current = false;
     setIsTyping(false);
     setMessages([]);
-    setStepSync('language');
+    setStep('language');
     // Sync to current page language on reset so close+reopen uses active site language
     const newLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
     const resetMemory = { ...DEFAULT_MEMORY, language: newLang };
@@ -2981,7 +2462,7 @@ export function ChatBot() {
   /* ---------- Medicare intake (NEW) - warm, state-first ---------- */
 
   function showMedicareIntake(langOverride?: ChatLanguage) {
-    setStepSync('state');
+    setStep('state');
     const effectiveLang = langOverride ?? memory.language;
     const messages = MEDICARE_INTRO[effectiveLang];
     enqueueBot(messages);
@@ -2989,7 +2470,7 @@ export function ChatBot() {
 
   function handleStateSelection(state: string) {
     updateMemory({ state });
-    setStepSync('question');
+    setStep('question');
 
     if (!SUPPORTED_STATES.includes(state)) {
       const messages = STATE_CONFIRMATION[memory.language].other;
@@ -3006,20 +2487,9 @@ export function ChatBot() {
   /* ---------- Plan review flow (unchanged) ---------- */
 
   function startPlanReview(interestType = memory.interestType || 'Plan review') {
-    const leadReset = {
-      wantsPlanReview: true, interestType,
-      firstName: '', lastName: '', phone: '',
-      zip: '', city: '', county: '', derivedState: '',
-      dob: '', calculatedAge: 0,
-      currentCoverage: '', preferredLanguage: '', preferredContactTime: '',
-      email: '', consentGiven: false, skippedEmail: false, submitted: false,
-      // Engine: set advisor_intake mode and reset confusion tracking
-      mode: 'advisor_intake' as ZaraMode,
-      confusionCount: 0,
-      userIntent: 'none' as UserIntent,
-    };
-    updateMemory(leadReset);
-    const freshMem = { ...memory, ...leadReset };
+    updateMemory({ wantsPlanReview: true, interestType, currentCoverage: '', phone: '', preferredLanguage: '', preferredContactTime: '', email: '', consentGiven: false, skippedEmail: false, submitted: false });
+    const freshMem = { ...memory, wantsPlanReview: true, interestType, currentCoverage: '', phone: '', preferredLanguage: '', preferredContactTime: '', email: '', consentGiven: false, skippedEmail: false, submitted: false };
+    enqueueBot([{ text: memory.language === 'es' ? 'Claro. Puedo ayudarte a solicitar una revisión gratuita.' : 'Of course. I can help you request a free plan review.', pace: 'short' }]);
     askNextQuestion(freshMem);
   }
 
@@ -3089,7 +2559,7 @@ export function ChatBot() {
   }
 
   async function submitLead(finalMemory: ChatMemory) {
-    setStepSync('complete');
+    setStep('complete');
     const conversationSummary = buildConversationSummary(finalMemory);
     const payload = {
       source: 'Website Chatbot',
@@ -3148,7 +2618,7 @@ export function ChatBot() {
   /* ---------- Boundaries ---------- */
 
   function showPersonalizedBoundary() {
-    setStepSync('choice');
+    setStep('choice');
     enqueueBot([
       {
         text:
@@ -3210,499 +2680,11 @@ export function ChatBot() {
     ]);
   }
 
-  /* ---------- Human Intent Router: inner handlers ---------- */
-
-  function handleLanguageSwitchIntent(newLang: 'en' | 'es') {
-    // Update site language and memory atomically
-    setLang(newLang);
-    updateMemory({ language: newLang, preferredLanguage: newLang === 'es' ? 'Español' : 'English' });
-    const updatedMem: ChatMemory = { ...memory, language: newLang };
-
-    const confirmMsg: QueuedBotMessage = {
-      text: newLang === 'es'
-        ? 'Claro, seguimos en español.'
-        : "Of course, we'll continue in English.",
-      pace: 'short',
-    };
-
-    const currentStep = stepRef.current;
-
-    // For lead steps: repeat the current field prompt in the new language.
-    // getStepClarificationMessages returns [explanation, reprompt] — use reprompt.
-    if (currentStep.startsWith('lead_')) {
-      const repromptPair = getStepClarificationMessages(currentStep, updatedMem);
-      const reprompt = repromptPair.length >= 2 ? repromptPair[1] : null;
-      enqueueBot(reprompt ? [confirmMsg, reprompt] : [confirmMsg]);
-      return;
-    }
-
-    // For education mode: reference the current topic and offer to continue in new language.
-    // Spec requirement: "Estábamos hablando de Medicare Advantage. ¿Desea que continúe?"
-    if (currentStep === 'medicare_education' && memory.educationTopic) {
-      const topicLabelEN: Record<string, string> = {
-        edu_parts_ab: 'Medicare Parts A & B',
-        edu_part_c: 'Medicare Advantage',
-        edu_supplement: 'Medicare Supplement / Medigap',
-        edu_part_d: 'Part D / Prescription Drugs',
-        edu_extra_help: 'Extra Help / LIS',
-        edu_cost_help: 'Help with Costs',
-        edu_medicaid: 'Medicaid',
-        edu_msp: 'Medicare Savings Programs',
-        edu_spap: 'State Prescription Assistance',
-        edu_enrollment: 'Enrollment Periods',
-        edu_advantage_types: 'HMO vs PPO',
-        edu_snp: 'SNP Plans',
-        edu_ssdi_ssi: 'SSI / SSDI',
-        edu_special_benefits: 'Special Benefits',
-      };
-      const topicLabelES: Record<string, string> = {
-        edu_parts_ab: 'las Partes A y B de Medicare',
-        edu_part_c: 'Medicare Advantage',
-        edu_supplement: 'Medicare Supplement / Medigap',
-        edu_part_d: 'la Parte D / medicamentos recetados',
-        edu_extra_help: 'Ayuda Extra / LIS',
-        edu_cost_help: 'ayuda con costos',
-        edu_medicaid: 'Medicaid',
-        edu_msp: 'Programas de Ahorros de Medicare',
-        edu_spap: 'ayuda estatal para medicamentos',
-        edu_enrollment: 'períodos de inscripción',
-        edu_advantage_types: 'HMO vs PPO',
-        edu_snp: 'planes SNP',
-        edu_ssdi_ssi: 'SSI / SSDI',
-        edu_special_benefits: 'beneficios especiales',
-      };
-      const labelMap = newLang === 'es' ? topicLabelES : topicLabelEN;
-      const topicLabel = labelMap[memory.educationTopic] ?? null;
-      const resumeMsg: QueuedBotMessage = topicLabel
-        ? {
-            text: newLang === 'es'
-              ? `Estábamos hablando de ${topicLabel}. ¿Desea que continúe esa explicación en español o prefiere ver otra opción?`
-              : `We were discussing ${topicLabel}. Would you like me to continue in English, or would you prefer another topic?`,
-            options: [
-              { label: newLang === 'es' ? `Continuar con ${topicLabel}` : `Continue: ${topicLabel}`, value: memory.educationTopic },
-              { label: newLang === 'es' ? 'Ver otros temas' : 'See other topics', value: 'edu_back_to_topics' },
-            ],
-            pace: 'short',
-          }
-        : {
-            text: newLang === 'es'
-              ? '¿Sobre qué tema de Medicare le gustaría aprender?'
-              : 'What Medicare topic would you like to learn about?',
-            options: newLang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0],
-            pace: 'short',
-          };
-      enqueueBot([confirmMsg, resumeMsg]);
-      return;
-    }
-
-    // For all other steps (state selection, topic menu, welcome): just confirm.
-    // The current menu/prompt stays visible above.
-    enqueueBot([confirmMsg]);
-  }
-
-  function handleAdvisorRequestIntent() {
-    const lang = memory.language;
-    cancelBotQueue();
-    // Set mode to advisor_intake so modeRouter correctly routes subsequent input.
-    // Without this, the next user input falls through to guide-mode routing.
-    updateMemory({
-      hasAskedForHuman: true,
-      userIntent: 'advisor_request',
-      mode: 'advisor_intake',
-      confusionCount: 0,
-      previousStep: stepRef.current,
-    });
-    enqueueBot([
-      {
-        text: lang === 'es'
-          ? 'Claro. Un asesor licenciado puede ayudarle con preguntas sobre su cobertura específica. No podemos recomendar planes sin antes revisar su situación completa, pero sí podemos conectarle con alguien que lo hará.'
-          : "Of course. A licensed advisor can help with questions about your specific coverage. An advisor would need to verify your ZIP, doctors, medications, and current coverage before discussing specific options.",
-        pace: 'slow',
-      },
-      {
-        text: lang === 'es'
-          ? '¿Me puede dar su primer nombre para iniciar el proceso?'
-          : 'May I have your first name to get started?',
-        pace: 'short',
-      },
-    ]);
-    if (!stepRef.current.startsWith('lead_')) {
-      setStepSync('lead_name');
-    }
-  }
-
-  // ─── Navigation handlers (enterprise spec) ──────────────────────────────────
-  // Each handler has a single, well-defined behavior. None collapses into another.
-
-  // returnToStateTopicMenu — shared helper used by handleBackIntent + handleMenuIntent.
-  // If selectedState is known: shows topic menu WITHOUT asking state again.
-  // If no state: falls back to state selection.
-  function returnToStateTopicMenu(messageOverride?: string) {
-    const lang = memory.language;
-    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
-    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
-
-    if (stateExists && stateName) {
-      setStepSync('question');
-      updateMemory({ mode: 'guide', activeMenu: 'guide_topics' });
-      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
-      enqueueBot([{
-        text: messageOverride ?? (lang === 'es'
-          ? `Volvemos al menú anterior. Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
-          : `We're back to the previous menu. I'll keep ${stateName} as your state. What would you like to review now?`),
-        options: topicOptions,
-        pace: 'short',
-      }]);
-    } else {
-      // No state known — must ask state
-      setStepSync('state');
-      enqueueBot(MEDICARE_INTRO[lang]);
-    }
-  }
-
-  // showAdvisorReturnChoiceMenu — shown when user presses Volver at the start
-  // of Advisor Review (no valid previous step). Gives 4 explicit choices so the
-  // user is never silently returned to state selection.
-  function showAdvisorReturnChoiceMenu() {
-    const lang = memory.language;
-    const stExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
-    const stName = stExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
-    const stateNote = stName
-      ? (lang === 'es' ? ` Mantengo ${stName} como su estado.` : ` I'll keep ${stName} as your state.`)
-      : '';
-    enqueueBot([{
-      text: lang === 'es'
-        ? `¿Desea continuar con la revisión o volver al menú de temas?${stateNote}`
-        : `Would you like to continue the review or return to the topic menu?${stateNote}`,
-      options: [
-        { label: lang === 'es' ? 'Continuar revisión' : 'Continue review', value: 'advisor_continue', icon: <Calendar className="w-4 h-4" /> },
-        { label: lang === 'es' ? 'Volver al menú de temas' : 'Return to topic menu', value: 'edu_back_to_topics' },
-        { label: lang === 'es' ? 'Cambiar estado' : 'Change state', value: 'change_state_from_advisor' },
-        { label: lang === 'es' ? 'Empezar de nuevo' : 'Start over', value: 'start_over' },
-      ],
-      pace: 'short',
-    }]);
-  }
-
-  // handleBackIntent — context-aware back. NEVER resets selectedState.
-  // Behavior by context:
-  //   advisor_intake or lead_* step → previous lead step (skips lead_state if state known)
-  //   At beginning of advisor form → showAdvisorReturnChoiceMenu (4 options, no state re-ask)
-  //   customer_service → topic menu (preserving state)
-  //   medicare_education → topic menu (preserving state)
-  //   default (guide/welcome/state) → topic menu if state exists, else ask state
-  function handleBackIntent() {
-    cancelBotQueue();
-    const lang = memory.language;
-    const currentMode = memory.mode;
-    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
-    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
-
-    // 1. Advisor form back navigation.
-    // Covers both: mode = 'advisor_intake' (normal) AND step.startsWith('lead_') without mode set.
-    const isInLeadFlow = (currentMode === 'advisor_intake' || stepRef.current.startsWith('lead_'))
-      && stepRef.current.startsWith('lead_');
-
-    if (isInLeadFlow) {
-      let prevStep = getPreviousLeadStep(stepRef.current);
-
-      // Skip lead_state when state was already selected in the guide flow.
-      // The user should never be asked to re-select state they already chose.
-      if (prevStep === 'lead_state' && stateExists) {
-        prevStep = getPreviousLeadStep('lead_state'); // → 'lead_phone'
-      }
-
-      if (prevStep) {
-        // Valid previous step — go there, preserve all collected data and selected state
-        updateMemory({
-          previousStep: stepRef.current,
-          previousMode: currentMode,
-          previousMenu: memory.activeMenu,
-        });
-        setStepSync(prevStep);
-        const backMsg: QueuedBotMessage = {
-          text: lang === 'es' ? 'Volvemos al paso anterior.' : 'Going back to the previous step.',
-          pace: 'short',
-        };
-        enqueueBot([backMsg, ...promptLeadStep(prevStep, lang, memory.firstName)]);
-        return;
-      }
-
-      // At beginning of advisor form — show choice menu. Never ask state again.
-      showAdvisorReturnChoiceMenu();
-      return;
-    }
-
-    // 2. Customer service stub → return to topic menu (preserve state)
-    if (currentMode === 'customer_service') {
-      updateMemory({ mode: 'guide', previousMode: currentMode, previousMenu: memory.activeMenu });
-      const msg = lang === 'es'
-        ? (stateName ? `Volvemos al menú. Mantengo ${stateName} como su estado. ¿Qué desea revisar?` : 'Volvemos al menú. ¿Qué desea revisar?')
-        : (stateName ? `Back to the menu. I'll keep ${stateName} as your state. What would you like to review?` : "Back to the menu. What would you like to review?");
-      returnToStateTopicMenu(msg);
-      return;
-    }
-
-    // 3. Education → return to topic menu (preserve state, track previousTopic)
-    if (stepRef.current === 'medicare_education') {
-      updateMemory({
-        previousTopic: memory.educationTopic,
-        previousMenu: memory.activeMenu,
-      });
-      returnToStateTopicMenu();
-      return;
-    }
-
-    // 4. All other contexts: show topic menu if state exists
-    updateMemory({
-      previousStep: stepRef.current,
-      previousMode: currentMode,
-      previousMenu: memory.activeMenu,
-    });
-    returnToStateTopicMenu();
-  }
-
-  // handleMenuIntent — shows topic menu for current state. Does NOT reset state.
-  // Typing "menu" or "menú" always shows the topic menu without asking state again.
-  function handleMenuIntent() {
-    cancelBotQueue();
-    const lang = memory.language;
-    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
-    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
-
-    updateMemory({
-      mode: 'guide',
-      previousMode: memory.mode,
-      previousStep: stepRef.current,
-      activeMenu: 'guide_topics',
-    });
-
-    if (stateExists && stateName) {
-      setStepSync('question');
-      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
-      enqueueBot([{
-        text: lang === 'es'
-          ? `Claro. Mantengo ${stateName} como su estado. ¿Qué desea revisar?`
-          : `Sure. I'll keep ${stateName} as your state. What would you like to review?`,
-        options: topicOptions,
-        pace: 'short',
-      }]);
-    } else {
-      setStepSync('state');
-      enqueueBot(MEDICARE_INTRO[lang]);
-    }
-  }
-
-  // handleOtherTopicIntent — "otro tema / another topic" → topic menu, preserving state.
-  // If in advisor lead flow: show the advisor choice menu instead of jumping directly to topics.
-  function handleOtherTopicIntent() {
-    cancelBotQueue();
-    const isInLeadFlow =
-      (memory.mode === 'advisor_intake' || stepRef.current.startsWith('lead_')) &&
-      stepRef.current.startsWith('lead_');
-    if (isInLeadFlow) {
-      showAdvisorReturnChoiceMenu();
-      return;
-    }
-    const lang = memory.language;
-    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
-    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
-    updateMemory({
-      mode: 'guide',
-      previousMode: memory.mode,
-      previousStep: stepRef.current,
-      previousTopic: memory.educationTopic,
-      activeMenu: 'guide_topics',
-    });
-    if (stateExists && stateName) {
-      setStepSync('question');
-      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
-      enqueueBot([{
-        text: lang === 'es'
-          ? `Claro. Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
-          : `Sure. I'll keep ${stateName} as your state. What would you like to review now?`,
-        options: topicOptions,
-        pace: 'short',
-      }]);
-    } else {
-      setStepSync('state');
-      enqueueBot(MEDICARE_INTRO[lang]);
-    }
-  }
-
-  // handleChangeStateIntent — asks state only. Does NOT reset other context.
-  // Only fires for explicit "cambiar estado" / "change state" phrases.
-  function handleChangeStateIntent() {
-    cancelBotQueue();
-    const lang = memory.language;
-    // Clear only state-dependent fields; preserve language, advisor flow, confusion count, etc.
-    updateMemory({
-      state: '',
-      city: '',
-      county: '',
-      derivedState: '',
-      previousStep: stepRef.current,
-      previousMode: memory.mode,
-    });
-    setStepSync('state');
-    enqueueBot([{
-      text: lang === 'es' ? 'Claro. ¿En qué estado vive?' : 'Of course. What state do you live in?',
-      options: [
-        { label: 'New York', value: 'state_NY' },
-        { label: 'New Jersey', value: 'state_NJ' },
-        { label: 'Connecticut', value: 'state_CT' },
-        { label: 'Florida', value: 'state_FL' },
-      ],
-      pace: 'short',
-    }]);
-  }
-
-  // handleRestartIntent — full memory reset. Only fires for explicit reset phrases.
-  // Clears ALL session context. This is the only place resetChat() is called from handleText.
-  function handleRestartIntent() {
-    cancelBotQueue();
-    resetChat();
-  }
-
-  function handleCSIntentAction() {
-    const lang = memory.language;
-    cancelBotQueue();
-    // Mark CS intent and set mode to advisor_intake so subsequent input routes correctly.
-    // Full CS mode is a stub — routes to advisor as the safe action.
-    updateMemory({
-      isCustomerServiceIntent: true,
-      userIntent: 'cs_intent',
-      mode: 'advisor_intake',
-      confusionCount: 0,
-      previousStep: stepRef.current,
-    });
-    enqueueBot([
-      {
-        text: lang === 'es'
-          ? 'Entiendo. Puedo ayudarle a organizar eso. Por favor no escriba su número de Medicare ID ni Seguro Social aquí. Para orientarle mejor, ¿puede decirme el nombre de su plan o compañía de seguros si lo tiene?'
-          : 'I understand. I can help organize that. Please do not enter your Medicare ID or Social Security number here. To guide you better, could you tell me the name of your plan or insurance company if you have it?',
-        pace: 'slow',
-      },
-      {
-        text: lang === 'es'
-          ? 'Un asesor licenciado o el servicio al cliente de su plan tendría que verificar los detalles. ¿Desea que un asesor le contacte?'
-          : 'A licensed advisor or your plan member services would need to verify the details. Would you like an advisor to contact you?',
-        options: [
-          {
-            label: lang === 'es' ? 'Sí, que me contacten' : 'Yes, contact me',
-            value: 'request_review',
-            icon: <Calendar className="w-4 h-4" />,
-          },
-          {
-            label: lang === 'es' ? 'Tengo una pregunta general' : 'I have a general question',
-            value: 'ask_question',
-          },
-        ],
-        pace: 'short',
-      },
-    ]);
-    // Do NOT auto-advance to lead_name — let user choose via the options above.
-    // If they choose 'request_review', startPlanReview() handles the form flow.
-  }
-
-  /* ---------- Zara Core Engine: inner helpers ---------- */
-
-  // rejectLeadStep — unified rejection helper for all lead step validators.
-  // Tracks confusion count per field attempt and escalates at >= 3 failures.
-  // Usage: return rejectLeadStep(errorText) instead of bare enqueueBot+return.
-  function rejectLeadStep(errorText: string): true {
-    // Look up field metadata for the current step (used for future enhanced errors)
-    const _fieldMeta = STEP_VALIDATOR_META[stepRef.current as string];
-    void _fieldMeta; // architecture reference
-    const newCount = (memory.confusionCount ?? 0) + 1;
-    updateMemory({ confusionCount: newCount, userIntent: 'clarification' });
-    if (newCount >= 3) {
-      const lang = memory.language;
-      enqueueBot([
-        {
-          text: lang === 'es'
-            ? `Parece que estamos teniendo dificultad. Si prefiere, puede llamarnos al ${CHATBOT_CONTEXT.phone} para hablar con un asesor directamente, o podemos intentarlo de otra manera.`
-            : `It seems we're having some difficulty. You're welcome to call us at ${CHATBOT_CONTEXT.phone} to speak with an advisor directly, or we can try another way.`,
-          options: [
-            { label: lang === 'es' ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review' },
-          ],
-          pace: 'slow',
-        },
-      ]);
-      return true;
-    }
-    enqueueBot([{ text: errorText, pace: 'short' }]);
-    return true;
-  }
-
-  // handleCSModeStub — Customer Service Mode architecture stub.
-  // Full CS mode is not yet built. This maintains the interface contract so
-  // CS mode can be added (with classifyCSIntent + per-intent handlers)
-  // without restructuring the engine. Current behavior: route to advisor.
-  //
-  // To implement CS mode:
-  //   1. Add CS-specific step types to ChatStep (e.g. 'cs_card', 'cs_otc')
-  //   2. Add handlers per CSIntent using classifyCSIntent(norm)
-  //   3. Replace handleCSIntentAction() call below with intent router
-  //   4. Set memory.mode = 'customer_service' on CS intent detection
-  function handleCSModeStub(norm: string): void {
-    // TODO: Implement full Customer Service Mode
-    // Classify intent now so future handlers can switch on it.
-    const _intent = classifyCSIntent(norm);
-    // switch (_intent) { case 'card_replacement': handleCSCard(); break; ... }
-    void _intent; // architecture reference — remove when full CS mode is built
-    handleCSIntentAction();
-  }
-
-  // modeRouter — routes typed input to the correct handler based on
-  // current conversation mode. Called from handleText after the Human
-  // Intent Router has run. Returns true if the input was handled, false
-  // to allow handleText to continue with normal guide-mode routing.
-  function modeRouter(mode: ZaraMode, text: string, norm: string): boolean {
-    switch (mode) {
-      case 'advisor_intake':
-        // Clarification check first — before validation
-        if (isClarification(text, memory.language)) {
-          const newCount = (memory.confusionCount ?? 0) + 1;
-          updateMemory({ confusionCount: newCount, userIntent: 'clarification' });
-          if (newCount >= 3) {
-            const lang = memory.language;
-            enqueueBot([{
-              text: lang === 'es'
-                ? `Estoy teniendo dificultad entendiéndole. Si prefiere, puede llamarnos al ${CHATBOT_CONTEXT.phone}.`
-                : `I'm having difficulty understanding. You're welcome to call us at ${CHATBOT_CONTEXT.phone}.`,
-              options: [
-                { label: lang === 'es' ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review' },
-              ],
-              pace: 'slow',
-            }]);
-            return true;
-          }
-          enqueueBot(getStepClarificationMessages(stepRef.current, memory));
-          return true;
-        }
-        return handleLeadText(text);
-
-      case 'customer_service':
-        // CS mode stub — routes to advisor for now
-        handleCSModeStub(norm);
-        return true;
-
-      case 'guide':
-      case 'followup':
-      default:
-        return false; // allow guide-mode routing in handleText to continue
-    }
-  }
-
   /* ---------- Option handler ---------- */
 
   function handleOption(value: string) {
     const selected = messages[messages.length - 1]?.options?.find((option) => option.value === value);
     if (selected) addUserMessage(selected.label);
-    // Cancel any pending bot queue so new step messages arrive cleanly
-    // and no stale queued prompt can appear after step has changed.
-    cancelBotQueue();
 
     /* Language */
     if (value === 'lang_en' || value === 'lang_es') {
@@ -3721,7 +2703,7 @@ export function ChatBot() {
 
     /* Quick topic options */
     if (value.startsWith('quick_')) {
-      setStepSync('medicare_education');
+      setStep('medicare_education');
       if (value === 'quick_basics') {
         updateMemory({ educationTopic: 'edu_parts_ab' });
         enqueueBot(getMedicareEducation('edu_parts_ab', memory.language, memory.state));
@@ -3753,29 +2735,9 @@ export function ChatBot() {
       return;
     }
 
-    /* Topic page navigation */
-    if (value === 'topic_page_2') {
-      setTopicPage(1);
-      const opts = memory.language === 'es' ? TOPIC_GROUPS_ES[1] : TOPIC_GROUPS_EN[1];
-      enqueueBot([{ text: memory.language === 'es' ? 'Aquí hay más temas:' : 'Here are more topics:', options: opts, pace: 'short' }], true);
-      return;
-    }
-    if (value === 'topic_page_3') {
-      setTopicPage(2);
-      const opts = memory.language === 'es' ? TOPIC_GROUPS_ES[2] : TOPIC_GROUPS_EN[2];
-      enqueueBot([{ text: memory.language === 'es' ? 'Y algunos temas adicionales:' : 'And a few more topics:', options: opts, pace: 'short' }], true);
-      return;
-    }
-
     /* State selection */
     if (value.startsWith('state_')) {
       const state = value.replace('state_', '');
-      if (step === 'lead_state') {
-        // Mid-lead-flow state selection: set state and continue lead intake
-        updateMemory({ state });
-        askNextQuestion({ ...memory, state });
-        return;
-      }
       if (state === 'other') {
         handleStateSelection('other');
       } else {
@@ -3786,7 +2748,7 @@ export function ChatBot() {
 
     /* Medicare education topics */
     if (value.startsWith('edu_')) {
-      setStepSync('medicare_education');
+      setStep('medicare_education');
       updateMemory({ educationTopic: value, educationStep: 1 });
 
       // Track discussed topic
@@ -3827,21 +2789,19 @@ export function ChatBot() {
 
       if (value === 'edu_state_programs') {
         const programs = getStatePrograms(memory.state, memory.language);
-        hasScrolledForCurrentEducationRef.current = false;
         enqueueBot(programs);
         return;
       }
 
       if (value === 'edu_back_to_topics') {
         // Go back to topic menu
-        setStepSync('question');
-        const topicOptions = memory.language === 'es' ? TOPIC_GROUPS_ES[topicPage] : TOPIC_GROUPS_EN[topicPage];
+        setStep('question');
+        const topicOptions = memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN;
         enqueueBot([{ text: memory.language === 'es' ? '¿Qué tema le gustaría aprender hoy?' : 'What would you like to learn about today?', options: topicOptions, pace: 'short' }]);
         return;
       }
 
       const education = getMedicareEducation(value, memory.language, memory.state);
-      hasScrolledForCurrentEducationRef.current = false;
       enqueueBot(education);
       return;
     }
@@ -3871,7 +2831,7 @@ export function ChatBot() {
           pace: 'short',
         },
       ]);
-      setStepSync('question');
+      setStep('question');
       return;
     }
 
@@ -3895,7 +2855,7 @@ export function ChatBot() {
 
     if (value === 'consent_no') {
       updateMemory({ consentGiven: false });
-      setStepSync('choice');
+      setStep('choice');
       enqueueBot([
         { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
         { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: memory.language === 'es' ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: memory.language === 'es' ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
@@ -3937,30 +2897,31 @@ export function ChatBot() {
       return;
     }
 
-    if (value === 'start_over') {
-      resetChat();
-      return;
-    }
-
-    // Advisor return choice menu actions (shown when user presses Volver at form start)
-    if (value === 'advisor_continue') {
-      // User chose "Continue review" — re-prompt the current lead step
-      const currentLeadStep = stepRef.current;
-      if (currentLeadStep.startsWith('lead_')) {
+    /* Resume lead capture after a pause (MEDICARE_QUESTION or IDENTITY_QUESTION mid-flow) */
+    if (value === 'resume_lead') {
+      const pausedStep = memory.pausedStep;
+      updateMemory({ pausedStep: null, pausedContext: '' });
+      if (pausedStep) {
+        setStep(pausedStep);
+        const fn = memory.firstName;
         enqueueBot([
-          { text: memory.language === 'es' ? 'Continuamos con la revisión.' : 'Continuing with the review.', pace: 'short' },
-          ...promptLeadStep(currentLeadStep, memory.language, memory.firstName),
+          {
+            text:
+              memory.language === 'es'
+                ? `${fn ? `Claro, ${fn}. ` : ''}Continuemos donde nos quedamos.`
+                : `${fn ? `Of course, ${fn}. ` : ''}Let's continue where we left off.`,
+            pace: 'short',
+          },
         ]);
+        askNextQuestion(memory);
       } else {
-        // Fallback: restart advisor flow from name step
         startPlanReview(memory.interestType || 'Plan review');
       }
       return;
     }
 
-    if (value === 'change_state_from_advisor') {
-      handleChangeStateIntent();
-      return;
+    if (value === 'start_over') {
+      resetChat();
     }
   }
 
@@ -3969,11 +2930,10 @@ export function ChatBot() {
   function getNextMissingStep(mem: ChatMemory): string {
     if (!mem.firstName) return 'firstName';
     if (!mem.lastName) return 'lastName';
-    if (!mem.phone) return 'phone';
-    if (!mem.state || mem.state === 'other') return 'leadState';
     if (!mem.zip) return 'zipCode';
     if (!mem.dob) return 'dob';
     if (!mem.currentCoverage) return 'currentCoverage';
+    if (!mem.phone) return 'phone';
     if (!mem.preferredLanguage) return 'preferredLanguage';
     if (!mem.preferredContactTime) return 'bestTime';
     if (!mem.email && !mem.skippedEmail) return 'emailOptional';
@@ -3988,76 +2948,46 @@ export function ChatBot() {
 
 
   function askNextQuestion(mem: ChatMemory) {
-    // Reset confusion counter on every successful step advance.
-    // A valid input was accepted — start fresh for the next field.
-    if ((memory.confusionCount ?? 0) > 0) {
-      updateMemory({ confusionCount: 0, userIntent: 'form_input' });
-    }
     const next = getNextMissingStep(mem);
     switch (next) {
       case 'firstName':
-        setStepSync('lead_name');
-        enqueueBot([{ text: mem.language === 'es'
-          ? '¿Cuál es su primer nombre?'
-          : 'What is your first name?', pace: 'short' }]);
+        setStep('lead_name');
+        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es tu primer nombre?' : 'What is your first name?', pace: 'short' }]);
         break;
       case 'lastName':
-        setStepSync('lead_last_name');
-        enqueueBot([{ text: mem.language === 'es'
-          ? '¿Cuál es su apellido?'
-          : 'What is your last name?', pace: 'short' }]);
+        setStep('lead_last_name');
+        enqueueBot([{ text: mem.language === 'es' ? `Gracias, ${mem.firstName}. ¿Cuál es tu apellido?` : `Thank you, ${mem.firstName}. What is your last name?`, pace: 'short' }]);
         break;
-      case 'phone':
-        setStepSync('lead_phone');
-        enqueueBot([{ text: mem.language === 'es'
-          ? `Gracias, ${mem.firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`
-          : `Thank you, ${mem.firstName}. What is the best phone number to reach you?`, pace: 'short' }]);
+      case 'zipCode':
+        setStep('lead_zip');
+        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es tu código postal?' : 'What is your ZIP code?', pace: 'short' }]);
         break;
-      case 'leadState':
-        setStepSync('lead_state');
-        enqueueBot([{ text: mem.language === 'es'
-          ? '¿En qué estado vive usted?'
-          : 'Which state do you live in?',
-          options: [
-            { label: 'New York', value: 'state_NY' },
-            { label: 'New Jersey', value: 'state_NJ' },
-            { label: 'Connecticut', value: 'state_CT' },
-            { label: 'Florida', value: 'state_FL' },
-          ], pace: 'short' }]);
-        break;
-      case 'zipCode': {
-        setStepSync('lead_zip');
-        const stateNames: Record<string,string> = { NY:'New York', NJ:'New Jersey', CT:'Connecticut', FL:'Florida' };
-        const stateNameLabel = mem.state && stateNames[mem.state] ? stateNames[mem.state] : null;
-        enqueueBot([{ text: mem.language === 'es'
-          ? (stateNameLabel ? `¿Cuál es su código postal de ${stateNameLabel}?` : '¿Cuál es su código postal?')
-          : (stateNameLabel ? `What is your ${stateNameLabel} ZIP code?` : 'What is your ZIP code?'), pace: 'short' }]);
-        break;
-      }
       case 'dob':
-        setStepSync('lead_dob');
-        enqueueBot([{ text: mem.language === 'es'
-          ? '¿Cuál es su fecha de nacimiento? Escríbala como MM/DD/YYYY. Ejemplo: 06/09/1983.'
-          : 'What is your date of birth? Please enter it as MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }]);
+        setStep('lead_dob');
+        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es su fecha de nacimiento?' : 'What is your date of birth?', pace: 'short' }]);
         break;
       case 'currentCoverage':
-        setStepSync('lead_coverage');
+        setStep('lead_coverage');
         enqueueBot([{ text: mem.language === 'es' ? 'Ahora dime, ¿tienes Medicare Original, Medicare Advantage o no estás seguro?' : 'Now, do you currently have Original Medicare, Medicare Advantage, or are you not sure?', options: [{ label: 'Original Medicare', value: 'coverage_original' }, { label: 'Medicare Advantage', value: 'coverage_advantage' }, { label: mem.language === 'es' ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' }], pace: 'short' }]);
         break;
+      case 'phone':
+        setStep('lead_phone');
+        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor número de teléfono para contactarte?' : 'What is the best phone number to reach you?', pace: 'short' }]);
+        break;
       case 'preferredLanguage':
-        setStepSync('lead_preferred_language');
+        setStep('lead_preferred_language');
         enqueueBot([{ text: mem.language === 'es' ? '¿Prefieres que te contacten en inglés o español?' : 'Do you prefer to be contacted in English or Spanish?', options: [{ label: 'English', value: 'preferred_en' }, { label: 'Español', value: 'preferred_es' }, { label: mem.language === 'es' ? 'Cualquiera' : 'Either', value: 'preferred_either' }], pace: 'short' }]);
         break;
       case 'bestTime':
-        setStepSync('lead_time');
+        setStep('lead_time');
         enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor horario para contactarte?' : 'What is the best time to contact you?', options: [{ label: mem.language === 'es' ? 'Mañana' : 'Morning', value: 'time_morning' }, { label: mem.language === 'es' ? 'Tarde' : 'Afternoon', value: 'time_afternoon' }, { label: mem.language === 'es' ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' }, { label: mem.language === 'es' ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' }], pace: 'short' }]);
         break;
       case 'emailOptional':
-        setStepSync('lead_email');
+        setStep('lead_email');
         enqueueBot([{ text: mem.language === 'es' ? 'Si quieres, puedes compartir un correo electrónico. También puedes escribir "saltar".' : 'If you would like, you can share an email address. You can also type "skip".', options: [{ label: mem.language === 'es' ? 'Saltar' : 'Skip', value: 'skip_email' }], pace: 'short' }]);
         break;
       case 'consent':
-        setStepSync('lead_consent');
+        setStep('lead_consent');
         enqueueBot([{ text: mem.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent, options: [{ label: mem.language === 'es' ? 'Sí, acepto' : 'Yes, I agree', value: 'consent_yes' }, { label: mem.language === 'es' ? 'Ahora no' : 'Not now', value: 'consent_no' }], pace: 'long' }]);
         break;
       case 'readyToSubmit':
@@ -4067,285 +2997,203 @@ export function ChatBot() {
     }
   }
 
-  // Returns step-specific clarification + reprompt messages.
-  // Called when user types a clarification phrase during advisor intake.
-  // Always returns 2 messages: explanation + reprompt. Never advances step.
-  function getStepClarificationMessages(currentStep: ChatStep, mem: ChatMemory): QueuedBotMessage[] {
-    // CLARIFICATION_RESPONSE_MAP_META defines the contract for each step.
-    // The switch below implements it. Future: data-driven rendering from this map.
-    const _stepMeta = CLARIFICATION_RESPONSE_MAP_META[currentStep as string];
-    void _stepMeta; // architecture reference
-    const es = mem.language === 'es';
-    const stateNames: Record<string, string> = {
-      NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida',
-    };
-    const stateName = mem.state ? (stateNames[mem.state] || mem.state) : null;
-    const firstName = mem.firstName || (es ? 'usted' : 'you');
-
-    switch (currentStep) {
-      case 'lead_name':
-        return [
-          { text: es
-            ? 'Claro. Estoy pidiendo su primer nombre para identificar su solicitud de revisión. Por favor escriba solo su primer nombre, por ejemplo: María.'
-            : "Of course. I'm asking for your first name so an advisor can identify your review request. Please enter only your first name, for example: Maria.",
-            pace: 'short' },
-          { text: es ? '¿Cuál es su primer nombre?' : 'What is your first name?', pace: 'short' },
-        ];
-      case 'lead_last_name':
-        return [
-          { text: es
-            ? 'Claro. Estoy pidiendo su apellido para completar su solicitud. Por favor escriba solo su apellido.'
-            : "Of course. I need your last name to complete your review request. Please enter only your last name.",
-            pace: 'short' },
-          { text: es ? '¿Cuál es su apellido?' : 'What is your last name?', pace: 'short' },
-        ];
-      case 'lead_phone':
-        return [
-          { text: es
-            ? 'Estoy pidiendo su número de teléfono para que un asesor licenciado pueda contactarle sobre su revisión. Por favor escriba un número válido de 10 dígitos, como 2125551234.'
-            : "I'm asking for your phone number so a licensed advisor can contact you about your review. Please enter a valid 10-digit number, like 2125551234.",
-            pace: 'short' },
-          { text: es
-            ? `Gracias, ${firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`
-            : `Thank you, ${firstName}. What is the best phone number to reach you?`,
-            pace: 'short' },
-        ];
-      case 'lead_zip':
-        return [
-          { text: es
-            ? `Claro. Estoy pidiendo su código postal porque los planes y beneficios de Medicare varían por condado y área de servicio.${stateName ? ` Por favor escriba un código postal válido de 5 dígitos de ${stateName}.` : ' Por favor escriba un código postal válido de 5 dígitos.'}`
-            : `Of course. I'm asking for your ZIP code because Medicare plan availability and benefits vary by county and service area.${stateName ? ` Please enter a valid 5-digit ZIP code from ${stateName}.` : ' Please enter a valid 5-digit ZIP code.'}`,
-            pace: 'short' },
-        ];
-      case 'lead_dob':
-        return [
-          { text: es
-            ? 'Estoy pidiendo su fecha de nacimiento porque algunas reglas de Medicare dependen de la edad o elegibilidad. Use el formato MM/DD/YYYY, por ejemplo: 06/09/1983.'
-            : "I'm asking for your date of birth because some Medicare rules depend on age or eligibility. Please use MM/DD/YYYY, for example: 06/09/1983.",
-            pace: 'short' },
-          { text: es
-            ? '¿Cuál es su fecha de nacimiento? Escríbala como MM/DD/YYYY. Ejemplo: 06/09/1983.'
-            : 'What is your date of birth? Please enter it as MM/DD/YYYY. Example: 06/09/1983.',
-            pace: 'short' },
-        ];
-      case 'lead_coverage':
-        return [
-          { text: es
-            ? 'Estoy preguntando sobre su cobertura actual para que el asesor entienda mejor su situación de Medicare. Puede elegir una de las opciones.'
-            : "I'm asking about your current coverage so the advisor can better understand your Medicare situation. Please choose one of the options.",
-            pace: 'short' },
-        ];
-      case 'lead_email':
-        return [
-          { text: es
-            ? 'El correo electrónico es opcional. Si prefiere no darlo, escriba "saltar" para continuar.'
-            : 'Email is optional. If you prefer not to provide it, type "skip" to continue.',
-            pace: 'short' },
-        ];
-      case 'lead_consent':
-        return [
-          { text: es
-            ? 'Necesito su autorización para que un asesor licenciado pueda contactarle. Puede responder "Sí, acepto" o "Ahora no".'
-            : 'I need your authorization so a licensed advisor can contact you. You can respond "Yes, I agree" or "Not now".',
-            pace: 'short' },
-        ];
-      default:
-        return [
-          { text: es
-            ? '¿Tiene alguna pregunta? Estoy aquí para ayudar.'
-            : 'Do you have a question? I am here to help.',
-            pace: 'short' },
-        ];
-    }
-  }
-
   function handleLeadText(text: string) {
-    // Use stepRef.current — always the current step without stale-closure risk.
-    // stepRef is updated synchronously in setStepSync before any React re-render.
-    const currentStep = stepRef.current;
+    const intent = classifyIntent(text, memory.language, step);
+    const firstName = memory.firstName;
+    const greet = firstName ? (memory.language === 'es' ? `${firstName}, ` : `${firstName}, `) : '';
 
-    // Email pre-capture: if user provides email out of order, save it but
-    // do NOT advance the flow — just acknowledge and repeat the current prompt.
-    if (isEmail(text) && currentStep !== 'lead_email') {
-      updateMemory({ email: text.trim(), skippedEmail: false });
-      const repromptMsgs = getStepClarificationMessages(currentStep, memory);
-      const ack: QueuedBotMessage = { text: memory.language === 'es'
-        ? 'Guardé su correo electrónico.'
-        : 'Got your email address.', pace: 'short' };
-      enqueueBot([ack, ...repromptMsgs]);
+    /* --- EXIT lead capture --- */
+    if (intent === 'EXIT_LEAD_CAPTURE') {
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? `${greet}claro. ¿Qué prefiere hacer?`
+          : `${greet}of course. What would you prefer to do?`,
+        options: [
+          { label: memory.language === 'es' ? 'Continuar la solicitud' : 'Continue my request', value: 'resume_lead' },
+          { label: memory.language === 'es' ? 'Hacer una pregunta' : 'Ask a question', value: 'ask_question' },
+          { label: memory.language === 'es' ? 'Empezar de nuevo' : 'Start over', value: 'start_over' },
+        ],
+        pace: 'short',
+      }]);
       return true;
     }
 
-    // Process by current step — use currentStep (from stepRef) not closure `step`
-    if (currentStep === 'lead_name') {
-      const firstName = text.trim();
-      const nameCheck = validatePersonName(firstName);
-      if (!nameCheck.valid) {
-        return rejectLeadStep(memory.language === 'es'
-          ? 'Por favor ingrese un primer nombre válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid first name without numbers, symbols, or inappropriate words.');
-      }
-      updateMemory({ firstName, lastValidUserInput: firstName });
-      askNextQuestion({ ...memory, firstName });
-      return true;
-    }
-    if (currentStep === 'lead_last_name') {
-      const lastName = text.trim();
-      const lastNameCheck = validatePersonName(lastName);
-      if (!lastNameCheck.valid) {
-        return rejectLeadStep(memory.language === 'es'
-          ? 'Por favor ingrese un apellido válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid last name without numbers, symbols, or inappropriate words.');
-      }
-      updateMemory({ lastName, lastValidUserInput: text.trim() });
-      askNextQuestion({ ...memory, lastName });
-      return true;
-    }
-    if (currentStep === 'lead_state') {
-      const detectedState = detectState(text);
-      if (detectedState && ['NY','NJ','CT','FL'].includes(detectedState)) {
-        updateMemory({ state: detectedState });
-        askNextQuestion({ ...memory, state: detectedState });
-      } else {
-        enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor seleccione New York, New Jersey, Connecticut o Florida.'
-          : 'Please select New York, New Jersey, Connecticut, or Florida.', pace: 'short' }]);
-      }
-      return true;
-    }
-    if (currentStep === 'lead_zip') {
-      // ── State-locked ZIP validation ──────────────────────────────────────────
-      // State is determined by the user's earlier selection — never inferred from ZIP.
-      const stateNames: Record<string,string> = { NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida' };
-      const expectedState = memory.state && stateNames[memory.state] ? memory.state : null;
-      const expectedStateName = expectedState ? stateNames[expectedState] : null;
-
-      // Unified reject helper — uses rejectLeadStep() for confusion tracking.
-      // State-specific message when state context is known.
-      const rejectZip = (): true => {
-        const msgEn = expectedStateName
-          ? `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`
-          : 'Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.';
-        const msgEs = expectedStateName
-          ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
-          : 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.';
-        return rejectLeadStep(memory.language === 'es' ? msgEs : msgEn);
+    /* --- Medicare question mid-form --- */
+    if (intent === 'MEDICARE_QUESTION') {
+      updateMemory({ pausedStep: step, pausedContext: 'lead_capture' });
+      const medicareTopic = detectMedicareTopic(text, memory.language);
+      const topicKeyMap: Record<string, string> = {
+        'Medicare Parts A & B': 'edu_parts_ab',
+        'Medicare Advantage': 'edu_part_c',
+        'Medicare Supplement': 'edu_supplement',
+        'Part D': 'edu_part_d',
+        'Extra Help / LIS': 'edu_extra_help',
+        'Medicaid': 'edu_medicaid',
+        'Medicare Savings Programs': 'edu_msp',
+        'MSP': 'edu_msp',
+        'Penalties': 'edu_penalties',
+        'Plan Loss': 'edu_plan_loss',
+        'State Programs': 'edu_spap',
+        'Employer Coverage': 'edu_employer',
+        'LI NET': 'edu_linet',
+        'Medication': 'edu_medication',
+        'Extra Benefits': 'edu_part_c',
+        'Prequalify': 'edu_prequalify',
+        'Advantage Types': 'edu_advantage_types',
+        'Comparison': 'edu_comparison',
+        'Enrollment': 'edu_enrollment',
       };
+      const eduKey = topicKeyMap[medicareTopic] || 'edu_parts_ab';
+      const eduMessages = getMedicareEducation(eduKey, memory.language, memory.state);
+      enqueueBot([
+        {
+          text: memory.language === 'es'
+            ? `${greet}entiendo. Te explico sobre ese tema. Cuando termines, podemos continuar con tu solicitud.`
+            : `${greet}I understand. Let me explain that for you. When you're ready, we can continue with your request.`,
+          pace: 'short',
+        },
+        ...eduMessages,
+        {
+          text: memory.language === 'es'
+            ? '¿Quieres continuar con la solicitud de revisión?'
+            : 'Would you like to continue with your review request?',
+          options: [
+            { label: memory.language === 'es' ? 'Sí, continuar' : 'Yes, continue', value: 'resume_lead' },
+            { label: memory.language === 'es' ? 'Tengo otra pregunta' : 'I have another question', value: 'ask_question' },
+          ],
+          pace: 'short',
+        },
+      ]);
+      return true;
+    }
 
-      // Strip non-digits. Check EXACT length — never truncate.
-      const rawDigits = text.replace(/\D/g, '');
-      if (rawDigits.length !== 5 || !/^\d{5}$/.test(rawDigits)) {
-        return rejectZip();
+    /* --- Advisor request mid-form: keep going, they already started --- */
+    if (intent === 'ADVISOR_REQUEST') {
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? `${greet}ya estás en el proceso de solicitar una revisión. Continuemos.`
+          : `${greet}you're already in the process of requesting a review. Let's continue.`,
+        pace: 'short',
+      }]);
+      askNextQuestion(memory);
+      return true;
+    }
+
+    /* --- Identity question mid-form --- */
+    if (intent === 'IDENTITY_QUESTION') {
+      updateMemory({ pausedStep: step, pausedContext: 'lead_capture' });
+      enqueueBot([
+        {
+          text: memory.language === 'es'
+            ? 'Soy Zara, la asistente virtual de Clear Point Senior Advisors. Soy una inteligencia artificial — no soy humana — pero estoy aquí para orientarle y conectarle con un asesor licenciado cuando lo necesite.'
+            : "I'm Zara, the virtual assistant for Clear Point Senior Advisors. I'm an AI — not human — but I'm here to guide you and connect you with a licensed advisor when needed.",
+          pace: 'slow',
+        },
+        {
+          text: memory.language === 'es'
+            ? '¿Quieres continuar con la solicitud?'
+            : 'Would you like to continue with your request?',
+          options: [
+            { label: memory.language === 'es' ? 'Sí, continuar' : 'Yes, continue', value: 'resume_lead' },
+            { label: memory.language === 'es' ? 'Hacer una pregunta' : 'Ask a question', value: 'ask_question' },
+          ],
+          pace: 'short',
+        },
+      ]);
+      return true;
+    }
+
+    // Detect and save out-of-order fields (doesn't matter which step we're on)
+    if (isEmail(text)) {
+      updateMemory({ email: text, skippedEmail: false });
+      askNextQuestion({ ...memory, email: text, skippedEmail: false });
+      return true;
+    }
+
+    // Process by current step
+    if (step === 'lead_name') {
+      updateMemory({ firstName: text });
+      askNextQuestion({ ...memory, firstName: text });
+      return true;
+    }
+    if (step === 'lead_last_name') {
+      updateMemory({ lastName: text });
+      askNextQuestion({ ...memory, lastName: text });
+      return true;
+    }
+    if (step === 'lead_zip') {
+      const cleanZip = text.replace(/\D/g, '').slice(0, 5);
+      if (cleanZip.length !== 5 || !/^\d{5}$/.test(cleanZip)) {
+        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese un código postal válido de 5 dígitos.' : 'Please enter a valid 5-digit ZIP code.', pace: 'short' }]);
+        return true;
       }
-
-      // Block obviously fake ZIP patterns
-      const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
-        '66666','77777','88888','99999','12345','54321','11223','00001']);
-      if (FAKE_ZIPS.has(rawDigits) || /^(\d)\1{4}$/.test(rawDigits)) {
-        return rejectZip();
-      }
-
-      const cleanZip = rawDigits;
       const zipInfo = getZipInfo(cleanZip);
       if (zipInfo) {
-        // ZIP found in database — enforce state lock: reject any ZIP not in selected state
-        if (expectedState && zipInfo.stateCode !== expectedState) {
-          return rejectZip();
+        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
+        if (!zipInfo.supported) {
+          enqueueBot([{ text: memory.language === 'es' ? `Gracias. Detecté ${zipInfo.city}, ${zipInfo.state}. Clear Point Senior Advisors actualmente se enfoca en NY, NJ, CT y FL. Aún puedo darle información educativa general.` : `Thank you. I detected ${zipInfo.city}, ${zipInfo.state}. Clear Point Senior Advisors currently focuses on NY, NJ, CT, and FL. I can still provide general educational information.`, pace: 'slow' }]);
         }
-        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode, lastValidUserInput: cleanZip });
         askNextQuestion({ ...memory, zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
       } else {
-        // ZIP not in database — always reject
-        return rejectZip();
+        enqueueBot([{ text: memory.language === 'es' ? 'No pude identificar esa área. Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.' : "I couldn't identify that area. Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.", pace: 'short' }]);
       }
       return true;
     }
-    if (currentStep === 'lead_dob') {
-      // Parse flexible DOB: YYYY-MM-DD checked first (prevents 8-digit collision), then MM/DD/YYYY, then MMDDYYYY
-      const rawDob = text.trim();
-      let isoDate: string | null = null;
-      const ymdFallback = rawDob.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-      if (ymdFallback) {
-        // YYYY-MM-DD — accepted as fallback, not prompted
-        isoDate = rawDob;
-      } else {
-        // MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY
-        const mdy = rawDob.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-        if (mdy) {
-          isoDate = `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
-        } else {
-          // 8-digit MMDDYYYY (e.g. 06091983)
-          const digits = rawDob.replace(/\D/g, '');
-          if (digits.length === 8) {
-            isoDate = `${digits.slice(4,8)}-${digits.slice(0,2)}-${digits.slice(2,4)}`;
-          }
-        }
-      }
-      const dobValidation = isoDate ? validateDOB(isoDate) : { valid: false, age: null, flags: [] };
+    if (step === 'lead_dob') {
+      const dobValidation = validateDOB(text.trim());
       if (!dobValidation.valid) {
-        return rejectLeadStep(memory.language === 'es'
-          ? 'Por favor ingrese una fecha de nacimiento válida como MM/DD/YYYY. Ejemplo: 06/09/1983.'
-          : 'Please enter a valid date of birth as MM/DD/YYYY. Example: 06/09/1983.');
+        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese una fecha de nacimiento válida (YYYY-MM-DD).' : 'Please enter a valid date of birth (YYYY-MM-DD).', pace: 'short' }]);
+        return true;
       }
-      updateMemory({ dob: isoDate!, calculatedAge: dobValidation.age ?? 0, lastValidUserInput: rawDob });
-      askNextQuestion({ ...memory, dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
+      updateMemory({ dob: text.trim(), calculatedAge: dobValidation.age ?? 0 });
+      askNextQuestion({ ...memory, dob: text.trim(), calculatedAge: dobValidation.age ?? 0 });
       return true;
     }
-    if (currentStep === 'lead_coverage') {
+    if (step === 'lead_coverage') {
       updateMemory({ currentCoverage: text });
       askNextQuestion({ ...memory, currentCoverage: text });
       return true;
     }
-    if (currentStep === 'lead_phone') {
-      // Use shared validatePhone() from src/lib/validation.ts (US area code allowlist)
-      const phoneResult = validatePhone(text);
-      if (!phoneResult.valid) {
-        return rejectLeadStep(memory.language === 'es'
-          ? 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.'
-          : 'Please enter a valid 10-digit U.S. phone number.');
+    if (step === 'lead_phone') {
+      const cleaned = text.replace(/\D/g, '').slice(0, 10);
+      const validation = validatePhone(cleaned);
+      if (!validation.valid) {
+        enqueueBot([{ text: memory.language === 'es' ? 'Por favor ingrese un número de teléfono válido de 10 dígitos para que un agente licenciado pueda contactarle.' : 'Please enter a valid 10-digit phone number so a licensed agent can contact you.', pace: 'short' }]);
+        return true;
       }
-      // Store cleaned 10-digit form; E.164 (+1XXXXXXXXXX) sent to GHL at submission
-      updateMemory({ phone: phoneResult.cleaned, lastValidUserInput: phoneResult.cleaned });
-      askNextQuestion({ ...memory, phone: phoneResult.cleaned });
+      updateMemory({ phone: validation.cleaned });
+      askNextQuestion({ ...memory, phone: validation.cleaned });
       return true;
     }
-    if (currentStep === 'lead_preferred_language') {
+    if (step === 'lead_preferred_language') {
       updateMemory({ preferredLanguage: text });
       askNextQuestion({ ...memory, preferredLanguage: text });
       return true;
     }
-    if (currentStep === 'lead_time') {
+    if (step === 'lead_time') {
       updateMemory({ preferredContactTime: text });
       askNextQuestion({ ...memory, preferredContactTime: text });
       return true;
     }
-    if (currentStep === 'lead_email') {
+    if (step === 'lead_email') {
       const skipped = text.toLowerCase() === 'skip' || text.toLowerCase() === 'saltar';
       if (skipped) {
         updateMemory({ skippedEmail: true });
         askNextQuestion({ ...memory, skippedEmail: true });
       } else {
-        // Validate entered email before accepting
-        const emailCheck = validateEmail(text.trim());
-        if (!emailCheck.valid) {
-          enqueueBot([{ text: memory.language === 'es'
-            ? 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.'
-            : 'Please enter a valid email address, or leave it blank if you prefer.', pace: 'short' }]);
-          return true;
-        }
-        updateMemory({ email: text.trim(), skippedEmail: false });
-        askNextQuestion({ ...memory, email: text.trim(), skippedEmail: false });
+        updateMemory({ email: text, skippedEmail: false });
+        askNextQuestion({ ...memory, email: text, skippedEmail: false });
       }
       return true;
     }
-    if (currentStep === 'lead_consent') {
+    if (step === 'lead_consent') {
       const yes = text.toLowerCase().includes('yes') || text.toLowerCase().includes('sí') || text.toLowerCase().includes('si');
       if (yes) {
         updateMemory({ consentGiven: true });
         askNextQuestion({ ...memory, consentGiven: true });
       } else {
         updateMemory({ consentGiven: false });
-        setStepSync('choice');
+        setStep('choice');
         enqueueBot([
           { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
           { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, pace: 'short' },
@@ -4364,83 +3212,122 @@ export function ChatBot() {
 
     input.value = '';
     addUserMessage(text);
-
-    // Always cancel any pending bot queue when user sends a message
     cancelBotQueue();
 
-    /* Safety filters — run before anything else */
-    if (containsAny(text, SENSITIVE_KEYWORDS)) {
+    const low = text.toLowerCase();
+    const firstName = memory.firstName;
+    const greet = firstName ? (memory.language === 'es' ? `${firstName}, ` : `${firstName}, `) : '';
+
+    /* 1 — INTERRUPT */
+    const lowClean = low.replace(/[^a-záéíóúüñ ]/g, '').trim();
+    const isInterrupt =
+      INTERRUPT_KEYWORDS_EN.some((k) => k === lowClean || lowClean.startsWith(k)) ||
+      ((memory.language === 'es' || !memory.language) &&
+        INTERRUPT_KEYWORDS_ES.some((k) => k === lowClean || lowClean.startsWith(k)));
+    if (isInterrupt && text.length < 25) {
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? 'Claro. Me detengo. Avísame cuando quieras continuar.'
+          : "Of course. I'll pause. Tell me when you're ready.",
+        pace: 'short',
+      }]);
+      return;
+    }
+
+    /* 2 — CLASSIFY INTENT BEFORE ANYTHING ELSE */
+    const intent = classifyIntent(text, memory.language, step);
+
+    /* 3 — PRIVACY */
+    if (intent === 'PRIVACY_CONCERN') {
       showPrivacyReminder();
       return;
     }
 
-    // ─── Human Intent Router ────────────────────────────────────────────────
-    // Runs on EVERY typed input, before form/step validation.
-    // Order is strict: language switch → advisor → restart/back → CS intent.
-    const norm = normalizePhrase(text);
-
-    // 1. Language switch — highest priority, overrides all step logic
-    const langSwitch = detectLangSwitch(norm);
-    if (langSwitch) {
-      handleLanguageSwitchIntent(langSwitch);
+    /* 4 — LANGUAGE SWITCH */
+    if (intent === 'LANGUAGE_SWITCH_EN') {
+      setLang('en');
+      updateMemory({ language: 'en', preferredLanguage: 'English' });
+      enqueueBot([{
+        text: memory.firstName
+          ? `${memory.firstName}, I've switched to English. How can I help you?`
+          : "I've switched to English. How can I help you?",
+        options: TOPIC_MENU_EN,
+        pace: 'short',
+      }]);
+      return;
+    }
+    if (intent === 'LANGUAGE_SWITCH_ES') {
+      setLang('es');
+      updateMemory({ language: 'es', preferredLanguage: 'Spanish' });
+      enqueueBot([{
+        text: memory.firstName
+          ? `${memory.firstName}, cambié al español. ¿En qué le puedo ayudar?`
+          : 'Cambié al español. ¿En qué le puedo ayudar?',
+        options: TOPIC_MENU_ES,
+        pace: 'short',
+      }]);
       return;
     }
 
-    // 2. Advisor / human agent request
-    if (detectAdvisorRequest(norm)) {
-      handleAdvisorRequestIntent();
+    /* 5 — IDENTITY QUESTION */
+    if (intent === 'IDENTITY_QUESTION') {
+      enqueueBot([
+        {
+          text: memory.language === 'es'
+            ? 'Soy Zara, la asistente virtual de Clear Point Senior Advisors. Soy una inteligencia artificial — no soy humana — pero estoy aquí para orientarle con información general sobre Medicare y conectarle con un asesor licenciado cuando lo necesite.'
+            : "I'm Zara, Clear Point Senior Advisors' virtual assistant. I'm an AI — not human — but I'm here to guide you with general Medicare information and connect you with a licensed advisor when you need one.",
+          pace: 'slow',
+        },
+        {
+          text: memory.language === 'es' ? '¿En qué puedo ayudarle hoy?' : 'How can I help you today?',
+          options: memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN,
+          pace: 'short',
+        },
+      ]);
       return;
     }
 
-    // 3. Back — context-aware, preserves selectedState and memory
-    if (detectBackIntent(norm)) {
-      handleBackIntent();
-      return;
-    }
-    // 4. Menu — shows topic menu, preserves selectedState
-    if (detectMenuIntent(norm)) {
-      handleMenuIntent();
-      return;
-    }
-    // 4a. Other topic — "otro tema / another topic" → topic menu or advisor choice
-    if (detectOtherTopicIntent(norm)) {
-      handleOtherTopicIntent();
-      return;
-    }
-    // 5. Change state — asks state only, keeps all other context
-    if (detectChangeStateIntent(norm)) {
-      handleChangeStateIntent();
-      return;
-    }
-    // 6. Restart — full memory reset (only explicit "empezar de nuevo"/"start over" phrases)
-    if (detectRestartIntent(norm)) {
-      handleRestartIntent();
+    /* 6 — GREETING */
+    if (intent === 'GREETING') {
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? `${firstName ? `¡Hola de nuevo, ${firstName}!` : '¡Hola!'} Estoy aquí para ayudarle. ¿En qué puedo asistirle?`
+          : `${firstName ? `Hello again, ${firstName}!` : 'Hello!'} I'm here to help. What can I assist you with today?`,
+        options: memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN,
+        pace: 'short',
+      }]);
       return;
     }
 
-    // 7. Customer service / plan issue intent
-    if (detectCSIntent(norm)) {
-      handleCSIntentAction();
-      return;
-    }
-    // ─── End Human Intent Router ────────────────────────────────────────────
-
-    // ─── Mode Router ────────────────────────────────────────────────────────
-    // If the current mode has a dedicated handler, route there.
-    // modeRouter returns true if input was fully handled.
-    if (modeRouter(memory.mode, text, norm)) return;
-
-    // Fallback for advisor_intake when mode is not yet set (e.g. first session load).
-    // Handles the case where step is lead_* but mode was not set via startPlanReview.
-    if (step.startsWith('lead_') && memory.mode !== 'advisor_intake') {
-      if (isClarification(text, memory.language)) {
-        enqueueBot(getStepClarificationMessages(stepRef.current, memory));
-        return;
-      }
+    /* 7 — LEAD CAPTURE STEPS — intent-aware */
+    if (step.startsWith('lead_')) {
       if (handleLeadText(text)) return;
     }
 
-    /* If we are waiting for state */
+    /* 8 — AUTO-LANGUAGE DETECT (outside lead capture) */
+    const detectedLang = detectInputLanguage(text);
+    if (detectedLang && detectedLang !== memory.language && text.length > 12) {
+      const switchMsg = detectedLang === 'es'
+        ? '¿Prefiere continuar en español?'
+        : 'Would you prefer to continue in English?';
+      enqueueBot([{
+        text: switchMsg,
+        options: [
+          {
+            label: detectedLang === 'es' ? 'Sí, en español' : 'Yes, in English',
+            value: detectedLang === 'es' ? 'lang_es' : 'lang_en',
+          },
+          {
+            label: detectedLang === 'es' ? 'No, continuar en inglés' : 'No, continue in Spanish',
+            value: detectedLang === 'es' ? 'lang_en' : 'lang_es',
+          },
+        ],
+        pace: 'short',
+      }]);
+      return;
+    }
+
+    /* 9 — WAITING FOR STATE */
     if (step === 'state') {
       const detectedState = detectState(text);
       if (detectedState && SUPPORTED_STATES.includes(detectedState)) {
@@ -4450,48 +3337,44 @@ export function ChatBot() {
         handleStateSelection('other');
         return;
       }
-      // Could not detect state - ask again gently
-      enqueueBot([
-        {
-          text:
-            memory.language === 'es'
-              ? 'Disculpa, no pude identificar el estado. Para orientarte mejor, ¿en qué estado vives? (NY, NJ, CT, FL u otro)'
-              : "I'm sorry, I couldn't identify the state. To guide you better, what state do you live in? (NY, NJ, CT, FL, or other)",
-          pace: 'slow',
-        },
-      ]);
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? 'Disculpa, no pude identificar el estado. ¿En qué estado vive? (NY, NJ, CT, FL u otro)'
+          : "I'm sorry, I couldn't identify the state. What state do you live in? (NY, NJ, CT, FL, or other)",
+        pace: 'slow',
+      }]);
       return;
     }
 
-    if (containsAny(text, OUT_OF_SCOPE_KEYWORDS)) {
+    /* 10 — OUT OF SCOPE */
+    if (intent === 'OUT_OF_SCOPE') {
       showOutOfScope();
       return;
     }
 
-    const interest = detectInterest(text);
-    updateMemory({ lastTopic: interest, interestType: interest });
-
-    if (containsAny(text, REVIEW_KEYWORDS)) {
+    /* 11 — ADVISOR REQUEST */
+    if (intent === 'ADVISOR_REQUEST') {
+      const interest = detectInterest(text);
+      updateMemory({ lastTopic: interest, interestType: interest });
       startPlanReview(interest);
       return;
     }
 
+    /* 12 — PERSONALIZED (recommend/compare/specific plan) */
     if (containsAny(text, PERSONALIZED_KEYWORDS)) {
       showPersonalizedBoundary();
       return;
     }
 
-    /* Medicare question - route through state intake if state unknown, then education */
+    /* 13 — MEDICARE TOPIC — route through state if unknown */
     const medicareTopic = detectMedicareTopic(text, memory.language);
     if (medicareTopic) {
       updateMemory({ lastTopic: medicareTopic, interestType: medicareTopic });
       trackTopic(medicareTopic);
       if (!memory.state) {
-        // Ask state first, then provide education
         showMedicareIntake();
         return;
       }
-      // State known - map topic to education key
       const topicMap: Record<string, string> = {
         'Medicare Parts A & B': 'edu_parts_ab',
         'Medicare Advantage': 'edu_part_c',
@@ -4514,26 +3397,25 @@ export function ChatBot() {
         'Enrollment': 'edu_enrollment',
       };
       const eduKey = topicMap[medicareTopic] || 'edu_parts_ab';
-      setStepSync('medicare_education');
+      setStep('medicare_education');
       updateMemory({ educationTopic: eduKey, educationStep: 1 });
-      const education = getMedicareEducation(eduKey, memory.language, memory.state);
-      hasScrolledForCurrentEducationRef.current = false;
-      enqueueBot(education);
+      enqueueBot(getMedicareEducation(eduKey, memory.language, memory.state));
       return;
     }
 
-    /* Fallback: legacy education or safe fallback */
+    /* 14 — FALLBACK: education with topic menu */
     const education = getEducationMessages(text, memory.language);
-    if (education.messages.length > 0) {
-      updateMemory({ lastTopic: education.topic, interestType: education.topic, userIntent: 'medicare_question' });
-      setStepSync('question');
-      hasScrolledForCurrentEducationRef.current = false;
-      enqueueBot(education.messages);
-    } else {
-      // No topic matched — use safe fallback to keep Zara on-topic
-      updateMemory({ userIntent: 'out_of_scope' });
-      enqueueBot([{ text: SAFE_FALLBACK[memory.language], pace: 'short' }]);
-    }
+    updateMemory({ lastTopic: education.topic, interestType: education.topic });
+    setStep('question');
+    enqueueBot([
+      {
+        text: memory.language === 'es'
+          ? `${greet}puedo ayudarle con educación general sobre Medicare.`
+          : `${greet}I can help with general Medicare information.`,
+        pace: 'short',
+      },
+      ...education.messages,
+    ]);
   }
 
   /* ---------- Render ---------- */
@@ -4545,19 +3427,6 @@ export function ChatBot() {
   const lastMessage = messages[messages.length - 1];
   const activeOptionMessageId = lastMessage?.type === 'bot' && lastMessage.options?.length ? lastMessage.id : '';
 
-  // Determine the index of the first message in the current step block.
-  // A step block = (preceding bot text-only message, if any) + (bot message with options).
-  // This ensures currentStepRef anchors to the QUESTION TEXT, not just the option buttons,
-  // so seniors always see the question and its options together when a new menu renders.
-  const activeStepMsgIdx = messages.reduce(
-    (last, m, i) => (m.type === 'bot' && (m.options?.length ?? 0) > 0 ? i : last), -1
-  );
-  const precedingStepMsg = activeStepMsgIdx > 0 ? messages[activeStepMsgIdx - 1] : null;
-  const stepBlockStartIdx =
-    precedingStepMsg?.type === 'bot' && !(precedingStepMsg.options?.length)
-      ? activeStepMsgIdx - 1
-      : activeStepMsgIdx;
-
   const minimizeLabel = t('Minimize chat', 'Minimizar chat');
 
   return (
@@ -4566,7 +3435,7 @@ export function ChatBot() {
       {!isOpen && (
         <button
           onClick={openChat}
-          className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
+          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
           aria-label={t('Open Zara, Clear Point virtual assistant', 'Abrir Zara, asistente virtual de Clear Point')}
         >
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -4583,7 +3452,7 @@ export function ChatBot() {
       {isOpen && isMinimized && (
         <button
           onClick={() => setIsMinimized(false)}
-          className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-earth-900 transition-all"
+          className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-earth-900 transition-all"
           aria-label={t('Expand Zara chat', 'Expandir chat de Zara')}
         >
           <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -4603,7 +3472,7 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed bottom-[max(82px,calc(env(safe-area-inset-bottom)+76px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div className="fixed bottom-[78px] right-4 md:bottom-6 md:right-6 z-50 w-[calc(100vw-12px)] md:w-[480px] lg:w-[520px] max-w-[calc(100vw-12px)] h-[calc(100dvh-88px)] md:h-[700px] max-h-[calc(100dvh-88px)] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
@@ -4631,21 +3500,14 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
-            {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
-                as conversation progresses; does not permanently consume chat height */}
-            <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
-              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
-              <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
-            </div>
-            <div className="px-3 py-3 space-y-3">
-            {messages.map((message, msgIdx) => (
-              <div
-                key={message.id}
-                data-msg-id={message.id}
-                ref={msgIdx === stepBlockStartIdx ? currentStepRef : undefined}
-                className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+          <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 flex-shrink-0 space-y-1">
+            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
+            <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
+          </div>
+
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-3 min-h-0">
+            {messages.map((message) => (
+              <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[88%] rounded-xl px-4 py-3 text-[14px] leading-[1.55] ${
                     message.type === 'user'
@@ -4701,7 +3563,6 @@ export function ChatBot() {
               </div>
             )}
             <div ref={endRef} />
-            </div>
           </div>
 
           <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center justify-between gap-2">
@@ -4719,8 +3580,8 @@ export function ChatBot() {
             </button>
           </div>
 
-          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
-            <div className="flex gap-2 min-w-0">
+          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0">
+            <div className="flex gap-2">
               <input
                 name="chatInput"
                 type="text"
@@ -4729,9 +3590,7 @@ export function ChatBot() {
                 autoCapitalize="sentences"
                 spellCheck="true"
                 placeholder={inputPlaceholder}
-                className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
-                onFocus={() => { chatInputFocusedRef.current = true; }}
-                onBlur={() => { chatInputFocusedRef.current = false; }}
+                className="flex-1 px-4 py-3 bg-white border border-cream-300 rounded-lg text-[14px] text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
                     event.preventDefault();
