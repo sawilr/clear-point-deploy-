@@ -12,8 +12,8 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
       <div className="text-[11px] text-earth-500 leading-relaxed">
         <p>
           {t(
-            'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, and costs vary by plan, location, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov or 1-800-MEDICARE for official information.',
-            'ClearPoint Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos y costos varían según el plan, la ubicación y la elegibilidad. Un agente de seguros licenciado puede contactarte para hablar sobre opciones relacionadas con Medicare. También puedes contactar Medicare.gov o 1-800-MEDICARE para obtener información oficial.'
+            'Clear Point Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, and costs vary by plan, location, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov or 1-800-MEDICARE for official information.',
+            'Clear Point Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos y costos varían según el plan, la ubicación y la elegibilidad. Un agente de seguros licenciado puede contactarte para hablar sobre opciones relacionadas con Medicare. También puedes contactar Medicare.gov o 1-800-MEDICARE para obtener información oficial.'
           )}
         </p>
       </div>
@@ -24,8 +24,8 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
     return (
       <p className="text-[11px] text-earth-500 leading-relaxed">
         {t(
-          'ClearPoint Senior Advisors is an independent insurance agency. Not connected with or endorsed by Medicare, CMS, or the U.S. government. Plan availability varies by location.',
-          'ClearPoint Senior Advisors es una agencia de seguros independiente. No está conectada ni respaldada por Medicare, CMS ni el gobierno de EE. UU. La disponibilidad de planes varía por ubicación.'
+          'Clear Point Senior Advisors is an independent insurance agency. Not connected with or endorsed by Medicare, CMS, or the U.S. government. Plan availability varies by location.',
+          'Clear Point Senior Advisors es una agencia de seguros independiente. No está conectada ni respaldada por Medicare, CMS ni el gobierno de EE. UU. La disponibilidad de planes varía por ubicación.'
         )}
       </p>
     );
@@ -43,8 +43,8 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
         {/* Compliance-safe draft — owner/legal review recommended before scaled marketing */}
         <p className="mb-1.5">
           {t(
-            'ClearPoint Senior Advisors uses the information you provide only to respond to your request and connect you with licensed insurance support. We apply reasonable administrative and technical safeguards to protect the information you submit. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical records through this website or chat.',
-            'ClearPoint Senior Advisors utiliza la información que proporcionas únicamente para responder a tu solicitud y conectarte con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que envías. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
+            'Clear Point Senior Advisors uses the information you provide only to respond to your request and connect you with licensed insurance support. We apply reasonable administrative and technical safeguards to protect the information you submit. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical records through this website or chat.',
+            'Clear Point Senior Advisors utiliza la información que proporcionas únicamente para responder a tu solicitud y conectarte con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que envías. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
           )}
         </p>
         <p className="text-[11px] text-amber-700">
@@ -61,8 +61,8 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
     <div className="text-[11px] text-cream-50/30 leading-relaxed space-y-2.5">
       <p>
         {t(
-          'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.',
-          'ClearPoint Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos, formularios, redes de farmacias y costos pueden variar según el plan, área de servicio y elegibilidad. Un agente de seguros licenciado puede contactarte para hablar sobre opciones relacionadas con Medicare. También puedes contactar Medicare.gov, 1-800-MEDICARE o tu Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información oficial y sobre todas tus opciones.'
+          'Clear Point Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.',
+          'Clear Point Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos, formularios, redes de farmacias y costos pueden variar según el plan, área de servicio y elegibilidad. Un agente de seguros licenciado puede contactarte para hablar sobre opciones relacionadas con Medicare. También puedes contactar Medicare.gov, 1-800-MEDICARE o tu Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información oficial y sobre todas tus opciones.'
         )}
       </p>
       <p>

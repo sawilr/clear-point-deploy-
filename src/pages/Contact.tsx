@@ -3,6 +3,7 @@ import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
 import { CTASection } from '../components/CTASection';
 import { useScrollReveal } from '../components/ScrollReveal';
+import { scrollToSection } from '../utils/scroll';
 import { PhoneIcon, MailIcon, MapPinIcon, CalendarIcon, GlobeIcon } from '../components/icons';
 
 export default function Contact() {
@@ -10,14 +11,11 @@ export default function Contact() {
   const infoReveal = useScrollReveal();
 
   const handleScrollToForm = () => {
-    const el = document.querySelector('#contact-form');
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      setTimeout(() => {
-        const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
-        if (firstInput) firstInput.focus();
-      }, 500);
-    }
+    scrollToSection('#contact-form');
+    setTimeout(() => {
+      const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+      if (firstInput) firstInput.focus();
+    }, 500);
   };
 
   return (
@@ -34,7 +32,7 @@ export default function Contact() {
         compact
       />
 
-      <section id="contact-form" ref={infoReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${infoReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section id="contact-form" ref={infoReveal.ref} className={`py-20 lg:py-28 bg-white scroll-mt-[88px] transition-all duration-700 ${infoReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-[1fr_380px] gap-12 items-start">
             <div className="space-y-10">

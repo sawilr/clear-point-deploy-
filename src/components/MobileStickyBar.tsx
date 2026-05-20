@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { PhoneIcon, CalendarIcon } from './icons';
+import { retryScrollToSection } from '../utils/scroll';
 
 export function MobileStickyBar() {
   const { t } = useLanguage();
@@ -8,21 +9,11 @@ export function MobileStickyBar() {
 
   const handleFreeReview = () => {
     navigate('/contact');
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-        setTimeout(() => {
-          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
-          if (firstInput) firstInput.focus();
-        }, 500);
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    retryScrollToSection('#contact-form');
+    setTimeout(() => {
+      const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+      if (firstInput) firstInput.focus();
+    }, 600);
   };
 
   return (

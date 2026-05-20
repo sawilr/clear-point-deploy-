@@ -4,6 +4,7 @@ import { LanguageToggle } from './LanguageToggle';
 import { LogoSvg } from './LogoSvg';
 import { PhoneIcon, MenuIcon, CloseIcon, ChevronDown } from './icons';
 import { Link, useLocation, useNavigate } from 'react-router';
+import { scrollToSection, retryScrollToSection } from '../utils/scroll';
 
 const navLinks = [
   { label: 'Services', labelEs: 'Servicios', href: '/#services', scroll: true },
@@ -48,70 +49,43 @@ export function Header() {
     setServicesOpen(false);
   }, [location.pathname]);
 
-  const scrollTo = (id: string) => {
-    const el = document.querySelector(id);
-    if (el) {
-      const headerOffset = 80;
-      const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-      window.scrollTo({ top: y, behavior: 'smooth' });
-      setServicesOpen(false);
-      setMobileMenuOpen(false);
-    }
-  };
-
   const closeNav = () => {
     setServicesOpen(false);
     setMobileMenuOpen(false);
   };
 
   // Free Review — navigates to /contact and scrolls to the contact form section.
-  // rAF retry waits for React to commit /contact route before querying #contact-form.
+  // retryScrollToSection waits for React to commit /contact route before querying #contact-form.
   const handleFreeReview = () => {
     closeNav();
     navigate('/contact');
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-        // Focus first name field so cursor lands in the form immediately
-        setTimeout(() => {
-          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
-          if (firstInput) firstInput.focus();
-        }, 500);
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    retryScrollToSection('#contact-form');
+    setTimeout(() => {
+      const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+      if (firstInput) firstInput.focus();
+    }, 600);
   };
 
   const isHome = location.pathname === '/';
 
-  /* Navigate to home then scroll to section — fixes broken nav from non-home pages */
+  // Navigate to home then scroll to section — fixes broken nav from non-home pages.
+  // KEY FIX (iOS Safari): when isHome, we wrap the scroll in a double rAF so the
+  // mobile menu has closed (React committed the state update) before getBoundingClientRect()
+  // is called. Without this delay, the DOM still has the menu mounted, and on iOS Safari
+  // the layout is not yet settled — causing scroll to land in the wrong section.
   const handleScrollNav = (href: string) => {
     closeNav();
     const id = href.replace('/#', '#');
     if (isHome) {
-      scrollTo(id);
+      // Double rAF: wait for mobile menu close to be painted before scrolling
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => scrollToSection(id))
+      );
       return;
     }
     navigate('/');
-    // Double rAF: first fires before React commits new route,
-    // second fires after. Then retries up to 10 frames until the
-    // target element exists — eliminates blind-timeout wrong-landing.
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector(id);
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    // retryScrollToSection handles the post-navigate rAF + element existence check
+    retryScrollToSection(id);
   };
 
   return (
@@ -246,6 +220,13 @@ export function Header() {
             <button onClick={handleFreeReview} className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-2">
               {t('Free Review', 'Revisión Gratis')}
             </button>
+            <div className="border-t border-cream-200 pt-4 flex items-center justify-between">
+              <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500">{t('Language', 'Idioma')}</span>
+              <div className="flex bg-cream-200 rounded-full p-0.5 gap-0.5">
+                <button onClick={() => { setLang('en'); }} className={`px-4 py-1.5 rounded-full text-[11px] font-bold tracking-wider transition-all ${lang === 'en' ? 'bg-earth-800 text-cream-50' : 'text-earth-600 hover:text-earth-900'}`} aria-pressed={lang === 'en'}>EN</button>
+                <button onClick={() => { setLang('es'); }} className={`px-4 py-1.5 rounded-full text-[11px] font-bold tracking-wider transition-all ${lang === 'es' ? 'bg-earth-800 text-cream-50' : 'text-earth-600 hover:text-earth-900'}`} aria-pressed={lang === 'es'}>ES</button>
+              </div>
+            </div>
           </div>
         )}
       </nav>

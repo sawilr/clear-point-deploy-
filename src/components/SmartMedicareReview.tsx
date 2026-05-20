@@ -221,7 +221,7 @@ export function SmartMedicareReview() {
 
   if (submitted) {
     return (
-      <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
+      <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-[88px]">
         <div className="max-w-2xl mx-auto px-5 text-center">
           <div className="w-16 h-16 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckIcon className="w-8 h-8 text-sage-500" />
@@ -236,7 +236,7 @@ export function SmartMedicareReview() {
   }
 
   return (
-    <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
+    <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-[88px]">
       <div className="max-w-2xl mx-auto px-5">
         {/* Header */}
         <div className="text-center mb-10">

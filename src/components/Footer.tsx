@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router';
 import { LogoSvg } from './LogoSvg';
 import { DisclaimerBlock } from './DisclaimerBlock';
 import { ExternalLinkIcon } from './icons';
+import { scrollToSection, retryScrollToSection } from '../utils/scroll';
 
 export function Footer() {
   const { t } = useLanguage();
@@ -10,8 +11,6 @@ export function Footer() {
   const location = useLocation();
 
   // Resources & Blog — always lands at top of /resources regardless of current page.
-  // Double rAF after navigate() ensures scroll fires AFTER React commits the new route,
-  // eliminating the race condition where ScrollToTop fires before the page renders.
   const handleResources = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     if (location.pathname === '/resources') {
@@ -24,31 +23,15 @@ export function Footer() {
     }));
   };
 
-  // How It Works — double rAF: waits for React to commit new route DOM,
-  // then retries until #how element exists. Eliminates double-click issue.
+  // How It Works — scrolls to #how on home page from any page.
   const handleHowItWorks = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     if (location.pathname === '/') {
-      const el = document.querySelector('#how');
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-      }
+      scrollToSection('#how');
       return;
     }
     navigate('/');
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#how');
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    retryScrollToSection('#how');
   };
 
   return (

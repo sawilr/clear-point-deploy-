@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router';
+import { retryScrollToSection } from '../utils/scroll';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -13,19 +14,11 @@ export default function MedicareSupplement() {
 
   const handleFreeReview = () => {
     navigate('/contact');
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        setTimeout(() => {
-          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
-          if (firstInput) firstInput.focus();
-        }, 500);
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    retryScrollToSection('#contact-form');
+    setTimeout(() => {
+      const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+      if (firstInput) firstInput.focus();
+    }, 600);
   };
   const eduReveal = useScrollReveal();
   const plansReveal = useScrollReveal();
@@ -180,8 +173,8 @@ export default function MedicareSupplement() {
             </p>
             <p className="text-earth-500 text-sm mb-5">
               {t(
-                'ClearPoint Senior Advisors can help you understand plan letters, premiums, and availability in your area.',
-                'ClearPoint Senior Advisors puede ayudarle a entender las letras de los planes, las primas y la disponibilidad en su área.'
+                'Clear Point Senior Advisors can help you understand plan letters, premiums, and availability in your area.',
+                'Clear Point Senior Advisors puede ayudarle a entender las letras de los planes, las primas y la disponibilidad en su área.'
               )}
             </p>
             <button

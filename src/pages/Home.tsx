@@ -185,7 +185,7 @@ export default function Home() {
       </section>
 
       {/* Services */}
-      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-[88px] transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
@@ -274,7 +274,7 @@ export default function Home() {
       </section>
 
       {/* How It Works */}
-      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-24 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-[88px] transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
@@ -319,7 +319,7 @@ export default function Home() {
       </section>
 
       {/* Why Independent */}
-      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-[88px] transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
@@ -370,7 +370,7 @@ export default function Home() {
                 key={carrier.name}
                 className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4"
               >
-                <div className="flex items-center justify-center w-[130px] h-[44px]">
+                <div className="flex items-center justify-center w-full max-w-[130px] h-[44px]">
                   <img
                     src={carrier.logo}
                     alt={carrier.alt}
@@ -448,7 +448,7 @@ export default function Home() {
       </section>
 
       {/* FAQ */}
-      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-20">
+      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-[88px]">
         <div className="max-w-6xl mx-auto px-5">
           <FAQ items={faqItems} title="Common Questions" titleEs="Preguntas Frecuentes" />
         </div>

@@ -2,6 +2,7 @@ import { useLanguage } from '../hooks/useLanguage';
 import { useScrollReveal } from './ScrollReveal';
 import { PhoneIcon, CalendarIcon } from './icons';
 import { Link, useNavigate } from 'react-router';
+import { retryScrollToSection } from '../utils/scroll';
 
 interface CTASectionProps {
   headline: string;
@@ -34,25 +35,14 @@ export function CTASection({
   const { ref, visible } = useScrollReveal();
   const navigate = useNavigate();
 
-  // When primaryHref points to /contact, navigate then scroll to form + focus first name.
-  // Works from any page. onPrimaryClick prop overrides this (e.g. Contact page itself).
+  // Navigate to /contact then scroll to form + focus first field.
   const handleContactNav = () => {
     navigate('/contact');
-    const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
-      if (el) {
-        const headerOffset = 80;
-        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-        setTimeout(() => {
-          const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
-          if (firstInput) firstInput.focus();
-        }, 500);
-      } else if (attemptsLeft > 0) {
-        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
-      }
-    };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    retryScrollToSection('#contact-form');
+    setTimeout(() => {
+      const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
+      if (firstInput) firstInput.focus();
+    }, 600);
   };
 
   const primaryBtnClass = `inline-flex items-center gap-2 font-bold text-sm px-7 py-3.5 rounded-xl transition-all hover:shadow-soft ${
@@ -63,7 +53,6 @@ export function CTASection({
 
   const primaryLabel = t(primaryCta || 'Get Free Plan Review', primaryCtaEs || 'Obtener Revisión Gratis');
 
-  // Resolve which handler / element to use for the primary CTA
   const resolvedClick = onPrimaryClick ?? (primaryHref === '/contact' ? handleContactNav : undefined);
 
   return (
