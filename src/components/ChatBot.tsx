@@ -2369,15 +2369,6 @@ function containsAny(text: string, keywords: string[]) {
   return keywords.some((keyword) => normalized.includes(keyword));
 }
 
-// Strip diacritics + punctuation and return a lowercase normalized form.
-function normalizePhrase(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[¿¡?!.,;:]/g, '')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim();
-}
 
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
@@ -3003,13 +2994,6 @@ export function ChatBot() {
   // ZARA ENTERPRISE NAVIGATION HELPERS + GLOBAL INTENT HANDLERS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function pushNav(view: ZaraView) {
-    updateMemory({
-      navStack: [...(memory.navStack || []), memory.currentView],
-      previousView: memory.currentView,
-      currentView: view,
-    });
-  }
 
 
   function setMode(mode: ZaraMode) {
