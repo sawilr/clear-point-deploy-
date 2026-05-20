@@ -2265,6 +2265,14 @@ const MENU_PHRASES: string[] = [
   'ver menu', 'ver menú', 'opciones', 'topics', 'temas',
 ];
 
+// OTHER TOPIC — "otro tema/topic/another topic" → topic menu, preserve state.
+// If in advisor flow: show advisor choice menu instead of direct topic menu.
+const OTHER_TOPIC_PHRASES: string[] = [
+  'otro topic', 'otro tema', 'otro topico', 'otro tópico',
+  'another topic', 'other topic', 'different topic',
+  'ver otro tema', 'quiero otro tema', 'otra opcion', 'otra opción',
+];
+
 // CHANGE STATE — clears selected state and asks again, keeps other context.
 const CHANGE_STATE_PHRASES: string[] = [
   'cambiar estado', 'otro estado', 'vivo en otro estado', 'cambiar mi estado',
@@ -2325,6 +2333,14 @@ function detectMenuIntent(norm: string): boolean {
   return MENU_PHRASES.some((p) => {
     const pn = normalizePhrase(p);
     return norm === pn;
+  });
+}
+
+// Other topic — exact or startsWith match.
+function detectOtherTopicIntent(norm: string): boolean {
+  return OTHER_TOPIC_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn || norm.startsWith(pn);
   });
 }
 
@@ -3477,6 +3493,43 @@ export function ChatBot() {
     }
   }
 
+  // handleOtherTopicIntent — "otro tema / another topic" → topic menu, preserving state.
+  // If in advisor lead flow: show the advisor choice menu instead of jumping directly to topics.
+  function handleOtherTopicIntent() {
+    cancelBotQueue();
+    const isInLeadFlow =
+      (memory.mode === 'advisor_intake' || stepRef.current.startsWith('lead_')) &&
+      stepRef.current.startsWith('lead_');
+    if (isInLeadFlow) {
+      showAdvisorReturnChoiceMenu();
+      return;
+    }
+    const lang = memory.language;
+    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
+    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
+    updateMemory({
+      mode: 'guide',
+      previousMode: memory.mode,
+      previousStep: stepRef.current,
+      previousTopic: memory.educationTopic,
+      activeMenu: 'guide_topics',
+    });
+    if (stateExists && stateName) {
+      setStepSync('question');
+      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
+      enqueueBot([{
+        text: lang === 'es'
+          ? `Claro. Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
+          : `Sure. I'll keep ${stateName} as your state. What would you like to review now?`,
+        options: topicOptions,
+        pace: 'short',
+      }]);
+    } else {
+      setStepSync('state');
+      enqueueBot(MEDICARE_INTRO[lang]);
+    }
+  }
+
   // handleChangeStateIntent — asks state only. Does NOT reset other context.
   // Only fires for explicit "cambiar estado" / "change state" phrases.
   function handleChangeStateIntent() {
@@ -4347,6 +4400,11 @@ export function ChatBot() {
     // 4. Menu — shows topic menu, preserves selectedState
     if (detectMenuIntent(norm)) {
       handleMenuIntent();
+      return;
+    }
+    // 4a. Other topic — "otro tema / another topic" → topic menu or advisor choice
+    if (detectOtherTopicIntent(norm)) {
+      handleOtherTopicIntent();
       return;
     }
     // 5. Change state — asks state only, keeps all other context
