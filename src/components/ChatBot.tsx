@@ -3004,15 +3004,16 @@ export function ChatBot() {
     updateMemory({ previousView: memory.currentView, currentView: view });
   }
 
-  function showTopicMenuWithState() {
+  function showTopicMenuWithState(langOverride?: ChatLanguage) {
+    const effectiveLang = langOverride ?? memory.language;
     const pageIndex = (topicPage as number) < 3 ? (topicPage as number) : 0;
-    const topicOptions = memory.language === 'es' ? TOPIC_GROUPS_ES[pageIndex] : TOPIC_GROUPS_EN[pageIndex];
+    const topicOptions = effectiveLang === 'es' ? TOPIC_GROUPS_ES[pageIndex] : TOPIC_GROUPS_EN[pageIndex];
     const stateName = memory.state ? SUPPORTED_STATES_LABELS[memory.state] || memory.state : '';
     const stateNote = stateName
-      ? (memory.language === 'es'
+      ? (effectiveLang === 'es'
           ? `Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
           : `I'll keep ${stateName} as your state. What would you like to review now?`)
-      : (memory.language === 'es'
+      : (effectiveLang === 'es'
           ? '¿Qué tema le gustaría aprender hoy?'
           : 'What would you like to learn about today?');
     setStepSync('question');
@@ -3119,20 +3120,96 @@ export function ChatBot() {
   function handleLanguageSwitchIntent(targetLang: ChatLanguage) {
     setLang(targetLang);
     updateMemory({ language: targetLang, preferredLanguage: targetLang === 'es' ? 'Spanish' : 'English' });
+
+    const currentStep = stepRef.current;
+    const currentMode = memory.currentMode;
     const fn = memory.firstName;
     const namePrefix = fn ? (targetLang === 'es' ? `Claro, ${fn}. ` : `Of course, ${fn}. `) : '';
+
+    // Context 1: Opening language screen → advance immediately to state selection
+    if (currentStep === 'language') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? 'Perfecto, continuamos en español.'
+          : "Perfect, we'll continue in English.",
+        pace: 'short',
+      }]);
+      setTimeout(() => showMedicareIntake(targetLang), 400);
+      return;
+    }
+
+    // Context 2: State selection screen → re-render state question in new language
+    if (currentStep === 'state') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? `${namePrefix}Continuamos en español.`
+          : `${namePrefix}We'll continue in English.`,
+        pace: 'short',
+      }]);
+      setTimeout(() => showMedicareIntake(targetLang), 400);
+      return;
+    }
+
+    // Context 3: Topic menu → re-render menu in new language
+    if (currentStep === 'question' || currentMode === 'menu') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? `${namePrefix}Continuamos en español.`
+          : `${namePrefix}We'll continue in English.`,
+        pace: 'short',
+      }]);
+      setTimeout(() => showTopicMenuWithState(targetLang), 400);
+      return;
+    }
+
+    // Context 4: Education topic → show topic menu in new language
+    if (currentStep === 'medicare_education' || currentMode === 'education') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? `${namePrefix}Continuamos en español.`
+          : `${namePrefix}We'll continue in English.`,
+        pace: 'short',
+      }]);
+      setTimeout(() => showTopicMenuWithState(targetLang), 400);
+      return;
+    }
+
+    // Context 5: Advisor intake → reprompt current field in new language
+    if (currentStep.startsWith('lead_') || currentMode === 'advisor_intake') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? `${namePrefix}Continuamos en español. Retomamos desde donde estábamos.`
+          : `${namePrefix}We'll continue in English. Let's pick up where we left off.`,
+        pace: 'short',
+      }]);
+      setTimeout(() => {
+        enqueueBot(getStepClarificationMessages(currentStep as ChatStep, { ...memory, language: targetLang }));
+      }, 400);
+      return;
+    }
+
+    // Context 6: Customer service stub → resume CS context in new language
+    if (currentMode === 'customer_service') {
+      enqueueBot([{
+        text: targetLang === 'es'
+          ? `${namePrefix}Continuamos en español. Retomamos el tema de su plan.`
+          : `${namePrefix}We'll continue in English. Let's get back to your plan issue.`,
+        options: [
+          { label: targetLang === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
+          { label: targetLang === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
+        ],
+        pace: 'short',
+      }]);
+      return;
+    }
+
+    // Default fallback: confirm + hold position
     enqueueBot([{
       text: targetLang === 'es'
         ? `${namePrefix}Seguimos en español. Mantengo la información que ya me dio y continuamos desde aquí.`
         : `${namePrefix}We'll continue in English. I'll keep the information you already provided and continue from here.`,
       pace: 'short',
     }]);
-    // If in lead capture, reprompt current step in new language
-    if (stepRef.current.startsWith('lead_')) {
-      setTimeout(() => {
-        enqueueBot(getStepClarificationMessages(stepRef.current as ChatStep, { ...memory, language: targetLang }));
-      }, 400);
-    }
   }
 
   // ── Handle ADVISOR REQUEST intent ────────────────────────────────────────────
