@@ -3344,9 +3344,34 @@ export function ChatBot() {
     }
   }
 
+  // showAdvisorReturnChoiceMenu — shown when user presses Volver at the start
+  // of Advisor Review (no valid previous step). Gives 4 explicit choices so the
+  // user is never silently returned to state selection.
+  function showAdvisorReturnChoiceMenu() {
+    const lang = memory.language;
+    const stExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
+    const stName = stExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
+    const stateNote = stName
+      ? (lang === 'es' ? ` Mantengo ${stName} como su estado.` : ` I'll keep ${stName} as your state.`)
+      : '';
+    enqueueBot([{
+      text: lang === 'es'
+        ? `¿Desea continuar con la revisión o volver al menú de temas?${stateNote}`
+        : `Would you like to continue the review or return to the topic menu?${stateNote}`,
+      options: [
+        { label: lang === 'es' ? 'Continuar revisión' : 'Continue review', value: 'advisor_continue', icon: <Calendar className="w-4 h-4" /> },
+        { label: lang === 'es' ? 'Volver al menú de temas' : 'Return to topic menu', value: 'edu_back_to_topics' },
+        { label: lang === 'es' ? 'Cambiar estado' : 'Change state', value: 'change_state_from_advisor' },
+        { label: lang === 'es' ? 'Empezar de nuevo' : 'Start over', value: 'start_over' },
+      ],
+      pace: 'short',
+    }]);
+  }
+
   // handleBackIntent — context-aware back. NEVER resets selectedState.
   // Behavior by context:
-  //   advisor_intake + lead step → previous lead step (preserves all other fields)
+  //   advisor_intake or lead_* step → previous lead step (skips lead_state if state known)
+  //   At beginning of advisor form → showAdvisorReturnChoiceMenu (4 options, no state re-ask)
   //   customer_service → topic menu (preserving state)
   //   medicare_education → topic menu (preserving state)
   //   default (guide/welcome/state) → topic menu if state exists, else ask state
@@ -3357,10 +3382,22 @@ export function ChatBot() {
     const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
     const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
 
-    // 1. Advisor intake: go to previous lead step (not start of form)
-    if (currentMode === 'advisor_intake' && stepRef.current.startsWith('lead_')) {
-      const prevStep = getPreviousLeadStep(stepRef.current);
+    // 1. Advisor form back navigation.
+    // Covers both: mode = 'advisor_intake' (normal) AND step.startsWith('lead_') without mode set.
+    const isInLeadFlow = (currentMode === 'advisor_intake' || stepRef.current.startsWith('lead_'))
+      && stepRef.current.startsWith('lead_');
+
+    if (isInLeadFlow) {
+      let prevStep = getPreviousLeadStep(stepRef.current);
+
+      // Skip lead_state when state was already selected in the guide flow.
+      // The user should never be asked to re-select state they already chose.
+      if (prevStep === 'lead_state' && stateExists) {
+        prevStep = getPreviousLeadStep('lead_state'); // → 'lead_phone'
+      }
+
       if (prevStep) {
+        // Valid previous step — go there, preserve all collected data and selected state
         updateMemory({
           previousStep: stepRef.current,
           previousMode: currentMode,
@@ -3374,7 +3411,10 @@ export function ChatBot() {
         enqueueBot([backMsg, ...promptLeadStep(prevStep, lang, memory.firstName)]);
         return;
       }
-      // First lead step → fall through to topic menu
+
+      // At beginning of advisor form — show choice menu. Never ask state again.
+      showAdvisorReturnChoiceMenu();
+      return;
     }
 
     // 2. Customer service stub → return to topic menu (preserve state)
@@ -3846,6 +3886,28 @@ export function ChatBot() {
 
     if (value === 'start_over') {
       resetChat();
+      return;
+    }
+
+    // Advisor return choice menu actions (shown when user presses Volver at form start)
+    if (value === 'advisor_continue') {
+      // User chose "Continue review" — re-prompt the current lead step
+      const currentLeadStep = stepRef.current;
+      if (currentLeadStep.startsWith('lead_')) {
+        enqueueBot([
+          { text: memory.language === 'es' ? 'Continuamos con la revisión.' : 'Continuing with the review.', pace: 'short' },
+          ...promptLeadStep(currentLeadStep, memory.language, memory.firstName),
+        ]);
+      } else {
+        // Fallback: restart advisor flow from name step
+        startPlanReview(memory.interestType || 'Plan review');
+      }
+      return;
+    }
+
+    if (value === 'change_state_from_advisor') {
+      handleChangeStateIntent();
+      return;
     }
   }
 
