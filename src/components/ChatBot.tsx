@@ -124,6 +124,7 @@ interface ChatMemory {
   isAdvisorFlowActive: boolean;
   isCustomerServiceIntent: boolean;
   pendingAction: string;
+  pausedStep?: ChatStep;
 }
 
 interface QueuedBotMessage {
@@ -2032,25 +2033,6 @@ const REVIEW_KEYWORDS = [
   'revisar opciones',
 ];
 
-const OUT_OF_SCOPE_KEYWORDS = [
-  'medical advice',
-  'diagnosis',
-  'symptom',
-  'emergency',
-  'legal advice',
-  'tax advice',
-  'lawsuit',
-  'irs',
-  'consejo médico',
-  'consejo medico',
-  'diagnóstico',
-  'diagnostico',
-  'síntoma',
-  'sintoma',
-  'emergencia',
-  'abogado',
-  'impuestos',
-];
 
 // ─── Clarification / interruption phrase detection ──────────────────────────
 // These are phrases that signal the user is confused or asking a question,
@@ -2397,24 +2379,6 @@ function normalizePhrase(text: string): string {
     .trim();
 }
 
-// Returns true when the user input is a clarification/confusion phrase,
-// not real form data. Works for both English and Spanish.
-function isClarification(text: string, lang: ChatLanguage): boolean {
-  if (!text || text.trim().length === 0) return false;
-  const norm = normalizePhrase(text);
-  for (const p of CLARIFICATION_PHRASES_EN) {
-    const pn = normalizePhrase(p);
-    if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
-  }
-  if (lang === 'es') {
-    for (const p of CLARIFICATION_PHRASES_ES) {
-      const pn = normalizePhrase(p);
-      if (norm === pn || norm.startsWith(pn + ' ') || norm.endsWith(' ' + pn)) return true;
-    }
-  }
-  return false;
-}
-
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
   if (normalized.match(/\bNY\b|\bNEW YORK\b|\bNEW\s?YORK\b/i)) return 'NY';
@@ -2729,7 +2693,7 @@ export function ChatBot() {
   // readable inside async/event handlers without closure staleness).
   function setStepSync(s: ChatStep) {
     stepRef.current = s;
-    setStepSync(s);
+    setStep(s);
   }
 
   function languageLabel(language: ChatLanguage) {
@@ -3040,23 +3004,13 @@ export function ChatBot() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   function pushNav(view: ZaraView) {
-    updateMemory((m: ChatMemory) => ({
-      navStack: [...(m.navStack || []), m.currentView],
-      previousView: m.currentView,
+    updateMemory({
+      navStack: [...(memory.navStack || []), memory.currentView],
+      previousView: memory.currentView,
       currentView: view,
-    } as Partial<ChatMemory>));
+    });
   }
 
-  function popNav(): ZaraView {
-    const stack = memory.navStack || [];
-    const prev = (stack[stack.length - 1] || 'none') as ZaraView;
-    updateMemory({
-      navStack: stack.slice(0, -1),
-      currentView: prev,
-      previousView: memory.currentView,
-    });
-    return prev;
-  }
 
   function setMode(mode: ZaraMode) {
     updateMemory({ previousMode: memory.currentMode, currentMode: mode });
@@ -3067,7 +3021,8 @@ export function ChatBot() {
   }
 
   function showTopicMenuWithState() {
-    const topicOptions = memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN;
+    const pageIndex = (topicPage as number) < 3 ? (topicPage as number) : 0;
+    const topicOptions = memory.language === 'es' ? TOPIC_GROUPS_ES[pageIndex] : TOPIC_GROUPS_EN[pageIndex];
     const stateName = memory.state ? SUPPORTED_STATES_LABELS[memory.state] || memory.state : '';
     const stateNote = stateName
       ? (memory.language === 'es'
@@ -3198,8 +3153,6 @@ export function ChatBot() {
 
   // ── Handle ADVISOR REQUEST intent ────────────────────────────────────────────
   function handleAdvisorRequestIntent() {
-    const fn = memory.firstName;
-    const namePrefix = fn ? (memory.language === 'es' ? `${fn}, ` : `${fn}, `) : '';
     updateMemory({ hasAskedForHuman: true, isAdvisorFlowActive: true });
     setMode('advisor_intake');
     setView('advisor_intro');
@@ -3235,7 +3188,7 @@ export function ChatBot() {
 
   // ── Handle CLARIFICATION intent ──────────────────────────────────────────────
   function handleClarificationGlobal() {
-    updateMemory((m: ChatMemory) => ({ confusionCount: (m.confusionCount || 0) + 1 } as Partial<ChatMemory>));
+    updateMemory({ confusionCount: (memory.confusionCount || 0) + 1 });
     const currentStep = stepRef.current as ChatStep;
     enqueueBot(getStepClarificationMessages(currentStep, memory));
   }
@@ -3498,8 +3451,8 @@ export function ChatBot() {
     }
 
     if (value === 'resume_lead') {
-      const pausedStep = memory.pausedStep as ChatStep | undefined;
-      updateMemory({ pausedStep: undefined as unknown as ChatStep });
+      const pausedStep = memory.pausedStep;
+      updateMemory({ pausedStep: undefined });
       if (pausedStep && pausedStep.startsWith('lead_')) {
         setStepSync(pausedStep);
         const fn = memory.firstName;
