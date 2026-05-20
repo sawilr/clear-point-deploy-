@@ -115,6 +115,20 @@ interface ChatMemory {
   lastValidUserInput: string;   // Last input successfully processed (not rejected, not clarification)
   pendingAction: string;        // Action deferred by interruption (e.g. 'continue_education')
   previousStep: string;         // Step before current (for back/resume logic)
+  // ─── Navigation context (enterprise spec: back/menu/mode routing) ──────────
+  // All fields are session-only. Reset on resetChat(). No sensitive data.
+  previousMode: ZaraMode;       // Mode before current (for back/resume after interrupt)
+  previousTopic: string;        // Education topic before current (for back-from-education)
+  lastEducationTopic: string;   // Last education topic discussed (alias for lang-switch resume)
+  lastPromptShown: string;      // Last bot message shown (clarification context)
+  lastOptionsShown: string;     // Last options set key shown (menu resume key)
+  lastBotIntent: string;        // Last bot intent classification (architecture reference)
+  lastQuestionAsked: string;    // Last question Zara asked (clarification context)
+  activeMenu: string;           // Current menu context ('guide_topics', 'cs_menu', 'edu_topic')
+  previousMenu: string;         // Previous menu context (for back-to-menu navigation)
+  activeEducationGroup: number; // Topic group page index (0–2; mirrors topicPage state)
+  activeFormStepId: string;     // Active lead form step ID (mirrors stepRef when in advisor_intake)
+  collectedLeadFields: string[];// Lead fields successfully collected in this session
 }
 
 interface QueuedBotMessage {
@@ -2099,6 +2113,19 @@ const DEFAULT_MEMORY: ChatMemory = {
   lastValidUserInput: '',
   pendingAction: '',
   previousStep: '',
+  // Navigation context fields (enterprise spec)
+  previousMode: 'guide',
+  previousTopic: '',
+  lastEducationTopic: '',
+  lastPromptShown: '',
+  lastOptionsShown: '',
+  lastBotIntent: '',
+  lastQuestionAsked: '',
+  activeMenu: '',
+  previousMenu: '',
+  activeEducationGroup: 0,
+  activeFormStepId: '',
+  collectedLeadFields: [],
 };
 
 function uid() {
@@ -2220,17 +2247,35 @@ const ADVISOR_REQUEST_PHRASES: string[] = [
   'hablar con alguien', 'un asesor', 'asesor humano',
 ];
 
-// Restart / back / menu
-const RESTART_PHRASES: string[] = [
-  'restart', 'start over', 'main menu', 'go back', 'change option', 'reset',
-  'empezar de nuevo', 'reiniciar', 'volver al menu', 'volver al menú',
-  'atras', 'atrás', 'cambiar opcion', 'cambiar opción', 'menu principal',
+// ─── Navigation phrase tables (enterprise spec) ──────────────────────────────
+// These four arrays are strictly separated — no phrase appears in more than one.
+// Detection priority in handleText: back → menu → change_state → restart.
+
+// BACK — context-aware: preserves memory, returns to previous step/menu/state.
+// Does NOT reset selectedState. Uses exact match for precision.
+const BACK_PHRASES: string[] = [
+  'back', 'go back', 'volver', 'atras', 'atrás', 'regresar',
+  'volver atras', 'volver atrás', 'volver al menu', 'volver al menú',
+  'anterior', 'paso anterior', 'ir atras', 'ir atrás',
 ];
-// These specifically mean "back to main menu" (not full reset)
-const BACK_TO_MENU_PHRASES: string[] = [
-  'menu', 'menú', 'back', 'go back', 'volver', 'atras', 'atrás',
-  'main menu', 'menu principal', 'volver al menu', 'volver al menú',
-  'cambiar opcion', 'cambiar opción',
+
+// MENU — shows topic menu for current state. Does NOT reset selectedState.
+const MENU_PHRASES: string[] = [
+  'menu', 'menú', 'main menu', 'menu principal',
+  'ver menu', 'ver menú', 'opciones', 'topics', 'temas',
+];
+
+// CHANGE STATE — clears selected state and asks again, keeps other context.
+const CHANGE_STATE_PHRASES: string[] = [
+  'cambiar estado', 'otro estado', 'vivo en otro estado', 'cambiar mi estado',
+  'change state', 'different state', 'i live in another state', 'update my state',
+  'vivir en otro estado', 'quiero cambiar estado',
+];
+
+// RESTART — full memory reset only. Only explicit "start over" intent triggers this.
+const RESTART_PHRASES: string[] = [
+  'restart', 'start over', 'reset', 'clear everything', 'begin again',
+  'empezar de nuevo', 'reiniciar', 'comenzar otra vez', 'borrar todo', 'resetear',
 ];
 
 // Customer service / plan issue intent
@@ -2267,17 +2312,35 @@ function detectAdvisorRequest(norm: string): boolean {
   });
 }
 
+// Back — context-aware, preserves state. Exact match.
+function detectBackIntent(norm: string): boolean {
+  return BACK_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn;
+  });
+}
+
+// Menu — shows topic menu, preserves state. Exact match.
+function detectMenuIntent(norm: string): boolean {
+  return MENU_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn;
+  });
+}
+
+// Change state — asks state only, keeps everything else. Contains match.
+function detectChangeStateIntent(norm: string): boolean {
+  return CHANGE_STATE_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn || norm.includes(pn);
+  });
+}
+
+// Restart — full memory reset only. Exact or startsWith match.
 function detectRestartIntent(norm: string): boolean {
   return RESTART_PHRASES.some((p) => {
     const pn = normalizePhrase(p);
     return norm === pn || norm.startsWith(pn);
-  });
-}
-
-function detectBackToMenuIntent(norm: string): boolean {
-  return BACK_TO_MENU_PHRASES.some((p) => {
-    const pn = normalizePhrase(p);
-    return norm === pn;
   });
 }
 
@@ -2543,6 +2606,94 @@ function getFailMessage(language: ChatLanguage) {
   return language === 'es'
     ? 'Lo siento, no pude enviar la solicitud en este momento. Puedes llamarnos directamente al 1-866-310-8702.'
     : "I'm sorry, I couldn't send the request right now. You can call us directly at 1-866-310-8702.";
+}
+
+// ─── Lead form back-navigation helpers (module-level — no component state needed) ──
+
+// Ordered list of lead steps for back-navigation in advisor_intake mode.
+// Steps match the sequence in askNextQuestion() / getNextMissingStep().
+const LEAD_STEP_ORDER: ChatStep[] = [
+  'lead_name', 'lead_last_name', 'lead_phone', 'lead_state',
+  'lead_zip', 'lead_dob', 'lead_coverage', 'lead_preferred_language',
+  'lead_time', 'lead_email', 'lead_consent',
+];
+
+// Returns the previous step in the lead flow, or null if at the first step.
+function getPreviousLeadStep(currentStep: string): ChatStep | null {
+  const idx = LEAD_STEP_ORDER.indexOf(currentStep as ChatStep);
+  if (idx <= 0) return null;
+  return LEAD_STEP_ORDER[idx - 1];
+}
+
+// Returns the re-prompt messages for a specific lead step (used by back navigation).
+// Mirrors the prompts in askNextQuestion() without resetting or advancing the flow.
+function promptLeadStep(step: string, lang: ChatLanguage, firstName: string): QueuedBotMessage[] {
+  const es = lang === 'es';
+  switch (step) {
+    case 'lead_name':
+      return [{ text: es ? '¿Cuál es su primer nombre?' : 'What is your first name?', pace: 'short' }];
+    case 'lead_last_name':
+      return [{ text: es ? '¿Cuál es su apellido?' : 'What is your last name?', pace: 'short' }];
+    case 'lead_phone':
+      return [{
+        text: es
+          ? `Gracias${firstName ? `, ${firstName}` : ''}. ¿Cuál es el mejor número de teléfono para contactarle?`
+          : `Thank you${firstName ? `, ${firstName}` : ''}. What is the best phone number to reach you?`,
+        pace: 'short',
+      }];
+    case 'lead_state':
+      return [{
+        text: es ? '¿En qué estado vive?' : 'What state do you live in?',
+        options: [
+          { label: 'New York', value: 'state_NY' },
+          { label: 'New Jersey', value: 'state_NJ' },
+          { label: 'Connecticut', value: 'state_CT' },
+          { label: 'Florida', value: 'state_FL' },
+        ],
+        pace: 'short',
+      }];
+    case 'lead_zip':
+      return [{ text: es ? 'Por favor ingrese su código postal de 5 dígitos.' : 'Please enter your 5-digit ZIP code.', pace: 'short' }];
+    case 'lead_dob':
+      return [{ text: es ? '¿Cuál es su fecha de nacimiento? Use el formato MM/DD/YYYY, ejemplo: 06/09/1983.' : 'What is your date of birth? Please use MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }];
+    case 'lead_coverage':
+      return [{
+        text: es ? '¿Cuál es su cobertura actual de Medicare?' : 'What is your current Medicare coverage?',
+        options: [
+          { label: es ? 'Medicare Original' : 'Original Medicare', value: 'coverage_original' },
+          { label: 'Medicare Advantage', value: 'coverage_advantage' },
+          { label: es ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' },
+        ],
+        pace: 'short',
+      }];
+    case 'lead_preferred_language':
+      return [{
+        text: es ? '¿En qué idioma prefiere hablar con el asesor?' : 'What language do you prefer to speak with the advisor?',
+        options: [
+          { label: 'English', value: 'preferred_en' },
+          { label: 'Español', value: 'preferred_es' },
+          { label: es ? 'Cualquiera' : 'Either', value: 'preferred_either' },
+        ],
+        pace: 'short',
+      }];
+    case 'lead_time':
+      return [{
+        text: es ? '¿Cuál es el mejor horario para contactarle?' : 'What is the best time to contact you?',
+        options: [
+          { label: es ? 'Mañana' : 'Morning', value: 'time_morning' },
+          { label: es ? 'Tarde' : 'Afternoon', value: 'time_afternoon' },
+          { label: es ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' },
+          { label: es ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' },
+        ],
+        pace: 'short',
+      }];
+    case 'lead_email':
+      return [{ text: es ? '¿Cuál es su correo electrónico? (opcional — escriba "saltar" para omitir)' : 'What is your email address? (optional — type "skip" to continue)', pace: 'short' }];
+    case 'lead_consent':
+      return [{ text: es ? 'Necesito su autorización para que un asesor le contacte. ¿Acepta?' : 'I need your authorization so a licensed advisor can contact you. Do you agree?', pace: 'short' }];
+    default:
+      return [{ text: es ? '¿Cómo puedo ayudarle?' : 'How can I help you?', pace: 'short' }];
+  }
 }
 
 export function ChatBot() {
@@ -3164,20 +3315,160 @@ export function ChatBot() {
     }
   }
 
-  function handleRestartIntentAction(norm: string) {
-    const isFullReset =
-      ['restart', 'start over', 'reiniciar', 'empezar de nuevo'].some((p) =>
-        norm.includes(normalizePhrase(p)),
-      );
-    if (isFullReset) {
-      resetChat();
-      return;
+  // ─── Navigation handlers (enterprise spec) ──────────────────────────────────
+  // Each handler has a single, well-defined behavior. None collapses into another.
+
+  // returnToStateTopicMenu — shared helper used by handleBackIntent + handleMenuIntent.
+  // If selectedState is known: shows topic menu WITHOUT asking state again.
+  // If no state: falls back to state selection.
+  function returnToStateTopicMenu(messageOverride?: string) {
+    const lang = memory.language;
+    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
+    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
+
+    if (stateExists && stateName) {
+      setStepSync('question');
+      updateMemory({ mode: 'guide', activeMenu: 'guide_topics' });
+      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
+      enqueueBot([{
+        text: messageOverride ?? (lang === 'es'
+          ? `Volvemos al menú anterior. Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
+          : `We're back to the previous menu. I'll keep ${stateName} as your state. What would you like to review now?`),
+        options: topicOptions,
+        pace: 'short',
+      }]);
+    } else {
+      // No state known — must ask state
+      setStepSync('state');
+      enqueueBot(MEDICARE_INTRO[lang]);
     }
-    // Back to main menu — keep language, return to state/topic intake
+  }
+
+  // handleBackIntent — context-aware back. NEVER resets selectedState.
+  // Behavior by context:
+  //   advisor_intake + lead step → previous lead step (preserves all other fields)
+  //   customer_service → topic menu (preserving state)
+  //   medicare_education → topic menu (preserving state)
+  //   default (guide/welcome/state) → topic menu if state exists, else ask state
+  function handleBackIntent() {
     cancelBotQueue();
     const lang = memory.language;
+    const currentMode = memory.mode;
+    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
+    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
+
+    // 1. Advisor intake: go to previous lead step (not start of form)
+    if (currentMode === 'advisor_intake' && stepRef.current.startsWith('lead_')) {
+      const prevStep = getPreviousLeadStep(stepRef.current);
+      if (prevStep) {
+        updateMemory({
+          previousStep: stepRef.current,
+          previousMode: currentMode,
+          previousMenu: memory.activeMenu,
+        });
+        setStepSync(prevStep);
+        const backMsg: QueuedBotMessage = {
+          text: lang === 'es' ? 'Volvemos al paso anterior.' : 'Going back to the previous step.',
+          pace: 'short',
+        };
+        enqueueBot([backMsg, ...promptLeadStep(prevStep, lang, memory.firstName)]);
+        return;
+      }
+      // First lead step → fall through to topic menu
+    }
+
+    // 2. Customer service stub → return to topic menu (preserve state)
+    if (currentMode === 'customer_service') {
+      updateMemory({ mode: 'guide', previousMode: currentMode, previousMenu: memory.activeMenu });
+      const msg = lang === 'es'
+        ? (stateName ? `Volvemos al menú. Mantengo ${stateName} como su estado. ¿Qué desea revisar?` : 'Volvemos al menú. ¿Qué desea revisar?')
+        : (stateName ? `Back to the menu. I'll keep ${stateName} as your state. What would you like to review?` : "Back to the menu. What would you like to review?");
+      returnToStateTopicMenu(msg);
+      return;
+    }
+
+    // 3. Education → return to topic menu (preserve state, track previousTopic)
+    if (stepRef.current === 'medicare_education') {
+      updateMemory({
+        previousTopic: memory.educationTopic,
+        previousMenu: memory.activeMenu,
+      });
+      returnToStateTopicMenu();
+      return;
+    }
+
+    // 4. All other contexts: show topic menu if state exists
+    updateMemory({
+      previousStep: stepRef.current,
+      previousMode: currentMode,
+      previousMenu: memory.activeMenu,
+    });
+    returnToStateTopicMenu();
+  }
+
+  // handleMenuIntent — shows topic menu for current state. Does NOT reset state.
+  // Typing "menu" or "menú" always shows the topic menu without asking state again.
+  function handleMenuIntent() {
+    cancelBotQueue();
+    const lang = memory.language;
+    const stateExists = !!(memory.state && SUPPORTED_STATES.includes(memory.state));
+    const stateName = stateExists ? (SUPPORTED_STATES_LABELS[memory.state] || memory.state) : null;
+
+    updateMemory({
+      mode: 'guide',
+      previousMode: memory.mode,
+      previousStep: stepRef.current,
+      activeMenu: 'guide_topics',
+    });
+
+    if (stateExists && stateName) {
+      setStepSync('question');
+      const topicOptions = lang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0];
+      enqueueBot([{
+        text: lang === 'es'
+          ? `Claro. Mantengo ${stateName} como su estado. ¿Qué desea revisar?`
+          : `Sure. I'll keep ${stateName} as your state. What would you like to review?`,
+        options: topicOptions,
+        pace: 'short',
+      }]);
+    } else {
+      setStepSync('state');
+      enqueueBot(MEDICARE_INTRO[lang]);
+    }
+  }
+
+  // handleChangeStateIntent — asks state only. Does NOT reset other context.
+  // Only fires for explicit "cambiar estado" / "change state" phrases.
+  function handleChangeStateIntent() {
+    cancelBotQueue();
+    const lang = memory.language;
+    // Clear only state-dependent fields; preserve language, advisor flow, confusion count, etc.
+    updateMemory({
+      state: '',
+      city: '',
+      county: '',
+      derivedState: '',
+      previousStep: stepRef.current,
+      previousMode: memory.mode,
+    });
     setStepSync('state');
-    enqueueBot(MEDICARE_INTRO[lang], true);
+    enqueueBot([{
+      text: lang === 'es' ? 'Claro. ¿En qué estado vive?' : 'Of course. What state do you live in?',
+      options: [
+        { label: 'New York', value: 'state_NY' },
+        { label: 'New Jersey', value: 'state_NJ' },
+        { label: 'Connecticut', value: 'state_CT' },
+        { label: 'Florida', value: 'state_FL' },
+      ],
+      pace: 'short',
+    }]);
+  }
+
+  // handleRestartIntent — full memory reset. Only fires for explicit reset phrases.
+  // Clears ALL session context. This is the only place resetChat() is called from handleText.
+  function handleRestartIntent() {
+    cancelBotQueue();
+    resetChat();
   }
 
   function handleCSIntentAction() {
@@ -3986,17 +4277,28 @@ export function ChatBot() {
       return;
     }
 
-    // 3. Restart / back / menu
-    if (detectBackToMenuIntent(norm)) {
-      handleRestartIntentAction(norm);
+    // 3. Back — context-aware, preserves selectedState and memory
+    if (detectBackIntent(norm)) {
+      handleBackIntent();
       return;
     }
+    // 4. Menu — shows topic menu, preserves selectedState
+    if (detectMenuIntent(norm)) {
+      handleMenuIntent();
+      return;
+    }
+    // 5. Change state — asks state only, keeps all other context
+    if (detectChangeStateIntent(norm)) {
+      handleChangeStateIntent();
+      return;
+    }
+    // 6. Restart — full memory reset (only explicit "empezar de nuevo"/"start over" phrases)
     if (detectRestartIntent(norm)) {
-      handleRestartIntentAction(norm);
+      handleRestartIntent();
       return;
     }
 
-    // 4. Customer service / plan issue intent
+    // 7. Customer service / plan issue intent
     if (detectCSIntent(norm)) {
       handleCSIntentAction();
       return;
