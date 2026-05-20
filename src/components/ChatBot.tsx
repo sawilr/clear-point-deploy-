@@ -2203,6 +2203,219 @@ const SOFT_OOS_KEYWORDS = [
   'restaurant','hotel','vacation','travel tips',
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ZARA FUZZY INTENT — TYPO / VOICE TRANSCRIPTION TOLERANCE LAYER
+// Controls typo-tolerant intent detection. Does NOT affect personal data
+// validation (name, phone, ZIP, DOB, email, consent) which remain strict.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Word-level typo aliases — Spanish
+const TYPO_ALIASES_ES: Record<string, string> = {
+  ablar: 'hablar', ablamos: 'hablamos', ablen: 'hablen',
+  alluda: 'ayuda', alludar: 'ayudar', aluda: 'ayuda', alludarme: 'ayudarme',
+  targeta: 'tarjeta',
+  yego: 'llego', yegar: 'llegar', yegue: 'llegue', yegaron: 'llegaron',
+  bolver: 'volver', bolber: 'volver',
+  kiero: 'quiero', kiera: 'quiera', quero: 'quiero',
+  nesecito: 'necesito', nesecitar: 'necesitar', nesecita: 'necesita',
+  medicai: 'medicaid',
+  extrajelp: 'extra help',
+  asy: 'asi',
+  cmo: 'como',
+  espanol: 'espanol', // already normalized (accent removed)
+  mui: 'muy',
+  benificio: 'beneficio', benifico: 'beneficio',
+  siguro: 'seguro', sigura: 'segura',
+  aseguransa: 'aseguranza',
+  incricion: 'inscripcion', inscripcion: 'inscripcion',
+};
+
+// Word-level typo aliases — English
+const TYPO_ALIASES_EN: Record<string, string> = {
+  halp: 'help', halpe: 'help', helo: 'help',
+  medecine: 'medicine', medicane: 'medicine', medcine: 'medicine',
+  leter: 'letter', lettr: 'letter', letr: 'letter',
+  advisr: 'advisor', advsr: 'advisor', adivsor: 'advisor',
+  spanich: 'spanish', spainish: 'spanish', spanesh: 'spanish',
+  medicade: 'medicaid', medicad: 'medicaid',
+  extrahelp: 'extra help',
+  bak: 'back', bck: 'back',
+  dont: "don't", doesnt: "doesn't", cant: "can't",
+  wont: "won't", didnt: "didn't",
+  recieved: 'received', recieve: 'receive',
+  benifits: 'benefits', benifit: 'benefit',
+  insurence: 'insurance', insuranse: 'insurance',
+};
+
+// Phrase-level aliases (checked before word-by-word substitution)
+const PHRASE_ALIASES: Record<string, string> = {
+  'como asy': 'como asi',
+  'no me yego la tarjeta': 'no me llego la tarjeta',
+  'no me llego la tarjeta': 'no me llego la tarjeta',
+  'perdi mi targeta': 'perdi mi tarjeta',
+  'perdi targeta': 'perdi tarjeta',
+  'me yego una carta': 'me llego una carta',
+  'me yego una letra': 'me llego una letra',
+  'el doctor no sale': 'doctor no sale',
+  'mi doctor no sale': 'doctor no sale',
+  'otc no llego': 'otc no llego',
+  'otc no work': 'otc problem',
+  'card no work': 'card problem',
+  'otc card no work': 'otc problem',
+};
+
+type FuzzyConfidence = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+interface FuzzyResult { intent: string; subIntent: string; confidence: FuzzyConfidence; }
+
+// Fuzzy intent patterns — ordered HIGH then MEDIUM.
+// Each phrase is matched against normalized+alias-corrected text.
+const FUZZY_INTENT_PATTERNS: Array<{
+  phrases: string[];
+  intent: string;
+  subIntent: string;
+  confidence: FuzzyConfidence;
+}> = [
+  // ADVISOR REQUEST — HIGH
+  { phrases: ['hablar con alguien', 'hablar con una persona', 'hablar con asesor',
+               'quiero hablar con alguien', 'necesito hablar', 'hablar con advisor',
+               'i need advisor', 'i need advisr', 'speak with someone', 'talk to someone',
+               'speak to advisor', 'need to talk to someone'],
+    intent: 'ADVISOR_REQUEST', subIntent: '', confidence: 'HIGH' },
+  // BACK — HIGH
+  { phrases: ['bolver', 'bolber', 'volver', 'volver al menu', 'regresar', 'regresar al menu',
+               'ir atras', 'go bak', 'go back', 'go back to menu', 'volver atras'],
+    intent: 'BACK', subIntent: '', confidence: 'HIGH' },
+  // CLARIFICATION — HIGH
+  { phrases: ['como asi', 'no entendi', 'no entiendo', 'no comprendi', 'no comprendo',
+               'i dont understand', "i don't understand", 'que significa', 'que quiere decir',
+               'i need halp', 'i need help', 'no se', 'no se que', 'explain',
+               'can you explain', 'que es eso', 'i am confused', 'im confused'],
+    intent: 'CLARIFICATION', subIntent: '', confidence: 'HIGH' },
+  // LANGUAGE SWITCH ES — HIGH
+  { phrases: ['quiero espanol', 'kiero espanol', 'en espanol', 'espanol por favor',
+               'hablar en espanol', 'prefiero espanol'],
+    intent: 'LANGUAGE_SWITCH_ES', subIntent: '', confidence: 'HIGH' },
+  // LANGUAGE SWITCH EN — HIGH
+  { phrases: ['speak spanich', 'speak spanish', 'in spanish', 'speak english',
+               'in english', 'english please', 'prefiero ingles'],
+    intent: 'LANGUAGE_SWITCH_ES', subIntent: '', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — CARD — HIGH
+  { phrases: ['perdi mi tarjeta', 'perdi tarjeta', 'no me llego la tarjeta',
+               'no llego la tarjeta', 'tarjeta perdida', 'lost my card', 'lost card',
+               'my card didnt come', "my card didn't come", 'card didnt arrive',
+               'missing card', 'card problem', 'tarjeta no llego',
+               'no recibi mi tarjeta'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'CARD', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — CARD — MEDIUM (ambiguous partial signals)
+  { phrases: ['tarjeta', 'perdi', 'my card', 'lost card'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'CARD', confidence: 'MEDIUM' },
+  // CUSTOMER SERVICE — LETTER — HIGH
+  { phrases: ['me llego una carta', 'me llego una letra', 'recibi una carta',
+               'recibi una letra', 'i got a letter', 'i got a leter', 'got letter',
+               'received letter', 'me mandaron una carta', 'llego una carta'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'LETTER', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — MEDICATION — HIGH
+  { phrases: ['mi medicina esta cara', 'medicina cara', 'medicamento caro',
+               'my medicine is expensive', 'my medecine is expensive', 'medicine expensive',
+               'medicine costs too much', 'my medicine costs', 'my pills are expensive',
+               'medicamentos caros'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'MEDICATION', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — MEDICATION — MEDIUM
+  { phrases: ['medicina cara', 'medicine expensive', 'medication cost'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'MEDICATION', confidence: 'MEDIUM' },
+  // CUSTOMER SERVICE — DOCTOR — HIGH
+  { phrases: ['doctor no sale', 'el doctor no sale', 'mi doctor no esta',
+               'doctor no aparece', 'doctor not covered', 'doctor not in network',
+               'my doctor not covered', 'doctor no esta en mi plan'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'DOCTOR', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — OTC — HIGH
+  { phrases: ['otc no llego', 'otc no work', 'otc problem', 'tarjeta otc no llego',
+               'tarjeta otc problema', 'otc card problem', 'flex card no work',
+               'otc card no llego'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'OTC', confidence: 'HIGH' },
+  // CUSTOMER SERVICE — OTC — MEDIUM
+  { phrases: ['otc'],
+    intent: 'CUSTOMER_SERVICE', subIntent: 'OTC', confidence: 'MEDIUM' },
+  // MEDICAID / EXTRA HELP — HIGH
+  { phrases: ['medicaid', 'medicai', 'medicade', 'extra help', 'extrahelp', 'extrajelp',
+               'ayuda extra', 'programa de ayuda', 'low income subsidy', 'lis',
+               'ayuda con costos', 'help with costs', 'extra benefits program'],
+    intent: 'MEDICAID_EXTRA_HELP', subIntent: '', confidence: 'HIGH' },
+];
+
+
+// ── Normalize text for fuzzy intent detection ────────────────────────────────────────
+// Lowercases, strips accents, removes punctuation, collapses spaces.
+// Used ONLY for intent detection — never applied to personal data fields.
+function normalizeForIntent(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u00BF\u00A1?!.,;:"\u201C\u201D()\[\]]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ── Apply typo alias substitutions ──────────────────────────────────────────────
+function applyTypoAliases(text: string): string {
+  if (PHRASE_ALIASES[text]) return PHRASE_ALIASES[text];
+  let result = text;
+  for (const [phrase, replacement] of Object.entries(PHRASE_ALIASES)) {
+    if (result.includes(phrase)) result = result.replace(phrase, replacement);
+  }
+  const combined: Record<string, string> = { ...TYPO_ALIASES_ES, ...TYPO_ALIASES_EN };
+  const words = result.split(' ');
+  return words.map(w => combined[w] || w).join(' ');
+}
+
+// ── Classify fuzzy intent with confidence level ────────────────────────────────────────
+function classifyFuzzyIntent(
+  normalizedText: string,
+  _currentStep: string,
+  currentMode: string,
+  currentTopic: string,
+): FuzzyResult {
+  const topic = currentTopic.toLowerCase();
+  const mode = currentMode.toLowerCase();
+  let bestResult: FuzzyResult = { intent: 'NONE', subIntent: '', confidence: 'NONE' };
+
+  for (const pattern of FUZZY_INTENT_PATTERNS) {
+    const matched = pattern.phrases.some(
+      (phrase) => normalizedText === phrase || normalizedText.includes(phrase),
+    );
+    if (!matched) continue;
+    let confidence = pattern.confidence;
+    if (confidence === 'MEDIUM') {
+      const sub = pattern.subIntent;
+      if (sub === 'CARD' && (topic.includes('card') || topic.includes('tarjeta') || mode === 'customer_service')) confidence = 'HIGH';
+      if (sub === 'OTC' && (topic.includes('otc') || mode === 'customer_service')) confidence = 'HIGH';
+      if (sub === 'MEDICATION' && (topic.includes('med') || mode === 'customer_service')) confidence = 'HIGH';
+      if (sub === 'DOCTOR' && (topic.includes('doctor') || mode === 'customer_service')) confidence = 'HIGH';
+      if (sub === 'LETTER' && (topic.includes('letter') || topic.includes('carta') || mode === 'customer_service')) confidence = 'HIGH';
+    }
+    if (confidence === 'HIGH') {
+      return { intent: pattern.intent, subIntent: pattern.subIntent, confidence: 'HIGH' };
+    }
+    if (confidence === 'MEDIUM' && bestResult.confidence === 'NONE') {
+      bestResult = { intent: pattern.intent, subIntent: pattern.subIntent, confidence: 'MEDIUM' };
+    }
+  }
+  // LOW: multi-word unrecognized text that might be intent-like
+  if (bestResult.confidence === 'NONE' && normalizedText.length >= 6 && normalizedText.split(' ').length > 1) {
+    return { intent: 'UNKNOWN', subIntent: '', confidence: 'LOW' };
+  }
+  return bestResult;
+}
+
+// Personal data steps — fuzzy detection never intercepts form input here
+const PERSONAL_DATA_STEPS: string[] = [
+  'lead_name', 'lead_phone', 'lead_zip', 'lead_dob',
+  'lead_email', 'lead_consent', 'lead_coverage',
+  'lead_language_pref', 'lead_contact_time',
+];
+
 function classifyGlobalIntent(
   text: string,
   sensitiveKeywords: string[],
@@ -3259,6 +3472,141 @@ export function ChatBot() {
     showOutOfScope();
   }
 
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ZARA FUZZY INTENT HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Customer service with sub-intent context ──────────────────────────────
+  function handleCustomerServiceWithSubIntent(subIntent: string, lang: ChatLanguage) {
+    updateMemory({ isCustomerServiceIntent: true, currentMode: 'customer_service' });
+    setMode('customer_service');
+    setView('customer_service_stub');
+    const fn = memory.firstName;
+    const namePrefix = fn ? `${fn}, ` : '';
+
+    const subMessages: Record<string, Record<ChatLanguage, string>> = {
+      CARD: {
+        en: 'I understand you may have an issue with your plan card — not received or lost.',
+        es: 'Entiendo que puede tener un problema con su tarjeta del plan — no recibida o perdida.',
+      },
+      LETTER: {
+        en: 'I understand you received a letter from your plan or Medicare.',
+        es: 'Entiendo que recibió una carta de su plan o de Medicare.',
+      },
+      MEDICATION: {
+        en: 'I understand you have a concern about medication cost or coverage.',
+        es: 'Entiendo que tiene una preocupación sobre el costo o cobertura de su medicamento.',
+      },
+      DOCTOR: {
+        en: 'I understand you have a concern about your doctor or network coverage.',
+        es: 'Entiendo que tiene una preocupación sobre su médico o la red de cobertura de su plan.',
+      },
+      OTC: {
+        en: 'I understand you have an issue with your OTC or flex card.',
+        es: 'Entiendo que tiene un problema con su tarjeta OTC o de beneficios flexibles.',
+      },
+    };
+
+    const subMsg = (subMessages[subIntent]?.[lang]) ??
+      (lang === 'es'
+        ? 'Entiendo que tiene un problema con su plan o beneficios.'
+        : 'I understand you have an issue with your plan or benefits.');
+
+    const safetyNote = lang === 'es'
+      ? ' Por seguridad, no ingrese su ID de Medicare, número de seguro social ni información bancaria en este chat.'
+      : ' For your security, please do not enter your Medicare ID, Social Security number, or banking information in this chat.';
+
+    enqueueBot([
+      { text: `${namePrefix}${subMsg}${safetyNote}`, pace: 'slow' },
+      {
+        text: lang === 'es'
+          ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
+          : 'A licensed advisor can assist you directly. Would you like someone to call you?',
+        options: [
+          { label: lang === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
+          { label: lang === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
+        ],
+        pace: 'short',
+      },
+    ]);
+  }
+
+  // ── Medicaid / Extra Help education route ─────────────────────────────────
+  function handleMedicaidExtraHelpIntent() {
+    const lang = memory.language;
+    setStepSync('medicare_education');
+    setMode('education');
+    setView('education_topic');
+    updateMemory({ educationTopic: 'edu_extra_help', lastEducationTopic: 'edu_extra_help' });
+    enqueueBot(getMedicareEducation('edu_extra_help', lang, memory.state));
+  }
+
+  // ── Medium-confidence: ask user to confirm inferred intent ─────────────────
+  function showFuzzyConfirmDialog(result: FuzzyResult) {
+    const lang = memory.language;
+    const fn = memory.firstName;
+    const namePrefix = fn ? `${fn}, ` : '';
+
+    const subIntentLabels: Record<string, Record<ChatLanguage, string>> = {
+      CARD:     { en: 'a lost or missing card', es: 'una tarjeta perdida o no recibida' },
+      LETTER:   { en: 'a letter from your plan', es: 'una carta de su plan' },
+      MEDICATION: { en: 'a medication cost issue', es: 'un problema con el costo de medicamentos' },
+      DOCTOR:   { en: 'a doctor coverage issue', es: 'cobertura de médico' },
+      OTC:      { en: 'an OTC card issue', es: 'un problema con su tarjeta OTC' },
+      '':       { en: 'a plan issue', es: 'un problema con su plan' },
+    };
+
+    const labelKey = result.subIntent in subIntentLabels ? result.subIntent : '';
+    const label = subIntentLabels[labelKey][lang];
+    const confirmValue = `fuzzy_confirm_${result.intent}_${result.subIntent || 'GENERAL'}`;
+
+    enqueueBot([{
+      text: lang === 'es'
+        ? `${namePrefix}Creo que se refiere a ${label}. \u00BFEs correcto?`
+        : `${namePrefix}I think you may be referring to ${label}. Is that correct?`,
+      options: [
+        { label: lang === 'es' ? `S\u00ED, eso es` : 'Yes, that\'s it', value: confirmValue },
+        { label: lang === 'es' ? 'No, otra cosa' : 'No, something else', value: 'back_to_topics' },
+        { label: lang === 'es' ? 'Hablar con asesor' : 'Speak with advisor', value: 'request_review' },
+      ],
+      pace: 'short',
+    }]);
+  }
+
+  // ── Low-confidence: safe clarification menu ────────────────────────────────
+  function showFuzzySafeMenu() {
+    const lang = memory.language;
+    const fn = memory.firstName;
+    const namePrefix = fn ? `${fn}, ` : '';
+    enqueueBot([{
+      text: lang === 'es'
+        ? `${namePrefix}Quiero asegurarme de entenderle bien. \u00BFEst\u00E1 preguntando sobre Medicare, necesita ayuda con su plan actual, o quiere hablar con un asesor?`
+        : `${namePrefix}I want to make sure I understand you correctly. Are you asking about Medicare, do you need help with your current plan, or would you like to speak with an advisor?`,
+      options: [
+        { label: lang === 'es' ? 'Temas de Medicare' : 'Medicare topics', value: 'back_to_topics' },
+        { label: lang === 'es' ? 'Problema con mi plan' : 'Issue with my plan', value: 'fuzzy_cs_general' },
+        { label: lang === 'es' ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review' },
+      ],
+      pace: 'short',
+    }]);
+  }
+
+  // ── Main fuzzy intent dispatcher ───────────────────────────────────────────
+  function handleFuzzyIntent(result: FuzzyResult) {
+    if (result.confidence === 'HIGH') {
+      if (result.intent === 'ADVISOR_REQUEST')   { handleAdvisorRequestIntent(); return; }
+      if (result.intent === 'BACK')              { handleBackIntent(); return; }
+      if (result.intent === 'CLARIFICATION')     { handleClarificationGlobal(); return; }
+      if (result.intent === 'LANGUAGE_SWITCH_ES') { handleLanguageSwitchIntent('es'); return; }
+      if (result.intent === 'LANGUAGE_SWITCH_EN') { handleLanguageSwitchIntent('en'); return; }
+      if (result.intent === 'CUSTOMER_SERVICE')  { handleCustomerServiceWithSubIntent(result.subIntent, memory.language); return; }
+      if (result.intent === 'MEDICAID_EXTRA_HELP') { handleMedicaidExtraHelpIntent(); return; }
+    }
+    if (result.confidence === 'MEDIUM') { showFuzzyConfirmDialog(result); return; }
+    if (result.confidence === 'LOW')    { showFuzzySafeMenu(); return; }
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // END ENTERPRISE NAVIGATION HELPERS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -3529,6 +3877,30 @@ export function ChatBot() {
       } else {
         startPlanReview(memory.interestType || 'Plan review');
       }
+      return;
+    }
+
+
+    // ── Fuzzy confirm — user confirmed medium-confidence intent ────────────────
+    if (value.startsWith('fuzzy_confirm_')) {
+      const parts = value.replace('fuzzy_confirm_', '').split('_');
+      const intent = parts[0];
+      const subIntent = parts.slice(1).join('_').replace('_GENERAL', '') || '';
+      if (intent === 'CUSTOMER_SERVICE') {
+        handleCustomerServiceWithSubIntent(subIntent, memory.language);
+      } else if (intent === 'MEDICAID_EXTRA_HELP') {
+        handleMedicaidExtraHelpIntent();
+      } else if (intent === 'ADVISOR_REQUEST') {
+        handleAdvisorRequestIntent();
+      } else {
+        handleCustomerServiceIntent();
+      }
+      return;
+    }
+
+    // ── Fuzzy CS general (from low-confidence safe menu) ──────────────────────
+    if (value === 'fuzzy_cs_general') {
+      handleCustomerServiceIntent();
       return;
     }
 
@@ -4069,6 +4441,24 @@ export function ChatBot() {
         updateMemory({ educationTopic: eduKey, educationStep: 1 });
         const education = getMedicareEducation(eduKey, memory.language, memory.state);
         enqueueBot(education);
+        return;
+      }
+    }
+
+    // ── FUZZY INTENT LAYER ─────────────────────────────────────────────────────
+    // Runs only when classifyGlobalIntent returned FORM_DATA (not recognized by
+    // the 13-step pipeline) AND we are not in a personal-data collection step.
+    // Personal data fields (name, phone, ZIP, DOB, email, consent) remain strict.
+    if (intent === 'FORM_DATA' && !PERSONAL_DATA_STEPS.includes(stepRef.current)) {
+      const normalized = applyTypoAliases(normalizeForIntent(text));
+      const fuzzyResult = classifyFuzzyIntent(
+        normalized,
+        stepRef.current,
+        memory.currentMode,
+        memory.currentTopic || memory.lastEducationTopic || '',
+      );
+      if (fuzzyResult.confidence !== 'NONE') {
+        handleFuzzyIntent(fuzzyResult);
         return;
       }
     }
