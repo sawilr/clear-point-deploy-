@@ -2129,6 +2129,103 @@ function isClarification(text: string, lang: ChatLanguage): boolean {
   return false;
 }
 
+// ─── Human Intent Router: module-level phrase tables ────────────────────────
+
+// Language switch — detected before ANY form/step validation
+const LANG_SWITCH_ES_PHRASES: string[] = [
+  'español', 'espanol', 'quiero español', 'quiero espanol',
+  'habla español', 'habla espanol', 'cambiar a español', 'cambiar a espanol',
+  'en español', 'en espanol', 'hablo español', 'hablo espanol',
+  'prefiero español', 'prefiero espanol', 'quiero hablar en español',
+  'quiero hablar en espanol', 'spanish',
+];
+const LANG_SWITCH_EN_PHRASES: string[] = [
+  'english', 'speak english', 'switch to english', 'change to english',
+  'in english', 'i prefer english', 'prefer english', 'continue in english',
+  'quiero inglés', 'quiero ingles', 'en inglés', 'en ingles',
+];
+
+// Advisor / human agent request
+const ADVISOR_REQUEST_PHRASES: string[] = [
+  'talk to someone', 'speak with advisor', 'speak to advisor', 'speak to someone',
+  'i want to speak to someone', 'i want to talk to someone', 'call me',
+  'i want a person', 'i want a human', 'representative', 'human agent',
+  'connect me with someone', 'transfer me',
+  'quiero hablar con alguien', 'quiero un asesor', 'llamame', 'llamame por favor',
+  'que me llamen', 'hablar con una persona', 'hablar con representante',
+  'necesito un asesor', 'quiero hablar con una persona',
+  'quiero hablar con representante', 'quiero hablar con alguien',
+  'hablar con alguien', 'un asesor', 'asesor humano',
+];
+
+// Restart / back / menu
+const RESTART_PHRASES: string[] = [
+  'restart', 'start over', 'main menu', 'go back', 'change option', 'reset',
+  'empezar de nuevo', 'reiniciar', 'volver al menu', 'volver al menú',
+  'atras', 'atrás', 'cambiar opcion', 'cambiar opción', 'menu principal',
+];
+// These specifically mean "back to main menu" (not full reset)
+const BACK_TO_MENU_PHRASES: string[] = [
+  'menu', 'menú', 'back', 'go back', 'volver', 'atras', 'atrás',
+  'main menu', 'menu principal', 'volver al menu', 'volver al menú',
+  'cambiar opcion', 'cambiar opción',
+];
+
+// Customer service / plan issue intent
+const CS_INTENT_PHRASES: string[] = [
+  'lost my card', 'lost card', 'otc issue', 'my doctor', 'no aparece mi doctor',
+  'received a letter', 'got a letter', 'problem with my plan', 'plan problem',
+  'transportation', 'dental', 'vision', 'hearing aid', 'audifono',
+  'perdi mi tarjeta', 'perdí mi tarjeta', 'no recibi otc', 'no recibí otc',
+  'mi medicina esta cara', 'mi medicina está cara', 'mi doctor no aparece',
+  'me llego una carta', 'me llegó una carta', 'problema con mi plan',
+  'necesito transportacion', 'necesito transportación',
+  'audífonos', 'audifonos', 'card replacement', 'replace my card',
+  'pharmacy issue', 'farmacia', 'medicamento caro', 'medicamentos caros',
+];
+
+// ─── Human Intent Router: module-level detection functions ───────────────────
+
+function detectLangSwitch(norm: string): 'en' | 'es' | null {
+  for (const p of LANG_SWITCH_ES_PHRASES) {
+    const pn = normalizePhrase(p);
+    if (norm === pn || norm.includes(pn)) return 'es';
+  }
+  for (const p of LANG_SWITCH_EN_PHRASES) {
+    const pn = normalizePhrase(p);
+    if (norm === pn || norm.includes(pn)) return 'en';
+  }
+  return null;
+}
+
+function detectAdvisorRequest(norm: string): boolean {
+  return ADVISOR_REQUEST_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn || norm.includes(pn);
+  });
+}
+
+function detectRestartIntent(norm: string): boolean {
+  return RESTART_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn || norm.startsWith(pn);
+  });
+}
+
+function detectBackToMenuIntent(norm: string): boolean {
+  return BACK_TO_MENU_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn;
+  });
+}
+
+function detectCSIntent(norm: string): boolean {
+  return CS_INTENT_PHRASES.some((p) => {
+    const pn = normalizePhrase(p);
+    return norm === pn || norm.includes(pn);
+  });
+}
+
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
   if (normalized.match(/\bNY\b|\bNEW YORK\b|\bNEW\s?YORK\b/i)) return 'NY';
@@ -2792,6 +2889,95 @@ export function ChatBot() {
     ]);
   }
 
+  /* ---------- Human Intent Router: inner handlers ---------- */
+
+  function handleLanguageSwitchIntent(newLang: 'en' | 'es') {
+    // Update site language and memory atomically
+    setLang(newLang);
+    updateMemory({ language: newLang, preferredLanguage: newLang === 'es' ? 'Español' : 'English' });
+    const updatedMem: ChatMemory = { ...memory, language: newLang };
+
+    const confirmMsg: QueuedBotMessage = {
+      text: newLang === 'es'
+        ? 'Claro, seguimos en español.'
+        : "Of course, we'll continue in English.",
+      pace: 'short',
+    };
+
+    const currentStep = stepRef.current;
+
+    // For lead steps: repeat the current field prompt in the new language
+    if (currentStep.startsWith('lead_')) {
+      const repromptPair = getStepClarificationMessages(currentStep, updatedMem);
+      const reprompt = repromptPair.length >= 2 ? repromptPair[1] : null;
+      enqueueBot(reprompt ? [confirmMsg, reprompt] : [confirmMsg]);
+      return;
+    }
+
+    // For all other steps: just confirm — current menu/prompt stays visible
+    enqueueBot([confirmMsg]);
+  }
+
+  function handleAdvisorRequestIntent() {
+    const lang = memory.language;
+    cancelBotQueue();
+    enqueueBot([
+      {
+        text: lang === 'es'
+          ? 'Claro. Un asesor autorizado puede ayudarle con preguntas sobre su cobertura específica. No puedo recomendar planes, pero sí podemos conectarle con alguien que revisará su situación completa.'
+          : "Of course. A licensed advisor can help with questions about your specific coverage. I cannot recommend plans, but we can connect you with someone who will review your full situation.",
+        pace: 'slow',
+      },
+      {
+        text: lang === 'es'
+          ? '¿Me puede dar su nombre para iniciar el proceso?'
+          : 'May I have your first name to get started?',
+        pace: 'short',
+      },
+    ]);
+    if (!stepRef.current.startsWith('lead_')) {
+      setStepSync('lead_name');
+    }
+  }
+
+  function handleRestartIntentAction(norm: string) {
+    const isFullReset =
+      ['restart', 'start over', 'reiniciar', 'empezar de nuevo'].some((p) =>
+        norm.includes(normalizePhrase(p)),
+      );
+    if (isFullReset) {
+      resetChat();
+      return;
+    }
+    // Back to main menu — keep language, return to state/topic intake
+    cancelBotQueue();
+    const lang = memory.language;
+    setStepSync('state');
+    enqueueBot(MEDICARE_INTRO[lang], true);
+  }
+
+  function handleCSIntentAction() {
+    const lang = memory.language;
+    cancelBotQueue();
+    enqueueBot([
+      {
+        text: lang === 'es'
+          ? 'Entiendo que tiene una situación con su plan actual. Este chat no puede resolver problemas de servicio al cliente directamente, pero un asesor autorizado puede orientarle.'
+          : "I understand you have an issue with your current plan. This chat cannot resolve customer service issues directly, but a licensed advisor can guide you.",
+        pace: 'slow',
+      },
+      {
+        text: lang === 'es'
+          ? '¿Me puede dar su nombre para conectarle con alguien que pueda ayudarle?'
+          : 'May I have your first name so we can connect you with someone who can help?',
+        pace: 'short',
+      },
+    ]);
+    if (!stepRef.current.startsWith('lead_')) {
+      setStepSync('lead_name');
+    }
+  }
+
   /* ---------- Option handler ---------- */
 
   function handleOption(value: string) {
@@ -3445,6 +3631,41 @@ export function ChatBot() {
       showPrivacyReminder();
       return;
     }
+
+    // ─── Human Intent Router ────────────────────────────────────────────────
+    // Runs on EVERY typed input, before form/step validation.
+    // Order is strict: language switch → advisor → restart/back → CS intent.
+    const norm = normalizePhrase(text);
+
+    // 1. Language switch — highest priority, overrides all step logic
+    const langSwitch = detectLangSwitch(norm);
+    if (langSwitch) {
+      handleLanguageSwitchIntent(langSwitch);
+      return;
+    }
+
+    // 2. Advisor / human agent request
+    if (detectAdvisorRequest(norm)) {
+      handleAdvisorRequestIntent();
+      return;
+    }
+
+    // 3. Restart / back / menu
+    if (detectBackToMenuIntent(norm)) {
+      handleRestartIntentAction(norm);
+      return;
+    }
+    if (detectRestartIntent(norm)) {
+      handleRestartIntentAction(norm);
+      return;
+    }
+
+    // 4. Customer service / plan issue intent
+    if (detectCSIntent(norm)) {
+      handleCSIntentAction();
+      return;
+    }
+    // ─── End Human Intent Router ────────────────────────────────────────────
 
     /* Advisor intake — clarification detection runs FIRST, before any validation.
        If user typed a clarification phrase (como asi / why / no entiendo / etc.),
