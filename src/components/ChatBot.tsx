@@ -26,6 +26,43 @@ type ChatStep =
   | 'lead_time'
   | 'lead_email'
   | 'complete';
+
+// ─── Zara Core Engine: Mode and Intent types ─────────────────────────────────
+// ZaraMode drives which handler set processes user input.
+// Extending to a new mode (e.g. 'followup') requires: new mode value +
+// new handler + entry in MODE_ROUTER switch. No other changes needed.
+type ZaraMode =
+  | 'guide'           // Default: Medicare education + topic navigation
+  | 'advisor_intake'  // Lead form collection — sequential field validation
+  | 'customer_service'// CS mode — plan issues, card, OTC (stub; expandable)
+  | 'followup';       // Future: post-submission follow-up flow
+
+// UserIntent is set each input cycle by the Human Intent Router.
+// Enables intent-aware responses and confusion tracking per intent type.
+type UserIntent =
+  | 'lang_switch'       // User requested language change
+  | 'advisor_request'   // User wants to speak with a human advisor
+  | 'clarification'     // User asked for help / expressed confusion
+  | 'restart'           // User wants to start over or go back to menu
+  | 'cs_intent'         // Customer service issue (card, benefits, plan)
+  | 'medicare_question' // Educational Medicare query
+  | 'form_input'        // Normal form field answer
+  | 'out_of_scope'      // Medical, legal, tax, or unsafe request
+  | 'none';             // Not yet classified
+
+// CSIntent classifies customer service inputs for future CS mode routing.
+// Stub only — full handler not built yet. Add new cases here to extend.
+type CSIntent =
+  | 'card_replacement'    // Lost/replacement Medicare card
+  | 'otc_issue'           // OTC benefit / card issues
+  | 'medication_cost'     // Drug cost / formulary issue
+  | 'provider_issue'      // Doctor not in network / PCP issue
+  | 'dental_vision_hearing' // DVH benefit question
+  | 'transportation'      // Transportation benefit
+  | 'plan_letter'         // Received letter about plan/coverage
+  | 'benefit_question'    // General benefit inquiry
+  | 'unknown';            // Unclassified CS input
+
 type MessagePace = 'short' | 'long' | 'slow';
 
 interface Option {
@@ -66,6 +103,18 @@ interface ChatMemory {
   submitted: boolean;
   skippedEmail: boolean;
   discussedTopics: string[];
+  // ─── Zara Core Engine: session context ───────────────────────────────────
+  // These fields are session-only. Never stored in GHL payload or server.
+  // No sensitive data. Reset on resetChat().
+  mode: ZaraMode;               // Current conversation mode
+  userIntent: UserIntent;       // Last detected intent (per input cycle)
+  confusionCount: number;       // Consecutive unresolved inputs in current step
+  hasAskedForHuman: boolean;    // Whether user has requested an advisor
+  isCustomerServiceIntent: boolean; // Whether current flow was CS-triggered
+  // Extended context tracking for loop prevention and resume-after-interrupt
+  lastValidUserInput: string;   // Last input successfully processed (not rejected, not clarification)
+  pendingAction: string;        // Action deferred by interruption (e.g. 'continue_education')
+  previousStep: string;         // Step before current (for back/resume logic)
 }
 
 interface QueuedBotMessage {
@@ -2040,6 +2089,16 @@ const DEFAULT_MEMORY: ChatMemory = {
   submitted: false,
   skippedEmail: false,
   discussedTopics: [],
+  // Zara Core Engine session fields
+  mode: 'guide',
+  userIntent: 'none',
+  confusionCount: 0,
+  hasAskedForHuman: false,
+  isCustomerServiceIntent: false,
+  // Extended context fields
+  lastValidUserInput: '',
+  pendingAction: '',
+  previousStep: '',
 };
 
 function uid() {
@@ -2102,12 +2161,15 @@ function containsAny(text: string, keywords: string[]) {
 }
 
 // Strip diacritics + punctuation and return a lowercase normalized form.
+// Handles: lowercase, trim, duplicate spaces, punctuation, accent normalization.
+// Used by ALL intent detection — must be consistent across layers.
 function normalizePhrase(text: string): string {
   return text
     .toLowerCase()
-    .replace(/[¿¡?!.,;:]/g, '')
+    .replace(/[¿¡?!.,;:'"]/g, '')
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
@@ -2225,6 +2287,94 @@ function detectCSIntent(norm: string): boolean {
     return norm === pn || norm.includes(pn);
   });
 }
+
+// ─── Zara Core Engine: Architecture Maps ────────────────────────────────────
+
+// CLARIFICATION_RESPONSE_MAP — canonical source of truth for per-step
+// clarification messages. getStepClarificationMessages() implements this map.
+// To add a new lead step: add an entry here and a case in the switch.
+const CLARIFICATION_RESPONSE_MAP_META: Partial<Record<string, {
+  fieldLabel: string;
+  whyNeeded: string;
+  format?: string;
+  optional?: boolean;
+}>> = {
+  lead_name:      { fieldLabel: 'First name',   whyNeeded: 'Advisor identification', format: 'Text only, e.g. Maria' },
+  lead_last_name: { fieldLabel: 'Last name',    whyNeeded: 'Full name for review request', format: 'Text only' },
+  lead_phone:     { fieldLabel: 'Phone number', whyNeeded: 'Advisor contact',        format: '10-digit US number' },
+  lead_zip:       { fieldLabel: 'ZIP code',     whyNeeded: 'Plan availability by county', format: '5-digit ZIP in selected state' },
+  lead_dob:       { fieldLabel: 'Date of birth', whyNeeded: 'Medicare eligibility depends on age', format: 'MM/DD/YYYY' },
+  lead_email:     { fieldLabel: 'Email',         whyNeeded: 'Optional follow-up',    optional: true },
+  lead_coverage:  { fieldLabel: 'Current coverage', whyNeeded: 'Understand Medicare situation' },
+  lead_consent:   { fieldLabel: 'Authorization', whyNeeded: 'Advisor contact authorization' },
+};
+
+// STEP_VALIDATOR_META — defines validation contract for each lead step.
+// The inline validators in handleLeadText implement these contracts.
+// Use this map to audit validators and to generate error messages consistently.
+type StepValidatorMeta = {
+  required: boolean;
+  validationType: 'name' | 'phone' | 'zip' | 'dob' | 'email' | 'state' | 'coverage' | 'consent' | 'time' | 'language';
+  description: string;
+};
+const STEP_VALIDATOR_META: Partial<Record<string, StepValidatorMeta>> = {
+  lead_name:       { required: true,  validationType: 'name',     description: 'First name — no numbers, symbols, profanity, or fake words' },
+  lead_last_name:  { required: true,  validationType: 'name',     description: 'Last name — no numbers or symbols' },
+  lead_phone:      { required: true,  validationType: 'phone',    description: '10-digit US phone number, digits only' },
+  lead_zip:        { required: true,  validationType: 'zip',      description: '5-digit ZIP within selected state — state-locked' },
+  lead_dob:        { required: true,  validationType: 'dob',      description: 'Date of birth MM/DD/YYYY — must resolve to age 64–89' },
+  lead_email:      { required: false, validationType: 'email',    description: 'Valid email address or blank/skip' },
+  lead_coverage:   { required: true,  validationType: 'coverage', description: 'Current Medicare coverage type from option buttons' },
+  lead_consent:    { required: true,  validationType: 'consent',  description: 'Yes/no advisor contact authorization' },
+  lead_state:      { required: true,  validationType: 'state',    description: 'State selection from NY, NJ, CT, FL' },
+};
+
+// CS_INTENT_MAP — maps normalized CS phrases to intent type.
+// classifyCSIntent() uses this to categorize CS inputs.
+// Extend by adding entries here — no other changes needed.
+const CS_INTENT_MAP: Array<[string, CSIntent]> = [
+  ['lost my card',      'card_replacement'],
+  ['lost card',         'card_replacement'],
+  ['perdi mi tarjeta',  'card_replacement'],
+  ['replace my card',   'card_replacement'],
+  ['card replacement',  'card_replacement'],
+  ['otc',               'otc_issue'],
+  ['no recibi otc',     'otc_issue'],
+  ['medication cost',   'medication_cost'],
+  ['mi medicina',       'medication_cost'],
+  ['medicamento caro',  'medication_cost'],
+  ['my doctor',         'provider_issue'],
+  ['mi doctor',         'provider_issue'],
+  ['no aparece',        'provider_issue'],
+  ['dental',            'dental_vision_hearing'],
+  ['vision',            'dental_vision_hearing'],
+  ['hearing',           'dental_vision_hearing'],
+  ['audifono',          'dental_vision_hearing'],
+  ['transportation',    'transportation'],
+  ['transportacion',    'transportation'],
+  ['letter',            'plan_letter'],
+  ['carta',             'plan_letter'],
+  ['received a letter', 'plan_letter'],
+  ['me llego una carta','plan_letter'],
+  ['benefit',           'benefit_question'],
+  ['beneficio',         'benefit_question'],
+  ['problem with my plan', 'benefit_question'],
+  ['problema con mi plan', 'benefit_question'],
+];
+
+function classifyCSIntent(norm: string): CSIntent {
+  for (const [phrase, intent] of CS_INTENT_MAP) {
+    if (norm.includes(phrase)) return intent;
+  }
+  return 'unknown';
+}
+
+// SAFE_FALLBACK — used when no other handler matches.
+// Keeps Zara on-topic without losing the user.
+const SAFE_FALLBACK: Record<ChatLanguage, string> = {
+  en: "I'm here to help with Medicare questions and connect you with a licensed advisor. What would you like to know?",
+  es: 'Estoy aquí para ayudarle con preguntas sobre Medicare y conectarle con un asesor autorizado. ¿En qué puedo ayudarle?',
+};
 
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
@@ -2696,6 +2846,10 @@ export function ChatBot() {
       dob: '', calculatedAge: 0,
       currentCoverage: '', preferredLanguage: '', preferredContactTime: '',
       email: '', consentGiven: false, skippedEmail: false, submitted: false,
+      // Engine: set advisor_intake mode and reset confusion tracking
+      mode: 'advisor_intake' as ZaraMode,
+      confusionCount: 0,
+      userIntent: 'none' as UserIntent,
     };
     updateMemory(leadReset);
     const freshMem = { ...memory, ...leadReset };
@@ -2906,7 +3060,8 @@ export function ChatBot() {
 
     const currentStep = stepRef.current;
 
-    // For lead steps: repeat the current field prompt in the new language
+    // For lead steps: repeat the current field prompt in the new language.
+    // getStepClarificationMessages returns [explanation, reprompt] — use reprompt.
     if (currentStep.startsWith('lead_')) {
       const repromptPair = getStepClarificationMessages(currentStep, updatedMem);
       const reprompt = repromptPair.length >= 2 ? repromptPair[1] : null;
@@ -2914,23 +3069,92 @@ export function ChatBot() {
       return;
     }
 
-    // For all other steps: just confirm — current menu/prompt stays visible
+    // For education mode: reference the current topic and offer to continue in new language.
+    // Spec requirement: "Estábamos hablando de Medicare Advantage. ¿Desea que continúe?"
+    if (currentStep === 'medicare_education' && memory.educationTopic) {
+      const topicLabelEN: Record<string, string> = {
+        edu_parts_ab: 'Medicare Parts A & B',
+        edu_part_c: 'Medicare Advantage',
+        edu_supplement: 'Medicare Supplement / Medigap',
+        edu_part_d: 'Part D / Prescription Drugs',
+        edu_extra_help: 'Extra Help / LIS',
+        edu_cost_help: 'Help with Costs',
+        edu_medicaid: 'Medicaid',
+        edu_msp: 'Medicare Savings Programs',
+        edu_spap: 'State Prescription Assistance',
+        edu_enrollment: 'Enrollment Periods',
+        edu_advantage_types: 'HMO vs PPO',
+        edu_snp: 'SNP Plans',
+        edu_ssdi_ssi: 'SSI / SSDI',
+        edu_special_benefits: 'Special Benefits',
+      };
+      const topicLabelES: Record<string, string> = {
+        edu_parts_ab: 'las Partes A y B de Medicare',
+        edu_part_c: 'Medicare Advantage',
+        edu_supplement: 'Medicare Supplement / Medigap',
+        edu_part_d: 'la Parte D / medicamentos recetados',
+        edu_extra_help: 'Ayuda Extra / LIS',
+        edu_cost_help: 'ayuda con costos',
+        edu_medicaid: 'Medicaid',
+        edu_msp: 'Programas de Ahorros de Medicare',
+        edu_spap: 'ayuda estatal para medicamentos',
+        edu_enrollment: 'períodos de inscripción',
+        edu_advantage_types: 'HMO vs PPO',
+        edu_snp: 'planes SNP',
+        edu_ssdi_ssi: 'SSI / SSDI',
+        edu_special_benefits: 'beneficios especiales',
+      };
+      const labelMap = newLang === 'es' ? topicLabelES : topicLabelEN;
+      const topicLabel = labelMap[memory.educationTopic] ?? null;
+      const resumeMsg: QueuedBotMessage = topicLabel
+        ? {
+            text: newLang === 'es'
+              ? `Estábamos hablando de ${topicLabel}. ¿Desea que continúe esa explicación en español o prefiere ver otra opción?`
+              : `We were discussing ${topicLabel}. Would you like me to continue in English, or would you prefer another topic?`,
+            options: [
+              { label: newLang === 'es' ? `Continuar con ${topicLabel}` : `Continue: ${topicLabel}`, value: memory.educationTopic },
+              { label: newLang === 'es' ? 'Ver otros temas' : 'See other topics', value: 'edu_back_to_topics' },
+            ],
+            pace: 'short',
+          }
+        : {
+            text: newLang === 'es'
+              ? '¿Sobre qué tema de Medicare le gustaría aprender?'
+              : 'What Medicare topic would you like to learn about?',
+            options: newLang === 'es' ? TOPIC_GROUPS_ES[0] : TOPIC_GROUPS_EN[0],
+            pace: 'short',
+          };
+      enqueueBot([confirmMsg, resumeMsg]);
+      return;
+    }
+
+    // For all other steps (state selection, topic menu, welcome): just confirm.
+    // The current menu/prompt stays visible above.
     enqueueBot([confirmMsg]);
   }
 
   function handleAdvisorRequestIntent() {
     const lang = memory.language;
     cancelBotQueue();
+    // Set mode to advisor_intake so modeRouter correctly routes subsequent input.
+    // Without this, the next user input falls through to guide-mode routing.
+    updateMemory({
+      hasAskedForHuman: true,
+      userIntent: 'advisor_request',
+      mode: 'advisor_intake',
+      confusionCount: 0,
+      previousStep: stepRef.current,
+    });
     enqueueBot([
       {
         text: lang === 'es'
-          ? 'Claro. Un asesor autorizado puede ayudarle con preguntas sobre su cobertura específica. No puedo recomendar planes, pero sí podemos conectarle con alguien que revisará su situación completa.'
-          : "Of course. A licensed advisor can help with questions about your specific coverage. I cannot recommend plans, but we can connect you with someone who will review your full situation.",
+          ? 'Claro. Un asesor licenciado puede ayudarle con preguntas sobre su cobertura específica. No podemos recomendar planes sin antes revisar su situación completa, pero sí podemos conectarle con alguien que lo hará.'
+          : "Of course. A licensed advisor can help with questions about your specific coverage. An advisor would need to verify your ZIP, doctors, medications, and current coverage before discussing specific options.",
         pace: 'slow',
       },
       {
         text: lang === 'es'
-          ? '¿Me puede dar su nombre para iniciar el proceso?'
+          ? '¿Me puede dar su primer nombre para iniciar el proceso?'
           : 'May I have your first name to get started?',
         pace: 'short',
       },
@@ -2959,22 +3183,131 @@ export function ChatBot() {
   function handleCSIntentAction() {
     const lang = memory.language;
     cancelBotQueue();
+    // Mark CS intent and set mode to advisor_intake so subsequent input routes correctly.
+    // Full CS mode is a stub — routes to advisor as the safe action.
+    updateMemory({
+      isCustomerServiceIntent: true,
+      userIntent: 'cs_intent',
+      mode: 'advisor_intake',
+      confusionCount: 0,
+      previousStep: stepRef.current,
+    });
     enqueueBot([
       {
         text: lang === 'es'
-          ? 'Entiendo que tiene una situación con su plan actual. Este chat no puede resolver problemas de servicio al cliente directamente, pero un asesor autorizado puede orientarle.'
-          : "I understand you have an issue with your current plan. This chat cannot resolve customer service issues directly, but a licensed advisor can guide you.",
+          ? 'Entiendo. Puedo ayudarle a organizar eso. Por favor no escriba su número de Medicare ID ni Seguro Social aquí. Para orientarle mejor, ¿puede decirme el nombre de su plan o compañía de seguros si lo tiene?'
+          : 'I understand. I can help organize that. Please do not enter your Medicare ID or Social Security number here. To guide you better, could you tell me the name of your plan or insurance company if you have it?',
         pace: 'slow',
       },
       {
         text: lang === 'es'
-          ? '¿Me puede dar su nombre para conectarle con alguien que pueda ayudarle?'
-          : 'May I have your first name so we can connect you with someone who can help?',
+          ? 'Un asesor licenciado o el servicio al cliente de su plan tendría que verificar los detalles. ¿Desea que un asesor le contacte?'
+          : 'A licensed advisor or your plan member services would need to verify the details. Would you like an advisor to contact you?',
+        options: [
+          {
+            label: lang === 'es' ? 'Sí, que me contacten' : 'Yes, contact me',
+            value: 'request_review',
+            icon: <Calendar className="w-4 h-4" />,
+          },
+          {
+            label: lang === 'es' ? 'Tengo una pregunta general' : 'I have a general question',
+            value: 'ask_question',
+          },
+        ],
         pace: 'short',
       },
     ]);
-    if (!stepRef.current.startsWith('lead_')) {
-      setStepSync('lead_name');
+    // Do NOT auto-advance to lead_name — let user choose via the options above.
+    // If they choose 'request_review', startPlanReview() handles the form flow.
+  }
+
+  /* ---------- Zara Core Engine: inner helpers ---------- */
+
+  // rejectLeadStep — unified rejection helper for all lead step validators.
+  // Tracks confusion count per field attempt and escalates at >= 3 failures.
+  // Usage: return rejectLeadStep(errorText) instead of bare enqueueBot+return.
+  function rejectLeadStep(errorText: string): true {
+    // Look up field metadata for the current step (used for future enhanced errors)
+    const _fieldMeta = STEP_VALIDATOR_META[stepRef.current as string];
+    void _fieldMeta; // architecture reference
+    const newCount = (memory.confusionCount ?? 0) + 1;
+    updateMemory({ confusionCount: newCount, userIntent: 'clarification' });
+    if (newCount >= 3) {
+      const lang = memory.language;
+      enqueueBot([
+        {
+          text: lang === 'es'
+            ? `Parece que estamos teniendo dificultad. Si prefiere, puede llamarnos al ${CHATBOT_CONTEXT.phone} para hablar con un asesor directamente, o podemos intentarlo de otra manera.`
+            : `It seems we're having some difficulty. You're welcome to call us at ${CHATBOT_CONTEXT.phone} to speak with an advisor directly, or we can try another way.`,
+          options: [
+            { label: lang === 'es' ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review' },
+          ],
+          pace: 'slow',
+        },
+      ]);
+      return true;
+    }
+    enqueueBot([{ text: errorText, pace: 'short' }]);
+    return true;
+  }
+
+  // handleCSModeStub — Customer Service Mode architecture stub.
+  // Full CS mode is not yet built. This maintains the interface contract so
+  // CS mode can be added (with classifyCSIntent + per-intent handlers)
+  // without restructuring the engine. Current behavior: route to advisor.
+  //
+  // To implement CS mode:
+  //   1. Add CS-specific step types to ChatStep (e.g. 'cs_card', 'cs_otc')
+  //   2. Add handlers per CSIntent using classifyCSIntent(norm)
+  //   3. Replace handleCSIntentAction() call below with intent router
+  //   4. Set memory.mode = 'customer_service' on CS intent detection
+  function handleCSModeStub(norm: string): void {
+    // TODO: Implement full Customer Service Mode
+    // Classify intent now so future handlers can switch on it.
+    const _intent = classifyCSIntent(norm);
+    // switch (_intent) { case 'card_replacement': handleCSCard(); break; ... }
+    void _intent; // architecture reference — remove when full CS mode is built
+    handleCSIntentAction();
+  }
+
+  // modeRouter — routes typed input to the correct handler based on
+  // current conversation mode. Called from handleText after the Human
+  // Intent Router has run. Returns true if the input was handled, false
+  // to allow handleText to continue with normal guide-mode routing.
+  function modeRouter(mode: ZaraMode, text: string, norm: string): boolean {
+    switch (mode) {
+      case 'advisor_intake':
+        // Clarification check first — before validation
+        if (isClarification(text, memory.language)) {
+          const newCount = (memory.confusionCount ?? 0) + 1;
+          updateMemory({ confusionCount: newCount, userIntent: 'clarification' });
+          if (newCount >= 3) {
+            const lang = memory.language;
+            enqueueBot([{
+              text: lang === 'es'
+                ? `Estoy teniendo dificultad entendiéndole. Si prefiere, puede llamarnos al ${CHATBOT_CONTEXT.phone}.`
+                : `I'm having difficulty understanding. You're welcome to call us at ${CHATBOT_CONTEXT.phone}.`,
+              options: [
+                { label: lang === 'es' ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review' },
+              ],
+              pace: 'slow',
+            }]);
+            return true;
+          }
+          enqueueBot(getStepClarificationMessages(stepRef.current, memory));
+          return true;
+        }
+        return handleLeadText(text);
+
+      case 'customer_service':
+        // CS mode stub — routes to advisor for now
+        handleCSModeStub(norm);
+        return true;
+
+      case 'guide':
+      case 'followup':
+      default:
+        return false; // allow guide-mode routing in handleText to continue
     }
   }
 
@@ -3249,6 +3582,11 @@ export function ChatBot() {
 
 
   function askNextQuestion(mem: ChatMemory) {
+    // Reset confusion counter on every successful step advance.
+    // A valid input was accepted — start fresh for the next field.
+    if ((memory.confusionCount ?? 0) > 0) {
+      updateMemory({ confusionCount: 0, userIntent: 'form_input' });
+    }
     const next = getNextMissingStep(mem);
     switch (next) {
       case 'firstName':
@@ -3327,6 +3665,10 @@ export function ChatBot() {
   // Called when user types a clarification phrase during advisor intake.
   // Always returns 2 messages: explanation + reprompt. Never advances step.
   function getStepClarificationMessages(currentStep: ChatStep, mem: ChatMemory): QueuedBotMessage[] {
+    // CLARIFICATION_RESPONSE_MAP_META defines the contract for each step.
+    // The switch below implements it. Future: data-driven rendering from this map.
+    const _stepMeta = CLARIFICATION_RESPONSE_MAP_META[currentStep as string];
+    void _stepMeta; // architecture reference
     const es = mem.language === 'es';
     const stateNames: Record<string, string> = {
       NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida',
@@ -3433,12 +3775,11 @@ export function ChatBot() {
       const firstName = text.trim();
       const nameCheck = validatePersonName(firstName);
       if (!nameCheck.valid) {
-        enqueueBot([{ text: memory.language === 'es'
+        return rejectLeadStep(memory.language === 'es'
           ? 'Por favor ingrese un primer nombre válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid first name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
-        return true;
+          : 'Please enter a valid first name without numbers, symbols, or inappropriate words.');
       }
-      updateMemory({ firstName });
+      updateMemory({ firstName, lastValidUserInput: firstName });
       askNextQuestion({ ...memory, firstName });
       return true;
     }
@@ -3446,12 +3787,11 @@ export function ChatBot() {
       const lastName = text.trim();
       const lastNameCheck = validatePersonName(lastName);
       if (!lastNameCheck.valid) {
-        enqueueBot([{ text: memory.language === 'es'
+        return rejectLeadStep(memory.language === 'es'
           ? 'Por favor ingrese un apellido válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid last name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
-        return true;
+          : 'Please enter a valid last name without numbers, symbols, or inappropriate words.');
       }
-      updateMemory({ lastName });
+      updateMemory({ lastName, lastValidUserInput: text.trim() });
       askNextQuestion({ ...memory, lastName });
       return true;
     }
@@ -3474,30 +3814,29 @@ export function ChatBot() {
       const expectedState = memory.state && stateNames[memory.state] ? memory.state : null;
       const expectedStateName = expectedState ? stateNames[expectedState] : null;
 
-      // Unified reject helper — uses state-specific message when state is known
-      const rejectZip = () => {
+      // Unified reject helper — uses rejectLeadStep() for confusion tracking.
+      // State-specific message when state context is known.
+      const rejectZip = (): true => {
         const msgEn = expectedStateName
           ? `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`
           : 'Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.';
         const msgEs = expectedStateName
           ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
           : 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.';
-        enqueueBot([{ text: memory.language === 'es' ? msgEs : msgEn, pace: 'short' }]);
+        return rejectLeadStep(memory.language === 'es' ? msgEs : msgEn);
       };
 
       // Strip non-digits. Check EXACT length — never truncate.
       const rawDigits = text.replace(/\D/g, '');
       if (rawDigits.length !== 5 || !/^\d{5}$/.test(rawDigits)) {
-        rejectZip();
-        return true;
+        return rejectZip();
       }
 
       // Block obviously fake ZIP patterns
       const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
         '66666','77777','88888','99999','12345','54321','11223','00001']);
       if (FAKE_ZIPS.has(rawDigits) || /^(\d)\1{4}$/.test(rawDigits)) {
-        rejectZip();
-        return true;
+        return rejectZip();
       }
 
       const cleanZip = rawDigits;
@@ -3505,14 +3844,13 @@ export function ChatBot() {
       if (zipInfo) {
         // ZIP found in database — enforce state lock: reject any ZIP not in selected state
         if (expectedState && zipInfo.stateCode !== expectedState) {
-          rejectZip();
-          return true;
+          return rejectZip();
         }
-        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
+        updateMemory({ zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode, lastValidUserInput: cleanZip });
         askNextQuestion({ ...memory, zip: cleanZip, city: zipInfo.city, county: zipInfo.county, derivedState: zipInfo.stateCode });
       } else {
         // ZIP not in database — always reject
-        rejectZip();
+        return rejectZip();
       }
       return true;
     }
@@ -3539,12 +3877,11 @@ export function ChatBot() {
       }
       const dobValidation = isoDate ? validateDOB(isoDate) : { valid: false, age: null, flags: [] };
       if (!dobValidation.valid) {
-        enqueueBot([{ text: memory.language === 'es'
+        return rejectLeadStep(memory.language === 'es'
           ? 'Por favor ingrese una fecha de nacimiento válida como MM/DD/YYYY. Ejemplo: 06/09/1983.'
-          : 'Please enter a valid date of birth as MM/DD/YYYY. Example: 06/09/1983.', pace: 'short' }]);
-        return true;
+          : 'Please enter a valid date of birth as MM/DD/YYYY. Example: 06/09/1983.');
       }
-      updateMemory({ dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
+      updateMemory({ dob: isoDate!, calculatedAge: dobValidation.age ?? 0, lastValidUserInput: rawDob });
       askNextQuestion({ ...memory, dob: isoDate!, calculatedAge: dobValidation.age ?? 0 });
       return true;
     }
@@ -3557,13 +3894,12 @@ export function ChatBot() {
       // Use shared validatePhone() from src/lib/validation.ts (US area code allowlist)
       const phoneResult = validatePhone(text);
       if (!phoneResult.valid) {
-        enqueueBot([{ text: memory.language === 'es'
+        return rejectLeadStep(memory.language === 'es'
           ? 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.'
-          : 'Please enter a valid 10-digit U.S. phone number.', pace: 'short' }]);
-        return true;
+          : 'Please enter a valid 10-digit U.S. phone number.');
       }
       // Store cleaned 10-digit form; E.164 (+1XXXXXXXXXX) sent to GHL at submission
-      updateMemory({ phone: phoneResult.cleaned });
+      updateMemory({ phone: phoneResult.cleaned, lastValidUserInput: phoneResult.cleaned });
       askNextQuestion({ ...memory, phone: phoneResult.cleaned });
       return true;
     }
@@ -3667,10 +4003,14 @@ export function ChatBot() {
     }
     // ─── End Human Intent Router ────────────────────────────────────────────
 
-    /* Advisor intake — clarification detection runs FIRST, before any validation.
-       If user typed a clarification phrase (como asi / why / no entiendo / etc.),
-       respond with a step-specific explanation and reprompt. Do NOT validate or advance. */
-    if (step.startsWith('lead_')) {
+    // ─── Mode Router ────────────────────────────────────────────────────────
+    // If the current mode has a dedicated handler, route there.
+    // modeRouter returns true if input was fully handled.
+    if (modeRouter(memory.mode, text, norm)) return;
+
+    // Fallback for advisor_intake when mode is not yet set (e.g. first session load).
+    // Handles the case where step is lead_* but mode was not set via startPlanReview.
+    if (step.startsWith('lead_') && memory.mode !== 'advisor_intake') {
       if (isClarification(text, memory.language)) {
         enqueueBot(getStepClarificationMessages(stepRef.current, memory));
         return;
@@ -3760,12 +4100,18 @@ export function ChatBot() {
       return;
     }
 
-    /* Fallback: legacy education */
+    /* Fallback: legacy education or safe fallback */
     const education = getEducationMessages(text, memory.language);
-    updateMemory({ lastTopic: education.topic, interestType: education.topic });
-    setStepSync('question');
-    hasScrolledForCurrentEducationRef.current = false;
-    enqueueBot(education.messages);
+    if (education.messages.length > 0) {
+      updateMemory({ lastTopic: education.topic, interestType: education.topic, userIntent: 'medicare_question' });
+      setStepSync('question');
+      hasScrolledForCurrentEducationRef.current = false;
+      enqueueBot(education.messages);
+    } else {
+      // No topic matched — use safe fallback to keep Zara on-topic
+      updateMemory({ userIntent: 'out_of_scope' });
+      enqueueBot([{ text: SAFE_FALLBACK[memory.language], pace: 'short' }]);
+    }
   }
 
   /* ---------- Render ---------- */
