@@ -41,6 +41,45 @@ interface Message {
   options?: Option[];
 }
 
+
+// ─── Zara Enterprise Mode / View / Intent Types ───────────────────────────────
+type ZaraMode =
+  | 'guide'
+  | 'education'
+  | 'advisor_intake'
+  | 'customer_service'
+  | 'menu'
+  | 'idle';
+
+type ZaraView =
+  | 'language_select'
+  | 'state_select'
+  | 'topic_menu'
+  | 'education_topic'
+  | 'advisor_intro'
+  | 'advisor_form_step'
+  | 'advisor_choice_menu'
+  | 'customer_service_stub'
+  | 'main_menu'
+  | 'none';
+
+type ZaraGlobalIntent =
+  | 'NONE'
+  | 'SENSITIVE'
+  | 'LANGUAGE_SWITCH_EN'
+  | 'LANGUAGE_SWITCH_ES'
+  | 'RESTART'
+  | 'CHANGE_STATE'
+  | 'BACK'
+  | 'MENU'
+  | 'ADVISOR_REQUEST'
+  | 'CUSTOMER_SERVICE'
+  | 'CLARIFICATION'
+  | 'MEDICARE_EDUCATION'
+  | 'OUT_OF_SCOPE'
+  | 'FORM_DATA';
+// ──────────────────────────────────────────────────────────────────────────────
+
 interface ChatMemory {
   language: ChatLanguage;
   firstName: string;
@@ -66,6 +105,25 @@ interface ChatMemory {
   submitted: boolean;
   skippedEmail: boolean;
   discussedTopics: string[];
+  // ── Enterprise Navigation + Mode Memory ──
+  navStack: string[];
+  currentMode: ZaraMode;
+  previousMode: ZaraMode;
+  currentView: ZaraView;
+  previousView: ZaraView;
+  currentTopic: string;
+  previousTopic: string;
+  lastEducationTopic: string;
+  activeMenu: string;
+  previousMenu: string;
+  lastValidUserInput: string;
+  lastUserIntent: ZaraGlobalIntent;
+  lastBotIntent: string;
+  confusionCount: number;
+  hasAskedForHuman: boolean;
+  isAdvisorFlowActive: boolean;
+  isCustomerServiceIntent: boolean;
+  pendingAction: string;
 }
 
 interface QueuedBotMessage {
@@ -2003,6 +2061,8 @@ const CLARIFICATION_PHRASES_EN: string[] = [
   'why','help','explain','what is this','what should i enter','what should i put',
   'why do you need this','what do i put',"i'm confused",'confused','not sure',
   'how','what for','what is that','what does that mean','i need help',
+  'huh','huh?','what?','say that again','can you repeat','i am confused',
+  'i am lost','lost','can you explain','i do not understand',
 ];
 const CLARIFICATION_PHRASES_ES: string[] = [
   'espera','para','detente','un momento','alto','pausa','esperate',
@@ -2014,6 +2074,213 @@ const CLARIFICATION_PHRASES_ES: string[] = [
   'no comprendo','cómo','no se que poner','no sé qué poner',
   'que pongo ahí','qué pongo ahí','para que es esto','para qué es esto',
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ZARA ENTERPRISE GLOBAL INTENT ENGINE
+// All typed input passes through classifyGlobalIntent() before any form routing.
+// 13-step detection cascade — first match wins.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const LANGUAGE_SWITCH_ES_KEYWORDS = [
+  'español','espanol','en español','en espanol','quiero español','quiero espanol',
+  'háblame español','hablame español','habla español','habla espanol',
+  'cambia a español','cambia a espanol','cambiar a español','cambiar a espanol',
+  'prefiero español','prefiero espanol','español por favor','espanol por favor',
+  'no entiendo inglés','no entiendo ingles','no hablo inglés','no hablo ingles',
+  'quiero seguir en español','quiero seguir en espanol',
+  'podemos hablar español','podemos hablar espanol',
+  'ponlo en español','ponlo en espanol',
+  'hablar español','hablar espanol','idioma español','spanish',
+  'hola','buenas','buenos días','buenas tardes','buenas noches',
+  'necesito ayuda en español','necesito ayuda espanol',
+];
+const LANGUAGE_SWITCH_EN_KEYWORDS = [
+  'english','in english','speak english','switch to english','change to english',
+  'i prefer english','i do not speak spanish','i don t speak spanish',
+  'can we continue in english','english please','put it in english',
+  'talk to me in english','i don t understand spanish','i do not understand spanish',
+  'no entiendo español','switch english','change english',
+  'let s speak english','continue in english',
+  'cambiar a inglés','cambiar a ingles','cambia a inglés','cambia a ingles',
+  'quiero inglés','quiero ingles','prefiero inglés','prefiero ingles',
+  'en inglés por favor','en ingles por favor',
+];
+const RESTART_KEYWORDS = [
+  'empezar de nuevo','reiniciar','reset','resetear','borrar todo',
+  'comenzar otra vez','empezar desde cero','limpiar conversacion',
+  'start over','restart','clear everything','begin again','start from scratch',
+  'reset conversation','new conversation','nueva conversacion',
+  'comenzar de nuevo','empezar otra vez','empezar nuevamente','reiniciar conversacion',
+];
+const CHANGE_STATE_KEYWORDS = [
+  'cambiar estado','otro estado','vivo en otro estado','cambiar mi estado',
+  'me mude','estoy en otro estado','no soy de ese estado','elegí mal el estado',
+  'elegi mal el estado','estado incorrecto','cambiar de estado',
+  'change state','another state','different state','i live in another state',
+  'update my state','i moved','wrong state','i selected the wrong state',
+  'incorrect state','switch state','change my state',
+  // State-declaration phrases
+  'i live in','i moved to','i now live in','i reside in','i am in',
+  'i am currently in','actually i am in','actually i live in',
+  'i recently moved to','i just moved to','moved to',
+  'estoy en','vivo en','me mudé a','me mude a',
+  'actualmente estoy en','ahora vivo en','recientemente me mudé',
+];
+const BACK_KEYWORDS = [
+  'volver','atras','regresar','vuelve','vuelve atras','regresar atras','ir atras',
+  'volver al paso anterior','volver a lo anterior','volver donde estaba',
+  'regresar donde estaba','paso anterior','anterior',
+  'back','go back','return','previous','previous step','go to previous step',
+  'back to where i was','return to previous menu','go back one step',
+  'take me back',
+];
+const MENU_KEYWORDS_GLOBAL = [
+  'menu','volver al menu','menu principal','otro tema','otro topic','otra cosa',
+  'otra pregunta','quiero ver opciones','quiero otras opciones','dame el menu',
+  'muestrame opciones','cambiar opcion',
+  'other topic','another topic','different topic','another question',
+  'show options','show me options','i want another option','change option',
+  'main menu','topic menu','back to menu','see options','ver opciones',
+  'temas','topics','opciones','options',
+  'ver el menú','ver el menu','ver menu','muestrame el menu','dime las opciones',
+];
+const ADVISOR_KEYWORDS = [
+  'quiero hablar con alguien','quiero un asesor','quiero hablar con un asesor',
+  'necesito un asesor','llamame','que me llamen','quiero una llamada',
+  'hablar con una persona','representante','agente','asesor licenciado',
+  'quiero que me contacten','necesito ayuda personal',
+  'talk to someone','speak with advisor','speak with an advisor','i need an advisor',
+  'call me','have someone call me','i want a call','representative','agent',
+  'licensed advisor','contact me','speak to a person','human agent','human advisor',
+  'real person','live agent','live advisor','i want to speak with someone',
+  'connect me','get me an agent','need help from a person',
+  'talk to an advisor','talk to advisor','talk to a person','talk to a human',
+  'connect me to','connect me with','connect me to a human','connect me with a human',
+  'i need a real person','a real person','actual person','actual human',
+  'speak to an agent','speak to an advisor','get me a person','get me a human',
+  'i prefer to talk','i prefer to speak','i want to talk to someone',
+  'hablar con un asesor','hablar con asesor','hablar con un agente','hablar con alguien',
+  'hablar con una persona','hablar con un humano','hablar con representante',
+];
+const CUSTOMER_SERVICE_KEYWORDS = [
+  'perdi mi tarjeta','se me perdio la tarjeta','no recibi mi tarjeta','necesito mi tarjeta',
+  'no recibi otc','mi tarjeta otc no funciona','no me llego otc','tarjeta otc',
+  'otc card','otc issue','lost my card','i lost my card',
+  'i did not receive my card','need my card','did not receive otc','otc not working',
+  'mi medicina esta cara','mi medicamento esta caro','mi medicina no esta cubierta',
+  'mi farmacia no acepta','medication cost','my medicine is expensive',
+  'drug not covered','pharmacy issue','pharmacy does not accept','medicine not covered',
+  'mi doctor no aparece','mi doctor no esta en la red','quiero cambiar mi doctor',
+  'doctor not in network','my doctor is not listed','change my doctor',
+  'me llego una carta','recibi una carta','no entiendo una carta',
+  'received a letter','i got a letter','i do not understand a letter',
+  'got a bill','billing issue','me cobraron algo','recibi una factura',
+  'problema con mi plan','mi plan no aparece activo','problem with my plan',
+  'plan not active','plan issue','necesito transportacion','transportation',
+  'dental','vision','audifonos','hearing aids','hearing benefits',
+  'problema con medicaid','medicaid problem','problema con extra help',
+  'extra help problem','extra help issue','medicaid issue',
+  'tengo una queja','quiero cancelar','quiero cambiar plan','complaint',
+  'cancel plan','change plan','i want to cancel','i want to change my plan',
+  // Additional billing / claims / grievance
+  'billing problem','billing issue','billing question','billing',
+  'cancel my plan','cancel my insurance','cancelar mi seguro','cancelar mi plan',
+  'claim was denied','denied my claim','claim denied','my claim','denied claim',
+  'queja formal','queja','grievance','filing a grievance','file a grievance',
+  'problema con mi factura','factura','invoice problem','overcharged',
+  'me cobraron de mas','cobro incorrecto',
+];
+const GLOBAL_OUT_OF_SCOPE = [
+  'social security number','ssn','numero de seguro social',
+  'bank account','cuenta bancaria','routing number','account number',
+  'legal advice','consejo legal','financial advice','consejo financiero',
+  'lawsuit','demanda','emergency','emergencia','call 911','llame al 911',
+  'hospital','ambulance','ambulancia',
+  // Harm / illegal content
+  'bomb','weapon','explosive','how to make a','how do i make a',
+  'suicide','kill myself','end my life','want to die',
+  'hurt myself','harm myself','self harm','self-harm','cutting myself',
+  'drugs for sale','drug dealer','buy drugs','sell drugs','illegal drugs',
+  'illegal immigration','undocumented alien','crossing the border illegally',
+  'sex trafficking','human trafficking','child abuse','exploit',
+  'pornography','explicit content','naked','nude',
+];
+const SOFT_OOS_KEYWORDS = [
+  'best plan','mejor plan','recommend a plan','which plan is best',
+  'que plan es mejor','guarantee','garantizar','promise eligibility',
+  'promise savings','qualify for sure','doctor covered','drug covered',
+  // General off-topic subjects
+  'stock market','stocks','cryptocurrency','bitcoin','investing',
+  'weather forecast','weather today','will it rain',
+  'sports score','sports scores','football score','basketball score',
+  'cooking recipe','recipe for','how to cook','how to bake',
+  'real estate','house price','mortgage','rent price',
+  'tell me a joke','joke','funny story','make me laugh',
+  'news today','latest news','politics','election',
+  'lottery','lottery ticket','scratch ticket',
+  'restaurant','hotel','vacation','travel tips',
+];
+
+function classifyGlobalIntent(
+  text: string,
+  sensitiveKeywords: string[],
+): ZaraGlobalIntent {
+  const low = text.toLowerCase().trim();
+  const words = low.split(/\s+/);
+  const anyMatch = (kws: string[]) => kws.some((k) => low === k || low.includes(k));
+  const wordMatch = (kws: string[]) => kws.some((k) => words.includes(k) || low.includes(k));
+  // Word-boundary match for short tokens (≤4 chars like ssn, mbi) to avoid substring false-positives
+  const sensitiveMatch = (kws: string[]) =>
+    kws.some((k) => (k.length <= 4 ? words.includes(k) : low === k || low.includes(k)));
+
+  // Step 2: Sensitive / Privacy risk
+  if (sensitiveMatch(sensitiveKeywords)) return 'SENSITIVE';
+  if (sensitiveMatch(GLOBAL_OUT_OF_SCOPE)) return 'SENSITIVE';
+
+  // Step 3: Language switch
+  if (anyMatch(LANGUAGE_SWITCH_ES_KEYWORDS)) return 'LANGUAGE_SWITCH_ES';
+  if (anyMatch(LANGUAGE_SWITCH_EN_KEYWORDS)) return 'LANGUAGE_SWITCH_EN';
+
+  // Step 4: Restart
+  if (anyMatch(RESTART_KEYWORDS)) return 'RESTART';
+
+  // Step 5: Change state
+  if (anyMatch(CHANGE_STATE_KEYWORDS)) return 'CHANGE_STATE';
+
+  // Step 6: Back
+  if (anyMatch(BACK_KEYWORDS)) return 'BACK';
+
+  // Step 7: Menu
+  if (wordMatch(MENU_KEYWORDS_GLOBAL)) return 'MENU';
+
+  // Step 8: Advisor request
+  if (anyMatch(ADVISOR_KEYWORDS)) return 'ADVISOR_REQUEST';
+
+  // Step 9: Customer service
+  if (anyMatch(CUSTOMER_SERVICE_KEYWORDS)) return 'CUSTOMER_SERVICE';
+
+  // Step 10: Clarification
+  const isClarEN = CLARIFICATION_PHRASES_EN.some((p) => low === p || low.includes(p));
+  const isClarES = CLARIFICATION_PHRASES_ES.some((p) => low === p || low.includes(p));
+  if (isClarEN || isClarES) return 'CLARIFICATION';
+
+  // Step 11: Medicare education
+  const EDU_TRIGGERS = [
+    'que es','what is','what are','como funciona','how does','diferencia entre',
+    'difference between','cuando puedo','when can i','que cubre','what does medicare cover',
+    'explain','explica','medicare advantage','medicare supplement','medigap','part d',
+    'extra help','enrollment period','periodo de inscripcion','hmo','ppo',
+    'otc benefits','dental benefits','vision benefits','transportation benefit',
+    'help with costs','ayuda con costos','guaranteed issue',
+  ];
+  if (EDU_TRIGGERS.some((t) => low.includes(t))) return 'MEDICARE_EDUCATION';
+
+  // Step 12: Out of scope (soft)
+  if (anyMatch(SOFT_OOS_KEYWORDS)) return 'OUT_OF_SCOPE';
+
+  // Step 13: Treat as form data
+  return 'FORM_DATA';
+}
 
 const DEFAULT_MEMORY: ChatMemory = {
   language: 'en',
@@ -2040,6 +2307,25 @@ const DEFAULT_MEMORY: ChatMemory = {
   submitted: false,
   skippedEmail: false,
   discussedTopics: [],
+  // ── Enterprise Navigation + Mode Memory ──
+  navStack: [],
+  currentMode: 'idle',
+  previousMode: 'idle',
+  currentView: 'none',
+  previousView: 'none',
+  currentTopic: '',
+  previousTopic: '',
+  lastEducationTopic: '',
+  activeMenu: '',
+  previousMenu: '',
+  lastValidUserInput: '',
+  lastUserIntent: 'NONE',
+  lastBotIntent: '',
+  confusionCount: 0,
+  hasAskedForHuman: false,
+  isAdvisorFlowActive: false,
+  isCustomerServiceIntent: false,
+  pendingAction: '',
 };
 
 function uid() {
@@ -2749,6 +3035,220 @@ export function ChatBot() {
 
   /* ---------- Option handler ---------- */
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ZARA ENTERPRISE NAVIGATION HELPERS + GLOBAL INTENT HANDLERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function pushNav(view: ZaraView) {
+    updateMemory((m: ChatMemory) => ({
+      navStack: [...(m.navStack || []), m.currentView],
+      previousView: m.currentView,
+      currentView: view,
+    } as Partial<ChatMemory>));
+  }
+
+  function popNav(): ZaraView {
+    const stack = memory.navStack || [];
+    const prev = (stack[stack.length - 1] || 'none') as ZaraView;
+    updateMemory({
+      navStack: stack.slice(0, -1),
+      currentView: prev,
+      previousView: memory.currentView,
+    });
+    return prev;
+  }
+
+  function setMode(mode: ZaraMode) {
+    updateMemory({ previousMode: memory.currentMode, currentMode: mode });
+  }
+
+  function setView(view: ZaraView) {
+    updateMemory({ previousView: memory.currentView, currentView: view });
+  }
+
+  function showTopicMenuWithState() {
+    const topicOptions = memory.language === 'es' ? TOPIC_MENU_ES : TOPIC_MENU_EN;
+    const stateName = memory.state ? SUPPORTED_STATES_LABELS[memory.state] || memory.state : '';
+    const stateNote = stateName
+      ? (memory.language === 'es'
+          ? `Mantengo ${stateName} como su estado. ¿Qué desea revisar ahora?`
+          : `I'll keep ${stateName} as your state. What would you like to review now?`)
+      : (memory.language === 'es'
+          ? '¿Qué tema le gustaría aprender hoy?'
+          : 'What would you like to learn about today?');
+    setStepSync('question');
+    setMode('menu');
+    setView('topic_menu');
+    enqueueBot([{ text: stateNote, options: topicOptions, pace: 'short' }]);
+  }
+
+  // ── Handle BACK intent ───────────────────────────────────────────────────────
+  function handleBackIntent() {
+    const mode = memory.currentMode;
+    const fn = memory.firstName;
+    const namePrefix = fn ? (memory.language === 'es' ? `${fn}, ` : `${fn}, `) : '';
+
+    if (mode === 'education' || stepRef.current === 'medicare_education') {
+      // Education → back to topic menu, state preserved
+      setMode('menu');
+      showTopicMenuWithState();
+      return;
+    }
+
+    if (mode === 'advisor_intake' || stepRef.current.startsWith('lead_')) {
+      const currentStep = stepRef.current;
+      const firstAdvisorSteps: ChatStep[] = ['lead_name'];
+      if (firstAdvisorSteps.includes(currentStep as ChatStep)) {
+        // First advisor field → show choice menu
+        setStepSync('choice');
+        setMode('menu');
+        enqueueBot([{
+          text: memory.language === 'es'
+            ? `${namePrefix}¿Qué le gustaría hacer?`
+            : `${namePrefix}What would you like to do?`,
+          options: [
+            { label: memory.language === 'es' ? 'Continuar la solicitud' : 'Continue review', value: 'request_review' },
+            { label: memory.language === 'es' ? 'Volver al menú de temas' : 'Return to topic menu', value: 'back_to_topics' },
+            { label: memory.language === 'es' ? 'Cambiar estado' : 'Change state', value: 'change_state_intent' },
+            { label: memory.language === 'es' ? 'Empezar de nuevo' : 'Start over', value: 'start_over' },
+          ],
+          pace: 'short',
+        }]);
+      } else {
+        // Mid-flow → explain and reprompt current field
+        enqueueBot([
+          {
+            text: memory.language === 'es'
+              ? `${namePrefix}Continuemos con la solicitud. Puede volver al menú en cualquier momento.`
+              : `${namePrefix}Let's continue with the intake. You can return to the menu at any time.`,
+            pace: 'short',
+          },
+          ...getStepClarificationMessages(currentStep as ChatStep, memory),
+        ]);
+      }
+      return;
+    }
+
+    if (mode === 'customer_service') {
+      showTopicMenuWithState();
+      return;
+    }
+
+    // Default: show topic menu if state known, else ask state
+    if (memory.state) {
+      showTopicMenuWithState();
+    } else {
+      showMedicareIntake();
+    }
+  }
+
+  // ── Handle MENU intent ───────────────────────────────────────────────────────
+  function handleMenuIntent() {
+    if (memory.state) {
+      showTopicMenuWithState();
+    } else {
+      showMedicareIntake();
+    }
+  }
+
+  // ── Handle CHANGE STATE intent ───────────────────────────────────────────────
+  function handleChangeStateIntent() {
+    updateMemory({
+      state: '',
+      derivedState: '',
+      city: '',
+      county: '',
+      zip: '',
+      currentMode: 'guide',
+    });
+    setStepSync('state');
+    setView('state_select');
+    enqueueBot([{
+      text: memory.language === 'es'
+        ? 'Claro. ¿En qué estado vive ahora? (NY, NJ, CT o FL)'
+        : 'Of course. What state do you live in now? (NY, NJ, CT, or FL)',
+      pace: 'short',
+    }]);
+  }
+
+  // ── Handle RESTART intent ────────────────────────────────────────────────────
+  function handleRestartIntent() {
+    resetChat();
+  }
+
+  // ── Handle LANGUAGE SWITCH intent ────────────────────────────────────────────
+  function handleLanguageSwitchIntent(targetLang: ChatLanguage) {
+    setLang(targetLang);
+    updateMemory({ language: targetLang, preferredLanguage: targetLang === 'es' ? 'Spanish' : 'English' });
+    const fn = memory.firstName;
+    const namePrefix = fn ? (targetLang === 'es' ? `Claro, ${fn}. ` : `Of course, ${fn}. `) : '';
+    enqueueBot([{
+      text: targetLang === 'es'
+        ? `${namePrefix}Seguimos en español. Mantengo la información que ya me dio y continuamos desde aquí.`
+        : `${namePrefix}We'll continue in English. I'll keep the information you already provided and continue from here.`,
+      pace: 'short',
+    }]);
+    // If in lead capture, reprompt current step in new language
+    if (stepRef.current.startsWith('lead_')) {
+      setTimeout(() => {
+        enqueueBot(getStepClarificationMessages(stepRef.current as ChatStep, { ...memory, language: targetLang }));
+      }, 400);
+    }
+  }
+
+  // ── Handle ADVISOR REQUEST intent ────────────────────────────────────────────
+  function handleAdvisorRequestIntent() {
+    const fn = memory.firstName;
+    const namePrefix = fn ? (memory.language === 'es' ? `${fn}, ` : `${fn}, `) : '';
+    updateMemory({ hasAskedForHuman: true, isAdvisorFlowActive: true });
+    setMode('advisor_intake');
+    setView('advisor_intro');
+    startPlanReview(memory.interestType || 'Plan review');
+  }
+
+  // ── Handle CUSTOMER SERVICE intent ──────────────────────────────────────────
+  function handleCustomerServiceIntent() {
+    updateMemory({ isCustomerServiceIntent: true, currentMode: 'customer_service' });
+    setMode('customer_service');
+    setView('customer_service_stub');
+    const fn = memory.firstName;
+    const namePrefix = fn ? (memory.language === 'es' ? `${fn}, ` : `${fn}, `) : '';
+    enqueueBot([
+      {
+        text: memory.language === 'es'
+          ? `${namePrefix}entiendo que tiene un problema con su plan o beneficios. Por seguridad, no ingrese su ID de Medicare, número de seguro social, información bancaria ni registros médicos en este chat.`
+          : `${namePrefix}I understand you have an issue with your plan or benefits. For your security, please do not enter your Medicare ID, Social Security number, banking information, or medical records in this chat.`,
+        pace: 'slow',
+      },
+      {
+        text: memory.language === 'es'
+          ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
+          : 'A licensed advisor can assist you directly. Would you like someone to call you?',
+        options: [
+          { label: memory.language === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
+          { label: memory.language === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
+        ],
+        pace: 'short',
+      },
+    ]);
+  }
+
+  // ── Handle CLARIFICATION intent ──────────────────────────────────────────────
+  function handleClarificationGlobal() {
+    updateMemory((m: ChatMemory) => ({ confusionCount: (m.confusionCount || 0) + 1 } as Partial<ChatMemory>));
+    const currentStep = stepRef.current as ChatStep;
+    enqueueBot(getStepClarificationMessages(currentStep, memory));
+  }
+
+  // ── Handle OUT OF SCOPE intent ───────────────────────────────────────────────
+  function handleOutOfScopeIntent() {
+    showOutOfScope();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // END ENTERPRISE NAVIGATION HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
   function handleOption(value: string) {
     const selected = messages[messages.length - 1]?.options?.find((option) => option.value === value);
     if (selected) addUserMessage(selected.label);
@@ -2984,6 +3484,37 @@ export function ChatBot() {
 
     if (value === 'call_now') {
       window.location.href = CHATBOT_CONTEXT.phoneHref;
+      return;
+    }
+
+    if (value === 'back_to_topics') {
+      showTopicMenuWithState();
+      return;
+    }
+
+    if (value === 'change_state_intent') {
+      handleChangeStateIntent();
+      return;
+    }
+
+    if (value === 'resume_lead') {
+      const pausedStep = memory.pausedStep as ChatStep | undefined;
+      updateMemory({ pausedStep: undefined as unknown as ChatStep });
+      if (pausedStep && pausedStep.startsWith('lead_')) {
+        setStepSync(pausedStep);
+        const fn = memory.firstName;
+        enqueueBot([
+          {
+            text: memory.language === 'es'
+              ? (fn ? `Claro, ${fn}. Continuemos donde nos quedamos.` : 'Continuemos donde nos quedamos.')
+              : (fn ? `Of course, ${fn}. Let's continue where we left off.` : "Let's continue where we left off."),
+            pace: 'short',
+          },
+        ]);
+        askNextQuestion(memory);
+      } else {
+        startPlanReview(memory.interestType || 'Plan review');
+      }
       return;
     }
 
@@ -3386,31 +3917,88 @@ export function ChatBot() {
     const input = e.currentTarget.elements.namedItem('chatInput') as HTMLInputElement;
     const text = input.value.trim();
     if (!text) return;
-
     input.value = '';
     addUserMessage(text);
-
-    // Always cancel any pending bot queue when user sends a message
     cancelBotQueue();
 
-    /* Safety filters — run before anything else */
-    if (containsAny(text, SENSITIVE_KEYWORDS)) {
+    // ── GLOBAL 13-STEP INTENT CLASSIFICATION ─────────────────────────────────
+    // Step 1: normalize (trim + lowercase handled inside classifyGlobalIntent)
+    // Steps 2-13: classifyGlobalIntent returns the winning intent
+    const intent = classifyGlobalIntent(text, SENSITIVE_KEYWORDS);
+    updateMemory({ lastValidUserInput: text, lastUserIntent: intent });
+
+    // Step 2: SENSITIVE / Privacy → stop immediately
+    if (intent === 'SENSITIVE') {
       showPrivacyReminder();
       return;
     }
 
-    /* Advisor intake — clarification detection runs FIRST, before any validation.
-       If user typed a clarification phrase (como asi / why / no entiendo / etc.),
-       respond with a step-specific explanation and reprompt. Do NOT validate or advance. */
+    // Step 3: LANGUAGE SWITCH
+    if (intent === 'LANGUAGE_SWITCH_ES') {
+      handleLanguageSwitchIntent('es');
+      return;
+    }
+    if (intent === 'LANGUAGE_SWITCH_EN') {
+      handleLanguageSwitchIntent('en');
+      return;
+    }
+
+    // Step 4: RESTART
+    if (intent === 'RESTART') {
+      handleRestartIntent();
+      return;
+    }
+
+    // Step 5: CHANGE STATE
+    if (intent === 'CHANGE_STATE') {
+      handleChangeStateIntent();
+      return;
+    }
+
+    // Step 6: BACK
+    if (intent === 'BACK') {
+      handleBackIntent();
+      return;
+    }
+
+    // Step 7: MENU
+    if (intent === 'MENU') {
+      handleMenuIntent();
+      return;
+    }
+
+    // Step 8: ADVISOR REQUEST
+    if (intent === 'ADVISOR_REQUEST') {
+      handleAdvisorRequestIntent();
+      return;
+    }
+
+    // Step 9: CUSTOMER SERVICE
+    if (intent === 'CUSTOMER_SERVICE') {
+      handleCustomerServiceIntent();
+      return;
+    }
+
+    // Step 10: CLARIFICATION
+    if (intent === 'CLARIFICATION') {
+      handleClarificationGlobal();
+      return;
+    }
+
+    // Step 11: MEDICARE EDUCATION (handled below as FORM_DATA may also match — check step)
+    // Step 12: OUT OF SCOPE
+    if (intent === 'OUT_OF_SCOPE') {
+      handleOutOfScopeIntent();
+      return;
+    }
+
+    // ── FORM_DATA or MEDICARE_EDUCATION — route by current step ──────────────
+    // If currently in lead capture flow, pass to field handler (form validation)
     if (step.startsWith('lead_')) {
-      if (isClarification(text, memory.language)) {
-        enqueueBot(getStepClarificationMessages(stepRef.current, memory));
-        return;
-      }
       if (handleLeadText(text)) return;
     }
 
-    /* If we are waiting for state */
+    // State selection step
     if (step === 'state') {
       const detectedState = detectState(text);
       if (detectedState && SUPPORTED_STATES.includes(detectedState)) {
@@ -3420,28 +4008,61 @@ export function ChatBot() {
         handleStateSelection('other');
         return;
       }
-      // Could not detect state - ask again gently
-      enqueueBot([
-        {
-          text:
-            memory.language === 'es'
-              ? 'Disculpa, no pude identificar el estado. Para orientarte mejor, ¿en qué estado vives? (NY, NJ, CT, FL u otro)'
-              : "I'm sorry, I couldn't identify the state. To guide you better, what state do you live in? (NY, NJ, CT, FL, or other)",
-          pace: 'slow',
-        },
-      ]);
+      enqueueBot([{
+        text: memory.language === 'es'
+          ? 'Disculpa, no pude identificar el estado. ¿En qué estado vive? (NY, NJ, CT o FL)'
+          : "I'm sorry, I couldn't identify the state. What state do you live in? (NY, NJ, CT, or FL)",
+        pace: 'slow',
+      }]);
       return;
     }
 
-    if (containsAny(text, OUT_OF_SCOPE_KEYWORDS)) {
-      showOutOfScope();
-      return;
+    // Step 11: MEDICARE EDUCATION — now safe to route (not form step)
+    if (intent === 'MEDICARE_EDUCATION') {
+      const medicareTopic = detectMedicareTopic(text, memory.language);
+      if (medicareTopic) {
+        updateMemory({ lastTopic: medicareTopic, interestType: medicareTopic, lastEducationTopic: medicareTopic });
+        trackTopic(medicareTopic);
+        setMode('education');
+        setView('education_topic');
+        if (!memory.state) {
+          showMedicareIntake();
+          return;
+        }
+        const topicMap: Record<string, string> = {
+          'Medicare Parts A & B': 'edu_parts_ab',
+          'Medicare Advantage': 'edu_part_c',
+          'Medicare Supplement': 'edu_supplement',
+          'Part D': 'edu_part_d',
+          'Extra Help / LIS': 'edu_extra_help',
+          'Medicaid': 'edu_medicaid',
+          'Medicare Savings Programs': 'edu_msp',
+          'MSP': 'edu_msp',
+          'Penalties': 'edu_penalties',
+          'Plan Loss': 'edu_plan_loss',
+          'State Programs': 'edu_spap',
+          'Employer Coverage': 'edu_employer',
+          'LI NET': 'edu_linet',
+          'Medication': 'edu_medication',
+          'Extra Benefits': 'edu_part_c',
+          'Prequalify': 'edu_prequalify',
+          'Advantage Types': 'edu_advantage_types',
+          'Comparison': 'edu_comparison',
+          'Enrollment': 'edu_enrollment',
+        };
+        const eduKey = topicMap[medicareTopic] || 'edu_parts_ab';
+        setStepSync('medicare_education');
+        updateMemory({ educationTopic: eduKey, educationStep: 1 });
+        const education = getMedicareEducation(eduKey, memory.language, memory.state);
+        enqueueBot(education);
+        return;
+      }
     }
 
-    const interest = detectInterest(text);
-    updateMemory({ lastTopic: interest, interestType: interest });
-
+    // ADVISOR / PLAN REVIEW by interest keyword
     if (containsAny(text, REVIEW_KEYWORDS)) {
+      const interest = detectInterest(text);
+      updateMemory({ lastTopic: interest, interestType: interest });
       startPlanReview(interest);
       return;
     }
@@ -3451,52 +4072,15 @@ export function ChatBot() {
       return;
     }
 
-    /* Medicare question - route through state intake if state unknown, then education */
-    const medicareTopic = detectMedicareTopic(text, memory.language);
-    if (medicareTopic) {
-      updateMemory({ lastTopic: medicareTopic, interestType: medicareTopic });
-      trackTopic(medicareTopic);
-      if (!memory.state) {
-        // Ask state first, then provide education
-        showMedicareIntake();
-        return;
-      }
-      // State known - map topic to education key
-      const topicMap: Record<string, string> = {
-        'Medicare Parts A & B': 'edu_parts_ab',
-        'Medicare Advantage': 'edu_part_c',
-        'Medicare Supplement': 'edu_supplement',
-        'Part D': 'edu_part_d',
-        'Extra Help / LIS': 'edu_extra_help',
-        'Medicaid': 'edu_medicaid',
-        'Medicare Savings Programs': 'edu_msp',
-        'MSP': 'edu_msp',
-        'Penalties': 'edu_penalties',
-        'Plan Loss': 'edu_plan_loss',
-        'State Programs': 'edu_spap',
-        'Employer Coverage': 'edu_employer',
-        'LI NET': 'edu_linet',
-        'Medication': 'edu_medication',
-        'Extra Benefits': 'edu_part_c',
-        'Prequalify': 'edu_prequalify',
-        'Advantage Types': 'edu_advantage_types',
-        'Comparison': 'edu_comparison',
-        'Enrollment': 'edu_enrollment',
-      };
-      const eduKey = topicMap[medicareTopic] || 'edu_parts_ab';
-      setStepSync('medicare_education');
-      updateMemory({ educationTopic: eduKey, educationStep: 1 });
-      const education = getMedicareEducation(eduKey, memory.language, memory.state);
-      enqueueBot(education);
-      return;
-    }
-
-    /* Fallback: legacy education */
+    // Fallback: general education
     const education = getEducationMessages(text, memory.language);
-    updateMemory({ lastTopic: education.topic, interestType: education.topic });
+    updateMemory({ lastTopic: education.topic, interestType: education.topic, lastEducationTopic: education.topic });
+    setMode('education');
     setStepSync('question');
     enqueueBot(education.messages);
   }
+
+
 
   /* ---------- Render ---------- */
 
