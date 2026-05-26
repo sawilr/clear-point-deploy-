@@ -9,29 +9,43 @@ export function Footer() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Resources & Blog — always lands at top of /resources regardless of current page.
-  // Double rAF after navigate() ensures scroll fires AFTER React commits the new route,
-  // eliminating the race condition where ScrollToTop fires before the page renders.
-  const handleResources = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault();
-    if (location.pathname === '/resources') {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    navigate('/resources');
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: 'instant' });
-    }));
-  };
-
   // How It Works — double rAF: waits for React to commit new route DOM,
   // then retries until #how element exists. Eliminates double-click issue.
   const handleHowItWorks = (e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
+    // Top bar (~28 px) + sticky nav (h-[70px]) ≈ 98 px stack; 100 px clears it.
+    const headerOffset = 100;
     if (location.pathname === '/') {
       const el = document.querySelector('#how');
       if (el) {
-        const headerOffset = 80;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      }
+      return;
+    }
+    navigate('/');
+    // 30-frame retry (~500 ms) absorbs HashRouter commit + Home mount +
+    // scroll-reveal observers on mid-range mobile. Matches Free Review pattern.
+    const tryScroll = (attemptsLeft: number) => {
+      const el = document.querySelector('#how');
+      if (el) {
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
+      } else if (attemptsLeft > 0) {
+        requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
+      }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
+  };
+
+  // Annual Review — same retry pattern, but targets the #annual-review section
+  // on the Home page (where the Enrollment Periods / Annual Review content lives).
+  const handleAnnualReview = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const headerOffset = 100;
+    if (location.pathname === '/') {
+      const el = document.querySelector('#annual-review');
+      if (el) {
         const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
         window.scrollTo({ top: y, behavior: 'smooth' });
       }
@@ -39,22 +53,26 @@ export function Footer() {
     }
     navigate('/');
     const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#how');
+      const el = document.querySelector('#annual-review');
       if (el) {
-        const headerOffset = 80;
         const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
         window.scrollTo({ top: y, behavior: 'smooth' });
       } else if (attemptsLeft > 0) {
         requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
       }
     };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
 
   return (
     <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
       <div className="max-w-6xl mx-auto px-5">
-        <div className="grid grid-cols-2 md:grid-cols-[1.8fr_1fr_1fr_1fr] gap-8 md:gap-10 mb-10">
+        {/* lg+ widens the Contact column so the full email
+            "info@clearpointsenioradvisors.com" fits on one line at desktop.
+            md (tablet) keeps the original 5-col split because narrower tablets
+            don't have room to widen Contact without squeezing the Services /
+            Education / Resources link columns past readable. */}
+        <div className="grid grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.2fr_0.95fr_0.95fr_0.95fr_1.95fr] gap-8 md:gap-8 mb-10">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
@@ -72,34 +90,59 @@ export function Footer() {
             </p>
           </div>
 
-          {/* Services */}
+          {/* Services — coverage / plan categories only. Extra Help / LIS moved to
+              Education to match Header taxonomy (Wave 1.8). */}
           <div>
             <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h4>
-            <ul className="space-y-2 text-sm">
-              <li><Link to="/medicare-advantage" className="hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
-              <li><Link to="/medicare-supplement" className="hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li>
-              <li><Link to="/part-d" className="hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Parte D Medicamentos')}</Link></li>
-              <li><Link to="/extra-help" className="hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
+            <ul className="space-y-1 text-sm">
+              <li><Link to="/medicare-advantage" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
+              <li><Link to="/medicare-supplement" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li>
+              <li><Link to="/part-d" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link></li>
             </ul>
           </div>
 
-          {/* Resources */}
+          {/* Education — learning / assistance topics. Mirrors Header Education dropdown. */}
+          <div>
+            <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h4>
+            <ul className="space-y-1 text-sm">
+              <li><Link to="/resources" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
+              <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
+              <li><Link to="/extra-help" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
+              <li><Link to="/help-paying-costs" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
+              <li><Link to="/otc-benefits" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>
+              <li><a href="/#annual-review" onClick={handleAnnualReview} className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</a></li>
+            </ul>
+          </div>
+
+          {/* External Resources */}
           <div>
             <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h4>
-            <ul className="space-y-2 text-sm">
-              <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="hover:text-cream-50 transition-colors inline-flex items-center gap-1">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="/resources" onClick={handleResources} className="hover:text-cream-50 transition-colors">{t('Resources & Blog', 'Recursos y Blog')}</a></li>
-              <li><a href="/#how" onClick={handleHowItWorks} className="hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
+            <ul className="space-y-1 text-sm">
+              <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="https://www.cms.gov/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">CMS.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="/#how" onClick={handleHowItWorks} className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
+              <li><Link to="/about" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('About', 'Nosotros')}</Link></li>
             </ul>
           </div>
 
           {/* Contact */}
           <div className="col-span-2 md:col-span-1">
             <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h4>
-            <ul className="space-y-2 text-sm">
-              <li><a href="tel:18663108702" className="hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
-              <li><a href="mailto:info@clearpointsenioradvisors.com" className="hover:text-cream-50 transition-colors">info@clearpointsenioradvisors.com</a></li>
+            <ul className="space-y-1 text-sm">
+              <li><a href="tel:18663108702" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
+              {/* Email layout per viewport:
+                  • Mobile (default, col-span-2): full-width column, fits on one
+                    line at text-sm down to 320px viewport.
+                  • md tablet (5-col grid, narrow Contact ~179px): the email
+                    is wider than the column; <wbr> hints + break-words let it
+                    wrap cleanly as "info@clearpoint / senioradvisors.com"
+                    instead of mid-word.
+                  • lg+ desktop (wider Contact ~279px+): lg:whitespace-nowrap
+                    forces the email onto a single continuous line.
+                  mailto href stays a single string so the email client opens
+                  the address correctly. <wbr> is silent for screen readers. */}
+              <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors break-words lg:whitespace-nowrap">info@clearpoint<wbr />senioradvisors<wbr />.com</a></li>
               <li className="text-cream-50/40 text-xs">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
               <li className="text-cream-50/40 text-xs mt-2">{t('Serving: NY, FL, CT, NJ', 'Sirviendo: NY, FL, CT, NJ')}</li>
             </ul>
@@ -124,12 +167,12 @@ export function Footer() {
             Example: <span>NPN: 12345678 | Licensed in NY · NJ · CT · FL</span>
           */}
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
-          <div className="flex items-center gap-3">
-            <Link to="/privacy-policy" className="hover:text-cream-50/60 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Link to="/privacy-policy" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
             <span>|</span>
-            <Link to="/accessibility" className="hover:text-cream-50/60 transition-colors">{t('Accessibility', 'Accesibilidad')}</Link>
+            <Link to="/accessibility" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Accessibility', 'Accesibilidad')}</Link>
             <span>|</span>
-            <Link to="/terms" className="hover:text-cream-50/60 transition-colors">{t('Terms', 'Términos')}</Link>
+            <Link to="/terms" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Terms', 'Términos')}</Link>
             <span>|</span>
             <span>TTY: 711</span>
           </div>

@@ -37,13 +37,18 @@ export function CTASection({
   // When primaryHref points to /contact, navigate then scroll to form + focus first name.
   // Works from any page. onPrimaryClick prop overrides this (e.g. Contact page itself).
   const handleContactNav = () => {
-    navigate('/contact');
+    // `?focus=name` signals LeadForm to autofocus the First Name field on mount.
+    navigate('/contact?focus=name');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#contact-form');
       if (el) {
-        const headerOffset = 80;
+        // Top bar (~28 px) + sticky nav (h-[70px]) ≈ 98 px stack; 100 px clears it.
+        const headerOffset = 100;
         const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
         window.scrollTo({ top: y, behavior: 'smooth' });
+        // iOS Safari won't auto-open keyboard from programmatic focus (gesture
+        // flag expired); user taps the field to open keyboard. Field will be
+        // visible and ready.
         setTimeout(() => {
           const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
           if (firstInput) firstInput.focus();
@@ -52,7 +57,9 @@ export function CTASection({
         requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
       }
     };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    // 30-frame retry (~500ms @ 60fps) absorbs HashRouter commit + Contact
+    // mount on mid-range mobile. Matches Header.tsx + MobileStickyBar timing.
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
 
   const primaryBtnClass = `inline-flex items-center gap-2 font-bold text-sm px-7 py-3.5 rounded-xl transition-all hover:shadow-soft ${

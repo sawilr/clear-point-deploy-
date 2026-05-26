@@ -35,8 +35,8 @@ export function Hero({
   if (variant === 'page') {
     return (
       <section className={`relative overflow-hidden flex ${compact ? tighter ? 'min-h-[200px] lg:min-h-[240px] items-start' : 'min-h-[220px] lg:min-h-[260px] items-start' : 'min-h-[300px] lg:min-h-[360px] items-center'}`}>
-        <div className="absolute inset-0">
-          <img src={image} alt="" className="w-full h-full object-cover" />
+        <div className="absolute inset-0" aria-hidden="true">
+          <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         </div>
         <div className={`relative z-10 max-w-6xl mx-auto px-5 w-full ${compact ? tighter ? 'pt-3 pb-8 lg:pt-4 lg:pb-10' : 'pt-8 pb-8 lg:pt-10 lg:pb-10' : 'pt-10 pb-12 lg:pt-14 lg:pb-16'}`}>
@@ -59,8 +59,8 @@ export function Hero({
 
   return (
     <section className="relative min-h-[600px] md:min-h-[660px] lg:min-h-[720px] flex items-center overflow-hidden">
-      <div className="absolute inset-0">
-        <img src={image} alt="" className="w-full h-full object-cover" />
+      <div className="absolute inset-0" aria-hidden="true">
+        <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         <div className="absolute inset-0 bg-gradient-to-t from-earth-900/50 via-transparent to-earth-900/20" />
       </div>

@@ -12,7 +12,12 @@ export default function Contact() {
   const handleScrollToForm = () => {
     const el = document.querySelector('#contact-form');
     if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Use window.scrollTo with explicit header offset instead of scrollIntoView —
+      // scrollIntoView({block:'start'}) lands the section under the sticky nav.
+      // Top bar (~28 px) + sticky nav (h-[70px]) ≈ 98 px stack; 100 px clears it.
+      const headerOffset = 100;
+      const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+      window.scrollTo({ top: y, behavior: 'smooth' });
       setTimeout(() => {
         const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
         if (firstInput) firstInput.focus();
@@ -62,7 +67,7 @@ export default function Contact() {
                     <div className="w-10 h-10 rounded-lg bg-gold-100 text-gold-500 flex items-center justify-center mb-3">{item.icon}</div>
                     <h3 className="font-serif text-sm font-semibold text-earth-900 mb-1">{t(item.title, item.titleEs)}</h3>
                     {item.href ? (
-                      <a href={item.href} className="text-earth-700 text-sm font-medium hover:text-gold-500 transition-colors">{item.value}</a>
+                      <a href={item.href} className="text-earth-700 text-sm font-medium hover:text-gold-500 transition-colors focus-visible:outline-2 focus-visible:outline-gold-400 focus-visible:outline-offset-2 rounded-sm">{item.value}</a>
                     ) : (
                       <p className="text-earth-700 text-sm font-medium">{item.value}</p>
                     )}

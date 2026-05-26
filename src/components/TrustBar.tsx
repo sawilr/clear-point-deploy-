@@ -15,9 +15,15 @@ export function TrustBar({ stats }: TrustBarProps) {
   const { t } = useLanguage();
   const { ref, visible } = useScrollReveal();
 
+  // Stats softened to claims we can defend without external substantiation.
+  // Removed prior unverifiable volume counts ("5,000+ Seniors Helped" and
+  // "20+ Carriers Compared") in favor of factual, verifiable attributes:
+  // the agency IS licensed + independent, the site IS bilingual, broker
+  // compensation IS paid by carriers ($0 to client — industry standard),
+  // and the licensed-states list IS accurate.
   const defaultStats: Stat[] = [
-    { num: '5,000+', labelEn: 'Seniors Helped', labelEs: 'Adultos Mayores Atendidos' },
-    { num: '20+', labelEn: 'Carriers Compared', labelEs: 'Aseguradoras Comparadas' },
+    { num: 'Licensed', labelEn: 'Independent Advisors', labelEs: 'Asesores Independientes' },
+    { num: 'Bilingual', labelEn: 'English & Español', labelEs: 'Inglés y Español' },
     { num: '$0', labelEn: 'Cost to You', labelEs: 'Costo Para Usted' },
     { num: 'NY·FL·CT·NJ', labelEn: 'States Served', labelEs: 'Estados Atendidos' },
   ];

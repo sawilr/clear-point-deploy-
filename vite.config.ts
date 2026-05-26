@@ -15,4 +15,17 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Enterprise: split vendor chunks for long-term browser caching.
+    // React + router + icon libraries change much less often than app code,
+    // so separating them means a code-only change doesn't bust the vendor cache.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'router-vendor': ['react-router'],
+        },
+      },
+    },
+  },
 });

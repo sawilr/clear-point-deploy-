@@ -5,8 +5,9 @@ import { TrustBar } from '../components/TrustBar';
 import { ServiceCard } from '../components/ServiceCard';
 import { FAQ } from '../components/FAQ';
 import { CTASection } from '../components/CTASection';
+import { DisclaimerBlock } from '../components/DisclaimerBlock';
 import { useScrollReveal } from '../components/ScrollReveal';
-import { PhoneIcon, ChevronRight, ShieldIcon, LockIcon, UsersIcon } from '../components/icons';
+import { PhoneIcon, ShieldIcon, LockIcon, UsersIcon } from '../components/icons';
 import { SmartMedicareReview } from '../components/SmartMedicareReview';
 import { LogoSvg } from '../components/LogoSvg';
 
@@ -55,8 +56,8 @@ const faqItems = [
   {
     q: "What's the difference between Medicare Advantage and a Supplement?",
     qEs: '¿Cuál es la diferencia entre Medicare Advantage y un Suplemento?',
-    a: "Medicare Advantage replaces Original Medicare with a private plan (often $0 premium, includes extras). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. The best option depends on your health usage and budget — that's exactly what we help you figure out.",
-    aEs: 'Medicare Advantage reemplaza al Medicare Original con un plan privado (frecuentemente prima de $0, incluye extras). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. La mejor opción depende de su uso de salud y presupuesto — eso es exactamente lo que le ayudamos a determinar.',
+    a: "Medicare Advantage replaces Original Medicare with a private plan (often $0 premium, includes extras). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
+    aEs: 'Medicare Advantage reemplaza al Medicare Original con un plan privado (frecuentemente prima de $0, incluye extras). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
   },
   {
     q: 'When can I enroll or change my Medicare plan?',
@@ -130,11 +131,11 @@ const carriers: Carrier[] = [
   { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo',                logoClass: 'scale-[1.38]' },
   { name: 'EmblemHealth',                  logo: '/carriers/emblemhealth.png',     alt: 'EmblemHealth logo',                 logoClass: 'scale-[1.52]' },
   { name: 'Empire BlueCross BlueShield',   logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo'   },
-  { name: 'Fidelis Care',                  logo: '/carriers/fidelis.png',          alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.35] saturate-[1.2] contrast-[1.1]' },
-  { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo'                   },
+  { name: 'Fidelis Care',                  logo: '/carriers/fidelis-care-final.png', alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.65]' },
+  { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo',                  logoClass: 'scale-[1.30]' },
   { name: 'Humana',                        logo: '/carriers/humana.png',           alt: 'Humana logo'                        },
   { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo',              logoClass: 'scale-[1.42]' },
-  { name: 'Wellcare',                      logo: '/carriers/wellcare.png',         alt: 'Wellcare logo',                     logoClass: 'scale-[1.48] saturate-[1.2]' },
+  { name: 'Wellcare',                      logo: '/carriers/wellcare-final.png',     alt: 'Wellcare logo',                     logoClass: 'scale-[1.75]' },
   { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                    logoClass: 'scale-[1.52] saturate-[1.4] contrast-[1.15]' },
   { name: 'Centene',                       logo: '/carriers/centene.png',          alt: 'Centene logo'                       },
   { name: 'VNS Health',                    logo: '/carriers/vns-health.svg',       alt: 'VNS Health logo',                   logoClass: 'scale-[1.15]' },
@@ -142,7 +143,6 @@ const carriers: Carrier[] = [
 
 export default function Home() {
   const { t } = useLanguage();
-  const welcomeReveal = useScrollReveal();
   const servicesReveal = useScrollReveal();
   const howReveal = useScrollReveal();
   const whyReveal = useScrollReveal();
@@ -162,30 +162,76 @@ export default function Home() {
         showForm={true}
       />
 
+      {/* TPMO disclosure — persistent in-page band (CMS §422.2267(e)(41)) */}
+      <div className="bg-cream-100 border-y border-cream-200">
+        <div className="max-w-6xl mx-auto px-5 py-3">
+          <DisclaimerBlock variant="inline" />
+        </div>
+      </div>
+
       <TrustBar />
 
-      {/* Smart Medicare Review */}
-      <SmartMedicareReview />
-
-      {/* Welcome */}
-      <section ref={welcomeReveal.ref} className={`py-20 lg:py-28 bg-cream-50 transition-all duration-700 ${welcomeReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-4xl mx-auto px-5 text-center">
-          <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Welcome', 'Bienvenido')}</span>
-          <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-6">
-            {t('At Clear Point, we are dedicated to providing exceptional Medicare guidance tailored to your unique needs.', 'En Clear Point, nos dedicamos a brindar orientación excepcional de Medicare adaptada a sus necesidades únicas.')}
-          </h2>
-          <p className="text-earth-600 text-base sm:text-lg leading-relaxed max-w-2xl mx-auto mb-8">
-            {t('Our experienced team is here to guide you through every step of your healthcare journey, ensuring optimal outcomes and peace of mind.', 'Nuestro experimentado equipo está aquí para guiarlo en cada paso de su viaje de salud, asegurando resultados óptimos y tranquilidad.')}
+      {/* Important before changing plans — compliance-aware warning */}
+      <section className="bg-amber-50 border-y border-amber-200 py-10 lg:py-12">
+        <div className="max-w-4xl mx-auto px-5">
+          <div className="flex items-start gap-3 mb-5">
+            <svg className="w-6 h-6 text-amber-700 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <h2 className="font-serif text-2xl sm:text-3xl text-earth-900 leading-snug mb-2">
+                {t('Important Before Changing Any Medicare Plan', 'Importante Antes de Cambiar Cualquier Plan de Medicare')}
+              </h2>
+              <p className="text-earth-700 text-sm sm:text-base leading-relaxed">
+                {t(
+                  'A change in your Medicare plan may affect benefits or coverage you already have. Please review with a licensed advisor before making any change.',
+                  'Un cambio en su plan de Medicare puede afectar beneficios o coberturas que ya tiene. Por favor revise con un asesor licenciado antes de hacer cualquier cambio.'
+                )}
+              </p>
+            </div>
+          </div>
+          <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-sm sm:text-[15px] leading-relaxed pl-9">
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('Medicaid, Medicare Savings Programs (MSP), Extra Help / LIS', 'Medicaid, Programas de Ahorro de Medicare (MSP), Ayuda Extra / LIS')}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('Retiree, union, federal, or state employee benefits', 'Beneficios de jubilado, sindicato, empleado federal o estatal')}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('VA / TRICARE coverage', 'Cobertura de VA / TRICARE')}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('Home care, nursing home, PACE, MAP, LTC, or I-SNP support', 'Cuidado en casa, hogar de ancianos, PACE, MAP, LTC, o apoyo I-SNP')}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('Current doctors, hospitals, or specialists you see', 'Médicos, hospitales o especialistas que ve actualmente')}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
+              <span>{t('Current medications, treatments, or prior authorizations', 'Medicamentos, tratamientos o autorizaciones previas actuales')}</span>
+            </li>
+          </ul>
+          <p className="text-earth-600 text-xs sm:text-sm leading-relaxed mt-5 pl-9">
+            {t(
+              'ClearPoint does not recommend plan changes without verification. Final review is performed by a licensed Medicare advisor.',
+              'ClearPoint no recomienda cambios de plan sin verificación. La revisión final la realiza un asesor licenciado de Medicare.'
+            )}
           </p>
-          <Link to="/contact" className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-7 py-3.5 rounded-xl hover:bg-earth-900 transition-all hover:shadow-soft">
-            {t('Get Started Now', 'Comience Ahora')}
-            <ChevronRight />
-          </Link>
         </div>
       </section>
 
+      {/* Smart Medicare Review — id wrapper enables direct anchor nav from header */}
+      <div id="smart-review" className="scroll-mt-28">
+        <SmartMedicareReview />
+      </div>
+
       {/* Services */}
-      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
@@ -204,8 +250,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Enrollment Periods */}
-      <section className="py-20 lg:py-28 bg-cream-50">
+      {/* Enrollment Periods — anchor for Annual Review nav link */}
+      <section id="annual-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <div>
@@ -274,7 +320,7 @@ export default function Home() {
       </section>
 
       {/* How It Works */}
-      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-24 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-28 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
@@ -319,7 +365,7 @@ export default function Home() {
       </section>
 
       {/* Why Independent */}
-      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-20 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
@@ -327,7 +373,7 @@ export default function Home() {
               {t('We Work for You,', 'Trabajamos para Usted,')}<br />{t('Not the Insurance Company', 'No para la Aseguradora')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed mb-8">
-              {t("Unlike captive agents who can only offer one company's plans, we're independent — meaning we compare across the entire market to find what's genuinely best for you.", 'A diferencia de los agentes cautivos que solo ofrecen planes de una empresa, somos independientes — comparamos en todo el mercado para encontrar lo que es genuinamente mejor para usted.')}
+              {t("Unlike captive agents who can only offer one company's plans, we're independent — meaning we can review options across the market with no carrier obligation, and a licensed advisor walks you through the differences.", 'A diferencia de los agentes cautivos que solo ofrecen planes de una empresa, somos independientes — podemos revisar opciones en el mercado sin obligación con ninguna aseguradora, y un asesor licenciado le explica las diferencias.')}
             </p>
             <div className="space-y-4">
               {[
@@ -364,17 +410,18 @@ export default function Home() {
             {t('Carrier participation and plan availability vary by county, state, eligibility, and appointment status.', 'La participación de aseguradoras y la disponibilidad de planes varían por condado, estado, elegibilidad y estado de cita.')}
           </p>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div role="region" aria-label={t('Carriers we may help you review', 'Aseguradoras que podemos ayudarle a revisar')} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {carriers.map((carrier) => (
               <div
                 key={carrier.name}
-                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4"
+                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4 overflow-hidden"
               >
                 <div className="flex items-center justify-center w-[130px] h-[44px]">
                   <img
                     src={carrier.logo}
                     alt={carrier.alt}
-                    loading="lazy"
+                    width={130}
+                    height={44}
                     decoding="async"
                     className={`block object-contain max-w-full max-h-full transition-transform${carrier.logoClass ? ' ' + carrier.logoClass : ''}`}
                   />
@@ -448,7 +495,7 @@ export default function Home() {
       </section>
 
       {/* FAQ */}
-      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-20">
+      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="max-w-6xl mx-auto px-5">
           <FAQ items={faqItems} title="Common Questions" titleEs="Preguntas Frecuentes" />
         </div>

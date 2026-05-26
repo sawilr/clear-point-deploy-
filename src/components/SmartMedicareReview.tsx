@@ -30,29 +30,53 @@ const ssdiQuestionsES = [
   { key: 'needsHelp',   q: '¿Qué necesita entender?',                                                                   opts: ['Cuándo puede comenzar Medicare', 'Ayuda pagando Parte A o Parte B', 'Medicaid / MSP / Extra Help', 'Reglas de discapacidad y Medicare', 'Hablar con un asesor'] },
 ];
 
+// Step 1 options — split into PRIMARY (always visible) and EXPANDED
+// (revealed via "More options"). Reduces choice overload for seniors on
+// mobile while preserving access to the full Medicare-situation list.
+// Wording is neutral and state-agnostic: ClearPoint covers NY/NJ/CT/FL
+// and we do NOT assume any single state's program rules apply universally.
+// The special-care option (PACE/MAP/LTC/I-SNP/home care) is a red-flag
+// review category — selection should route to careful advisor review, not
+// to plan-change recommendations.
+const PRIMARY_CONCERN_COUNT = 4;
+
 const concernsEN = [
+  // PRIMARY 4 — always visible
   'I want to lower my Medicare costs',
-  'I may need Medicaid, Medicare Savings Program, or Extra Help',
+  'I need help paying for Medicare, Medicaid, MSP, Extra Help, LIS, or state help programs',
+  'I want to review or change my current plan',
+  "I'm new to Medicare or not sure what I have",
+  // EXPANDED — revealed via "More options"
   'I have Medicare Advantage and want to review my plan',
   'I have Medicare Supplement / Medigap',
-  'I am new to Medicare',
   'I am not insured or not sure what I have',
   'I have disability, SSI, SSDI, or need help with Medicare premiums',
   'I have retiree, union, federal, state, VA, or TRICARE coverage that may affect Medicare',
+  'I receive home care, nursing home care, PACE, MAP, LTC, I-SNP, or special care support',
   'I am not sure',
 ];
 
 const concernsES = [
+  // PRIMARIAS 4 — siempre visibles
   'Quiero reducir mis costos de Medicare',
-  'Puede que necesite Medicaid, Programa de Ahorro de Medicare o Extra Help',
+  'Necesito ayuda para pagar Medicare, Medicaid, MSP, Extra Help, LIS o programas estatales de ayuda',
+  'Quiero revisar o cambiar mi plan actual',
+  'Soy nuevo en Medicare o no estoy seguro de lo que tengo',
+  // EXPANDIDAS — se muestran al tocar "Más opciones"
   'Tengo Medicare Advantage y quiero revisar mi plan',
   'Tengo Medicare Supplement / Medigap',
-  'Soy nuevo en Medicare',
   'No tengo seguro o no estoy seguro de lo que tengo',
   'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare',
   'Tengo cobertura de retiro, unión, federal, estatal, VA o TRICARE que puede afectar Medicare',
+  'Recibo cuidado en casa, hogar de ancianos, PACE, MAP, LTC, I-SNP o apoyo de cuidado especial',
   'No estoy seguro',
 ];
+
+// Special-care red-flag — exact-match constants for handler-level routing.
+// Selection should trigger careful advisor review (no plan-change recommendation,
+// no eligibility promise, no state-specific claim — these vary across NY/NJ/CT/FL).
+const SPECIAL_CARE_CONCERN_EN = 'I receive home care, nursing home care, PACE, MAP, LTC, I-SNP, or special care support';
+const SPECIAL_CARE_CONCERN_ES = 'Recibo cuidado en casa, hogar de ancianos, PACE, MAP, LTC, I-SNP o apoyo de cuidado especial';
 
 export function SmartMedicareReview() {
   const { t, lang } = useLanguage();
@@ -72,6 +96,13 @@ export function SmartMedicareReview() {
   const [error, setError] = useState('');
   const [ssdiSubStep, setSsdiSubStep] = useState(0);
   const [ssdiAnswers, setSsdiAnswers] = useState<Record<string, string>>({});
+  // Honeypot anti-bot field — must stay empty. Real users never see this input;
+  // bots that scrape and fill every form input will populate it. API discards
+  // any submission where this is non-empty.
+  const [websiteUrl, setWebsiteUrl] = useState('');
+  // Step 1 progressive disclosure — 4 primary options first, "More options"
+  // reveals the remaining 7. Resets if the user goes back to Step 1.
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
 
   const concerns = lang === 'es' ? concernsES : concernsEN;
   const isEs = lang === 'es';
@@ -171,8 +202,10 @@ export function SmartMedicareReview() {
       lead_notes: buildSummary(),
       lead_quality_flags: flags.join('; '),
       bot_transcript_summary: '',
-      tags: ['Smart Review Lead', 'Medicare Lead', lang === 'es' ? 'Spanish' : 'English'],
+      tags: ['Smart Review Lead', 'Medicare Lead'],
       created_at: new Date().toISOString(),
+      // Honeypot value forwarded to API for anti-bot gate
+      website_url: websiteUrl,
     };
 
     const success = await submitLeadToGHL(payload);
@@ -237,6 +270,22 @@ export function SmartMedicareReview() {
 
   return (
     <section id="smart-medicare-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
+      {/* Honeypot anti-bot field — hidden from sight, keyboard, screen readers,
+          and browser autofill. Real users never see or touch this. Bots that
+          scrape and auto-fill every input will populate it; the API silently
+          discards any submission where this field has a value. Placed at the
+          section root so it's part of the form's data even though Smart Review
+          is a multi-step wizard (not wrapped in a <form> element). */}
+      <input
+        type="text"
+        name="website_url"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        value={websiteUrl}
+        onChange={(e) => setWebsiteUrl(e.target.value)}
+        style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
+      />
       <div className="max-w-2xl mx-auto px-5">
         {/* Header */}
         <div className="text-center mb-10">
@@ -280,14 +329,15 @@ export function SmartMedicareReview() {
               <span>{isEs ? 'Atrás' : 'Back'}</span>
             </button>
           )}
-          {/* Step 1 — Main Concern */}
+          {/* Step 1 — Main Concern (progressive disclosure: 4 primary + More options) */}
           {step === 1 && ssdiSubStep === 0 && (
             <div>
               <p className="text-earth-800 text-base font-semibold mb-5">
                 {t('What Medicare situation best matches you today?', '¿Cuál situación de Medicare describe mejor su caso hoy?')}
               </p>
               <div className="grid gap-2.5">
-                {concerns.map((c) => (
+                {/* PRIMARY 4 — always visible */}
+                {concerns.slice(0, PRIMARY_CONCERN_COUNT).map((c) => (
                   <button
                     key={c}
                     onClick={() => {
@@ -305,7 +355,75 @@ export function SmartMedicareReview() {
                     {c}
                   </button>
                 ))}
+
+                {/* EXPANDED — revealed via "More options" */}
+                {showMoreOptions && concerns.slice(PRIMARY_CONCERN_COUNT).map((c) => {
+                  const isSpecialCare = c === SPECIAL_CARE_CONCERN_EN || c === SPECIAL_CARE_CONCERN_ES;
+                  return (
+                    <button
+                      key={c}
+                      onClick={() => {
+                        setConcern(c);
+                        setSsdiAnswers({});
+                        const isSSdi = c === SSDI_CONCERN_EN || c === SSDI_CONCERN_ES;
+                        const isSC = c === SPECIAL_CARE_CONCERN_EN || c === SPECIAL_CARE_CONCERN_ES;
+                        // Special-care: do NOT auto-advance. Show the careful-review note
+                        // below, require an explicit "Continue" tap so the user has a
+                        // chance to read the no-promise advisory before proceeding.
+                        if (isSSdi) { setSsdiSubStep(1); }
+                        else if (isSC) { setSsdiSubStep(0); /* stay on step 1, note renders */ }
+                        else { setSsdiSubStep(0); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }
+                      }}
+                      className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
+                        concern === c
+                          ? 'border-gold-400 bg-gold-50 text-earth-900'
+                          : isSpecialCare
+                            ? 'border-amber-300 hover:border-amber-500 hover:bg-amber-50 text-earth-700'
+                            : 'border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
               </div>
+
+              {/* "More options" toggle — only shown when expanded list hidden */}
+              {!showMoreOptions && (
+                <button
+                  type="button"
+                  onClick={() => setShowMoreOptions(true)}
+                  className="mt-3 w-full text-center px-4 py-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-gold-300 hover:bg-cream-50 text-earth-600 hover:text-earth-800 text-sm font-medium transition-all"
+                  aria-expanded={false}
+                >
+                  {t('More options', 'Más opciones')}
+                </button>
+              )}
+
+              {/* Careful-review notice for special care selection — neutral, no promises.
+                  User must explicitly tap Continue to proceed; this gives them a chance
+                  to read the no-recommendation advisory before any plan-related step. */}
+              {(concern === SPECIAL_CARE_CONCERN_EN || concern === SPECIAL_CARE_CONCERN_ES) && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900 leading-relaxed">
+                  <p className="font-semibold mb-1.5">
+                    {t('Special care situation — careful review required', 'Situación de cuidado especial — revisión cuidadosa requerida')}
+                  </p>
+                  <p className="mb-3">
+                    {t(
+                      'A change to your Medicare plan may affect benefits or services you already receive. A licensed advisor should review your situation carefully before any change. We do not make plan recommendations from this answer alone.',
+                      'Un cambio en su plan de Medicare puede afectar beneficios o servicios que ya recibe. Un asesor licenciado debe revisar su situación con cuidado antes de cualquier cambio. No hacemos recomendaciones de plan solo con esta respuesta.'
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setStep(s => Math.min(s + 1, TOTAL_STEPS + 1))}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-earth-800 text-cream-50 text-sm font-semibold hover:bg-earth-900 transition-colors"
+                  >
+                    {t('Continue', 'Continuar')}
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -440,7 +558,7 @@ export function SmartMedicareReview() {
                 </p>
               )}
               {dob && !validateDOB(dob).valid && (
-                <p className="text-sm text-red-500 mt-2">{t('Please enter a valid date of birth.', 'Por favor ingrese una fecha de nacimiento válida.')}</p>
+                <p role="alert" className="text-sm text-red-500 mt-2">{t('Please enter a valid date of birth.', 'Por favor ingrese una fecha de nacimiento válida.')}</p>
               )}
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
@@ -455,15 +573,15 @@ export function SmartMedicareReview() {
                 {t('Your contact information', 'Su información de contacto')}
               </p>
               <div className="space-y-3.5">
-                <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {firstName.length > 1 && !validatePersonName(firstName).valid && <p className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {lastName.length > 1 && !validatePersonName(lastName).valid && <p className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="numeric" pattern="[0-9]*" autoComplete="tel" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {phone.length > 0 && phone.length < 10 && <p className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
-                {phone.length === 10 && !validatePhone(phone).valid && <p className="text-xs text-red-500">{t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>}
-                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {email && !validateEmail(email).valid && <p className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
+                <input type="text" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {firstName.length > 1 && !validatePersonName(firstName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                <input type="text" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
+                {phone.length === 10 && !validatePhone(phone).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>}
+                <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
@@ -482,7 +600,8 @@ export function SmartMedicareReview() {
                   <button
                     key={l}
                     onClick={() => { setPrefLang(l); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }}
-                    className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
+                    aria-pressed={prefLang === l}
+                    className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 ${
                       prefLang === l
                         ? 'border-gold-400 bg-gold-50 text-earth-900'
                         : 'border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700'

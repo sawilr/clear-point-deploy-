@@ -24,6 +24,13 @@ dist-ssr
 *.sw?
 
 .vercel
-.env*.local
+
+# Environment variables — explicit safety net. Real secrets live in Vercel
+# project env vars, never in repo. The `.env` line catches any accidental
+# `.env` file (without .local suffix) created by future developers.
+.env
+.env.local
+.env.*.local
+
 *.BACKUP_*
 backups/

@@ -66,11 +66,20 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
       body.state = (payload as any).state;
     }
     if ((payload as any).source_component) { body.source_component = (payload as any).source_component; }
+    // Forward the unified TCPA consent (consent_to_contact). Smart Review, Zara,
+    // and LeadForm each build this as a real boolean and gate submission on it.
+    // The api/submit-lead.js consent derivation treats consent_to_contact as the
+    // umbrella TCPA signal covering marketing calls + SMS.
+    if ((payload as any).consent_to_contact != null) { body.consent_to_contact = (payload as any).consent_to_contact; }
     if ((payload as any).consent != null) { body.consent = (payload as any).consent; }
     if ((payload as any).consent_sms != null) { body.consent_sms = (payload as any).consent_sms; }
     if ((payload as any).consent_call != null) { body.consent_call = (payload as any).consent_call; }
     // Tags: preserve array as-is
     if (Array.isArray(payload.tags) && payload.tags.length > 0) { body.tags = payload.tags; }
+    // Honeypot anti-bot field — forward to API so the server-side gate can
+    // discard bot submissions. Real users never see or fill this field; it
+    // arrives empty (''). The API discards any submission where it's non-empty.
+    if ((payload as any).website_url !== undefined) { body.website_url = (payload as any).website_url; }
 
     const response = await fetch(API_ROUTE, {
       method: 'POST',
@@ -84,24 +93,36 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
       throw new Error(`HTTP ${response.status}: ${data?.error || response.statusText}`);
     }
 
-    console.info('[GHL] Lead submitted via API route:', { name: payload.full_name, source: payload.source, contactId: data?.contact_id, status: response.status });
+    // Privacy: log only non-PII identifiers (HTTP status, CRM contact id, lead
+    // source label). Never log payload.full_name, phone, email, DOB, ZIP,
+    // lead_notes, or any user-supplied content.
+    console.info('[GHL] Lead submitted', { status: response.status, source: payload.source, contactId: data?.contact_id });
     return true;
   } catch (error) {
-    // Store failed submissions locally
-    const pending = JSON.parse(localStorage.getItem('cp_pending_leads') || '[]');
-    pending.push(payload);
-    localStorage.setItem('cp_pending_leads', JSON.stringify(pending));
-    console.error('[GHL] Submission failed — stored locally:', { name: payload.full_name, source: payload.source, error: error instanceof Error ? error.message : String(error) });
+    // Privacy: do NOT persist the failed payload locally — it contains PII
+    // (name, phone, email, DOB, ZIP, lead_notes). Drop it. Log only a generic
+    // failure label + error message (never the payload).
+    console.error('[GHL] Submission failed', { error: error instanceof Error ? error.message : 'unknown' });
     return false;
   }
 }
 
+// One-time cleanup: purge any PII left over in localStorage from earlier
+// versions that persisted failed-lead payloads. Safe to run on every load.
+if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+  try { localStorage.removeItem('cp_pending_leads'); } catch { /* ignore */ }
+}
+
+// Kept as no-op for API stability. Failed leads are no longer stored locally
+// (would have contained PII). Callers receive an empty array.
 export function getPendingLeads(): GHLLeadPayload[] {
-  return JSON.parse(localStorage.getItem('cp_pending_leads') || '[]');
+  return [];
 }
 
 export function clearPendingLeads(): void {
-  localStorage.removeItem('cp_pending_leads');
+  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try { localStorage.removeItem('cp_pending_leads'); } catch { /* ignore */ }
+  }
 }
 
 export function getSuccessMessage(lang: 'en' | 'es'): string {

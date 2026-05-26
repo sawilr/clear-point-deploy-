@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { LockIcon, CheckIcon } from './icons';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { submitLeadToGHL } from '../lib/ghl';
 import { validatePersonName, validatePhone, validateEmail } from '../lib/validation';
 import { getZipInfo } from '../lib/zipLookup';
@@ -23,7 +23,31 @@ interface LeadFormProps {
 
 export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFormProps) {
   const { lang, t } = useLanguage();
+  const location = useLocation();
+  const firstNameRef = useRef<HTMLInputElement>(null);
   const [submitted, setSubmitted] = useState(false);
+
+  // Cursor-on-first-name autofocus — triggered when any Free Review CTA
+  // navigates here with `?focus=name`. The CTA handler scrolls the form
+  // into view; this effect positions the cursor in the First Name field
+  // as soon as the form is mounted, matching the desktop UX on mobile
+  // too. iOS Safari restricts programmatic keyboard opening (gesture
+  // chain expires across rAF/setTimeout) — the cursor is still visibly
+  // placed in the field; the user taps to open the keyboard.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('focus') !== 'name') return;
+    let attempts = 30;
+    const tryFocus = () => {
+      const el = firstNameRef.current;
+      if (el) {
+        el.focus({ preventScroll: true });
+      } else if (--attempts > 0) {
+        requestAnimationFrame(tryFocus);
+      }
+    };
+    requestAnimationFrame(tryFocus);
+  }, [location.search]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(false);
   const [formData, setFormData] = useState({
@@ -36,6 +60,10 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     medicare_status: '',
     best_time_to_contact: '',
     tcpa_consent: false,
+    // Honeypot anti-bot field — must stay empty. Bots that scrape and fill
+    // every input will populate it. API discards submissions with any value.
+    // Innocuous-looking name so bots are more likely to fill it.
+    website_url: '',
   });
   const [errors, setErrors] = useState({
     first_name: '',
@@ -182,8 +210,10 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
       consent_text: 'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors. Message and data rates may apply. Reply STOP to opt out.',
       lead_notes: `Source: ${source}. Status: ${formData.medicare_status || 'not specified'}.`,
       bot_transcript_summary: '',
-      tags: ['Website Lead', 'Medicare Lead', 'ClearPoint Website', 'Form Lead', 'Consent Captured', formData.preferred_language === 'es' ? 'Spanish' : 'English'],
+      tags: ['Website Lead', 'Medicare Lead', 'ClearPoint Website', 'Form Lead', 'Consent Captured'],
       created_at: new Date().toISOString(),
+      // Honeypot value (always empty for real users; bots fill it and API discards)
+      website_url: formData.website_url,
       ...utm,
     };
 
@@ -233,32 +263,49 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         )}
 
         <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+          {/* Honeypot anti-bot field — hidden from sight, keyboard, and screen
+              readers. Real users never see or touch this. Bots that scrape
+              and auto-fill every input will populate it; the API discards
+              any submission where this field has a value. Defense in depth:
+              tabIndex={-1} blocks keyboard tab, aria-hidden hides from AT,
+              autoComplete=off prevents browser autofill, off-screen position
+              prevents visual rendering. */}
+          <input
+            type="text"
+            name="website_url"
+            tabIndex={-1}
+            autoComplete="off"
+            aria-hidden="true"
+            value={formData.website_url}
+            onChange={handleChange}
+            style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
+          />
           <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3.5">
             <div>
               <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
-              <input type="text" name="first_name" required value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="John / Juan" />
-              {errors.first_name && <p className="text-xs text-red-500 mt-1">{errors.first_name}</p>}
+              <input ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
+              {errors.first_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.first_name}</p>}
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Last Name', 'Apellido')} *</label>
-              <input type="text" name="last_name" required value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="Smith / García" />
-              {errors.last_name && <p className="text-xs text-red-500 mt-1">{errors.last_name}</p>}
+              <input type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
+              {errors.last_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.last_name}</p>}
             </div>
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input type="tel" name="phone" required value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(555) 000-0000" />
-            {errors.phone && <p className="text-xs text-red-500 mt-1">{errors.phone}</p>}
+            <input type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(555) 000-0000" />
+            {errors.phone && <p role="alert" className="text-xs text-red-500 mt-1">{errors.phone}</p>}
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Email', 'Correo')}</label>
-            <input type="email" name="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
-            {errors.email && <p className="text-xs text-red-500 mt-1">{errors.email}</p>}
+            <input type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
+            {errors.email && <p role="alert" className="text-xs text-red-500 mt-1">{errors.email}</p>}
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
-            <input type="text" name="zip" required inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
-            {errors.zip && <p className="text-xs text-red-500 mt-1">{errors.zip}</p>}
+            <input type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-sm text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
+            {errors.zip && <p role="alert" className="text-xs text-red-500 mt-1">{errors.zip}</p>}
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
@@ -325,8 +372,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             </p>
             <p>
               {t(
-                'ClearPoint Senior Advisors respects your privacy. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical information through this form. Information submitted may be transmitted to our secure CRM for follow-up. Final privacy, HIPAA, TCPA, and Medicare compliance language should be reviewed by qualified legal/compliance counsel.',
-                'ClearPoint Senior Advisors respeta tu privacidad. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni información médica detallada a través de este formulario. La información enviada puede transmitirse a nuestro CRM seguro para seguimiento. El lenguaje final de privacidad, HIPAA, TCPA y cumplimiento de Medicare debe ser revisado por un abogado o especialista de cumplimiento calificado.'
+                'ClearPoint Senior Advisors respects your privacy. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical information through this form. Information submitted may be transmitted to our secure CRM so a licensed advisor can follow up with you.',
+                'ClearPoint Senior Advisors respeta su privacidad. Por favor no envíe números de Seguro Social, números de Medicare, información bancaria, ni información médica detallada a través de este formulario. La información enviada puede transmitirse a nuestro CRM seguro para que un asesor licenciado pueda contactarle.'
               )}
             </p>
           </div>

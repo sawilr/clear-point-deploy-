@@ -2,11 +2,9 @@
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  var token = process.env.HIGHLEVEL_TOKEN;
-  var locationId = process.env.HIGHLEVEL_LOCATION_ID;
-  if (!token || !locationId) return res.status(500).json({ error: 'Server configuration error' });
-
-  // Read body: try req.body first, fall back to raw stream
+  // Read body FIRST so the honeypot check can fire as the very first gate,
+  // before any env/auth setup. This way bot traffic is discarded with the
+  // minimum amount of server work and never touches GHL token logic.
   var body = {};
   try { body = req.body || {}; } catch (e1) {
     // req.body getter failed - read raw stream
@@ -24,6 +22,25 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Cannot read request body' });
     }
   }
+
+  // ── Honeypot anti-bot gate (FIRST GATE — runs before env/auth) ─────────
+  // The forms include a hidden `website_url` field that real users never see
+  // or fill (off-screen, tabIndex=-1, aria-hidden, autoComplete off). Bots
+  // that scrape and fill every input will populate it. If it has ANY value,
+  // we silently return a generic success-style response so the bot believes
+  // submission worked, but no GHL contact is created and no PII reaches the
+  // CRM. We do not log the honeypot value itself — only that it triggered.
+  // Placed BEFORE env check so it works in all environments (Preview too).
+  if (body && typeof body.website_url === 'string' && body.website_url.trim() !== '') {
+    console.warn('[ANTI-BOT] Honeypot triggered — submission discarded');
+    // Return a benign success response (no contact_id) so the bot doesn't
+    // probe further and so legitimate edge cases don't surface an error.
+    return res.status(200).json({ success: true, message: 'Received' });
+  }
+
+  var token = process.env.HIGHLEVEL_TOKEN;
+  var locationId = process.env.HIGHLEVEL_LOCATION_ID;
+  if (!token || !locationId) return res.status(500).json({ error: 'Server configuration error' });
 
   try {
     var first_name = body.first_name; var last_name = body.last_name; var phone = body.phone;
@@ -96,7 +113,9 @@ export default async function handler(req, res) {
     }
     var phoneValidation = serverValidatePhone(phone);
     if (!phoneValidation.valid) {
-      console.warn('[VALIDATION] Phone rejected: ' + phoneValidation.reason + ' | raw=' + phone);
+      // Privacy: log validation reason only — never the raw phone number.
+      // The phone is rejected before any further processing, so no contact is created.
+      console.warn('[VALIDATION] Phone rejected: ' + phoneValidation.reason);
       return res.status(400).json({ error: 'Invalid U.S. phone number', reason: phoneValidation.reason });
     }
     var phone10 = phoneValidation.national;
@@ -112,12 +131,20 @@ export default async function handler(req, res) {
       country: 'US',
       source: 'ClearPoint Website',
       address1: county || undefined,
+      // Compliance / TCPA — consent flags must reflect what the user actually
+      // agreed to. Never hardcode 'true' (that would record falsified consent
+      // for every lead). Derive each flag strictly from the submitted body.
+      // Only the literal boolean true counts; truthy strings ('true', '1') are
+      // intentionally NOT accepted, to avoid silent client-side coercion bugs.
+      // If the body does not clearly provide consent for a channel, default
+      // to 'false'. consent_to_contact is the unified TCPA consent covering
+      // marketing calls + SMS (per displayed consent text on the form).
       customFields: [
         { id: 'QULAmkAuVNCQrAMZ487K', key: 'contact.preferred_language', value: preferred_language || 'en' },
         { id: 'R510tHz6GFBaqZgN5e5S', key: 'contact.medicare_status', value: medicare_status || '' },
-        { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: 'true' },
-        { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms', value: 'true' },
-        { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls', value: 'true' },
+        { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: ((body.consent === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
+        { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: ((body.consent_sms === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
+        { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: ((body.consent_call === true) || (body.consent_calls === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
         { id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: email ? 'true' : 'false' },
         { id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age', value: age || '' },
         { id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age', value: calculated_age != null ? String(calculated_age) : '' },
@@ -134,9 +161,24 @@ export default async function handler(req, res) {
       headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
       body: JSON.stringify(contact)
     });
-    if (!ghlRes.ok) { var t=''; try{t=await ghlRes.text()}catch(e){} console.error('[GHL] Contact creation failed: HTTP '+ghlRes.status+' body='+t); return res.status(502).json({error:'CRM error',detail:ghlRes.status}); }
+    if (!ghlRes.ok) {
+      // Privacy: log HTTP status only — never the GHL response body (may echo
+      // the contact payload we just sent, which contains PII).
+      console.error('[GHL] Contact creation failed: HTTP ' + ghlRes.status);
+      return res.status(502).json({ error: 'CRM error', detail: ghlRes.status });
+    }
     var ghlData = await ghlRes.json(); var contactId = ghlData.contact && ghlData.contact.id;
-    console.log('[GHL] Contact created: id='+contactId+' name="'+first_name+' '+(last_name||'')+'" phone='+phoneE164+' source='+(lead_source||''));
+    // Privacy: log only contactId + source + language. Never log first_name,
+    // last_name, phone, email, ZIP, DOB, or any other PII. Vercel runtime logs
+    // are accessible via the dashboard and may be exported — keeping logs
+    // PII-free ensures privacy compliance even if logs are reviewed by ops.
+    console.log('[GHL] Contact created', {
+      contactId: contactId,
+      source: lead_source || '',
+      lang: preferred_language || '',
+      state: derived_state || '',
+      status: 'created'
+    });
 
     if (contactId) {
       var noteBody = '';
@@ -191,8 +233,13 @@ export default async function handler(req, res) {
           headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
           body:JSON.stringify({ locationId:locationId, pipelineId:pipelineId, pipelineStageId:pipelineStageId, contactId:contactId, name:oppName, status:'open' })
         });
-        if (!oppRes.ok) { var ot=''; try{ot=await oppRes.text()}catch(e){} console.error('[GHL] Opportunity creation failed: HTTP '+oppRes.status+' pipeline='+pipelineId+' stage='+pipelineStageId+' body='+ot); }
-        else { console.log('[GHL] Opportunity created: contactId='+contactId+' pipeline='+pipelineId); }
+        if (!oppRes.ok) {
+          // Privacy: log status + pipeline IDs only. The response body may echo
+          // contact name / lead source / monetary value — keep PII out of logs.
+          console.error('[GHL] Opportunity creation failed: HTTP ' + oppRes.status + ' pipeline=' + pipelineId);
+        } else {
+          console.log('[GHL] Opportunity created', { contactId: contactId, pipeline: pipelineId });
+        }
       } catch(e) {
         console.error('[GHL] Opportunity creation exception: ' + (e && e.message ? e.message : String(e)));
       }

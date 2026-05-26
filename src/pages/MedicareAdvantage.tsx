@@ -25,6 +25,13 @@ export default function MedicareAdvantage() {
         compact
       />
 
+      {/* TPMO disclosure — persistent in-page band (CMS §422.2267(e)(41)) */}
+      <div className="bg-cream-100 border-y border-cream-200">
+        <div className="max-w-6xl mx-auto px-5 py-3">
+          <DisclaimerBlock variant="inline" />
+        </div>
+      </div>
+
       <section ref={eduReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${eduReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="grid lg:grid-cols-[1fr_380px] gap-12 items-start">

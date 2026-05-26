@@ -36,11 +36,23 @@
 
   html {
     scroll-behavior: auto; /* JS calls specify behavior explicitly — smooth/instant per call */
+    overflow-x: clip; /* Enterprise: kill horizontal overflow without breaking position:sticky descendants. Modern (Baseline 2024+); preferred over overflow-x:hidden which creates a scroll container. */
   }
 
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, sans-serif;
+    overflow-x: clip; /* Belt-and-suspenders alongside html. */
+  }
+
+  /* Honor user accessibility preference — reduces motion sickness risk for senior users (vestibular sensitivity). */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 
   h1, h2, h3, h4, h5, h6 {

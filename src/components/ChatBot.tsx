@@ -2778,44 +2778,124 @@ export function ChatBot() {
   // Using a ref (not state) so focus/blur events never trigger re-renders.
   // The scroll useEffect checks this to skip scroll when keyboard is open.
   const chatInputFocusedRef = useRef(false);
+  // Tracks previous messages.length so we know when a brand-new message
+  // arrived. New-message arrivals must always scroll (so the bot's next
+  // question is visible — e.g. "What is your last name?" after the user
+  // types their first name with the keyboard still focused).
+  const prevMessagesLenRef = useRef(0);
+  // Tracks whether the user has manually scrolled away from the bottom of
+  // the chat (typically to re-read earlier history). When true, auto-scroll
+  // suppresses bottom-follow so we don't fight the user. Hysteresis: set true
+  // at >200px from bottom, cleared at <40px from bottom. See handleChatScroll.
+  const userPinnedUpRef = useRef(false);
+  // Tracks isTyping across renders so we can detect the false→true edge
+  // (the moment the "Zara is typing..." pill first appears). That pill is
+  // rendered inside chatBodyRef and adds ~40px of content; without a follow
+  // on that edge the pill lands below the fold.
+  const prevIsTypingRef = useRef(false);
   // Synchronous mirror of the `step` state — updated atomically in setStepSync.
   // handleLeadText reads stepRef.current instead of the closure `step` to avoid
   // stale-closure bugs caused by React batching of state updates.
   const stepRef = useRef<ChatStep>('language');
 
+  // ──────────────────────────────────────────────────────────────────────
+  // CENTRALIZED SCROLL CONTROLLER — PURE MONOTONIC BOTTOM-FOLLOW
+  //
+  // Design principle: the controller only ever scrolls in ONE direction
+  // (down, toward the latest content). Any time scroll commands can move
+  // both up and down, direction reversals appear to users as bouncing.
+  // Restricting writes to bottom-follow only makes bouncing impossible by
+  // construction, while keeping each new piece of content readable as it
+  // lands. This is the standard chat-app pattern (iMessage, WhatsApp,
+  // Slack) and is the same on mobile and desktop.
+  //
+  // Two primitives — both atomic, both single-write, no smooth animation
+  // (animations across consecutive frames are what create the perceived
+  // bounce). No scrollIntoView. No nested setTimeout / rAF. No anchor-up.
+  // ──────────────────────────────────────────────────────────────────────
+  function safeScrollToBottom(_reason: string) {
+    const c = chatBodyRef.current;
+    if (!c) return;
+    c.scrollTop = c.scrollHeight;
+  }
+
+  // onScroll handler — tracks whether the user has manually scrolled up.
+  // Hysteresis avoids thrash on tiny user movements:
+  //   • Become "pinned up" only when clearly above the fold (>200px).
+  //   • Re-engage bottom-follow only when clearly at the bottom (<40px).
+  // While pinned up we never auto-scroll. The user is reading history and
+  // we don't fight them. Programmatic scroll writes also fire onScroll,
+  // but they always set scrollTop = scrollHeight (distFromBottom = 0), so
+  // they cannot accidentally trip the >200px threshold.
+  function handleChatScroll() {
+    const c = chatBodyRef.current;
+    if (!c) return;
+    const distFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
+    if (distFromBottom > 200) userPinnedUpRef.current = true;
+    else if (distFromBottom < 40) userPinnedUpRef.current = false;
+  }
+
   useEffect(() => {
-    // Keyboard guard: iOS Safari raises the viewport when the soft keyboard opens,
-    // which changes element rects and fires this effect. Scrolling during keyboard-open
-    // causes the chat body to jump unexpectedly. Skip entirely when input is focused.
-    if (chatInputFocusedRef.current) return;
+    // ──────────────────────────────────────────────────────────────────────
+    // ZARA SCROLL LIFECYCLE  —  ONE EFFECT, ONE DIRECTION
+    //
+    // processQueue dispatches three state updates per bot message:
+    //   setIsTyping(true) → await sleep → setIsTyping(false) → addMessage()
+    // So this effect runs ~3× per message. Per tick we decide: should we
+    // scroll to the bottom now, or stay put?
+    //
+    // We scroll to the bottom on EXACTLY two triggers (both move down):
+    //   T1. messages.length grew — a new bot or user message just landed.
+    //       Bottom-follow keeps it visible (Mode A + Mode D in the spec —
+    //       active text readable as it appears, sequential messages move
+    //       naturally into view).
+    //   T2. isTyping flipped false → true — the "Zara is typing..." pill
+    //       just appeared inside chatBodyRef and added ~40px of height.
+    //       Without a follow here the pill renders below the visible area
+    //       on small viewports.
+    //
+    // We stay put when:
+    //   • userPinnedUpRef === true — the user manually scrolled up to read
+    //     history (Mode B). Don't fight them. They re-engage auto-follow
+    //     when they scroll back near the bottom.
+    //   • chatInputFocusedRef is true AND no new message arrived — iOS
+    //     soft-keyboard raise fires spurious resize/scroll events; skip
+    //     the effect to avoid viewport-shift jitter.
+    //   • isTyping flipped true → false, or `step` state churned, with no
+    //     new message and no typing-edge — these are just internal
+    //     bookkeeping re-renders; no scroll needed.
+    //
+    // No anchor-up branch. No mobile-only suppression branch. No mode that
+    // can pull the chat UP. Same behavior on mobile and desktop.
+    // ──────────────────────────────────────────────────────────────────────
+    const prevLen = prevMessagesLenRef.current;
+    prevMessagesLenRef.current = messages.length;
+    const messagesGrew = messages.length > prevLen;
+
+    const wasTyping = prevIsTypingRef.current;
+    prevIsTypingRef.current = isTyping;
+    const typingIndicatorAppeared = isTyping && !wasTyping;
+
+    if (chatInputFocusedRef.current && !messagesGrew) return;
 
     requestAnimationFrame(() => {
-      const container = chatBodyRef.current;
-      if (!container) return;
+      const c = chatBodyRef.current;
+      if (!c) return;
 
-      // During lead/form steps the "currentStepRef" still points to the topic-menu
-      // message from before the form started — a stale anchor. For all lead_ steps
-      // and after completion, just keep the bottom visible so the active input stays
-      // in view as the user submits each field.
-      if (step.startsWith('lead_') || step === 'complete') {
-        container.scrollTop = container.scrollHeight;
+      // Respect manual user scrolling.
+      if (userPinnedUpRef.current) return;
+
+      if (messagesGrew) {
+        safeScrollToBottom('messages-grew');
         return;
       }
 
-      // For menu steps: scroll so the question/title (currentStepRef) sits at the
-      // top of the visible chat body, keeping both the question and options visible.
-      // Never uses scrollIntoView — it can scroll ancestor/page containers on iOS Safari.
-      const target = currentStepRef.current;
-      if (!isTyping && target && messages.length > 1) {
-        const containerRect = container.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const targetTop = container.scrollTop + (targetRect.top - containerRect.top) - 10;
-        container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+      if (typingIndicatorAppeared) {
+        safeScrollToBottom('typing-indicator-appeared');
         return;
       }
 
-      // Default: scroll to bottom (typing indicator, user messages, text-only steps)
-      container.scrollTop = container.scrollHeight;
+      // Otherwise: no actionable change → stay put. No scroll = no bounce.
     });
   }, [messages, isTyping, step]);
 
@@ -3015,7 +3095,8 @@ export function ChatBot() {
   }
 
   function buildConversationSummary(mem: ChatMemory): string {
-    const lang = mem.language === 'es' ? 'Spanish' : 'English';
+    const interfaceLang = mem.language === 'es' ? 'Spanish' : 'English';
+    const preferredLang = mem.preferredLanguage || interfaceLang;
     const stateName = SUPPORTED_STATES_LABELS[mem.state] || mem.state || 'Not provided';
     const topics = mem.discussedTopics.length > 0
       ? mem.discussedTopics.join(', ')
@@ -3033,7 +3114,8 @@ export function ChatBot() {
       `County: ${mem.county || 'Not provided'}`,
       `Date of Birth: ${mem.dob || 'Not provided'}`,
       `Calculated Age: ${mem.calculatedAge || 'N/A'}`,
-      `Language: ${lang}`,
+      `Interface Language: ${interfaceLang}`,
+      `Preferred Contact Language: ${preferredLang}`,
       `Consent to contact: ${mem.consentGiven ? 'Yes' : 'No'}`,
     ];
 
@@ -3048,7 +3130,7 @@ export function ChatBot() {
       ? `asked for help with ${mem.interestType.toLowerCase()}`
       : 'requested general Medicare information';
 
-    lines.push(`Client communicated in ${lang} and ${concern} in ${stateName}. The main topics discussed were ${topics}.`);
+    lines.push(`Client communicated in ${interfaceLang} and ${concern} in ${stateName}. The main topics discussed were ${topics}.`);
 
     // Agent guidance
     const guidance: string[] = [];
@@ -3106,7 +3188,7 @@ export function ChatBot() {
       consent_text: finalMemory.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent,
       lead_notes: conversationSummary,
       bot_transcript_summary: `Language: ${finalMemory.language}. State: ${finalMemory.state || 'not provided'}. ZIP: ${finalMemory.zip}. Coverage: ${finalMemory.currentCoverage || 'not provided'}. Topics: ${finalMemory.discussedTopics.join(', ') || 'none'}.`,
-      tags: ['Website Lead', 'Medicare Lead', 'Chat Lead', 'Chatbot', finalMemory.language === 'es' ? 'Spanish' : 'English'],
+      tags: ['Website Lead', 'Medicare Lead', 'Chat Lead', 'Chatbot'],
       created_at: new Date().toISOString(),
       ...getUtms(),
     };
@@ -4581,7 +4663,7 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div ref={chatBodyRef} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+          <div ref={chatBodyRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
             {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
                 as conversation progresses; does not permanently consume chat height */}
             <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
