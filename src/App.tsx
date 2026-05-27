@@ -7,6 +7,7 @@ import PartD from './pages/PartD'
 import ExtraHelp from './pages/ExtraHelp'
 import HelpPayingCosts from './pages/HelpPayingCosts'
 import OtcBenefits from './pages/OtcBenefits'
+import Support from './pages/Support'
 import Resources from './pages/Resources'
 import Contact from './pages/Contact'
 import PrivacyPolicy from './pages/PrivacyPolicy'
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="/extra-help" element={<ExtraHelp />} />
           <Route path="/help-paying-costs" element={<HelpPayingCosts />} />
           <Route path="/otc-benefits" element={<OtcBenefits />} />
+          <Route path="/support" element={<Support />} />
           <Route path="/resources" element={<Resources />} />
           <Route path="/contact" element={<Contact />} />
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
