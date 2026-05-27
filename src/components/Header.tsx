@@ -193,10 +193,10 @@ export function Header() {
                   <ChevronDown className={`w-3 h-3 transition-transform ${servicesOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {servicesOpen && (
-                  <div role="menu" className="absolute top-full left-0 mt-2 w-60 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
-                    <Link to="/medicare-advantage" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
-                    <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
-                    <Link to="/part-d" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
+                  <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
+                    <Link to="/medicare-advantage" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
+                    <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
+                    <Link to="/part-d" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
                   </div>
                 )}
               </div>
