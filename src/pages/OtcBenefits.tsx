@@ -91,7 +91,7 @@ export default function OtcBenefits() {
                   <p className="text-earth-600 text-sm leading-relaxed">
                     {t(
                       'Review the Summary of Benefits, Evidence of Coverage, and carrier materials before relying on any OTC amount or card rule.',
-                      'Revisar el Summary of Benefits, la Evidence of Coverage y los materiales de la aseguradora antes de confiar en cualquier monto OTC o regla de tarjeta.'
+                      'Revise el Resumen de Beneficios, la Evidencia de Cobertura y los materiales de la aseguradora antes de confiar en cualquier monto OTC o regla de tarjeta.'
                     )}
                   </p>
                 </div>

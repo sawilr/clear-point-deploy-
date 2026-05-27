@@ -247,7 +247,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         <div className="absolute -top-11 left-1/2 -translate-x-1/2 bg-gold-400 text-earth-900 text-[11px] font-extrabold tracking-wider uppercase px-5 py-2 rounded-full whitespace-nowrap shadow-soft">
           {t('Free Medicare Review', 'Revisión Medicare Gratis')}
         </div>
-        <h3 className="font-serif text-xl text-earth-900 text-center mt-2 mb-1">
+        <h3 id="lead-form-heading" className="font-serif text-xl text-earth-900 text-center mt-2 mb-1 scroll-mt-[100px]">
           {t('Get Your Free Plan Review', 'Obtenga Su Revisión Gratis')}
         </h3>
         <p className="text-earth-600 text-xs text-center mb-6">

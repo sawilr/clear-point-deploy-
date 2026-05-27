@@ -12,11 +12,17 @@ export default function MedicareSupplement() {
   const navigate = useNavigate();
 
   const handleFreeReview = () => {
-    navigate('/contact');
+    navigate('/contact?focus=name');
     const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
+      const el = document.querySelector('#lead-form-heading');
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Heading element has scroll-mt-[100px] CSS — using window.scrollTo with
+        // matching headerOffset so mobile lands on the visible form title (not
+        // the section wrapper above). Matches Header.tsx + MobileStickyBar +
+        // CTASection pattern.
+        const headerOffset = 100;
+        const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+        window.scrollTo({ top: y, behavior: 'smooth' });
         setTimeout(() => {
           const firstInput = document.querySelector<HTMLInputElement>('[name="first_name"]');
           if (firstInput) firstInput.focus();
@@ -25,7 +31,8 @@ export default function MedicareSupplement() {
         requestAnimationFrame(() => tryScroll(attemptsLeft - 1));
       }
     };
-    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(10)));
+    // 30-frame retry (~500 ms) absorbs HashRouter commit + Contact mount.
+    requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
   const eduReveal = useScrollReveal();
   const plansReveal = useScrollReveal();

@@ -87,10 +87,10 @@ export function Header() {
     // expires before setTimeout-based focus would fire.
     navigate('/contact?focus=name');
     const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
+      const el = document.querySelector('#lead-form-heading');
       if (el) {
-        // Top bar (~28px) + sticky nav (h-[70px]) ≈ 98px combined stack.
-        // 100px clears both so the form heading isn't hidden under the header.
+        // Heading element has scroll-mt-[100px] CSS — using it directly so
+        // mobile lands on the visible form title, not the section wrapper above.
         const headerOffset = 100;
         const y = el.getBoundingClientRect().top + window.pageYOffset - headerOffset;
         window.scrollTo({ top: y, behavior: 'smooth' });

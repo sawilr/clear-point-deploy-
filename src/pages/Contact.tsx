@@ -10,7 +10,7 @@ export default function Contact() {
   const infoReveal = useScrollReveal();
 
   const handleScrollToForm = () => {
-    const el = document.querySelector('#contact-form');
+    const el = document.querySelector('#lead-form-heading');
     if (el) {
       // Use window.scrollTo with explicit header offset instead of scrollIntoView —
       // scrollIntoView({block:'start'}) lands the section under the sticky nav.

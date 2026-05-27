@@ -10,7 +10,7 @@ export function MobileStickyBar() {
     // `?focus=name` signals LeadForm to autofocus the First Name field on mount.
     navigate('/contact?focus=name');
     const tryScroll = (attemptsLeft: number) => {
-      const el = document.querySelector('#contact-form');
+      const el = document.querySelector('#lead-form-heading');
       if (el) {
         // Top bar + sticky nav ~98 px stack; 100 px clears it.
         const headerOffset = 100;
