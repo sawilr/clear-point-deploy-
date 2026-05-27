@@ -131,6 +131,7 @@ export function Footer() {
               <li><a href="https://www.cms.gov/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">CMS.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="/#how" onClick={handleHowItWorks} className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
               <li><Link to="/about" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('About', 'Nosotros')}</Link></li>
+              <li><Link to="/support" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Customer Support', 'Servicio al Cliente')}</Link></li>
             </ul>
           </div>
 
