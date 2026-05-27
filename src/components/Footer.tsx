@@ -105,7 +105,7 @@ export function Footer() {
             <ul className="space-y-1 text-sm">
               <li><Link to="/medicare-advantage" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
               <li><Link to="/medicare-supplement" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li>
-              <li><Link to="/part-d" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link></li>
+              <li><Link to="/part-d" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Parte D / Medicamentos')}</Link></li>
             </ul>
           </div>
 
