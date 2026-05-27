@@ -67,12 +67,20 @@ export function Footer() {
   return (
     <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
       <div className="max-w-6xl mx-auto px-5">
-        {/* lg+ widens the Contact column so the full email
-            "info@clearpointsenioradvisors.com" fits on one line at desktop.
-            md (tablet) keeps the original 5-col split because narrower tablets
-            don't have room to widen Contact without squeezing the Services /
-            Education / Resources link columns past readable. */}
-        <div className="grid grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.2fr_0.95fr_0.95fr_0.95fr_1.95fr] gap-8 md:gap-8 mb-10">
+        {/* lg+ rebalances the column widths so:
+            • Contact stays wide enough for the full email on one line
+            • Services is wide enough for the longest Spanish label
+              "Planes de Medicamentos Parte D" — instead of wrapping ugly
+              ("Planes de" / "Medicamentos Parte D"), Services now fits
+              "Planes de Medicamentos" on line 1 with "Parte D" on line 2,
+              which reads as a balanced, intentional 2-line wrap.
+            • Brand column narrows slightly (1.2 → 1.0fr); its paragraph
+              already has max-w-xs and just wraps to one more line, which
+              is visually fine for the description block.
+            md (tablet) keeps the original 5-col split because narrower
+            tablets don't have room to widen Services without squeezing
+            the link columns past readable. */}
+        <div className="grid grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-8 md:gap-8 mb-10">
           {/* Brand */}
           <div className="col-span-2 md:col-span-1">
             <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
