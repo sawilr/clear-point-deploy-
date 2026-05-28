@@ -932,17 +932,23 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // V21 — Provider source + amount known → Sawil's exact spec wording.
-      // High-amount hospital bill drill-down with "amount due / balance due /
-      // patient responsibility" question.
+      // V22 — Provider source + amount known. Wording matches Sawil's exact
+      // V22 spec for the "Español → Factura → hopital → 10k" flow.
       if (src === 'provider' && amount) {
         const amountFormatted = Number(amount).toLocaleString('en-US');
+        // Detect whether the user specifically named "hospital" (vs. doctor)
+        // so we can insert "de hospital" / "from a hospital" in the response.
+        const history = fullUserHistory(newState, userMessage);
+        const isHospital = /\b(hospital|hospitals|ospital|hopital|hospita|hostpital|hospitl|hospitall|hospitales|emergency room|sala de emergencias)\b/i.test(history)
+          || fuzzyConcept(history) === 'hospital';
+        const sourceEs = isHospital ? ' de hospital' : ' del médico u hospital';
+        const sourceEn = isHospital ? ' from a hospital' : ' from a doctor or hospital';
         const out = isSpanish
-          ? `Entiendo. Una factura de $${amountFormatted} puede ser seria, pero primero hay que confirmar si realmente dice que usted debe esa cantidad o si solo muestra cargos del hospital al plan. No envíe fotos con Medicare ID, Seguro Social ni datos bancarios aquí. ¿El documento dice "amount due", "balance due", "patient responsibility" o algo parecido?`
-          : `Got it. A bill for $${amountFormatted} can be serious, but first we need to confirm whether it actually says you owe that amount or if it just shows charges the hospital sent to the plan. Please do not send photos with Medicare ID, Social Security, or banking details here. Does the document say "amount due", "balance due", "patient responsibility", or something similar?`;
+          ? `Entiendo. Una factura de $${amountFormatted}${sourceEs} puede ser seria, pero primero hay que confirmar si realmente dice que usted debe esa cantidad o si solo muestra cargos del hospital. ¿El documento dice "amount due", "balance due", "patient responsibility" o algo parecido?`
+          : `Got it. A bill for $${amountFormatted}${sourceEn} can be serious, but first we need to confirm if it actually says you owe that amount or if it just shows charges from the hospital. Does the document say "amount due", "balance due", "patient responsibility", or something similar?`;
         newState.quickReplies = isSpanish
-          ? ['Amount due / balance due', 'Patient responsibility', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
-          : ['Amount due / balance due', 'Patient responsibility', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
+          ? ['Dice amount due', 'Dice balance due', 'Dice patient responsibility', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
+          : ['Says amount due', 'Says balance due', 'Says patient responsibility', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }

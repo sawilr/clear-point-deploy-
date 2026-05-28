@@ -39,7 +39,10 @@ export default function Support() {
       <section className="py-14 lg:py-20">
         <div className="max-w-5xl mx-auto px-5">
           <div className="mb-8">
-            <p className="text-earth-700 text-sm sm:text-base leading-relaxed max-w-3xl">
+            <p
+              className="text-earth-700 text-sm sm:text-base leading-relaxed max-w-3xl whitespace-normal break-normal"
+              style={{ wordBreak: 'normal', overflowWrap: 'normal', hyphens: 'none' }}
+            >
               {t(
                 'This Support Guide helps organize your Medicare question. It does not recommend plans, confirm eligibility, or verify coverage. A licensed ClearPoint advisor will review what you share and follow up.',
                 'Esta Guía de Soporte le ayuda a organizar su pregunta sobre Medicare. No recomienda planes, no confirma elegibilidad ni verifica cobertura. Un asesor licenciado de ClearPoint revisará lo que comparta y se comunicará con usted.'
