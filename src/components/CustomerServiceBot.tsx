@@ -30,6 +30,7 @@ import { Headphones, MessageCircle, Phone, RotateCcw, Send } from 'lucide-react'
 import { type IntentId, type IntentUrgency } from '../data/customerServiceIntents';
 import {
   classifyIntent,
+  detectBotComplaint,
   detectCaregiver,
   detectEmergency,
   detectExplicitLanguagePick,
@@ -39,6 +40,7 @@ import {
   detectSensitive,
   detectUpcomingProcedure,
   detectVisitorType,
+  looksLikeName,
   validatePhone,
   buildCaseSummary,
   buildMultiTopicAck,
@@ -47,6 +49,7 @@ import {
   advisorHandoffLine,
   intentFollowUp,
   intentFollowUpChips,
+  intentLabel,
   parseZipOrState,
   QUICK_ACTIONS,
   reflectBack,
@@ -755,6 +758,54 @@ export function CustomerServiceBot() {
       return;
     }
 
+    // 4a. BOT COMPLAINT (Wave 11) — user explicitly says the bot isn't getting it.
+    //     Apologize briefly, summarize what we DO know, and ask the right
+    //     clarifying question. Critically: do NOT keep asking for the same
+    //     field (ZIP/state) that the user already complained about.
+    if (detectBotComplaint(text)) {
+      dispatch({ type: 'FRUSTRATION_FLAG' });
+      dispatch({ type: 'ADD_USER_MSG', text });
+      const knownIntent = state.primary_intent;
+      const lastQuestion = state.customer_questions[state.customer_questions.length - 1] || '';
+      const lang = state.language;
+      if (knownIntent === 'plan_letter_issue' || /billes|bills|recibos|factura|cobro|carta|letter/i.test(lastQuestion)) {
+        // Specifically the bills/letter scenario from Sawil's screenshots.
+        enqueueBot([{
+          text: lang === 'es'
+            ? 'Tiene razón — me estaba yendo por datos antes de entender el problema. Vamos a organizarlo mejor: usted recibió billes, recibos o una carta y necesita saber qué significa o qué hacer. No le voy a pedir el código postal todavía. Primero: ¿el papel viene de un doctor o hospital, de una farmacia, del plan de Medicare, o dice EOB / Explicación de Beneficios?'
+            : "You're right — I was asking for details before fully understanding the issue. Let me reset: you received bills, receipts, or a letter and you need to know what it means or what to do. I won't ask for your ZIP yet. First, does the document come from a doctor or hospital, a pharmacy, your Medicare plan, or does it say EOB / Explanation of Benefits?",
+          pace: 'long',
+        }]);
+        // Make sure the primary intent is set to plan_letter_issue so the
+        // narrowing chips appear under the bot's message.
+        if (knownIntent !== 'plan_letter_issue') {
+          const r = classifyWithAggregation('me llegaron billes', lang);
+          dispatch({
+            type: 'SET_INTENT',
+            primary: 'plan_letter_issue',
+            secondary: r.secondary,
+            confidence: 'high',
+            urgency: r.urgency,
+            requires_agent_review: true,
+          });
+        } else {
+          // Keep the chips visible again.
+          dispatch({ type: 'SET_STEP', step: 'intent_followup' });
+        }
+        return;
+      }
+      // Generic bot-complaint recovery — summarize what we have so far.
+      const summary = knownIntent
+        ? (lang === 'es'
+            ? `Tiene razón — déjeme organizarlo. Por lo que ha dicho, esto parece sobre ${intentLabelHelper(knownIntent, 'es')}. ¿Quiere que sigamos por ahí, o el tema principal es otro?`
+            : `You're right — let me reset. From what you've said, this seems to be about ${intentLabelHelper(knownIntent, 'en')}. Should we keep going there, or is the main topic something else?`)
+        : (lang === 'es'
+            ? 'Tiene razón, lo voy a organizar mejor. ¿Esto es sobre una factura o carta, sobre un doctor, sobre medicamentos, sobre costos, o quiere que un asesor le llame?'
+            : "You're right — let me reset. Is this about a bill or letter, a doctor, medications, costs, or would you like an advisor to call?");
+      enqueueBot([{ text: summary, pace: 'long' }]);
+      return;
+    }
+
     // 4. FRUSTRATION — acknowledge, then re-prompt the same step softer.
     if (detectFrustration(text)) {
       dispatch({ type: 'FRUSTRATION_FLAG' });
@@ -852,23 +903,38 @@ export function CustomerServiceBot() {
         }
         dispatch({ type: 'PICK_LANGUAGE', lang: picked });
 
-        // If the typed text already contains a classifiable Medicare concern,
-        // capture it as a side-channel intent so we don't waste the caller's
-        // first message.
+        // WAVE 11 SERVICE-FIRST: if the typed text already contains a
+        // classifiable concern (high or medium confidence), DO NOT route
+        // through the name-collection step. Instead, treat this as the
+        // user's primary concern statement, capture the intent, and respond
+        // with intent-specific clarification copy. Name + location are only
+        // collected later when the caller opts in to a callback.
         const r = classifyWithAggregation(text, picked);
         if (r.confidence === 'high' || r.confidence === 'medium') {
           dispatch({
-            type: 'SET_INTENT_SIDE_CHANNEL',
+            type: 'SET_INTENT',
             primary: r.primary,
             secondary: r.secondary,
             confidence: r.confidence,
             urgency: r.urgency,
             requires_agent_review: r.requires_agent_review,
           });
+          const msgs: QueuedMsg[] = [];
+          if (r.secondary.length > 0) {
+            msgs.push({ text: buildMultiTopicAck(r.primary, r.secondary, picked), pace: 'long' });
+          }
+          msgs.push({ text: intentFollowUp(r.primary, picked), pace: 'long' });
+          enqueueBot(msgs);
+          return;
         }
 
+        // No clear concern in the opening message — confirm language with a
+        // brief reply then wait for the caller's actual concern.
         enqueueBot([
-          { text: picked === 'es' ? COPY.privacy_es : COPY.privacy_en, pace: 'long' },
+          { text: picked === 'es'
+              ? 'Gracias. Cuénteme qué está pasando — puede ser una factura, una carta, un doctor, un medicamento, un costo, o quiere que un asesor le llame.'
+              : "Thank you. Tell me what's going on — it could be a bill, a letter, a doctor, a medication, a cost, or you'd like an advisor to call.",
+            pace: 'long' },
         ]);
         return;
       }
@@ -919,6 +985,44 @@ export function CustomerServiceBot() {
       }
 
       case 'collecting_full_name': {
+        // Wave 11 — anti-misclassification guard. If the typed text is clearly
+        // NOT a name (contains verbs, problem nouns, punctuation, or too many
+        // words), treat it as a concern and re-classify instead of storing
+        // "Me Llegaron Recibos" as the caller's first + last name.
+        if (!looksLikeName(text)) {
+          const result = classifyWithAggregation(text, state.language);
+          // If classifier finds a real intent, route there.
+          if (result.confidence !== 'low' || sideChannel) {
+            dispatch({
+              type: 'SET_INTENT',
+              primary: sideChannel?.primary || result.primary,
+              secondary: sideChannel?.secondary || result.secondary,
+              confidence: sideChannel?.confidence || result.confidence,
+              urgency: sideChannel?.urgency || result.urgency,
+              requires_agent_review: sideChannel?.requires_agent_review || result.requires_agent_review,
+            });
+            const lang = state.language;
+            const msgs: QueuedMsg[] = [];
+            const finalId = sideChannel?.primary || result.primary;
+            const secList = sideChannel?.secondary || result.secondary;
+            if (secList && secList.length > 0) {
+              msgs.push({ text: buildMultiTopicAck(finalId, secList, lang), pace: 'long' });
+            }
+            msgs.push({ text: intentFollowUp(finalId, lang), pace: 'long' });
+            enqueueBot(msgs);
+            return;
+          }
+          // No clear intent — politely re-ask without storing the input as a name.
+          enqueueBot([{
+            text: state.language === 'es'
+              ? 'Para ayudarle mejor, dígame brevemente qué está pasando — por ejemplo, una factura o carta, un doctor, un medicamento, costos, o quiere que alguien le llame.'
+              : 'To help you best, please tell me briefly what is going on — for example a bill or letter, a doctor, a medication, costs, or you would like someone to call.',
+            pace: 'short',
+          }]);
+          return;
+        }
+
+        // Looks like a real name — store it and move forward.
         const { firstName, lastName } = splitFullName(text);
         dispatch({ type: 'COLLECT_FULL_NAME', first: firstName, last: lastName });
         const lang = state.language;
@@ -1492,6 +1596,7 @@ export function CustomerServiceBot() {
 // the dependency surface tight.
 import { getIntent as _getIntent } from '../data/customerServiceIntents';
 function getIntentDef(id: IntentId) { return _getIntent(id); }
+const intentLabelHelper = intentLabel;
 
 function ActionRow({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap gap-2 pt-1">{children}</div>;

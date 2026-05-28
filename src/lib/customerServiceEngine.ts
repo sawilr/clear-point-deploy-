@@ -212,6 +212,18 @@ export function intentLabel(id: IntentId, lang: SupportLang): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TYPO_MAP: Record<string, string> = {
+  // Wave 11 — Spanglish + senior-caller wording normalization
+  'mellgaron': 'me llegaron', 'mellegaron': 'me llegaron', 'mellgo': 'me llegó',
+  'mellego': 'me llegó', 'mellegó': 'me llegó',
+  'billes': 'bills', 'bils': 'bills', 'biles': 'bills',
+  'recivos': 'recibos', 'resivos': 'recibos', 'resibos': 'recibos',
+  'cobrro': 'cobro', 'cobross': 'cobros',
+  'factuura': 'factura', 'factturas': 'facturas',
+  'medecare': 'medicare', 'medicar': 'medicare',
+  'seguro medico': 'medicare',
+  // NOTE: do NOT expand "eob" — the classifier already has "eob" as a keyword
+  // and replacing it would strip the literal token. Same for compound terms
+  // that the classifier already handles as phrases.
   // Medicaid
   'medicad': 'medicaid', 'medikaid': 'medicaid', 'medicare aid': 'medicaid',
   // Medicare Advantage
@@ -448,8 +460,11 @@ export function intentFollowUp(id: IntentId, lang: SupportLang): string {
       es: 'Entiendo. Los costos de medicamentos pueden cambiar por varias razones — los formularios, farmacias y reglas del plan importan. Por favor no comparta su número de Medicare, Seguro Social, ni números de receta aquí. En palabras simples, ¿cuál es el problema principal con la medicina?',
     },
     plan_letter_issue: {
-      en: 'I understand. A letter from Medicare or your plan can be important because it may mention renewal, costs, benefits, network, or a deadline. Please do not send your Medicare number or Social Security number here. In simple words, what does the letter say it is about?',
-      es: 'Entiendo. Una carta de Medicare o de su plan puede ser importante porque puede mencionar renovación, costos, beneficios, red o una fecha límite. Por favor no envíe su número de Medicare ni Seguro Social aquí. En palabras simples, ¿de qué dice la carta que se trata?',
+      // Wave 11 — service-first response for bills / letters / receipts / EOB / charges.
+      // Acknowledge, list the realistic possibilities, ask ONE clarifying question
+      // about the source of the document. Compliance caution embedded.
+      en: 'I understand. When you mention bills, receipts, or a letter, it could be a doctor or hospital bill, a pharmacy charge, a monthly premium from your plan, an Explanation of Benefits (EOB), a denial notice, or an unexpected charge. To help you correctly, please do not send your Medicare ID, Social Security number, banking info, or a full photo of the document here. Where does the document come from?',
+      es: 'Entiendo. Cuando dice que le llegaron billes, recibos o una carta, puede ser una factura de un doctor u hospital, un cobro de la farmacia, un premium mensual del plan, una Explicación de Beneficios (EOB), un aviso de denegación o un cobro que no esperaba. Para ayudarle correctamente, por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa del documento aquí. ¿De dónde viene el papel?',
     },
     doctor_network_question: {
       en: 'I understand. Doctor network situations should be verified carefully before any plan decision, because networks can change. ClearPoint should confirm the doctor, location, and plan details with you. What state and ZIP code are you in?',
@@ -550,8 +565,9 @@ export function intentFollowUpChips(id: IntentId, lang: SupportLang): string[] {
       es: ['Más cara', 'No cubierta', 'Farmacia la rechazó', 'Pide autorización'],
     },
     plan_letter_issue: {
-      en: ['Renewal', 'Cost change', 'Benefits changed', 'Deadline'],
-      es: ['Renovación', 'Cambio de costo', 'Cambio de beneficios', 'Fecha límite'],
+      // Wave 11 — document-source clarification chips (4 max)
+      en: ['Doctor / Hospital', 'Pharmacy', 'Medicare plan', 'EOB / Not sure'],
+      es: ['Doctor / Hospital', 'Farmacia', 'Plan de Medicare', 'EOB / No sé'],
     },
     doctor_network_question: {
       en: ['Primary doctor', 'Specialist', 'Hospital', 'Pharmacy'],
@@ -680,6 +696,73 @@ export function parseZipOrState(text: string): ParsedLocation {
 // ─────────────────────────────────────────────────────────────────────────────
 // FULL-NAME SPLITTER — best-effort first/last from a "full name" answer.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// looksLikeName  (Wave 11 — anti-misclassification guard)
+//
+// Reject obvious non-names before splitFullName runs. If the input contains
+// verbs, problem nouns, or punctuation that proves it's a concern statement
+// rather than a name, return false. Caller then re-classifies the text as
+// a concern instead of storing "Me Llegaron Recibos" as the first/last name.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NON_NAME_TOKENS = [
+  // Spanish verbs + problem nouns the user actually types when describing an issue
+  'me', 'mi', 'mis', 'tengo', 'recibi', 'recibí', 'llego', 'llegó', 'llegaron',
+  'mellgaron', 'mellegaron', 'estoy', 'necesito', 'quiero', 'no', 'que', 'qué',
+  'como', 'cómo', 'cuando', 'cuándo', 'donde', 'dónde', 'tiene', 'tienen',
+  'cobro', 'cobros', 'cobran', 'pago', 'pagar', 'factura', 'facturas', 'recibo',
+  'recibos', 'carta', 'cartas', 'billes', 'bills', 'bill', 'cobertura',
+  'medicamento', 'medicamentos', 'medicina', 'medicinas', 'pastilla', 'pastillas',
+  'doctor', 'doctora', 'hospital', 'farmacia', 'plan', 'planes', 'medicare',
+  'medicaid', 'extra', 'help', 'entiendes', 'entiendo', 'ayuda',
+  // English verbs / problem nouns
+  'i', "i'm", 'im', 'have', 'received', 'got', 'getting', 'need', 'want',
+  'help', 'understand', 'understanding', 'about', 'with', 'for', 'from',
+  'doctor', 'doctors', 'pharmacy', 'plan', 'plans', 'bill', 'bills', 'letter',
+  'letters', 'invoice', 'invoices', 'charge', 'charges', 'eob', 'medicare',
+  'medication', 'medications', 'cost', 'costs', 'premium', 'copay',
+];
+
+const NON_NAME_TOKEN_SET = new Set(NON_NAME_TOKENS);
+
+export function looksLikeName(text: string): boolean {
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return false;
+  // Too long to be a name (>5 words is almost certainly a sentence)
+  const words = cleaned.split(' ').filter(Boolean);
+  if (words.length > 5) return false;
+  // Contains punctuation typical of sentences
+  if (/[.?!,:;]/.test(cleaned)) return false;
+  // Contains numbers (names don't have digits)
+  if (/\d/.test(cleaned)) return false;
+  // Contains any non-name token (verb/problem noun)
+  const lower = cleaned.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const w of lower.split(/\s+/)) {
+    if (NON_NAME_TOKEN_SET.has(w)) return false;
+  }
+  return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// detectBotComplaint  (Wave 11) — user explicitly tells the bot it's failing
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BOT_COMPLAINT_PHRASES = [
+  'no entiendes', 'no me entiendes', 'no entendiste', 'no entiendes nada',
+  'estas perdido', 'estás perdido', 'estas mal', 'estás mal',
+  'no es lo que dije', 'eso no es', 'me equivocaste', 'no es eso',
+  "you don't understand", 'you do not understand', 'you dont understand',
+  'thats not what i said', "that's not what i said",
+  'stop asking me that', "you're not listening", 'you are not listening',
+  'wrong question', 'wrong answer', 'you got it wrong',
+];
+
+export function detectBotComplaint(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const p of BOT_COMPLAINT_PHRASES) if (lower.includes(p)) return true;
+  return false;
+}
 
 export function splitFullName(text: string): { firstName: string; lastName: string } {
   let cleaned = text.trim().replace(/\s+/g, ' ');

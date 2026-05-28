@@ -124,10 +124,12 @@ export const INTENTS: IntentDefinition[] = [
   },
   {
     id: 'plan_letter_issue',
-    keywords_en: ['letter', 'notice', 'mail', 'received', 'eob', 'denial', 'termination', 'rejected', 'deadline'],
-    keywords_es: ['carta', 'aviso', 'correo', 'recibi', 'eob', 'denegacion', 'terminacion', 'rechazado', 'plazo', 'fecha'],
-    phrases_en: ['got a letter', 'received a letter', 'letter from', 'plan termination', 'denial letter', 'i dont understand the letter', 'what does this letter mean', 'theres a deadline'],
-    phrases_es: ['recibi una carta', 'carta de', 'me llego una carta', 'terminacion del plan', 'carta de denegacion', 'no entiendo la carta', 'que significa esta carta', 'hay un plazo'],
+    // Wave 11 — broadened to include bills/receipts/charges/EOB/invoices in EN+ES+Spanglish.
+    // "billes" is Spanglish for "bills" — a common senior-callers wording in NY/NJ/FL.
+    keywords_en: ['letter', 'notice', 'mail', 'received', 'eob', 'denial', 'termination', 'rejected', 'deadline', 'bill', 'bills', 'invoice', 'invoices', 'receipt', 'receipts', 'charge', 'charges', 'collection', 'past due', 'balance', 'premium', 'document', 'paper'],
+    keywords_es: ['carta', 'cartas', 'aviso', 'correo', 'recibi', 'recibí', 'eob', 'denegacion', 'denegación', 'terminacion', 'terminación', 'rechazado', 'plazo', 'fecha', 'factura', 'facturas', 'recibo', 'recibos', 'cobro', 'cobros', 'billes', 'colección', 'coleccion', 'documento', 'papel', 'papeles', 'premium', 'prima', 'copago'],
+    phrases_en: ['got a letter', 'received a letter', 'letter from', 'plan termination', 'denial letter', 'i dont understand the letter', "i don't understand this", 'what does this letter mean', 'theres a deadline', 'received a bill', 'got a bill', 'i got bills', 'received bills', 'i received an eob', 'i got an eob', 'pharmacy charged me', 'unexpected charge', 'collection notice', 'past due', 'balance due', 'amount due', 'doctor bill', 'hospital bill', 'pharmacy bill', 'plan bill', 'monthly premium'],
+    phrases_es: ['recibi una carta', 'recibí una carta', 'carta de', 'me llego una carta', 'me llegó una carta', 'terminacion del plan', 'carta de denegacion', 'no entiendo la carta', 'que significa esta carta', 'hay un plazo', 'me llegaron billes', 'me llegaron bills', 'me llegaron recibos', 'me llegó una factura', 'me llegó un cobro', 'me llegó un recibo', 'me llegaron facturas', 'me llegaron cobros', 'me llegó una carta', 'me llegaron cartas', 'me llego un bill', 'me llego una factura', 'me mandaron un bill', 'me estan cobrando', 'me están cobrando', 'tengo un bill', 'tengo una factura', 'me llego un papel', 'me llegó un papel', 'no entiendo el cobro', 'no entiendo este cobro', 'no entiendo esta carta', 'cobro vencido', 'pago vencido', 'collection', 'me llego un eob', 'me llegó un eob', 'cobro inesperado', 'recibí un cobro', 'doctor me cobro', 'hospital me cobro', 'farmacia me cobro'],
     escalate_to_agent: true,
     require_privacy_warning: true,
     default_urgency: 'high',
