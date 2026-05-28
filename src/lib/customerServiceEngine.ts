@@ -764,6 +764,249 @@ export function detectBotComplaint(text: string): boolean {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENT SUBTYPE CLASSIFIER (Wave 12 — point 19, 20, 92, 93)
+//
+// When a caller says they received "billes / recibos / una carta", the bot
+// must distinguish what KIND of document it is, because each kind has a
+// different correct response. A "carta de renovación" should not be thrown
+// into the generic bills flow.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type DocumentSubtype =
+  | 'renewal'        // Annual Notice of Change, Evidence of Coverage, renewal, recertification
+  | 'medicaid_notice'
+  | 'extra_help_notice'
+  | 'eob'            // Explanation of Benefits — usually NOT a bill
+  | 'collection'
+  | 'denial'
+  | 'premium'        // monthly plan premium notice
+  | 'bill'           // provider bill, copay, coinsurance, charge
+  | 'plan_notice'    // general plan letter
+  | null;
+
+const SUBTYPE_PATTERNS: Array<{ subtype: NonNullable<DocumentSubtype>; patterns: string[] }> = [
+  // Renewal — checked BEFORE generic bill so "carta de renovación" wins over "bill"
+  {
+    subtype: 'renewal',
+    patterns: [
+      'renovacion', 'renovación', 'carta de renovacion', 'carta de renovación',
+      'recertificacion', 'recertificación', 'aviso anual', 'cambios anuales',
+      'anoc', 'annual notice of change', 'evidence of coverage', 'eoc',
+      'renewal', 'recertification', 'annual notice', 'change for next year',
+    ],
+  },
+  {
+    subtype: 'medicaid_notice',
+    patterns: [
+      'medicaid notice', 'aviso de medicaid', 'carta de medicaid',
+      'redetermination', 'redeterminacion', 'redeterminación',
+    ],
+  },
+  {
+    subtype: 'extra_help_notice',
+    patterns: [
+      'extra help notice', 'aviso de extra help', 'lis notice',
+      'aviso de ayuda extra', 'carta de extra help', 'carta de ayuda extra',
+      'aviso de lis',
+    ],
+  },
+  {
+    subtype: 'eob',
+    patterns: [
+      'eob', 'explanation of benefits', 'explicacion de beneficios',
+      'explicación de beneficios', 'this is not a bill', 'esto no es una factura',
+    ],
+  },
+  {
+    subtype: 'collection',
+    patterns: [
+      'collection', 'collections', 'past due', 'final notice',
+      'cobro vencido', 'pago vencido', 'aviso final', 'coleccion', 'colección',
+    ],
+  },
+  {
+    subtype: 'denial',
+    patterns: [
+      'denial', 'denied', 'rejected', 'not approved',
+      'denegacion', 'denegación', 'denegado', 'rechazado', 'no aprobado',
+    ],
+  },
+  {
+    subtype: 'premium',
+    patterns: [
+      'monthly premium', 'plan premium', 'prima mensual', 'prima del plan',
+      'aviso de prima', 'premium notice',
+    ],
+  },
+  {
+    subtype: 'bill',
+    patterns: [
+      'doctor bill', 'hospital bill', 'pharmacy bill', 'medical bill',
+      'amount due', 'balance due', 'pay now', 'unexpected charge',
+      'factura del doctor', 'factura del hospital', 'factura medica', 'factura médica',
+      'cobro inesperado', 'cantidad a pagar', 'saldo a pagar',
+      'billes', 'bill', 'recibo', 'recibos', 'cobro', 'cobros', 'factura', 'facturas',
+    ],
+  },
+];
+
+export function detectDocumentSubtype(text: string): DocumentSubtype {
+  const normalized = applyFuzzyTypos(text).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const entry of SUBTYPE_PATTERNS) {
+    for (const p of entry.patterns) {
+      if (normalized.includes(p)) return entry.subtype;
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CASUAL / SOCIAL DETECTOR (Wave 12 — points 99–101)
+//
+// "Hi", "hola", "thank you", "me gusta tu voz" — the bot should respond
+// warmly but briefly and steer back to the support topic without breaking
+// the conversation.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CASUAL_PATTERNS = [
+  // Greetings (very short)
+  'hola', 'hello', 'hi', 'hey', 'buenos dias', 'buenas tardes', 'buenas noches',
+  'good morning', 'good afternoon', 'good evening',
+  // Thanks
+  'gracias', 'mil gracias', 'thank you', 'thanks',
+  // Goodbye
+  'adios', 'adiós', 'bye', 'chao', 'hasta luego', 'goodbye', 'see you',
+  // Compliments
+  'me gusta tu voz', 'eres simpatico', 'eres simpática', 'que amable',
+  'qué amable', 'you are nice', "you're nice", 'i like you',
+  // How are you
+  'como estas', 'cómo estás', 'how are you',
+];
+
+export function detectCasualSocial(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  // Only treat as casual if the message is short and matches a known pattern.
+  if (lower.length > 40) return false;
+  for (const p of CASUAL_PATTERNS) {
+    if (lower === p || lower.startsWith(p + ' ') || lower.endsWith(' ' + p) || lower === p + '!') return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// "OTRA COSA" / "another topic" DETECTOR (Wave 12 — point 98)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TOPIC_CHANGE_PATTERNS = [
+  'otra cosa', 'otro tema', 'cambio de tema', 'algo diferente',
+  'something else', 'another topic', 'change topic', 'different topic',
+  'olvidalo', 'olvídalo', 'olvidemos eso',
+];
+
+export function detectTopicChange(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (lower.length > 60) return false;
+  for (const p of TOPIC_CHANGE_PATTERNS) {
+    if (lower.includes(p)) return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOCUMENT-SUBTYPE-SPECIFIC FOLLOW-UP COPY
+//
+// When the document subtype is known, give a focused next-step instead of
+// the generic plan_letter_issue follow-up. Returns null if no specific
+// follow-up exists for this subtype (caller falls back to generic).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function documentSubtypeFollowUp(subtype: DocumentSubtype, lang: SupportLang): string | null {
+  if (!subtype) return null;
+  const map: Record<NonNullable<DocumentSubtype>, { en: string; es: string }> = {
+    renewal: {
+      en: "I understand. A renewal letter can come from a Medicare Advantage plan, a Part D plan, Medicaid, Extra Help, or it could be an Annual Notice of Change (ANOC) or Evidence of Coverage (EOC) explaining changes for next year. To help you correctly: does the letter say Annual Notice of Change, Evidence of Coverage, renewal, recertification, Medicaid, Extra Help, or does it look like it came from your plan?",
+      es: 'Entiendo. Una carta de renovación puede venir de un plan Medicare Advantage, un plan Parte D, Medicaid, Extra Help, o puede ser un Aviso Anual de Cambios (ANOC) o Evidencia de Cobertura (EOC) explicando cambios para el próximo año. Para orientarle bien: ¿la carta dice Annual Notice of Change, Evidence of Coverage, renovación, recertificación, Medicaid, Extra Help, o parece venir de su plan?',
+    },
+    medicaid_notice: {
+      en: "I understand. A Medicaid notice can be about recertification, change in benefits, eligibility review, or coordination with Medicare. Medicaid is administered separately, so please do not send your Medicare ID or Social Security number here. A licensed advisor should review this carefully before any change. Does the letter mention recertification, a deadline, or a benefits change?",
+      es: 'Entiendo. Un aviso de Medicaid puede ser sobre recertificación, cambio de beneficios, revisión de elegibilidad o coordinación con Medicare. Medicaid se administra por separado, así que por favor no envíe su número de Medicare ni Seguro Social aquí. Un asesor licenciado debe revisar esto con cuidado antes de cualquier cambio. ¿La carta menciona recertificación, una fecha límite, o un cambio de beneficios?',
+    },
+    extra_help_notice: {
+      en: "I understand. An Extra Help / LIS notice usually comes from the Social Security Administration about prescription drug subsidy eligibility. Please do not send your Medicare ID or Social Security number here. Does the letter say you were approved, denied, asked to re-apply, or that something changed?",
+      es: 'Entiendo. Un aviso de Extra Help / LIS usualmente viene de la Administración del Seguro Social sobre el subsidio de medicamentos. Por favor no envíe su número de Medicare ni Seguro Social aquí. ¿La carta dice que fue aprobado, denegado, que tiene que volver a solicitar, o que algo cambió?',
+    },
+    eob: {
+      en: "Thank you. An Explanation of Benefits (EOB) usually is NOT a bill — it explains what your plan processed, what was charged, what the plan paid, and what may be your responsibility. To help you correctly: does the document say 'This is not a bill,' or does it say you must pay an amount?",
+      es: 'Gracias. Una Explicación de Beneficios (EOB) normalmente NO es una factura — explica lo que su plan procesó, lo que se cobró, lo que el plan pagó, y lo que podría ser su responsabilidad. Para orientarle bien: ¿el documento dice "This is not a bill" / "Esto no es una factura," o dice que usted debe pagar una cantidad?',
+    },
+    collection: {
+      en: "I understand — that can feel urgent. If it looks like a collection or past-due notice, it should be reviewed carefully before paying or ignoring. Please do not send your Medicare ID, Social Security number, banking information, or a full photo of the notice here. A licensed advisor can help organize what to review next, though some debt disputes require contacting the provider or plan directly. Does the notice say 'collection,' 'past due,' 'final notice,' or 'amount due'?",
+      es: 'Entiendo — eso puede sentirse urgente. Si parece collection o aviso de cobro vencido, conviene revisarlo con calma antes de pagar o ignorarlo. Por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa del aviso aquí. Un asesor licenciado puede ayudar a organizar qué revisar, aunque algunas disputas de deuda requieren contactar directamente al proveedor o plan. ¿El aviso dice "collection," "past due," "final notice," o "amount due"?',
+    },
+    denial: {
+      en: "I understand. A denial notice should be reviewed carefully because it usually has a deadline to appeal. Please do not send your Medicare ID or Social Security number here. A licensed advisor can help you organize the next step. Does the letter mention an appeal deadline, a reason for the denial, or instructions on what to do next?",
+      es: 'Entiendo. Un aviso de denegación debe revisarse con cuidado porque usualmente tiene un plazo para apelar. Por favor no envíe su número de Medicare ni Seguro Social aquí. Un asesor licenciado puede ayudar a organizar el próximo paso. ¿La carta menciona una fecha límite para apelar, una razón de la denegación, o instrucciones de qué hacer?',
+    },
+    premium: {
+      en: "I understand. A monthly premium notice usually shows what your plan charges and when payment is due. Please do not send your banking information here. Is the issue that the premium went up, you missed a payment, or you do not recognize the charge?",
+      es: 'Entiendo. Un aviso de prima mensual usualmente muestra lo que su plan cobra y cuándo es el pago. Por favor no envíe su información bancaria aquí. ¿El problema es que la prima subió, no pagó a tiempo, o no reconoce el cobro?',
+    },
+    bill: {
+      en: "I understand. A medical bill can come from a doctor, hospital, pharmacy, or your plan. It could be a copay, coinsurance, an out-of-network charge, or a denied claim. Please do not send your Medicare ID, Social Security number, banking info, or a full photo of the bill here. Where does the bill come from?",
+      es: 'Entiendo. Una factura médica puede venir de un doctor, hospital, farmacia o su plan. Puede ser un copago, coseguro, un cobro fuera de la red, o un reclamo denegado. Por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa de la factura aquí. ¿De dónde viene la factura?',
+    },
+    plan_notice: {
+      en: "I understand. A letter from your Medicare plan can be about renewal, costs, benefits, network, a deadline, or a denial. Please do not send your Medicare ID or Social Security number here. What does the letter say it is about?",
+      es: 'Entiendo. Una carta de su plan Medicare puede ser sobre renovación, costos, beneficios, red, una fecha límite o una denegación. Por favor no envíe su número de Medicare ni Seguro Social aquí. ¿De qué dice la carta que se trata?',
+    },
+  };
+  return map[subtype][lang];
+}
+
+export function documentSubtypeChips(subtype: DocumentSubtype, lang: SupportLang): string[] {
+  if (!subtype) return [];
+  const map: Record<NonNullable<DocumentSubtype>, { en: string[]; es: string[] }> = {
+    renewal: {
+      en: ['ANOC / Annual Notice', 'EOC / Coverage', 'Medicaid / Extra Help', 'From the plan'],
+      es: ['ANOC / Aviso Anual', 'EOC / Cobertura', 'Medicaid / Extra Help', 'Del plan'],
+    },
+    medicaid_notice: {
+      en: ['Recertification', 'Benefits changed', 'Deadline', 'Not sure'],
+      es: ['Recertificación', 'Cambio de beneficios', 'Fecha límite', 'No sé'],
+    },
+    extra_help_notice: {
+      en: ['Approved', 'Denied', 'Re-apply', 'Something changed'],
+      es: ['Aprobado', 'Denegado', 'Volver a solicitar', 'Algo cambió'],
+    },
+    eob: {
+      en: ['Says not a bill', 'Says amount due', 'Not sure'],
+      es: ['Dice no es factura', 'Dice debo pagar', 'No sé'],
+    },
+    collection: {
+      en: ['Says collection', 'Past due', 'Final notice', 'Amount due'],
+      es: ['Dice collection', 'Vencido', 'Aviso final', 'Cantidad a pagar'],
+    },
+    denial: {
+      en: ['Has appeal deadline', 'Reason listed', 'Not sure'],
+      es: ['Tiene plazo para apelar', 'Razón listada', 'No sé'],
+    },
+    premium: {
+      en: ['Premium went up', 'Missed payment', "Don't recognize"],
+      es: ['Subió la prima', 'No pagué a tiempo', 'No reconozco'],
+    },
+    bill: {
+      en: ['Doctor / Hospital', 'Pharmacy', 'Medicare plan', 'Not sure'],
+      es: ['Doctor / Hospital', 'Farmacia', 'Plan de Medicare', 'No sé'],
+    },
+    plan_notice: {
+      en: ['Renewal', 'Cost change', 'Benefits changed', 'Deadline'],
+      es: ['Renovación', 'Cambio de costo', 'Cambio de beneficios', 'Fecha límite'],
+    },
+  };
+  return map[subtype][lang];
+}
+
 export function splitFullName(text: string): { firstName: string; lastName: string } {
   let cleaned = text.trim().replace(/\s+/g, ' ');
   if (!cleaned) return { firstName: '', lastName: '' };

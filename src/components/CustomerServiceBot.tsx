@@ -32,16 +32,22 @@ import {
   classifyIntent,
   detectBotComplaint,
   detectCaregiver,
+  detectCasualSocial,
+  detectDocumentSubtype,
   detectEmergency,
   detectExplicitLanguagePick,
   detectFrustration,
   detectGlobalIntent,
   detectLanguage,
   detectSensitive,
+  detectTopicChange,
   detectUpcomingProcedure,
   detectVisitorType,
+  documentSubtypeChips,
+  documentSubtypeFollowUp,
   looksLikeName,
   validatePhone,
+  type DocumentSubtype,
   buildCaseSummary,
   buildMultiTopicAck,
   buildSupportTags,
@@ -114,6 +120,7 @@ interface State {
   mentioned_upcoming_procedure: boolean;
   mentioned_doctor_concern: boolean;
   mentioned_medication_concern: boolean;
+  document_subtype: DocumentSubtype;
   followup_chips_dismissed: boolean;
   wants_callback: boolean;
   consent_to_contact: boolean;
@@ -147,6 +154,7 @@ type Action =
   | { type: 'DOCTOR_CONCERN_MENTIONED' }
   | { type: 'MEDICATION_CONCERN_MENTIONED' }
   | { type: 'DISMISS_FOLLOWUP_CHIPS' }
+  | { type: 'SET_DOCUMENT_SUBTYPE'; value: DocumentSubtype }
   | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
   | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
   | { type: 'COLLECT_STATE_FALLBACK'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
@@ -194,6 +202,7 @@ function initialState(lang: SupportLang): State {
     mentioned_upcoming_procedure: false,
     mentioned_doctor_concern: false,
     mentioned_medication_concern: false,
+    document_subtype: null,
     followup_chips_dismissed: false,
     wants_callback: false,
     consent_to_contact: false,
@@ -294,6 +303,9 @@ function reduce(state: State, action: Action): State {
 
     case 'DISMISS_FOLLOWUP_CHIPS':
       return { ...state, followup_chips_dismissed: true };
+
+    case 'SET_DOCUMENT_SUBTYPE':
+      return { ...state, document_subtype: action.value };
 
     case 'COLLECT_FULL_NAME':
       return { ...state, first_name: action.first, last_name: action.last, current_step: 'collecting_location' };
@@ -678,6 +690,25 @@ export function CustomerServiceBot() {
     return { ...result, urgency, requires_agent_review: needsReview };
   }
 
+  // ── Wave 12 helper: pick the right follow-up message ──
+  // For plan_letter_issue we look at the user's text and any tracked
+  // document_subtype to give a focused response. Returns the message text
+  // the bot should emit next. The caller dispatches SET_DOCUMENT_SUBTYPE.
+  function pickFollowUpFor(intentId: IntentId, userText: string, lang: SupportLang): {
+    text: string;
+    chips: string[];
+    subtype: DocumentSubtype;
+  } {
+    if (intentId === 'plan_letter_issue') {
+      const subtype = detectDocumentSubtype(userText) || state.document_subtype;
+      const subtypeText = documentSubtypeFollowUp(subtype, lang);
+      if (subtype && subtypeText) {
+        return { text: subtypeText, chips: documentSubtypeChips(subtype, lang), subtype };
+      }
+    }
+    return { text: intentFollowUp(intentId, lang), chips: intentFollowUpChips(intentId, lang), subtype: null };
+  }
+
   // ── Free-text user submit  (single entry point for typed input) ──
   //
   // Wrapped in try/catch (Phase 16). If ANY classifier, detector, or dispatch
@@ -755,6 +786,40 @@ export function CustomerServiceBot() {
         dispatch({ type: 'SET_INTENT_SIDE_CHANNEL', primary: 'call_requested', secondary: r.secondary, confidence: 'high', urgency: r.urgency, requires_agent_review: true });
       }
       enqueueBot([{ text: state.language === 'es' ? COPY.ask_callback_pref_es : COPY.ask_callback_pref_en, pace: 'short' }]);
+      return;
+    }
+
+    // 3b. CASUAL / SOCIAL (Wave 12) — short greetings, thanks, compliments.
+    //     Respond warmly + briefly, then gently steer back to the topic.
+    if (detectCasualSocial(text)) {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      const knownIntent = state.primary_intent;
+      const lang = state.language;
+      const continuation = knownIntent
+        ? (lang === 'es'
+            ? '¿Quiere que sigamos con su pregunta sobre Medicare?'
+            : 'Would you like to keep going with your Medicare question?')
+        : (lang === 'es'
+            ? '¿En qué puedo ayudarle hoy? Puede ser una factura, carta, doctor, medicamento, costo o algo más.'
+            : "How can I help you today? It could be a bill, letter, doctor, medication, cost, or something else.");
+      enqueueBot([{
+        text: (lang === 'es' ? 'Gracias. ' : 'Thank you. ') + continuation,
+        pace: 'short',
+      }]);
+      return;
+    }
+
+    // 3c. TOPIC CHANGE (Wave 12) — "otra cosa", "another topic"
+    if (detectTopicChange(text) && state.primary_intent) {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      // Soft reset of the topic context (keep visitor_type, language, contact info)
+      dispatch({ type: 'SET_DOCUMENT_SUBTYPE', value: null });
+      enqueueBot([{
+        text: state.language === 'es'
+          ? 'Entiendo. ¿Cuál es el nuevo tema? Puede ser una factura, una carta, un doctor, un medicamento, costos, o quiere que un asesor le llame.'
+          : "Of course. What's the new topic? It could be a bill, a letter, a doctor, a medication, costs, or you'd like an advisor to call.",
+        pace: 'short',
+      }]);
       return;
     }
 
@@ -919,11 +984,14 @@ export function CustomerServiceBot() {
             urgency: r.urgency,
             requires_agent_review: r.requires_agent_review,
           });
+          // Wave 12: pick subtype-specific follow-up for plan_letter_issue
+          const fu = pickFollowUpFor(r.primary, text, picked);
+          if (fu.subtype) dispatch({ type: 'SET_DOCUMENT_SUBTYPE', value: fu.subtype });
           const msgs: QueuedMsg[] = [];
           if (r.secondary.length > 0) {
             msgs.push({ text: buildMultiTopicAck(r.primary, r.secondary, picked), pace: 'long' });
           }
-          msgs.push({ text: intentFollowUp(r.primary, picked), pace: 'long' });
+          msgs.push({ text: fu.text, pace: 'long' });
           enqueueBot(msgs);
           return;
         }
@@ -1385,7 +1453,15 @@ export function CustomerServiceBot() {
             !isTyping &&
             state.primary_intent &&
             !state.followup_chips_dismissed && (() => {
-              const chips = intentFollowUpChips(state.primary_intent, state.language);
+              // Wave 12: prefer document-subtype chips when we know the subtype
+              // (e.g. renewal → ANOC/EOC/Medicaid/From the plan).
+              let chips: string[] = [];
+              if (state.primary_intent === 'plan_letter_issue' && state.document_subtype) {
+                chips = documentSubtypeChips(state.document_subtype, state.language);
+              }
+              if (chips.length === 0) {
+                chips = intentFollowUpChips(state.primary_intent, state.language);
+              }
               if (!chips || chips.length === 0) return null;
               return (
                 <div className="flex flex-wrap gap-1.5 pl-1">
@@ -1406,7 +1482,9 @@ export function CustomerServiceBot() {
               <div className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-200">
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] text-earth-500 italic">
-                    {lang === 'es' ? 'Escribiendo…' : 'Typing…'}
+                    {lang === 'es'
+                      ? 'Guía de Soporte está escribiendo…'
+                      : 'Support Guide is typing…'}
                   </span>
                   <span className="flex gap-1">
                     <span className="w-1.5 h-1.5 bg-earth-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
