@@ -21,8 +21,8 @@ export default function Support() {
         eyebrowEs="Servicio al Cliente"
         headline="ClearPoint Support Guide"
         headlineEs="Guía de Soporte ClearPoint"
-        subheadline="Organize a Medicare question or concern so a licensed advisor can follow up. Bilingual, no pressure, no cost to you for our services."
-        subheadlineEs="Organice una pregunta o inquietud sobre Medicare para que un asesor licenciado pueda comunicarse. Bilingüe, sin presión, sin costo para usted por nuestros servicios."
+        subheadline="Organize your Medicare question or concern so a licensed advisor can review it and follow up. Bilingual guidance. No pressure. No cost for our service."
+        subheadlineEs="Organice su pregunta o inquietud sobre Medicare para que un asesor licenciado pueda revisarla y comunicarse con usted. Orientación bilingüe. Sin presión. Sin costo por nuestro servicio."
         variant="page"
         compact
         tighter
@@ -36,9 +36,9 @@ export default function Support() {
       </div>
 
       {/* Bot — page-resident, NOT floating */}
-      <section className="py-12 lg:py-16">
-        <div className="max-w-6xl mx-auto px-5">
-          <div className="mb-6">
+      <section className="py-14 lg:py-20">
+        <div className="max-w-5xl mx-auto px-5">
+          <div className="mb-8">
             <p className="text-earth-700 text-sm sm:text-base leading-relaxed max-w-3xl">
               {t(
                 'This Support Guide helps organize your Medicare question. It does not recommend plans, confirm eligibility, or verify coverage. A licensed ClearPoint advisor will review what you share and follow up.',
@@ -51,7 +51,7 @@ export default function Support() {
         </div>
       </section>
 
-      <div className="bg-cream-50 py-10">
+      <div className="bg-cream-50 pt-6 pb-14">
         <div className="max-w-4xl mx-auto px-5">
           <DisclaimerBlock variant="compact" />
         </div>

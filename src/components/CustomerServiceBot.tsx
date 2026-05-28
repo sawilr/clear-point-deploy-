@@ -392,14 +392,14 @@ function reduce(state: SupportState, action: Action): SupportState {
 const COPY = {
   brand_en: 'ClearPoint Support Guide',
   brand_es: 'Guía de Soporte ClearPoint',
-  greeting_en: "Hi, I'm your ClearPoint Support Guide. I'm here to help organize your Medicare question so a licensed advisor can review it.",
-  greeting_es: 'Hola, soy tu Guía de Soporte ClearPoint. Estoy aquí para ayudarte a organizar tu pregunta sobre Medicare para que un asesor licenciado pueda revisarla.',
+  greeting_en: "Hi, I'm the ClearPoint Support Guide. I can help organize your Medicare question so a licensed advisor can review it.",
+  greeting_es: 'Hola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar su pregunta de Medicare para que un asesor licenciado pueda revisarla.',
   language_prompt_en: 'Pick a language to continue:',
   language_prompt_es: 'Elija un idioma para continuar:',
-  privacy_warning_title_en: 'Privacy Notice',
-  privacy_warning_title_es: 'Aviso de Privacidad',
-  privacy_warning_en: 'Please do not send your Medicare ID, Social Security number, banking information, or private medical records here. This chat is for organizing your question — sensitive details should only be shared securely with a licensed advisor.',
-  privacy_warning_es: 'Por favor no envíe su número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí. Este chat es para organizar su pregunta — los detalles sensibles solo deben compartirse de forma segura con un asesor licenciado.',
+  privacy_warning_title_en: 'Privacy notice',
+  privacy_warning_title_es: 'Aviso de privacidad',
+  privacy_warning_en: 'Please do not send Medicare ID, Social Security number, banking information, or private medical records here. This guide helps organize your question only.',
+  privacy_warning_es: 'Por favor no envíe su número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí. Esta guía solo ayuda a organizar su pregunta.',
   privacy_acknowledge_en: 'I understand — continue',
   privacy_acknowledge_es: 'Entiendo — continuar',
   intent_pick_en: 'What can I help you organize today? Pick a topic or type your question.',
@@ -598,7 +598,7 @@ export function buildSupportPayload(state: SupportState) {
 const SESSION_KEY = 'clear_point_support_session_memory';
 
 export function CustomerServiceBot() {
-  const { lang: pageLang } = useLanguage();
+  const { lang: pageLang, setLang } = useLanguage();
   const initialBotLang: 'en' | 'es' = pageLang === 'es' ? 'es' : 'en';
 
   const [state, dispatch] = useReducer(reduce, initialBotLang, (l) => initialState(l));
@@ -623,8 +623,12 @@ export function CustomerServiceBot() {
   const botSay = (text: string) => dispatch({ type: 'ADD_BOT_MESSAGE', text });
 
   const handlePickLanguage = (l: 'en' | 'es') => {
+    // Sync page-level language (Hero, footer, header toggle all update together)
+    setLang(l);
     dispatch({ type: 'PICK_LANGUAGE', lang: l });
-    setTimeout(() => botSay(l === 'es' ? COPY.greeting_es : COPY.greeting_en), 100);
+    // NOTE: greeting is NOT re-emitted as a chat bubble here — it is already
+    // rendered statically inside the privacy_acknowledge step. Re-emitting it
+    // via botSay produced a duplicate greeting (Phase-3 UI bug fix).
   };
 
   const handleAcknowledgePrivacy = () => {
@@ -814,9 +818,11 @@ export function CustomerServiceBot() {
         {state.current_step === 'privacy_acknowledge' && (
           <div className="space-y-3">
             <BotBubble text={lang === 'es' ? COPY.greeting_es : COPY.greeting_en} />
-            <button onClick={handleAcknowledgePrivacy} className="px-5 py-2.5 bg-sage-300 text-earth-900 rounded-lg text-sm font-semibold hover:bg-sage-400 min-h-[44px]">
-              {lang === 'es' ? COPY.privacy_acknowledge_es : COPY.privacy_acknowledge_en}
-            </button>
+            <div className="pt-1">
+              <button onClick={handleAcknowledgePrivacy} className="px-5 py-3 bg-sage-300 text-earth-900 rounded-lg text-sm font-semibold hover:bg-sage-400 min-h-[44px] shadow-xs">
+                {lang === 'es' ? COPY.privacy_acknowledge_es : COPY.privacy_acknowledge_en}
+              </button>
+            </div>
           </div>
         )}
 
