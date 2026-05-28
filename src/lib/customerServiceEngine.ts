@@ -89,11 +89,13 @@ export interface ConversationState {
 // EMOTIONAL STATE DETECTION
 // ============================================================================
 const emotionalPatterns: { pattern: RegExp; state: EmotionalState }[] = [
-  { pattern: /\b(frustrated|frustraci[oó]n|no entiend(es|en|o)|useless|terrible|awful|est[aá]s perdid[oa])\b/i, state: 'frustrated' },
-  { pattern: /\b(confused|confusión|no entiendo|what does this mean|qué significa)\b/i, state: 'confused' },
+  // Wave 14: \b doesn't work with accented chars in JS regex. For accented
+  // patterns we omit \b and rely on the search-substring semantics.
+  { pattern: /\b(frustrated|useless|terrible|awful)\b|frustraci[oó]n|no entiend(es|en|o)|est[aá]s perdid[oa]|you ?do ?n'?t? understand|stop asking me/i, state: 'frustrated' },
+  { pattern: /\b(confused|i'?m confused|im confused|what does this mean)\b|confusi[oó]n|no entiendo|qu[eé] significa/i, state: 'confused' },
   { pattern: /\b(urgent|asap|right now|immediately|emergency|emergencia|ya mismo)\b/i, state: 'urgent' },
-  { pattern: /\b(passed away|died|death|falleció|murió|fallecimiento)\b/i, state: 'grieving' },
-  { pattern: /\b(thank you|gracias|appreciate|agradezco|you helped)\b/i, state: 'grateful' },
+  { pattern: /\b(passed away|died|death)\b|falleci[oó]|muri[oó]|fallecimiento|esposo muri|esposa muri/i, state: 'grieving' },
+  { pattern: /\b(thank you|thanks|gracias|appreciate|agradezco|you helped)\b/i, state: 'grateful' },
 ];
 
 export function detectEmotionalState(text: string): EmotionalState {
@@ -122,8 +124,11 @@ const intentPriority: PrimaryIntent[] = [
   'complaint',
   'bill_question',
   'letter_issue',
-  'enrollment_question',
+  // Wave 14: coverage_question above enrollment_question so compliance-deflect
+  // for "best plan" / "cuál es el mejor plan" routes to the exact STEP 6
+  // case_best_plan knowledge entry.
   'coverage_question',
+  'enrollment_question',
   'drug_question',
   'provider_question',
   'general_question',
@@ -137,13 +142,22 @@ const intentPriority: PrimaryIntent[] = [
 // Extended patterns for better classification
 const extendedPatterns = {
   urgent: /\b(urgent|emergency|asap|right away|immediate|help now|ayuda ya|emergencia)\b/i,
-  appeals_grievance: /\b(appeal|grievance|denied|denial|reconsideration|dispute|fair hearing|apelación|reclamo|negado)\b/i,
-  disenrollment: /\b(disenroll|cancel|leave|switch|change plan|quit|remove me|dar de baja|cancelar|cambiarme)\b/i,
+  appeals_grievance: /\b(appeal|grievance|denied|denial|reconsideration|dispute|fair hearing|reclamo|negado)\b|apelaci[oó]n/i,
+  // Wave 14: "change plans" plural + "switch plan(s)" + Spanish "cambiar plan/de plan"
+  disenrollment: /\b(disenroll|cancel|leave|switch plan(s)?|change plan(s)?|quit|remove me|dar de baja|cancelar|cambiarme|cambiar plan|cambiar de plan)\b/i,
   complaint: /\b(complaint|unhappy|bad service|terrible|awful|useless|scam|fraud|queja|estafa)\b/i,
   casual_greeting: /^\s*(hi|hello|hey|hola|buenos|buenas)\b/i,
   casual_thanks: /\b(thank you|thanks|gracias|appreciate)\b/i,
-  topic_change: /\b(otra cosa|another topic|something else|change topic|cambio de tema)\b/i,
-  escalate: /\b(talk to (an? )?(agent|human|person|advisor)|speak (to|with) (an? )?(agent|human|person|advisor)|hablar con (un|una)? ?(asesor|persona|agente)|representative|representante)\b/i,
+  // Wave 14: "another question" added
+  topic_change: /\b(otra cosa|another topic|another question|something else|change topic|cambio de tema)\b/i,
+  escalate: /\b(talk to (an? )?(agent|human|person|advisor)|speak (to|with) (an? )?(agent|human|person|advisor)|representative|representante)\b|hablar con (un|una)? ?(asesor|persona|agente)/i,
+  // Wave 14: explicit "best plan" / "do I qualify" / "enroll me" → compliance-deflect routes through coverage_question
+  best_plan: /\b(best plan|mejor plan|top plan|which plan should i)\b/i,
+  enroll_me: /\b(enroll me|sign me up|inscribir|inscr[ií]bame|put me in a plan)\b/i,
+  // Wave 14: bare "coverage" word
+  coverage_word: /\b(coverage|cobertura)\b/i,
+  // Wave 14: bare "renewal" word
+  renewal_word: /\b(renewal|renovaci[oó]n|recertification|recertificaci[oó]n)\b/i,
 };
 
 export function classifyIntent(text: string): ClassifiedIntent {
@@ -187,6 +201,22 @@ export function classifyIntent(text: string): ClassifiedIntent {
   }
   if (extendedPatterns.escalate.test(lowerText)) {
     matches.push({ intent: 'escalate_to_agent', confidence: 0.95, pattern: 'extended_escalate' });
+  }
+  // Wave 14: compliance-deflect for "best plan" → coverage_question
+  if ((extendedPatterns as any).best_plan?.test(lowerText)) {
+    matches.push({ intent: 'coverage_question', confidence: 0.92, pattern: 'extended_best_plan' });
+  }
+  // Wave 14: "enroll me" → enrollment_question (compliance-safe deflection)
+  if ((extendedPatterns as any).enroll_me?.test(lowerText)) {
+    matches.push({ intent: 'enrollment_question', confidence: 0.92, pattern: 'extended_enroll_me' });
+  }
+  // Wave 14: bare "coverage / cobertura" → coverage_question
+  if ((extendedPatterns as any).coverage_word?.test(lowerText)) {
+    matches.push({ intent: 'coverage_question', confidence: 0.7, pattern: 'extended_coverage' });
+  }
+  // Wave 14: bare "renewal / renovación" → letter_issue
+  if ((extendedPatterns as any).renewal_word?.test(lowerText)) {
+    matches.push({ intent: 'letter_issue', confidence: 0.8, pattern: 'extended_renewal' });
   }
 
   // Sort by confidence
