@@ -59,9 +59,10 @@ for (const id of ['medication_help', 'plan_letter_issue', 'doctor_network_questi
   assert(`intentFollowUp.${id}.en no forbidden phrase`, scanForbiddenPhrases(en).length === 0, scanForbiddenPhrases(en).join(','));
   assert(`intentFollowUp.${id}.es no forbidden phrase`, scanForbiddenPhrases(es).length === 0, scanForbiddenPhrases(es).join(','));
   // Empathy opening — every follow-up should open with "I understand", "Thank you",
-  // "Of course", "Welcome", "Lo escucho", "I hear you", or "Por supuesto" / "Entiendo" / "Gracias".
-  const empathyEn = /^(i understand|thank you|of course|welcome|i hear you|good question)/i.test(en);
-  const empathyEs = /^(entiendo|gracias|por supuesto|bienvenid|lo escucho)/i.test(es);
+  // "Of course", "Welcome", "Lo escucho", "I hear you", "Happy to help", or
+  // "Por supuesto" / "Entiendo" / "Gracias" / "Con gusto" / "Bienvenido".
+  const empathyEn = /^(i understand|thank you|of course|welcome|i hear you|good question|happy to help|i hear you)/i.test(en);
+  const empathyEs = /^(entiendo|gracias|por supuesto|bienvenid|lo escucho|con gusto)/i.test(es);
   assert(`intentFollowUp.${id}.en opens with empathy`, empathyEn, `starts: "${en.slice(0,30)}"`);
   assert(`intentFollowUp.${id}.es opens with empathy`, empathyEs, `starts: "${es.slice(0,30)}"`);
 }

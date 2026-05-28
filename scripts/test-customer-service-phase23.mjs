@@ -102,7 +102,8 @@ const t12gi = detectGlobalIntent('mejor en espanol');
 check('TEST 12: detectGlobalIntent CHANGE_LANGUAGE_ES', t12gi === 'CHANGE_LANGUAGE_ES');
 
 console.log('\n=== TEST 13 — buttons and typing both work ===');
-check('TEST 13: QUICK_ACTIONS has 6 chips', QUICK_ACTIONS.length === 6);
+// Wave 9 reduced chips from 6 to 3 topic pills + a separate language toggle.
+check('TEST 13: QUICK_ACTIONS reduced to 3 small pills (Wave 9 button discipline)', QUICK_ACTIONS.length === 3);
 check('TEST 13: input is enabled in non-submit steps (architectural — see CustomerServiceBot.tsx inputEnabled)', true);
 
 console.log('\n=== TEST 14 — close/minimize/reopen (inline bot — no minimize)');

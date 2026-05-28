@@ -301,13 +301,12 @@ export interface QuickAction {
   secondary?: IntentId[];
 }
 
+// Wave 9 — Phase 3: opening shows AT MOST 4 small pill chips (1 language toggle
+// + 3 high-signal shortcuts). Typing is the primary path; chips are subtle.
 export const QUICK_ACTIONS: QuickAction[] = [
-  { id: 'medicare', label_en: 'Medicare help', label_es: 'Ayuda con Medicare', primary: 'general_medicare_question' },
-  { id: 'costs', label_en: 'Plan costs', label_es: 'Costos del plan', primary: 'cost_help' },
-  { id: 'rx_dr', label_en: 'Doctors or medications', label_es: 'Doctores o medicamentos', primary: 'doctor_network_question', secondary: ['medication_help'] },
-  { id: 'medicaid_lis', label_en: 'Medicaid / Extra Help', label_es: 'Medicaid / Ayuda Extra', primary: 'medicaid_msp', secondary: ['extra_help_lis'] },
-  { id: 'letter', label_en: 'I received a letter', label_es: 'Recibí una carta', primary: 'plan_letter_issue' },
   { id: 'advisor', label_en: 'Speak with an advisor', label_es: 'Hablar con un asesor', primary: 'call_requested' },
+  { id: 'letter', label_en: 'I received a letter', label_es: 'Recibí una carta', primary: 'plan_letter_issue' },
+  { id: 'costs', label_en: 'Plan cost issue', label_es: 'Problema de costos', primary: 'cost_help' },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -360,78 +359,161 @@ export function advisorHandoffLine(lang: SupportLang): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function intentFollowUp(id: IntentId, lang: SupportLang): string {
+  // Pattern: acknowledge briefly → contextual explanation → compliance caution
+  // (only when relevant) → ONE simple question. Companion chips are emitted
+  // separately via intentFollowUpChips() so the message reads as prose.
   const map: Record<IntentId, { en: string; es: string }> = {
     medication_help: {
-      en: 'I understand. Medication costs can change for several reasons. To organize this correctly, is the issue that the medication became more expensive, is not covered, was rejected at the pharmacy, or requires prior authorization?',
-      es: 'Entiendo. Los costos de medicamentos pueden cambiar por varias razones. Para organizar esto bien, ¿el problema es que la medicina salió más cara, no está cubierta, la farmacia la rechazó, o le pidieron autorización previa?',
+      en: 'I understand. Medication costs can change for several reasons — formularies, pharmacies, and plan rules all matter. Please do not share your Medicare ID, Social Security number, or prescription numbers here. In simple words, what is the main issue with the medication?',
+      es: 'Entiendo. Los costos de medicamentos pueden cambiar por varias razones — los formularios, farmacias y reglas del plan importan. Por favor no comparta su número de Medicare, Seguro Social, ni números de receta aquí. En palabras simples, ¿cuál es el problema principal con la medicina?',
     },
     plan_letter_issue: {
-      en: 'I understand. Letters from Medicare or your plan can be confusing. Does the letter mention cancellation, renewal, payment, a deadline, or a change in benefits?',
-      es: 'Entiendo. Las cartas de Medicare o del plan pueden ser confusas. ¿La carta menciona cancelación, renovación, pago, fecha límite, o cambio de beneficios?',
+      en: 'I understand. A letter from Medicare or your plan can be important because it may mention renewal, costs, benefits, network, or a deadline. Please do not send your Medicare number or Social Security number here. In simple words, what does the letter say it is about?',
+      es: 'Entiendo. Una carta de Medicare o de su plan puede ser importante porque puede mencionar renovación, costos, beneficios, red o una fecha límite. Por favor no envíe su número de Medicare ni Seguro Social aquí. En palabras simples, ¿de qué dice la carta que se trata?',
     },
     doctor_network_question: {
-      en: 'I understand. To organize this well, is this about your primary doctor, a specialist, a hospital, a pharmacy, or the plan network in general?',
-      es: 'Entiendo. Para organizarlo bien, ¿se trata de su doctor primario, un especialista, un hospital, una farmacia, o la red del plan en general?',
+      en: 'I understand. Doctor network situations should be verified carefully before any plan decision, because networks can change. ClearPoint should confirm the doctor, location, and plan details with you. What state and ZIP code are you in?',
+      es: 'Entiendo. Las situaciones de red de doctores deben verificarse con cuidado antes de cualquier decisión del plan, porque las redes pueden cambiar. ClearPoint debe confirmar el doctor, la ubicación y los detalles del plan con usted. ¿En qué estado y código postal vive?',
     },
     possible_loss_of_coverage: {
-      en: "I understand — that sounds stressful. So we capture this correctly, did you receive a letter or notice, was something said by phone, or did you find out at a doctor or pharmacy?",
-      es: 'Entiendo — eso suena estresante. Para anotarlo bien, ¿recibió una carta o aviso, le dijeron algo por teléfono, o se enteró en el doctor o farmacia?',
+      en: "I hear you — that can feel urgent. Coverage situations can be time-sensitive and should be reviewed by a licensed advisor quickly. How did you find out — was it a letter, a phone call, or at a doctor or pharmacy?",
+      es: 'Lo escucho — eso puede sentirse urgente. Las situaciones de cobertura pueden tener tiempo limitado y deben ser revisadas por un asesor licenciado rápidamente. ¿Cómo se enteró — fue por una carta, una llamada, o en el doctor o farmacia?',
     },
     annual_review: {
-      en: "Of course — many people review their plan each year. To organize this for an advisor, is your main goal to compare new plans, check that your current plan still works, look at medication costs, or check your doctors and pharmacy?",
-      es: 'Por supuesto — muchas personas revisan su plan cada año. Para organizar esto para un asesor, ¿su objetivo principal es comparar nuevos planes, verificar que su plan actual aún le sirva, revisar costos de medicamentos, o revisar sus doctores y farmacia?',
+      en: "Of course — many people review their plan each year. To prepare this for an advisor, what is the main thing you want to look at first?",
+      es: 'Por supuesto — muchas personas revisan su plan cada año. Para prepararlo para un asesor, ¿qué es lo principal que quiere revisar primero?',
     },
     extra_help_lis: {
-      en: "Thank you. To organize this for the advisor, are you asking how Extra Help works, whether you might qualify, how to apply, or about a letter you received about it?",
-      es: 'Gracias. Para organizar esto para el asesor, ¿está preguntando cómo funciona Extra Help, si usted podría calificar, cómo solicitarlo, o sobre una carta que recibió al respecto?',
+      en: "Thank you. Extra Help is a federal program that may reduce Part D costs for people who qualify, but the Social Security Administration decides eligibility — I cannot confirm it here. To organize this for an advisor, what would you like to focus on?",
+      es: 'Gracias. Extra Help es un programa federal que puede reducir costos de Parte D para personas que califican, pero la Administración del Seguro Social decide la elegibilidad — no puedo confirmarla aquí. Para organizar esto para un asesor, ¿en qué le gustaría enfocarse?',
     },
     medicaid_msp: {
-      en: "Thank you. Is the question about already having Medicaid alongside Medicare, applying for Medicaid or a Medicare Savings Program, or a recent change in your Medicaid status?",
-      es: 'Gracias. ¿La pregunta es sobre ya tener Medicaid junto con Medicare, solicitar Medicaid o un Programa de Ahorro de Medicare, o un cambio reciente en su estatus de Medicaid?',
+      en: "Thank you. When a person has both Medicare and Medicaid, the situation can be complex and a change to Medicare can sometimes affect Medicaid. A licensed advisor should review this carefully. To start, what state are you (or the person) in?",
+      es: 'Gracias. Cuando una persona tiene Medicare y Medicaid, la situación puede ser compleja y un cambio en Medicare a veces puede afectar Medicaid. Un asesor licenciado debe revisar esto con cuidado. Para empezar, ¿en qué estado vive usted (o la persona)?',
     },
     cost_help: {
-      en: "I understand. To organize this for the advisor, is your concern the monthly premium, a copay for a doctor or prescription, an unexpected bill, or something else?",
-      es: 'Entiendo. Para organizar esto para el asesor, ¿le preocupa la prima mensual, un copago de doctor o receta, una factura inesperada, o algo más?',
+      en: "I understand. There are several programs and adjustments that may help with Medicare costs — premium, copays, deductibles — but eligibility depends on your situation. To organize this for an advisor, what is the main cost that is bothering you?",
+      es: 'Entiendo. Hay varios programas y ajustes que pueden ayudar con los costos de Medicare — prima, copagos, deducibles — pero la elegibilidad depende de su situación. Para organizar esto para un asesor, ¿cuál es el costo principal que le preocupa?',
     },
     benefit_card_issue: {
-      en: "Thank you. So we organize this correctly, is the card being declined at a store, lost or never received, low on funds, or showing the wrong balance?",
-      es: 'Gracias. Para organizarlo bien, ¿la tarjeta es rechazada en la tienda, está perdida o nunca la recibió, sin fondos, o muestra un saldo incorrecto?',
+      en: "Thank you. Benefit card issues are usually handled by the plan that issued the card, but I can prepare the situation so an advisor can guide you. What is happening with the card?",
+      es: 'Gracias. Los problemas con tarjetas de beneficios usualmente los maneja el plan que la emitió, pero puedo preparar la situación para que un asesor lo guíe. ¿Qué está pasando con la tarjeta?',
     },
     otc_question: {
-      en: "Thank you. Are you asking about what OTC items are covered, how to use the benefit, how much you have available, or how to order?",
-      es: 'Gracias. ¿Está preguntando qué artículos OTC están cubiertos, cómo usar el beneficio, cuánto tiene disponible, o cómo pedirlos?',
+      en: "Thank you. OTC benefits vary by plan, so the Summary of Benefits and Evidence of Coverage from your specific plan is the source of truth. What would you like an advisor to walk through?",
+      es: 'Gracias. Los beneficios OTC varían por plan, así que el Resumen de Beneficios y la Evidencia de Cobertura de su plan específico son la fuente oficial. ¿Qué le gustaría que un asesor le explique?',
     },
     appointment_requested: {
-      en: "Of course. So an advisor can prepare, is this for a plan review, a question about a letter, a medication issue, or a different topic?",
-      es: 'Por supuesto. Para que un asesor se pueda preparar, ¿es para una revisión de plan, una pregunta sobre una carta, un problema con medicamentos, u otro tema?',
+      en: "Of course. So an advisor can prepare for the call, what would you like to focus on first?",
+      es: 'Por supuesto. Para que un asesor se pueda preparar para la llamada, ¿en qué le gustaría enfocarse primero?',
     },
     call_requested: {
-      en: "Of course. So the advisor can prepare, could you share briefly what you would like to discuss on the call?",
-      es: 'Por supuesto. Para que el asesor se pueda preparar, ¿podría compartir brevemente de qué le gustaría hablar en la llamada?',
+      en: "Of course. So the advisor can prepare, could you share briefly what you would like to discuss?",
+      es: 'Por supuesto. Para que el asesor se pueda preparar, ¿podría compartir brevemente de qué le gustaría hablar?',
     },
     new_to_medicare: {
-      en: "Welcome. So we organize this correctly, are you getting close to age 65, already past 65, qualifying due to disability, or helping a family member who is new to Medicare?",
-      es: 'Bienvenido. Para organizarlo bien, ¿está cerca de cumplir 65, ya pasó los 65, califica por discapacidad, o está ayudando a un familiar que es nuevo en Medicare?',
+      en: "Welcome. Getting started with Medicare is one of the more important decisions, and a licensed advisor should walk you through the timing and options. Where are you in the process right now?",
+      es: 'Bienvenido. Comenzar con Medicare es una de las decisiones más importantes, y un asesor licenciado debe explicarle los tiempos y opciones. ¿En qué parte del proceso está ahora mismo?',
     },
     confused_customer: {
-      en: "I understand. Medicare can be confusing. Let's go step by step. First I'll identify the main issue, then I'll prepare a summary for a licensed advisor to review. Could you share — in one or two sentences — what is bothering you most right now?",
-      es: 'Entiendo. Medicare puede ser confuso. Vamos paso a paso. Primero voy a identificar el problema principal y luego preparo un resumen para que un asesor licenciado lo revise. ¿Podría compartir — en una o dos oraciones — qué es lo que más le preocupa ahora mismo?',
+      en: "I understand. Medicare can feel like a lot. Let's take it one step at a time — I'll organize the main thing for a licensed advisor. In one or two sentences, what is bothering you most right now?",
+      es: 'Entiendo. Medicare puede sentirse abrumador. Vamos paso a paso — voy a organizar lo principal para un asesor licenciado. En una o dos oraciones, ¿qué es lo que más le preocupa ahora mismo?',
     },
     complaint: {
-      en: "I hear you. So I can prepare this for the advisor, is the concern about how a plan handled something, how a doctor or pharmacy treated you, a billing issue, or something else?",
-      es: 'Lo escucho. Para preparar esto para el asesor, ¿la queja es sobre cómo un plan manejó algo, cómo un doctor o farmacia lo trató, un problema de facturación, o algo más?',
+      en: "I hear you, and I'm sorry you are going through this. I'll prepare the situation so a licensed advisor can review it with you carefully. What is the main concern?",
+      es: 'Lo escucho, y lamento que esté pasando por esto. Voy a preparar la situación para que un asesor licenciado pueda revisarla con usted con cuidado. ¿Cuál es la preocupación principal?',
     },
     employer_union_benefits: {
-      en: "Thank you for mentioning this — employer, union, retiree, federal, state, VA, or TRICARE benefits can be lost permanently if a Medicare change is made without checking impact. To organize this safely, could you tell me which type of benefit this is (employer, union, retiree, VA, or other) and whether you still have a benefits administrator or contact you can reach?",
-      es: 'Gracias por mencionarlo — los beneficios de empleador, unión, retiro, federales, estatales, VA o TRICARE se pueden perder permanentemente si se hace un cambio en Medicare sin revisar el impacto. Para organizar esto con seguridad, ¿podría decirme qué tipo de beneficio es (empleador, unión, retiro, VA u otro) y si todavía tiene un administrador de beneficios o contacto al que pueda comunicarse?',
+      en: "Thank you for mentioning this — union, retiree, employer, VA, or TRICARE benefits can be lost permanently if Medicare is changed without checking impact first. A licensed advisor must review this with you before any decision. Which type of benefit is it?",
+      es: 'Gracias por mencionarlo — los beneficios de unión, retiro, empleador, VA o TRICARE se pueden perder permanentemente si se cambia Medicare sin revisar el impacto primero. Un asesor licenciado debe revisar esto con usted antes de cualquier decisión. ¿Qué tipo de beneficio es?',
     },
     general_medicare_question: {
-      en: "Of course. So I capture the question correctly, is it about how Medicare works in general, the difference between plan types, prescription coverage, or something else?",
-      es: 'Por supuesto. Para anotar la pregunta correctamente, ¿es sobre cómo funciona Medicare en general, la diferencia entre tipos de planes, cobertura de medicamentos, o algo más?',
+      en: "Happy to help with general Medicare information. Specific eligibility and plan details should be verified with a licensed advisor or with Medicare directly. What part of Medicare would you like to understand?",
+      es: 'Con gusto le ayudo con información general sobre Medicare. La elegibilidad específica y los detalles del plan deben verificarse con un asesor licenciado o directamente con Medicare. ¿Qué parte de Medicare le gustaría entender?',
     },
     other_unknown: {
-      en: "Thank you for sharing that. Could you give me one more detail — for example, is this about your plan, your medications, your doctor, a letter, or costs?",
-      es: 'Gracias por compartir. ¿Podría darme un detalle más — por ejemplo, es sobre su plan, sus medicamentos, su doctor, una carta, o costos?',
+      en: "Thank you for sharing that. Could you tell me a little more — is this about a plan, medications, a doctor, a letter, costs, or something else?",
+      es: 'Gracias por compartir. ¿Podría decirme un poco más — es sobre un plan, medicamentos, un doctor, una carta, costos o algo más?',
+    },
+  };
+  return map[id][lang];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INLINE NARROWING CHIPS (Wave 9 — Phase 5 button discipline)
+//
+// Up to 4 small optional pill chips per intent follow-up. The user can ignore
+// them entirely and type freely — they exist only to reduce friction for
+// callers who prefer to point at the option that matches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function intentFollowUpChips(id: IntentId, lang: SupportLang): string[] {
+  const map: Record<IntentId, { en: string[]; es: string[] }> = {
+    medication_help: {
+      en: ['More expensive', 'Not covered', 'Pharmacy rejected', 'Needs authorization'],
+      es: ['Más cara', 'No cubierta', 'Farmacia la rechazó', 'Pide autorización'],
+    },
+    plan_letter_issue: {
+      en: ['Renewal', 'Cost change', 'Benefits changed', 'Deadline'],
+      es: ['Renovación', 'Cambio de costo', 'Cambio de beneficios', 'Fecha límite'],
+    },
+    doctor_network_question: {
+      en: ['Primary doctor', 'Specialist', 'Hospital', 'Pharmacy'],
+      es: ['Doctor primario', 'Especialista', 'Hospital', 'Farmacia'],
+    },
+    possible_loss_of_coverage: {
+      en: ['A letter', 'A phone call', 'At a doctor', 'Not sure'],
+      es: ['Una carta', 'Una llamada', 'En el doctor', 'No sé'],
+    },
+    annual_review: {
+      en: ['Compare new plans', 'Check current plan', 'Medication costs', 'Doctors / pharmacy'],
+      es: ['Comparar planes nuevos', 'Revisar plan actual', 'Costos de medicinas', 'Doctores / farmacia'],
+    },
+    extra_help_lis: {
+      en: ['How it works', 'Might I qualify', 'How to apply', 'A letter I received'],
+      es: ['Cómo funciona', 'Si yo califico', 'Cómo solicitar', 'Una carta que recibí'],
+    },
+    medicaid_msp: {
+      en: ['I have Medicaid', 'I want to apply', 'Medicaid changed', 'Not sure'],
+      es: ['Tengo Medicaid', 'Quiero solicitar', 'Medicaid cambió', 'No sé'],
+    },
+    cost_help: {
+      en: ['Premium', 'Copay', 'A bill I got', 'Not sure'],
+      es: ['Prima', 'Copago', 'Una factura', 'No sé'],
+    },
+    benefit_card_issue: {
+      en: ['Declined at store', 'Lost it', 'Low balance', 'Wrong balance'],
+      es: ['Rechazada', 'La perdí', 'Sin saldo', 'Saldo incorrecto'],
+    },
+    otc_question: {
+      en: ['What is covered', 'How to use it', 'How much I have', 'How to order'],
+      es: ['Qué cubre', 'Cómo usarlo', 'Cuánto tengo', 'Cómo pedirlo'],
+    },
+    appointment_requested: {
+      en: ['Plan review', 'A letter', 'Medication', 'Other topic'],
+      es: ['Revisar plan', 'Una carta', 'Medicamentos', 'Otro tema'],
+    },
+    call_requested: { en: [], es: [] },
+    new_to_medicare: {
+      en: ['Almost 65', 'Just turned 65', 'Disability', 'Helping a family member'],
+      es: ['Cerca de 65', 'Acabo de cumplir 65', 'Discapacidad', 'Ayudando a familiar'],
+    },
+    confused_customer: { en: [], es: [] },
+    complaint: {
+      en: ['How a plan handled it', 'Doctor / pharmacy', 'Billing', 'Something else'],
+      es: ['Cómo lo manejó el plan', 'Doctor / farmacia', 'Facturación', 'Otra cosa'],
+    },
+    employer_union_benefits: {
+      en: ['Union', 'Retiree', 'Employer', 'VA / TRICARE'],
+      es: ['Unión', 'Retiro', 'Empleador', 'VA / TRICARE'],
+    },
+    general_medicare_question: {
+      en: ['Medicare basics', 'Plan types', 'Part D / drugs', 'Costs'],
+      es: ['Medicare básico', 'Tipos de planes', 'Parte D / medicinas', 'Costos'],
+    },
+    other_unknown: {
+      en: ['A plan', 'Medications', 'A doctor', 'A letter'],
+      es: ['Un plan', 'Medicamentos', 'Un doctor', 'Una carta'],
     },
   };
   return map[id][lang];

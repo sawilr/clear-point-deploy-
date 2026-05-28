@@ -43,6 +43,7 @@ import {
   frustrationAck,
   advisorHandoffLine,
   intentFollowUp,
+  intentFollowUpChips,
   parseZipOrState,
   QUICK_ACTIONS,
   reflectBack,
@@ -103,6 +104,7 @@ interface State {
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
   caregiver_signal: boolean;
+  followup_chips_dismissed: boolean;
   wants_callback: boolean;
   consent_to_contact: boolean;
   first_name: string;
@@ -130,6 +132,7 @@ type Action =
   | { type: 'SENSITIVE_INTERCEPTED' }
   | { type: 'FRUSTRATION_FLAG' }
   | { type: 'CAREGIVER_FLAG' }
+  | { type: 'DISMISS_FOLLOWUP_CHIPS' }
   | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
   | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
   | { type: 'COLLECT_STATE_FALLBACK'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
@@ -173,6 +176,7 @@ function initialState(lang: SupportLang): State {
     emergency_warning_shown: false,
     frustration_detected: false,
     caregiver_signal: false,
+    followup_chips_dismissed: false,
     wants_callback: false,
     consent_to_contact: false,
     first_name: '',
@@ -197,14 +201,18 @@ function reduce(state: State, action: Action): State {
       return initialState(action.lang);
 
     case 'PICK_LANGUAGE':
+      // Wave 9: skip explicit privacy_acknowledge step. The persistent privacy
+      // band at the top of the scroll body counts as disclosure.
       return {
         ...state,
         language: action.lang,
         preferred_language: action.lang === 'es' ? 'Spanish' : 'English',
-        current_step: 'privacy_acknowledge',
+        privacy_warning_shown: true,
+        current_step: 'collecting_full_name',
       };
 
     case 'ACKNOWLEDGE_PRIVACY':
+      // Legacy action kept for backward compatibility but unused in Wave 9.
       return {
         ...state,
         privacy_warning_shown: true,
@@ -251,6 +259,9 @@ function reduce(state: State, action: Action): State {
 
     case 'CAREGIVER_FLAG':
       return { ...state, caregiver_signal: true };
+
+    case 'DISMISS_FOLLOWUP_CHIPS':
+      return { ...state, followup_chips_dismissed: true };
 
     case 'COLLECT_FULL_NAME':
       return { ...state, first_name: action.first, last_name: action.last, current_step: 'collecting_location' };
@@ -359,20 +370,21 @@ function reduce(state: State, action: Action): State {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COPY = {
-  brand_en: 'Customer Service Box',
-  brand_es: 'Caja de Servicio al Cliente',
-  tagline_en: 'ClearPoint Support Intake · Bilingual · No cost',
-  tagline_es: 'Soporte ClearPoint · Bilingüe · Sin costo',
+  brand_en: 'ClearPoint Support Guide',
+  brand_es: 'Guía de Soporte ClearPoint',
+  tagline_en: 'Bilingual · Senior-friendly · No cost',
+  tagline_es: 'Bilingüe · Para personas mayores · Sin costo',
 
-  // Step 1 — language
-  welcome_en: 'Welcome to ClearPoint. Before we begin, would you prefer English or Spanish?',
-  welcome_es: 'Bienvenido a ClearPoint. Antes de empezar, ¿prefiere español o inglés?',
+  // Wave 9 — single conversational opener. NO menu wall. The privacy notice
+  // lives in the persistent gold band at the top of the scroll body.
+  welcome_en: "Hi, I'm the ClearPoint Support Guide. Tell me what's going on with your Medicare question, plan, doctor, medication, cost, letter, or benefits. I'll help organize it clearly and let you know when a licensed advisor should review it.",
+  welcome_es: 'Hola, soy la Guía de Soporte de ClearPoint. Dígame qué está pasando con su pregunta de Medicare, plan, doctor, medicamento, costo, carta o beneficios. Le ayudaré a organizarlo claramente y le diré cuándo un asesor licenciado debe revisarlo.',
 
-  // Step 2 — privacy (short, human, no jargon)
-  privacy_en: 'Thank you. I can help organize your Medicare question so a licensed advisor can review it. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here.',
-  privacy_es: 'Gracias. Puedo ayudarle a organizar su pregunta de Medicare para que un asesor licenciado pueda revisarla. Por favor no envíe número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí.',
-  privacy_continue_en: 'I understand',
-  privacy_continue_es: 'Entiendo',
+  // Kept for backward compatibility with the global-intent CHANGE_LANGUAGE re-prompt path.
+  privacy_en: "Hi, I'm the ClearPoint Support Guide. Tell me what's going on and I'll help organize it.",
+  privacy_es: 'Hola, soy la Guía de Soporte de ClearPoint. Dígame qué está pasando y le ayudaré a organizarlo.',
+  privacy_continue_en: 'Continue',
+  privacy_continue_es: 'Continuar',
 
   // Step 3 — name
   ask_name_en: 'To start, what is your full name?',
@@ -511,6 +523,7 @@ export function CustomerServiceBot() {
   const userPinnedUpRef = useRef(false);
   const prevMsgLenRef = useRef(0);
   const prevTypingRef = useRef(false);
+  const prevTypingFalseEdgeRef = useRef(false);
   const inputFocusedRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -544,6 +557,32 @@ export function CustomerServiceBot() {
       if (grew || typingEdge) safeScrollToBottom();
     });
   }, [state.messages.length, isTyping]);
+
+  // ── Wave 9 desktop input refocus ───────────────────────────────────
+  // After the bot finishes typing (isTyping flips true → false), the input
+  // is re-focused on desktop so the caller can keep typing without clicking.
+  // Skipped on touch devices (window.matchMedia '(pointer: coarse)') because
+  // forcing focus there pops the mobile keyboard unexpectedly.
+  useEffect(() => {
+    const wasTyping = prevTypingFalseEdgeRef.current;
+    prevTypingFalseEdgeRef.current = isTyping;
+    if (wasTyping && !isTyping) {
+      // Edge: typing just ended.
+      if (typeof window === 'undefined') return;
+      const isTouch = window.matchMedia?.('(pointer: coarse)')?.matches;
+      const allowedSteps =
+        state.current_step !== 'submitting' &&
+        state.current_step !== 'submitted' &&
+        state.current_step !== 'submission_failed' &&
+        state.current_step !== 'emergency_paused';
+      if (!isTouch && allowedSteps) {
+        // Defer one frame so the DOM has flushed any structural changes.
+        requestAnimationFrame(() => {
+          inputRef.current?.focus({ preventScroll: true });
+        });
+      }
+    }
+  }, [isTyping, state.current_step]);
 
   // ── Typing queue ──────────────────────────────────────────────────────
   function sleep(ms: number) { return new Promise<void>((r) => window.setTimeout(r, ms)); }
@@ -587,11 +626,10 @@ export function CustomerServiceBot() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Language pick (legacy entry point retained for the privacy_acknowledge JSX) ──
-  function handleAcknowledgePrivacy() {
-    dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
-    enqueueBot([{ text: state.language === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' }]);
-  }
+  // Wave 9: handleAcknowledgePrivacy removed — the privacy_acknowledge step
+  // no longer has its own UI. The persistent gold band in the scroll body is
+  // the disclosure surface. The PICK_LANGUAGE reducer now jumps straight to
+  // collecting_full_name.
 
   // ── Helper: compute intent classification + aggregated urgency/escalation ──
   function classifyWithAggregation(text: string, lang: SupportLang) {
@@ -985,6 +1023,18 @@ export function CustomerServiceBot() {
     dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
   }
 
+  // ── Inline narrowing chip (after intent_followup bot message) ────────
+  // Clicking a chip is equivalent to typing that chip's label. The chip row
+  // is dismissed so the caller doesn't see a stale chip set after answering.
+  function handleNarrowingChip(label: string) {
+    dispatch({ type: 'ADD_USER_MSG', text: label });
+    dispatch({ type: 'DISMISS_FOLLOWUP_CHIPS' });
+    dispatch({ type: 'CONCERN_CAPTURED' });
+    enqueueBot([
+      { text: state.language === 'es' ? COPY.ask_callback_pref_es : COPY.ask_callback_pref_en, pace: 'short' },
+    ]);
+  }
+
   // ── Quick language toggle (single chip) ───────────────────────────────
   function handleQuickLanguageToggle() {
     const next: SupportLang = state.language === 'es' ? 'en' : 'es';
@@ -1134,22 +1184,53 @@ export function CustomerServiceBot() {
       <div
         ref={bodyRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overscroll-contain min-h-0 max-h-[62vh] md:max-h-[640px]"
+        className="flex-1 overflow-y-auto overscroll-contain min-h-0 max-h-[64vh] md:max-h-[680px]"
       >
-        <div className="px-3 py-3 space-y-3">
+        {/* Persistent privacy/identity band — sits at the top of the scroll
+            body so it doesn't permanently consume vertical space. */}
+        <div className="bg-gold-100 border-b border-gold-200 px-4 py-2 text-[11.5px] leading-[1.45] text-earth-700">
+          <p>
+            {lang === 'es'
+              ? 'ClearPoint Senior Advisors es una agencia privada e independiente. No estamos conectados con Medicare ni con el gobierno federal. Por favor no envíe número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí.'
+              : 'ClearPoint Senior Advisors is a private independent agency. We are not connected with Medicare or the federal government. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here.'}
+          </p>
+        </div>
+        <div className="px-4 py-4 space-y-3.5">
           {state.messages.map((m) => (
             <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
-                className={`max-w-[88%] rounded-xl px-4 py-3 text-[14px] leading-[1.55] ${
+                className={`max-w-[85%] rounded-2xl px-4 py-3 text-[14.5px] leading-[1.55] ${
                   m.role === 'user'
-                    ? 'bg-earth-800 text-cream-50 rounded-br-sm'
-                    : 'bg-white text-earth-800 shadow-sm border border-cream-200 rounded-bl-sm'
+                    ? 'bg-earth-800 text-cream-50 rounded-br-md'
+                    : 'bg-white text-earth-800 shadow-xs border border-cream-200 rounded-bl-md'
                 }`}
               >
                 <div className="whitespace-pre-line">{m.text}</div>
               </div>
             </div>
           ))}
+
+          {/* Wave 9 — inline narrowing chips after the intent_followup bot turn.
+              Up to 4 small pills the caller can ignore by typing freely. */}
+          {state.current_step === 'intent_followup' &&
+            !isTyping &&
+            state.primary_intent &&
+            !state.followup_chips_dismissed && (() => {
+              const chips = intentFollowUpChips(state.primary_intent, state.language);
+              if (!chips || chips.length === 0) return null;
+              return (
+                <div className="flex flex-wrap gap-1.5 pl-1">
+                  {chips.slice(0, 4).map((c) => (
+                    <PillButton
+                      key={c}
+                      onClick={() => handleNarrowingChip(c)}
+                    >
+                      {c}
+                    </PillButton>
+                  ))}
+                </div>
+              );
+            })()}
 
           {isTyping && (
             <div className="flex justify-start">
@@ -1168,47 +1249,28 @@ export function CustomerServiceBot() {
             </div>
           )}
 
-          {/* Step-specific action panels ────────────────────────────── */}
+          {/* ── Wave 9 opening — premium pill chips, subtle, max 4 ── */}
           {state.current_step === 'language_pick' && !isTyping && (
-            <div className="space-y-3 pt-1">
-              {/* Quick-action chips (Phase 14 Flow A) — clickable shortcuts
-                  for common topics. Senior can type freely instead. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {QUICK_ACTIONS.map((qa) => (
-                  <button
-                    key={qa.id}
-                    onClick={() => handleQuickAction(qa.id)}
-                    className="w-full text-left px-4 py-3 bg-cream-50 border border-cream-200 text-earth-800 rounded-lg text-[14px] font-medium min-h-[48px] hover:bg-gold-100 hover:border-gold-300 transition-colors"
-                  >
-                    {lang === 'es' ? qa.label_es : qa.label_en}
-                  </button>
-                ))}
-              </div>
-              {/* Language toggle — single chip flips to the opposite language. */}
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[12px] text-earth-500">
-                  {lang === 'es'
-                    ? 'O escriba su pregunta abajo en sus propias palabras.'
-                    : 'Or type your question below in your own words.'}
-                </span>
-                <button
-                  onClick={() => handleQuickLanguageToggle()}
-                  className="px-3 py-2 bg-white border border-cream-300 text-earth-700 rounded-lg text-[12px] font-semibold hover:bg-cream-50 transition-colors flex-shrink-0"
-                  aria-label={lang === 'es' ? 'Cambiar a inglés' : 'Switch to Spanish'}
-                >
-                  🌐 {lang === 'es' ? 'English' : 'Español'}
-                </button>
-              </div>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {/* Language toggle pill */}
+              <PillButton
+                onClick={() => handleQuickLanguageToggle()}
+                aria-label={lang === 'es' ? 'Cambiar a inglés' : 'Switch to Spanish'}
+              >
+                🌐 {lang === 'es' ? 'English' : 'Español'}
+              </PillButton>
+              {/* 3 topic chips (Wave 9 reduced from 6 grid to 3 pills) */}
+              {QUICK_ACTIONS.map((qa) => (
+                <PillButton key={qa.id} onClick={() => handleQuickAction(qa.id)}>
+                  {lang === 'es' ? qa.label_es : qa.label_en}
+                </PillButton>
+              ))}
             </div>
           )}
 
-          {state.current_step === 'privacy_acknowledge' && !isTyping && (
-            <ActionRow>
-              <ActionButton onClick={handleAcknowledgePrivacy}>
-                {lang === 'es' ? COPY.privacy_continue_es : COPY.privacy_continue_en}
-              </ActionButton>
-            </ActionRow>
-          )}
+          {/* Wave 9: privacy_acknowledge step UI removed. Reducer auto-skips to
+              collecting_full_name. The persistent gold privacy band at the top
+              of the body provides the compliance disclosure. */}
 
           {state.current_step === 'state_fallback' && !isTyping && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
@@ -1384,6 +1446,32 @@ function ActionButton({
       ? 'bg-cream-100 border border-cream-300 text-earth-800 hover:bg-cream-200'
       : 'bg-earth-800 text-cream-50 hover:bg-earth-900';
   return <button onClick={onClick} className={`${base} ${styles}`}>{children}</button>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PillButton — Wave 9 premium small chip. Subtle, optional, ignorable.
+// Smaller than a real action button. Inline-flex so multiple wrap naturally
+// in a chip row instead of dominating a column.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PillButton({
+  onClick,
+  children,
+  'aria-label': ariaLabel,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+  'aria-label'?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={ariaLabel}
+      className="inline-flex items-center px-3 py-1.5 bg-white border border-cream-300 text-earth-700 rounded-full text-[12.5px] font-medium hover:bg-cream-50 hover:border-gold-400 hover:text-earth-900 active:bg-cream-100 transition-colors whitespace-nowrap"
+    >
+      {children}
+    </button>
+  );
 }
 
 function ConsentReview({
