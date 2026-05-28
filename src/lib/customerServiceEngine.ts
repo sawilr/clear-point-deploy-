@@ -27,6 +27,13 @@ export interface ConversationState {
   emotionalState: string;
   turnCount: number;
   needsHuman: boolean;
+  // ─── Wave 17: context memory across turns ───
+  /** Source of the bill once the user names it. Set once, used forever. */
+  billSource?: 'provider' | 'pharmacy' | 'plan' | 'unknown';
+  /** True if user mentioned having BOTH Medicaid + Medicare (dual eligible). */
+  dualEligible?: boolean;
+  /** Most recent dollar amount the user mentioned. */
+  amountMentioned?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -109,6 +116,41 @@ function detectProblemType(text: string): string {
   if (/\b(doctor|doctora|provider|hospital|cl[ií]nica|cobertura|coverage|red|network|specialist|especialista)\b/i.test(normalized)) return 'coverage';
   if (/\b(gracias|thank|thanks|hola|hello|hi|hey)\b/i.test(normalized) && normalized.length < 30) return 'casual';
   return 'general';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 17 — CONTEXT MEMORY HELPERS
+//
+// Scan the FULL user-message history so the bot never re-asks for something
+// the caller already said. Each helper looks at every prior user turn (plus
+// the current message) and returns what's been established so far.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fullUserHistory(state: ConversationState, currentMessage: string): string {
+  const past = state.messages.filter((m) => m.role === 'user').map((m) => m.content).join(' ');
+  return normalizeText(past + ' ' + currentMessage);
+}
+
+function detectBillSource(history: string): 'provider' | 'pharmacy' | 'plan' | null {
+  // Pharmacy wins over generic plan if both appear, because the call usually
+  // started with the bill discussion.
+  if (/\b(farmacia|pharmacy|drug ?store|cvs|walgreens|walmart pharmacy|de la farmacia|from (the )?pharmacy)\b/i.test(history)) return 'pharmacy';
+  if (/\b(doctor|doctora|m[eé]dico|hospital|cl[ií]nica|provider|specialist|especialista|del m[eé]dico|del hospital|from (the )?doctor|from (the )?hospital)\b/i.test(history)) return 'provider';
+  if (/\b(plan de medicare|medicare plan|advantage plan|del plan|from (the )?plan|monthly premium|prima mensual)\b/i.test(history)) return 'plan';
+  return null;
+}
+
+function detectDualEligible(history: string): boolean {
+  return /\b(medicaid (y|and) medicare|medicare (y|and) medicaid|dual[- ]?eligible|doble elegibilidad|tengo medicaid y medicare|tengo medicare y medicaid|both medicare and medicaid)\b/i.test(history);
+}
+
+function detectAmount(history: string): string | null {
+  // Match "$18", "18 dolares", "18 dollars", "18 de copago", "$18.50", etc.
+  const m = history.match(/\$?\s*(\d{1,4}(?:\.\d{2})?)\s*(d[oó]lares?|dollars?|de copay|de copago|copay|copago)/i);
+  if (m) return m[1];
+  const m2 = history.match(/\$\s*(\d{1,4}(?:\.\d{2})?)/);
+  if (m2) return m2[1];
+  return null;
 }
 
 function detectEmotion(text: string): string {
@@ -233,7 +275,17 @@ export function processMessage(
     newState.intent = problemType;
     newState.emotionalState = emotion;
 
-    // Emotional first
+    // ── WAVE 17 CONTEXT SCAN ──
+    // Scan the entire user history (plus this message) so we never re-ask
+    // for something the caller already told us.
+    const history = fullUserHistory(newState, userMessage);
+    const newSource = detectBillSource(history);
+    if (newSource && !newState.billSource) newState.billSource = newSource;
+    if (detectDualEligible(history)) newState.dualEligible = true;
+    const amt = detectAmount(history);
+    if (amt) newState.amountMentioned = amt;
+
+    // ── Emotional priority responses ──
     if (emotion === 'grieving') {
       const out = isSpanish
         ? `Lo siento mucho por su pérdida, ${newState.name}. Para temas de Medicare después de un fallecimiento, lo mejor es llamar al Social Security: 1-800-772-1213. ¿Necesita ayuda con algo específico?`
@@ -256,25 +308,87 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
 
-    // Problem-type follow-ups (one clarifying question, no chip walls)
-    if (problemType === 'bill') {
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 17: BILL / DRUG with CONTEXT MEMORY
+    //
+    // The exact Antonio failure was that the bot kept asking "is this from
+    // the doctor, pharmacy, or plan?" after Antonio had already said
+    // "DE LA FARMACIA" 2 turns earlier, then said he had dual eligibility,
+    // then said he paid $18. Now the bot honors billSource + dualEligible +
+    // amountMentioned and gives a contextually correct response.
+    // ──────────────────────────────────────────────────────────────────────
+    // Drug-specific first turn: if user said "my medication is expensive"
+    // and never named a source, ask the drug-specific question.
+    if (problemType === 'drug' && !newState.billSource && !newState.amountMentioned) {
       const out = isSpanish
-        ? `Entiendo, ${newState.name}. ¿Esta factura es del médico u hospital, de la farmacia, o del plan de Medicare? Por favor no envíe Medicare ID, Seguro Social ni datos bancarios aquí.`
+        ? `Sobre medicamentos, ${newState.name}. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
+        : `About medications, ${newState.name}. Is the issue the cost, not covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'bill' || problemType === 'drug') {
+      const src = newState.billSource;
+      const amount = newState.amountMentioned;
+      const dual = newState.dualEligible;
+
+      // Pharmacy source + dual eligible + amount known → fullest context response
+      if (src === 'pharmacy' && dual && amount) {
+        const out = isSpanish
+          ? `Anotado, ${newState.name}. Tiene Medicare y Medicaid (doble elegibilidad) y pagó $${amount} en la farmacia. Para personas con Medicare + Medicaid los copagos de medicamentos suelen ser mucho más bajos. No puedo confirmar la cantidad exacta aquí, pero un asesor licenciado puede revisar el formulario, la farmacia y si Extra Help / LIS se está aplicando. ¿Quiere que un asesor revise esto?`
+          : `Got it, ${newState.name}. You have both Medicare and Medicaid (dual eligible) and paid $${amount} at the pharmacy. For people with Medicare + Medicaid the drug copays are usually much lower. I can't confirm the exact amount here, but a licensed advisor can review the formulary, the pharmacy, and whether Extra Help / LIS is being applied. Would you like an advisor to review this?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Pharmacy source + dual eligible (no amount yet)
+      if (src === 'pharmacy' && dual) {
+        const out = isSpanish
+          ? `Gracias, ${newState.name}. Tiene Medicare y Medicaid (doble elegibilidad). Eso es importante — los copagos de medicamentos suelen ser muy bajos. ¿Cuánto pagó esta vez en la farmacia?`
+          : `Thanks, ${newState.name}. You have both Medicare and Medicaid (dual eligible). That matters — drug copays are usually very low. How much did you pay at the pharmacy this time?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Pharmacy source known (no dual signal)
+      if (src === 'pharmacy') {
+        const out = isSpanish
+          ? `Anotado, ${newState.name}. Es un cobro de la farmacia. ¿El problema es que es muy caro, que no esperaba ese costo, o que no le cubrieron el medicamento?`
+          : `Got it, ${newState.name}. Pharmacy charge. Is the issue that it's too expensive, that you didn't expect that cost, or that the medication wasn't covered?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Provider source known
+      if (src === 'provider') {
+        const out = isSpanish
+          ? `Anotado, ${newState.name}. Es una factura del doctor u hospital. ¿La cantidad parece correcta, o cree que hay un error en el cobro?`
+          : `Got it, ${newState.name}. It's a doctor or hospital bill. Does the amount look right, or do you think there's an error?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Plan source known
+      if (src === 'plan') {
+        const out = isSpanish
+          ? `Anotado, ${newState.name}. Es del plan de Medicare. ¿Es una prima mensual, un copago, o un cobro inesperado?`
+          : `Got it, ${newState.name}. It's from your Medicare plan. Is it a monthly premium, a copay, or an unexpected charge?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // No source captured yet — ask the source question ONCE
+      const out = isSpanish
+        ? `Entiendo, ${newState.name}. ¿Esta factura es del médico u hospital, de la farmacia, o del plan de Medicare? Por favor no envíe Medicare ID, Seguro Social, ni datos bancarios aquí.`
         : `Got it, ${newState.name}. Is this bill from a doctor or hospital, a pharmacy, or your Medicare plan? Please do not send Medicare ID, Social Security, or banking info here.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
+
     if (problemType === 'letter') {
       const out = isSpanish
         ? `Recibió una carta. ¿Es sobre renovación/cambios anuales (ANOC/EOC), Medicaid, Extra Help, IRMAA, o un aviso de cobro? No envíe Medicare ID, Seguro Social, ni una foto completa con datos sensibles.`
         : `You received a letter. Is it about renewal/annual changes (ANOC/EOC), Medicaid, Extra Help, IRMAA, or a collection notice? Please do not send Medicare ID, Social Security, or a full photo with sensitive details.`;
-      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-      return { response: out, newState, needsHuman: false };
-    }
-    if (problemType === 'drug') {
-      const out = isSpanish
-        ? `Sobre medicamentos. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
-        : `About medications. Is the issue the cost, not being covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -303,6 +417,24 @@ export function processMessage(
       const out = isSpanish
         ? `Hola ${newState.name}. ¿En qué puedo ayudarle con Medicare hoy?`
         : `Hi ${newState.name}. How can I help you with Medicare today?`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    // ── WAVE 17: "general" intent that mentions dual eligibility ──
+    // If the user just told us they have Medicaid + Medicare, recognize it
+    // and respond with that context instead of "give me more detail".
+    if (newState.dualEligible && newState.billSource) {
+      const out = isSpanish
+        ? `Gracias, ${newState.name}. Anoto que tiene Medicare y Medicaid, y que esto se refiere a ${newState.billSource === 'pharmacy' ? 'una factura de la farmacia' : newState.billSource === 'provider' ? 'una factura del médico u hospital' : 'el plan de Medicare'}. Eso ayuda mucho. ¿Cuál es el monto que ve, o qué le preocupa más sobre el cobro?`
+        : `Thanks, ${newState.name}. I'm noting that you have Medicare and Medicaid, and that this is about ${newState.billSource === 'pharmacy' ? 'a pharmacy bill' : newState.billSource === 'provider' ? 'a doctor or hospital bill' : 'your Medicare plan'}. That helps a lot. What's the amount you're seeing, or what concerns you most about the charge?`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (newState.dualEligible) {
+      const out = isSpanish
+        ? `Anotado, ${newState.name} — tiene Medicare y Medicaid (doble elegibilidad). Eso es importante porque sus costos de medicamentos y servicios suelen ser muy bajos. ¿Sobre qué situación quiere que le ayude?`
+        : `Got it, ${newState.name} — you have both Medicare and Medicaid (dual eligible). That matters because your drug and service costs are usually very low. What situation can I help you organize?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
