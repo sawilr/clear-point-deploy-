@@ -9,7 +9,7 @@ import type { KnowledgeEntry } from '../data/customerServiceKnowledge';
 // ============================================================================
 // TYPES — COMPLETE STATE MODEL
 // ============================================================================
-export type EmotionalState = 'calm' | 'confused' | 'frustrated' | 'urgent' | 'grieving' | 'grateful';
+export type EmotionalState = 'calm' | 'confused' | 'frustrated' | 'urgent' | 'grieving' | 'grateful' | 'angry';
 
 export type PrimaryIntent =
   | 'bill_question'
@@ -39,6 +39,10 @@ export type DocumentSubtype =
   | 'denial'
   | 'premium'
   | 'bill'
+  | 'irmaa_notice'
+  | 'snp_notice'
+  | 'welcome_letter'
+  | 'termination_notice'
   | 'plan_notice'
   | 'none';
 
@@ -55,6 +59,7 @@ export interface ExtractedEntities {
   mentionedMedicaid?: boolean;
   mentionedExtraHelp?: boolean;
   mentionedSNP?: boolean;
+  mentionedIRMAA?: boolean;
 }
 
 export interface IntentStackEntry {
@@ -76,6 +81,9 @@ export interface ConversationState {
   escalationCount: number;
   emotionalState: EmotionalState;
   language: 'en' | 'es';
+  /** V14: once true, language NEVER auto-changes via heuristics — only via
+   *  an explicit user click on the 🇺🇸 / 🇪🇸 flag button. */
+  languageLocked: boolean;
   visitorType?: 'beneficiary' | 'family' | 'provider' | 'agent';
   contactInfo?: { phone?: string; email?: string; bestTimeToCall?: string };
   unansweredQuestions: string[];
@@ -95,7 +103,8 @@ const emotionalPatterns: { pattern: RegExp; state: EmotionalState }[] = [
   { pattern: /\b(confused|i'?m confused|im confused|what does this mean)\b|confusi[oó]n|no entiendo|qu[eé] significa/i, state: 'confused' },
   { pattern: /\b(urgent|asap|right now|immediately|emergency|emergencia|ya mismo)\b/i, state: 'urgent' },
   { pattern: /\b(passed away|died|death)\b|falleci[oó]|muri[oó]|fallecimiento|esposo muri|esposa muri/i, state: 'grieving' },
-  { pattern: /\b(thank you|thanks|gracias|appreciate|agradezco|you helped)\b/i, state: 'grateful' },
+  { pattern: /\b(thank you|thanks|gracias|appreciate|agradezco|you helped|me ayudaste)\b/i, state: 'grateful' },
+  { pattern: /\b(angry|enojado|furioso|indignado|mad|furious)\b/i, state: 'angry' },
 ];
 
 export function detectEmotionalState(text: string): EmotionalState {
@@ -158,6 +167,12 @@ const extendedPatterns = {
   coverage_word: /\b(coverage|cobertura)\b/i,
   // Wave 14: bare "renewal" word
   renewal_word: /\b(renewal|renovaci[oó]n|recertification|recertificaci[oó]n)\b/i,
+  // V14: SNP / D-SNP / C-SNP / dual-eligible → coverage_question
+  snp_word: /\b(snp|d-snp|c-snp|special needs plan|dual eligible|chronic condition)\b/i,
+  // V14: IRMAA / income-related → letter_issue (so case_irmaa fires)
+  irmaa_word: /\b(irmaa|income[- ]?related|ajuste de ingresos|ingresos altos)\b/i,
+  // V14: moving / mudanza → enrollment_question (so SEP entry fires)
+  moving_word: /\b(moving|mudanza|relocate|new state|nuevo estado|mudarme)\b/i,
 };
 
 export function classifyIntent(text: string): ClassifiedIntent {
@@ -218,6 +233,18 @@ export function classifyIntent(text: string): ClassifiedIntent {
   if ((extendedPatterns as any).renewal_word?.test(lowerText)) {
     matches.push({ intent: 'letter_issue', confidence: 0.8, pattern: 'extended_renewal' });
   }
+  // V14: SNP / D-SNP / C-SNP → coverage_question (so snp_special_needs knowledge fires)
+  if ((extendedPatterns as any).snp_word?.test(lowerText)) {
+    matches.push({ intent: 'coverage_question', confidence: 0.9, pattern: 'extended_snp' });
+  }
+  // V14: IRMAA → letter_issue (so irmaa_appeal_ssa44 knowledge fires)
+  if ((extendedPatterns as any).irmaa_word?.test(lowerText)) {
+    matches.push({ intent: 'letter_issue', confidence: 0.9, pattern: 'extended_irmaa' });
+  }
+  // V14: moving → enrollment_question (so enrollment_sep_moving knowledge fires)
+  if ((extendedPatterns as any).moving_word?.test(lowerText)) {
+    matches.push({ intent: 'enrollment_question', confidence: 0.85, pattern: 'extended_moving' });
+  }
 
   // Sort by confidence
   matches.sort((a, b) => b.confidence - a.confidence);
@@ -262,9 +289,14 @@ const documentSubtypePatterns: { pattern: RegExp; subtype: DocumentSubtype }[] =
   { pattern: /\b(eob|explanation of benefits|explicaci[oó]n de beneficios)\b/i, subtype: 'eob' },
   { pattern: /\b(collection|past due|vencido|deuda|collector|cobro vencido)\b/i, subtype: 'collection' },
   { pattern: /\b(denial|denied|denegado|rechazado|negativa)\b/i, subtype: 'denial' },
-  { pattern: /\b(premium notice|monthly premium|prima mensual|aumento de prima|irmaa|income adjustment|ajuste de ingresos)\b/i, subtype: 'premium' },
+  // V14: IRMAA gets its own subtype, no longer rolled into premium
+  { pattern: /\b(irmaa|income[- ]?related|ajuste de ingresos|ingresos altos)\b/i, subtype: 'irmaa_notice' },
+  { pattern: /\b(premium notice|monthly premium|prima mensual|aumento de prima)\b/i, subtype: 'premium' },
   { pattern: /\b(bill|factura|cobro|cargo|billes|recibo|recibos)\b/i, subtype: 'bill' },
-  { pattern: /\b(snp|special needs plan|chronic condition|condici[oó]n cr[oó]nica|welcome letter|bienvenida|new member|nuevo miembro|termination|disenrollment|terminado|cancelado)\b/i, subtype: 'plan_notice' },
+  // V14: SNP / welcome / termination split out from plan_notice
+  { pattern: /\b(snp|special needs plan|d-snp|c-snp|chronic condition|condici[oó]n cr[oó]nica)\b/i, subtype: 'snp_notice' },
+  { pattern: /\b(welcome letter|bienvenida|new member|nuevo miembro)\b/i, subtype: 'welcome_letter' },
+  { pattern: /\b(termination|disenrollment|terminado|cancelado|lo voy a perder)\b/i, subtype: 'termination_notice' },
 ];
 
 export function detectDocumentSubtype(text: string): DocumentSubtype {
@@ -285,21 +317,31 @@ export function retrieveKnowledge(
   subtype: DocumentSubtype,
   _entities: ExtractedEntities,
   _language: 'en' | 'es',
+  userText?: string,
 ): KnowledgeEntry | null {
-  // Priority: exact match on intent + subtype
+  // Priority 1: exact match on intent + subtype
   for (const entry of customerServiceKnowledge) {
     if (entry.intent === intent && entry.subtype === subtype) {
       return entry;
     }
   }
-
-  // Then: intent only
+  // Priority 2 (V14): if userText provided, prefer an entry whose KEYWORDS
+  // appear in the message — this resolves the case where multiple entries
+  // share the same intent (e.g. enrollment_question has 4 entries).
+  if (userText) {
+    const lower = userText.toLowerCase();
+    for (const entry of customerServiceKnowledge) {
+      if (entry.intent === intent && entry.keywords?.some((kw) => lower.includes(kw.toLowerCase()))) {
+        return entry;
+      }
+    }
+  }
+  // Priority 3: first entry that matches the intent and has NO subtype.
   for (const entry of customerServiceKnowledge) {
     if (entry.intent === intent && !entry.subtype) {
       return entry;
     }
   }
-
   return null;
 }
 
@@ -325,6 +367,18 @@ export function generateResponse(
         ? ['Notificar fallecimiento', 'Cobertura sobreviviente', 'Hablar con asesor', 'Otra pregunta']
         : ['Report death', 'Survivor coverage', 'Talk to advisor', 'Other question'],
       followUpNeeded: false,
+    };
+  }
+
+  if (emotionalState === 'angry' && state.escalationCount < 2) {
+    return {
+      message: isSpanish
+        ? 'Entiendo que está enojado y tiene razón en estarlo. Déjeme ayudarle directamente. ¿Puede contarme qué pasó para que pueda resolverlo o conectarle con quien pueda ayudarle?'
+        : "I understand you're angry and you have every right to be. Let me help directly. Can you tell me what happened so I can resolve it or connect you with someone who can?",
+      chips: isSpanish
+        ? ['Mi problema', 'Quiero un asesor', 'Necesito una solución']
+        : ['My problem', 'I want an advisor', 'I need a solution'],
+      followUpNeeded: true,
     };
   }
 
@@ -388,7 +442,7 @@ export function generateResponse(
   }
 
   // ===== KNOWLEDGE RETRIEVAL =====
-  const knowledge = retrieveKnowledge(intent.primary, subtype, state.extractedEntities, lang);
+  const knowledge = retrieveKnowledge(intent.primary, subtype, state.extractedEntities, lang, state.lastUserMessage);
 
   if (knowledge) {
     const messageText = isSpanish ? knowledge.responseEs : knowledge.response;
@@ -611,9 +665,29 @@ function makeId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
 
+/**
+ * V14: detectFirstLanguage — only used at conversation start. Looks for
+ * accented characters and Spanish keywords to pick the initial language.
+ * After the first message the language is LOCKED and only an explicit
+ * override (flag-button click) can change it.
+ */
+function detectFirstLanguage(text: string): 'en' | 'es' {
+  if (/[áéíóúñ¿¡]/i.test(text)) return 'es';
+  const spanishWords = /\b(hola|gracias|c[oó]mo|qu[eé]|por favor|ayuda|factura|carta|seguro|m[eé]dico|farmacia|medicamento|cobertura|inscripci[oó]n|prima|recib[oí]|cobro|millones|llegaron|billes)\b/i;
+  const englishWords = /\b(hello|thank|how|what|please|help|bill|letter|insurance|doctor|pharmacy|drug|coverage|enrollment|premium|received|got)\b/i;
+  const es = (text.match(spanishWords) || []).length;
+  const en = (text.match(englishWords) || []).length;
+  if (es > en) return 'es';
+  if (en > es) return 'en';
+  return 'en';
+}
+
 export function processMessage(
   userMessage: string,
   existingState: ConversationState | null,
+  /** V14: explicit language override. Set ONLY when the user clicks the
+   *  🇺🇸 / 🇪🇸 flag button. Never set from automatic detection. */
+  explicitLanguage?: 'en' | 'es' | null,
 ): { response: string; chips: string[]; newState: ConversationState; needsHuman: boolean } {
   // Initialize or update state
   const state: ConversationState = existingState
@@ -628,13 +702,22 @@ export function processMessage(
         pendingFollowUps: [],
         escalationCount: 0,
         emotionalState: 'calm',
-        language: /[áéíóúñ¿¡]/i.test(userMessage) ? 'es' : 'en',
+        // V14: detect at first message and immediately LOCK
+        language: detectFirstLanguage(userMessage),
+        languageLocked: true,
         unansweredQuestions: [],
         lastUserMessage: '',
         lastBotResponse: '',
         turnCount: 0,
         needsHuman: false,
       };
+
+  // V14 LANGUAGE LOCK: only an EXPLICIT override (from the flag button)
+  // can change the language. No more heuristic flips on every message.
+  if (explicitLanguage && explicitLanguage !== state.language) {
+    state.language = explicitLanguage;
+    state.languageLocked = true;
+  }
 
   // Update state with new message
   state.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() });
@@ -655,10 +738,12 @@ export function processMessage(
     resolved: false,
   });
 
-  // Detect document subtype
+  // Detect document subtype — V14 broadened to also trigger on IRMAA / SNP /
+  // dual-eligible / welcome / termination keywords even when there's no
+  // explicit "letter/carta/notice" word.
   if (
     intent.primary === 'letter_issue' ||
-    /carta|letter|notice|aviso|eob|factura|bill|recibo|cobro|billes/i.test(userMessage)
+    /carta|letter|notice|aviso|eob|factura|bill|recibo|cobro|billes|irmaa|snp|d-snp|c-snp|dual eligible|welcome letter|termination|disenrollment/i.test(userMessage)
   ) {
     const subtype = detectDocumentSubtype(userMessage);
     state.currentDocumentSubtype = subtype;
@@ -672,7 +757,9 @@ export function processMessage(
   if (dollarMatch) state.extractedEntities.dollarAmount = parseFloat(dollarMatch[1]);
 
   if (/\b(medicaid)\b/i.test(userMessage)) state.extractedEntities.mentionedMedicaid = true;
-  if (/\b(extra help|lis|low income)\b/i.test(userMessage)) state.extractedEntities.mentionedExtraHelp = true;
+  if (/\b(extra help|lis|low income|ayuda extra|ayuda adicional)\b/i.test(userMessage)) state.extractedEntities.mentionedExtraHelp = true;
+  if (/\b(irmaa|income[- ]?related|ajuste de ingresos|ingresos altos)\b/i.test(userMessage)) state.extractedEntities.mentionedIRMAA = true;
+  if (/\b(snp|special needs|condici[oó]n cr[oó]nica)\b/i.test(userMessage)) state.extractedEntities.mentionedSNP = true;
 
   // Generate response
   const { message, chips } = generateResponse(state, intent, state.currentDocumentSubtype, emotionalState);

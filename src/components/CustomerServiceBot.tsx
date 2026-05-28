@@ -125,7 +125,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const escalateHandler = onEscalate || defaultEscalate;
 
   // Process user message
-  async function handleSendMessage(text: string) {
+  // V14: optional explicitLanguage param — set ONLY when the user clicks the
+  // flag-button toggle. Passes through to the engine so the language is
+  // overridden cleanly. Without it, the engine keeps the locked language.
+  async function handleSendMessage(text: string, explicitLanguage?: 'en' | 'es') {
     if (!text.trim() || isTyping) return;
 
     const userMessage: Message = {
@@ -148,7 +151,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     let newState: ConversationState | null = conversationState;
     let needsHuman = false;
     try {
-      const result = processMessage(text, conversationState);
+      const result = processMessage(text, conversationState, explicitLanguage ?? null);
       response = result.response;
       chips = result.chips;
       newState = result.newState;
@@ -161,8 +164,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       chips = language === 'es' ? ['Hablar con un asesor', 'Empezar de nuevo'] : ['Talk to an advisor', 'Start over'];
     }
 
-    // Sync language with the page if the engine detected a switch
-    if (newState && newState.language !== language) {
+    // V14: only sync UI language to engine state if the engine just locked-in
+    // the FIRST language OR an explicit override was applied. The engine no
+    // longer auto-flips, so there is nothing else to sync.
+    if (newState && newState.language !== language && (!conversationState || explicitLanguage)) {
       setLanguage(newState.language);
       setLang(newState.language);
     }
@@ -191,16 +196,29 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
 
   const handleChipClick = (chip: string) => handleSendMessage(chip);
 
+  // V14: explicit flag-button toggle. This is the ONLY way the language
+  // changes. It updates the local UI language, also calls setLang() to sync
+  // the page-level useLanguage hook, and — critically — applies an explicit
+  // override on the engine state so the LOCK respects the new language.
   function toggleLanguage() {
     const newLang: 'en' | 'es' = language === 'en' ? 'es' : 'en';
     setLanguage(newLang);
     setLang(newLang);
+    // Apply the language override to the engine state directly so the
+    // next user message processes in the new locked language.
+    if (conversationState) {
+      setConversationState({
+        ...conversationState,
+        language: newLang,
+        languageLocked: true,
+      });
+    }
     const sysMessage: Message = {
       id: 'lang-' + Date.now(),
       text:
         newLang === 'es'
-          ? 'Cambié a español. ¿En qué puedo ayudarle?'
-          : 'Switched to English. How can I help you?',
+          ? '🇪🇸 Cambié a español. Todos mis mensajes serán en español de ahora en adelante. ¿En qué puedo ayudarle?'
+          : '🇺🇸 Switched to English. All my messages will be in English from now on. How can I help you?',
       sender: 'bot',
       timestamp: new Date(),
       chips:

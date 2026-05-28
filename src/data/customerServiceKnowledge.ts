@@ -270,6 +270,51 @@ export const customerServiceKnowledge: KnowledgeEntry[] = [
     chips: ['Medicare Advantage OEP?', 'Special Enrollment Periods', 'Talk to advisor'],
     chipsEs: ['¿OEP de Advantage?', 'Períodos Especiales', 'Hablar con asesor'],
   },
+  // ─────────────────────────────────────────────────────────────────────
+  // V14 NEW ENTRIES (Sawil's master plan additions)
+  // ─────────────────────────────────────────────────────────────────────
+  {
+    id: 'irmaa_appeal_ssa44',
+    intent: 'letter_issue',
+    subtype: 'irmaa_notice',
+    keywords: ['irmaa', 'income related', 'ssa-44', 'ssa44', 'ajuste de ingresos', 'ingresos altos'],
+    response: "IRMAA (Income-Related Monthly Adjustment Amount) is an extra charge on Medicare Part B and Part D for higher-income beneficiaries. If your income has decreased due to retirement, divorce, death of a spouse, or work stoppage, you can appeal using form SSA-44 (Medicare Income-Related Monthly Adjustment Amount — Life-Changing Event). Submit it to Social Security with proof of the life-changing event. You generally have 60 days from the date of the IRMAA notice.",
+    responseEs: "IRMAA (Ajuste Mensual por Ingresos Altos) es un cargo extra en Medicare Parte B y Parte D para beneficiarios con ingresos más altos. Si sus ingresos disminuyeron por jubilación, divorcio, fallecimiento del cónyuge, o cese laboral, puede apelar usando el formulario SSA-44 (Ajuste Mensual de Medicare por Ingresos Altos — Evento de Cambio de Vida). Envíelo al Seguro Social con prueba del evento. Generalmente tiene 60 días desde la fecha del aviso IRMAA.",
+    chips: ['Download SSA-44', 'What counts as life-changing?', 'Where to submit?', 'Talk to advisor'],
+    chipsEs: ['Descargar SSA-44', '¿Qué es evento de vida?', '¿Dónde enviar?', 'Hablar con asesor'],
+  },
+  {
+    id: 'enrollment_sep_moving',
+    intent: 'enrollment_question',
+    keywords: ['moving', 'mudanza', 'new state', 'nuevo estado', 'relocate', 'mudarme'],
+    response: "Moving to a new address that's outside your current plan's service area triggers a Special Enrollment Period (SEP). You generally have 2 months before the move and 2 months after to switch plans. Call your plan or 1-800-MEDICARE to notify them of the move and enroll in a new plan that serves your new area.",
+    responseEs: "Mudarse a una nueva dirección fuera del área de servicio de su plan actual activa un Período Especial de Inscripción (SEP). Generalmente tiene 2 meses antes y 2 meses después de la mudanza para cambiar de plan. Llame a su plan o al 1-800-MEDICARE para notificar la mudanza e inscribirse en un nuevo plan que sirva su nueva área.",
+    chips: ['How to notify Medicare', 'Find plans in new area', 'Talk to advisor'],
+    chipsEs: ['Cómo notificar a Medicare', 'Buscar planes en nueva área', 'Hablar con asesor'],
+  },
+  {
+    id: 'snp_special_needs',
+    intent: 'coverage_question',
+    subtype: 'snp_notice',
+    keywords: ['snp', 'special needs plan', 'chronic condition', 'dual eligible', 'd-snp', 'c-snp', 'condicion cronica'],
+    response: "Special Needs Plans (SNPs) are Medicare Advantage plans for people with specific conditions: Dual-eligible (Medicare + Medicaid), Chronic conditions (diabetes, heart failure, certain other conditions), or Institutional (nursing home). SNPs offer coordinated care, often lower costs, and Part D drug coverage. A licensed advisor should review whether a SNP fits your situation.",
+    responseEs: "Los Planes de Necesidades Especiales (SNP) son planes de Medicare Advantage para personas con condiciones específicas: Doble elegibilidad (Medicare + Medicaid), Condiciones crónicas (diabetes, insuficiencia cardíaca, otras condiciones), o Institucionales (hogar de ancianos). Los SNPs ofrecen cuidado coordinado, a menudo costos más bajos, y cobertura de medicamentos Parte D. Un asesor licenciado debe revisar si un SNP le conviene.",
+    chips: ['Am I eligible?', 'D-SNP vs C-SNP', 'Talk to advisor'],
+    chipsEs: ['¿Soy elegible?', 'D-SNP vs C-SNP', 'Hablar con asesor'],
+  },
+  {
+    id: 'extra_help_auto_enrollment',
+    intent: 'general_question',
+    keywords: ['extra help automatic', 'lis automatic', 'medicaid auto', 'ayuda adicional automática', 'ayuda extra automatica'],
+    response: "If you have full Medicaid, you are usually automatically enrolled in Extra Help (LIS) — you do not have to apply separately. People with partial Medicaid or a Medicare Savings Program (MSP) may also qualify automatically. Social Security notifies you by mail. If you think you qualify but did not receive a letter, you can apply at ssa.gov or by calling 1-800-772-1213.",
+    responseEs: "Si tiene Medicaid completo, generalmente está inscrito automáticamente en Ayuda Adicional (LIS) — no tiene que solicitar por separado. Personas con Medicaid parcial o un Programa de Ahorro de Medicare (MSP) también pueden calificar automáticamente. El Seguro Social le notifica por correo. Si cree que califica pero no recibió carta, puede solicitar en ssa.gov o llamando al 1-800-772-1213.",
+    chips: ['Check my Extra Help status', 'I think I qualify', 'I lost Extra Help', 'Talk to advisor'],
+    chipsEs: ['Ver mi estado', 'Creo que califico', 'Perdí Ayuda Adicional', 'Hablar con asesor'],
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
+  // General Medicare KB (kept)
+  // ─────────────────────────────────────────────────────────────────────
   {
     id: 'kb_provider_network',
     intent: 'provider_question',
