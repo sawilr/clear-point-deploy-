@@ -18,11 +18,15 @@ import {
   detectSensitive,
   detectFrustration,
   detectLanguage,
+  detectGlobalIntent,
   classifyIntent,
   buildMultiTopicAck,
   buildCaseSummary,
   buildSupportTags,
   scanForbiddenPhrases,
+  splitFullName,
+  reflectBack,
+  parseZipOrState,
 } from '../src/lib/customerServiceEngine.ts';
 import { COPY } from '../src/components/CustomerServiceBot.tsx';
 
@@ -174,6 +178,51 @@ assert('tags include sensitive_warning_shown', tags.includes('sensitive_warning_
 assert('tags include customer_frustrated', tags.includes('customer_frustrated'));
 assert('tags primary intent ghl_tag present', tags.includes('medication_help'));
 assert('tags secondary intent ghl_tag present', tags.includes('medicaid_msp'));
+
+// ── 10. NEW WAVE 7 HELPERS ──
+console.log('\n=== 10. WAVE 7 HELPERS ===');
+
+// splitFullName with conversational prefixes
+const name1 = splitFullName('Hi, my name is Maria Rodriguez Lopez');
+assert('splitFullName strips "Hi, my name is"', name1.firstName === 'Maria' && name1.lastName === 'Rodriguez Lopez');
+
+const name2 = splitFullName('Soy Juan Pérez');
+assert('splitFullName strips "Soy"', name2.firstName === 'Juan' && name2.lastName === 'Pérez');
+
+const name3 = splitFullName('me llamo Ana');
+assert('splitFullName strips "me llamo"', name3.firstName === 'Ana' && name3.lastName === '');
+
+const name4 = splitFullName("I'm John");
+assert("splitFullName strips \"I'm\"", name4.firstName === 'John' && name4.lastName === '');
+
+const name5 = splitFullName('JOHN');
+assert('splitFullName capitalizes "JOHN"', name5.firstName === 'John');
+
+// detectGlobalIntent
+assert('detectGlobalIntent("start over") → RESTART', detectGlobalIntent('start over') === 'RESTART');
+assert('detectGlobalIntent("empezar de nuevo") → RESTART', detectGlobalIntent('empezar de nuevo') === 'RESTART');
+assert('detectGlobalIntent("talk to a person") → TALK_TO_HUMAN', detectGlobalIntent('talk to a person') === 'TALK_TO_HUMAN');
+assert('detectGlobalIntent("hablar con una persona") → TALK_TO_HUMAN', detectGlobalIntent('hablar con una persona') === 'TALK_TO_HUMAN');
+assert('detectGlobalIntent("mejor en ingles") → CHANGE_LANGUAGE_EN', detectGlobalIntent('mejor en ingles') === 'CHANGE_LANGUAGE_EN');
+assert('detectGlobalIntent("better in spanish") → CHANGE_LANGUAGE_ES', detectGlobalIntent('better in spanish') === 'CHANGE_LANGUAGE_ES');
+assert('detectGlobalIntent("my medication is expensive") → null (no false trigger)', detectGlobalIntent('my medication is expensive') === null);
+assert('detectGlobalIntent("") → null', detectGlobalIntent('') === null);
+
+// reflectBack
+const refl1 = reflectBack('Maria', '10001', 'NY', 'es');
+assert('reflectBack ES has name + state', refl1.includes('Maria') && refl1.includes('Nueva York'));
+const refl2 = reflectBack('John', '33101', 'FL', 'en');
+assert('reflectBack EN has name + state', refl2.includes('John') && refl2.includes('Florida'));
+
+// parseZipOrState resilience
+const loc1 = parseZipOrState('NY');
+assert('parseZipOrState "NY" → NY', loc1.state === 'NY');
+const loc2 = parseZipOrState('estoy en Connecticut');
+assert('parseZipOrState "estoy en Connecticut" → CT', loc2.state === 'CT');
+const loc3 = parseZipOrState('11201');
+assert('parseZipOrState "11201" → NY (prefix infer)', loc3.zip === '11201' && loc3.state === 'NY');
+const loc4 = parseZipOrState('99999');
+assert('parseZipOrState non-supported ZIP → Other', loc4.zip === '99999' && loc4.state === 'Other');
 
 // ── REPORT ──
 console.log(`\n=== TOTALS ===`);

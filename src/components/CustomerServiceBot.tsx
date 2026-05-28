@@ -32,6 +32,7 @@ import {
   classifyIntent,
   detectEmergency,
   detectFrustration,
+  detectGlobalIntent,
   detectLanguage,
   detectSensitive,
   buildCaseSummary,
@@ -41,6 +42,7 @@ import {
   advisorHandoffLine,
   intentFollowUp,
   parseZipOrState,
+  reflectBack,
   splitFullName,
   type CaseState,
   type SupportLang,
@@ -126,9 +128,15 @@ type Action =
   | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
   | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
   | { type: 'COLLECT_STATE_FALLBACK'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
+  // SET_INTENT_SIDE_CHANNEL: classifier picked up an intent while the user was
+  // answering a different field (name or location). We record it but DO NOT
+  // jump steps — the field collection continues until we have name + location.
+  | { type: 'SET_INTENT_SIDE_CHANNEL'; primary: IntentId; secondary: IntentId[]; confidence: 'high' | 'medium' | 'low'; requires_agent_review: boolean; urgency: IntentUrgency }
   | { type: 'SET_INTENT'; primary: IntentId; secondary: IntentId[]; confidence: 'high' | 'medium' | 'low'; requires_agent_review: boolean; urgency: IntentUrgency }
   | { type: 'CONCERN_CAPTURED' }
   | { type: 'WANTS_CALLBACK'; value: boolean }
+  | { type: 'JUMP_TO_CALLBACK_PREF' }
+  | { type: 'SWITCH_LANGUAGE'; lang: SupportLang }
   | { type: 'COLLECT_PHONE'; value: string }
   | { type: 'COLLECT_BEST_TIME'; value: string }
   | { type: 'SET_CONSENT'; value: boolean }
@@ -201,7 +209,11 @@ function reduce(state: State, action: Action): State {
       const detected = detectLanguage(action.text);
       let nextLang = state.language;
       let switches = state.language_switches;
-      if (detected !== 'mixed' && detected !== state.language && state.turn_count > 1) {
+      // Implicit mid-conversation switch: starting from the user's SECOND
+      // message (after the explicit language pick). We require ≥1 prior
+      // user turn so a single stopword on the first message doesn't override
+      // the explicit pick.
+      if (detected !== 'mixed' && detected !== state.language && state.turn_count >= 1) {
         nextLang = detected;
         switches++;
       }
@@ -235,18 +247,42 @@ function reduce(state: State, action: Action): State {
       return { ...state, first_name: action.first, last_name: action.last, current_step: 'collecting_location' };
 
     case 'COLLECT_LOCATION': {
-      // If parser inferred a state, jump straight to concern. Otherwise route
-      // through the state-fallback chips so we don't lose location entirely.
+      // Step-routing depends on what we already know:
+      //   - No state inferred → state_fallback chips so we don't lose location.
+      //   - State inferred + intent ALREADY captured side-channel → jump
+      //     straight to intent_followup. Don't make the user repeat themselves.
+      //   - State inferred + no intent yet → ask the concern in their own words.
+      let nextStep: Step;
+      if (!action.state) nextStep = 'state_fallback';
+      else if (state.primary_intent) nextStep = 'intent_followup';
+      else nextStep = 'collecting_concern';
       return {
         ...state,
         zip: action.zip,
         state: action.state,
-        current_step: action.state ? 'collecting_concern' : 'state_fallback',
+        current_step: nextStep,
       };
     }
 
     case 'COLLECT_STATE_FALLBACK':
-      return { ...state, state: action.value, current_step: 'collecting_concern' };
+      return {
+        ...state,
+        state: action.value,
+        current_step: state.primary_intent ? 'intent_followup' : 'collecting_concern',
+      };
+
+    case 'SET_INTENT_SIDE_CHANNEL':
+      // The caller volunteered concern info while answering a different field.
+      // Record the classification but DO NOT change current_step — the field
+      // collection (name / location) continues to completion.
+      return {
+        ...state,
+        primary_intent: action.primary,
+        secondary_intents: action.secondary,
+        confidence: action.confidence,
+        urgency: action.urgency,
+        requires_agent_review: action.requires_agent_review,
+      };
 
     case 'SET_INTENT':
       return {
@@ -261,6 +297,21 @@ function reduce(state: State, action: Action): State {
 
     case 'CONCERN_CAPTURED':
       return { ...state, current_step: 'asking_callback_pref' };
+
+    case 'JUMP_TO_CALLBACK_PREF':
+      // User pressed "talk to a person" mid-flow. Skip ahead.
+      return { ...state, current_step: 'asking_callback_pref' };
+
+    case 'SWITCH_LANGUAGE':
+      // Mid-conversation language switch (silent — bot just continues in the
+      // new language). Increments the counter for the bilingual GHL tag.
+      if (action.lang === state.language) return state;
+      return {
+        ...state,
+        language: action.lang,
+        language_switches: state.language_switches + 1,
+        preferred_language: action.lang === 'es' ? 'Spanish' : 'English',
+      };
 
     case 'WANTS_CALLBACK':
       return {
@@ -542,13 +593,28 @@ export function CustomerServiceBot() {
     enqueueBot([{ text: state.language === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' }]);
   }
 
-  // ── Free-text user submit  (this is the single entry point for typed input) ──
+  // ── Helper: compute intent classification + aggregated urgency/escalation ──
+  function classifyWithAggregation(text: string, lang: SupportLang) {
+    const result = classifyIntent(text, lang);
+    const primaryDef = getIntentDef(result.primary);
+    let urgency: IntentUrgency = primaryDef.default_urgency;
+    let needsReview = primaryDef.escalate_to_agent;
+    for (const sid of result.secondary) {
+      const s = getIntentDef(sid);
+      if (s.default_urgency === 'urgent') urgency = 'urgent';
+      else if (s.default_urgency === 'high' && urgency !== 'urgent') urgency = 'high';
+      if (s.escalate_to_agent) needsReview = true;
+    }
+    return { ...result, urgency, requires_agent_review: needsReview };
+  }
+
+  // ── Free-text user submit  (single entry point for typed input) ──
   function handleUserSubmit() {
     const text = inputText.trim();
     if (!text) return;
     setInputText('');
 
-    // 1. Emergency — never store; pause immediately.
+    // 1. EMERGENCY — highest priority. Never store, pause immediately.
     if (detectEmergency(text)) {
       dispatch({ type: 'ADD_USER_MSG', text });
       dispatch({ type: 'EMERGENCY_DETECTED' });
@@ -556,14 +622,49 @@ export function CustomerServiceBot() {
       return;
     }
 
-    // 2. Sensitive — never store the raw text.
+    // 2. SENSITIVE — never store the raw text.
     if (detectSensitive(text).isSensitive) {
       dispatch({ type: 'SENSITIVE_INTERCEPTED' });
       enqueueBot([{ text: state.language === 'es' ? COPY.sensitive_intercept_es : COPY.sensitive_intercept_en, pace: 'long' }]);
       return;
     }
 
-    // 3. Frustration — acknowledge first, then re-prompt the same step.
+    // 3. GLOBAL INTENT — restart, language switch, "talk to a person", stop.
+    //    These short-circuit normal field collection.
+    const gi = detectGlobalIntent(text);
+    if (gi === 'RESTART') {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      handleReset();
+      return;
+    }
+    if (gi === 'CHANGE_LANGUAGE_EN' && state.language !== 'en') {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      setLang('en');
+      dispatch({ type: 'SWITCH_LANGUAGE', lang: 'en' });
+      enqueueBot([{ text: rePromptEN(state.current_step) || COPY.ask_concern_en, pace: 'short' }]);
+      return;
+    }
+    if (gi === 'CHANGE_LANGUAGE_ES' && state.language !== 'es') {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      setLang('es');
+      dispatch({ type: 'SWITCH_LANGUAGE', lang: 'es' });
+      enqueueBot([{ text: rePromptES(state.current_step) || COPY.ask_concern_es, pace: 'short' }]);
+      return;
+    }
+    if (gi === 'TALK_TO_HUMAN') {
+      dispatch({ type: 'ADD_USER_MSG', text });
+      dispatch({ type: 'JUMP_TO_CALLBACK_PREF' });
+      // If we don't have an intent yet, default to call_requested so the
+      // advisor knows the caller asked for a person.
+      if (!state.primary_intent) {
+        const r = classifyWithAggregation('call me please', state.language);
+        dispatch({ type: 'SET_INTENT_SIDE_CHANNEL', primary: 'call_requested', secondary: r.secondary, confidence: 'high', urgency: r.urgency, requires_agent_review: true });
+      }
+      enqueueBot([{ text: state.language === 'es' ? COPY.ask_callback_pref_es : COPY.ask_callback_pref_en, pace: 'short' }]);
+      return;
+    }
+
+    // 4. FRUSTRATION — acknowledge, then re-prompt the same step softer.
     if (detectFrustration(text)) {
       dispatch({ type: 'FRUSTRATION_FLAG' });
       dispatch({ type: 'ADD_USER_MSG', text });
@@ -573,8 +674,44 @@ export function CustomerServiceBot() {
       return;
     }
 
-    // 4. Normal flow — branch by current step.
+    // 5. Mid-conversation language switch via stopword detection (no command).
+    //    Skip on turn 1 to avoid overriding the explicit language pick.
+    const detected = detectLanguage(text);
+    if (state.turn_count > 1 && detected !== 'mixed' && detected !== state.language) {
+      setLang(detected);
+      // The reducer's ADD_USER_MSG already increments language_switches when
+      // it sees a stable detected ≠ state.language. We don't double-dispatch
+      // SWITCH_LANGUAGE here — ADD_USER_MSG handles it.
+    }
+
+    // 6. Side-channel intent capture: the user may volunteer concern info
+    //    while answering name / location. Record it without disrupting the
+    //    current field collection.
+    const sideChannel = (() => {
+      if (state.primary_intent) return null; // already captured
+      if (text.length < 12) return null;     // too short to be meaningful
+      const inField = state.current_step === 'collecting_full_name' ||
+                      state.current_step === 'collecting_location' ||
+                      state.current_step === 'state_fallback';
+      if (!inField) return null;
+      const r = classifyWithAggregation(text, state.language);
+      if (r.confidence === 'high' || r.confidence === 'medium') return r;
+      return null;
+    })();
+
+    // 7. Normal flow — branch by current step.
     dispatch({ type: 'ADD_USER_MSG', text });
+
+    if (sideChannel) {
+      dispatch({
+        type: 'SET_INTENT_SIDE_CHANNEL',
+        primary: sideChannel.primary,
+        secondary: sideChannel.secondary,
+        confidence: sideChannel.confidence,
+        urgency: sideChannel.urgency,
+        requires_agent_review: sideChannel.requires_agent_review,
+      });
+    }
 
     switch (state.current_step) {
       case 'collecting_full_name': {
@@ -591,48 +728,59 @@ export function CustomerServiceBot() {
         const parsed = parseZipOrState(text);
         dispatch({ type: 'COLLECT_LOCATION', zip: parsed.zip, state: parsed.state });
         const lang = state.language;
-        if (parsed.state) {
-          // Proceed directly to concern.
-          enqueueBot([{ text: lang === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
-        } else {
-          // Couldn't infer state — show fallback chips.
+
+        if (!parsed.state) {
+          // Couldn't infer state — fallback chips next.
           enqueueBot([{ text: lang === 'es' ? COPY.state_fallback_es : COPY.state_fallback_en, pace: 'short' }]);
+          return;
+        }
+
+        // We have a state. Reflect what we know.
+        const knownIntent = sideChannel?.primary || state.primary_intent;
+        const reflection = reflectBack(state.first_name, parsed.zip, parsed.state, lang);
+        const msgs: QueuedMsg[] = [{ text: reflection, pace: 'short' }];
+
+        if (knownIntent) {
+          // Skip the concern question — go straight to intent-specific follow-up.
+          if ((sideChannel?.secondary?.length || state.secondary_intents.length) > 0) {
+            const sec = sideChannel?.secondary ?? state.secondary_intents;
+            msgs.push({ text: buildMultiTopicAck(knownIntent, sec, lang), pace: 'long' });
+          }
+          msgs.push({ text: intentFollowUp(knownIntent, lang), pace: 'long' });
+        } else {
+          // No intent yet — ask the open concern question.
+          msgs.push({ text: lang === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' });
+        }
+        enqueueBot(msgs);
+        return;
+      }
+
+      case 'state_fallback': {
+        const parsed = parseZipOrState(text);
+        const stateVal = parsed.state || 'Other';
+        dispatch({ type: 'COLLECT_STATE_FALLBACK', value: stateVal });
+        const lang = state.language;
+        const knownIntent = sideChannel?.primary || state.primary_intent;
+        if (knownIntent) {
+          enqueueBot([
+            { text: reflectBack(state.first_name, state.zip, stateVal, lang), pace: 'short' },
+            { text: intentFollowUp(knownIntent, lang), pace: 'long' },
+          ]);
+        } else {
+          enqueueBot([{ text: lang === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
         }
         return;
       }
 
-      case 'state_fallback':
-        // Typed-text path is unlikely here (we expect chip click), but accept it.
-        // Try parsing the text again for a state name match.
-        {
-          const parsed = parseZipOrState(text);
-          if (parsed.state) {
-            dispatch({ type: 'COLLECT_STATE_FALLBACK', value: parsed.state });
-          } else {
-            dispatch({ type: 'COLLECT_STATE_FALLBACK', value: 'Other' });
-          }
-          enqueueBot([{ text: state.language === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
-        }
-        return;
-
       case 'collecting_concern': {
-        const result = classifyIntent(text, state.language);
-        const primaryDef = getIntentDef(result.primary);
-        let urgency: IntentUrgency = primaryDef.default_urgency;
-        let needsReview = primaryDef.escalate_to_agent;
-        for (const sid of result.secondary) {
-          const s = getIntentDef(sid);
-          if (s.default_urgency === 'urgent') urgency = 'urgent';
-          else if (s.default_urgency === 'high' && urgency !== 'urgent') urgency = 'high';
-          if (s.escalate_to_agent) needsReview = true;
-        }
+        const result = classifyWithAggregation(text, state.language);
         dispatch({
           type: 'SET_INTENT',
           primary: result.primary,
           secondary: result.secondary,
           confidence: result.confidence,
-          urgency,
-          requires_agent_review: needsReview,
+          urgency: result.urgency,
+          requires_agent_review: result.requires_agent_review,
         });
 
         const msgs: QueuedMsg[] = [];
@@ -645,7 +793,7 @@ export function CustomerServiceBot() {
       }
 
       case 'intent_followup': {
-        // We have enough to organize the case. Bridge to callback preference.
+        // Caller answered the follow-up. Move to callback preference.
         dispatch({ type: 'CONCERN_CAPTURED' });
         enqueueBot([{ text: state.language === 'es' ? COPY.ask_callback_pref_es : COPY.ask_callback_pref_en, pace: 'short' }]);
         return;
@@ -716,8 +864,10 @@ export function CustomerServiceBot() {
       sensitive_data_intercepted: state.sensitive_data_intercepted,
       emergency_warning_shown: state.emergency_warning_shown,
       frustration_detected: state.frustration_detected,
+      wants_callback: state.wants_callback,
       consent_to_contact: state.consent_to_contact,
       first_name: state.first_name,
+      last_name: state.last_name,
       phone: state.phone,
       state: state.state,
       zip: state.zip,

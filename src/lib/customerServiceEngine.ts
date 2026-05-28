@@ -363,13 +363,155 @@ export function parseZipOrState(text: string): ParsedLocation {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function splitFullName(text: string): { firstName: string; lastName: string } {
-  const cleaned = text.trim().replace(/\s+/g, ' ');
+  let cleaned = text.trim().replace(/\s+/g, ' ');
   if (!cleaned) return { firstName: '', lastName: '' };
-  const parts = cleaned.split(' ');
-  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+
+  // Strip common conversational prefixes seniors actually type.
+  // We do this in a loop because someone may write "Hi, my name is Maria"
+  // (two prefixes back-to-back).
+  const prefixPatterns: RegExp[] = [
+    /^(hola|hi|hello|hey)[,.\s]+/i,
+    /^(my name is|i am|i'm|im|this is|name's|name is)\s+/i,
+    /^(me llamo|mi nombre es|soy|nombre[:\s]+|mi nombre[:\s]+)\s*/i,
+    /^buenos? (dias|tardes|noches)[,.\s]+/i,
+    /^(good (morning|afternoon|evening))[,.\s]+/i,
+  ];
+  let changed = true;
+  let safety = 0;
+  while (changed && safety < 6) {
+    changed = false;
+    for (const re of prefixPatterns) {
+      const next = cleaned.replace(re, '').trim();
+      if (next !== cleaned) {
+        cleaned = next;
+        changed = true;
+      }
+    }
+    safety++;
+  }
+  // Drop trailing period / comma if any.
+  cleaned = cleaned.replace(/[.,;:!?]+$/, '').trim();
+  if (!cleaned) return { firstName: '', lastName: '' };
+
+  const parts = cleaned.split(' ').filter(Boolean);
+  if (parts.length === 1) return { firstName: capitalize(parts[0]), lastName: '' };
   // Treat first token as first name, everything else as the surname (handles
   // common Hispanic two-surname patterns like "Maria Rodriguez Lopez").
-  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  return {
+    firstName: capitalize(parts[0]),
+    lastName: parts.slice(1).map(capitalize).join(' '),
+  };
+}
+
+function capitalize(word: string): string {
+  if (!word) return word;
+  // Preserve apostrophes and hyphens for names like O'Brien or Smith-Jones.
+  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GLOBAL-INTENT DETECTOR
+//
+// Mid-conversation interruptions a senior might type at any step:
+//   restart, go back, talk to a person, change my state, never mind, stop.
+// Returns one of a small set or null. Lets the UI handle them gracefully
+// instead of trying to interpret them as field data.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type GlobalIntent =
+  | 'RESTART'
+  | 'GO_BACK'
+  | 'TALK_TO_HUMAN'
+  | 'CHANGE_LANGUAGE_EN'
+  | 'CHANGE_LANGUAGE_ES'
+  | 'STOP_CONVERSATION'
+  | null;
+
+const RESTART_PHRASES = [
+  'restart', 'start over', 'start again', 'begin again', 'reset',
+  'reiniciar', 'empezar de nuevo', 'comenzar de nuevo', 'volver a empezar',
+];
+const GO_BACK_PHRASES = [
+  'go back', 'previous', 'last question', 'undo',
+  'atras', 'volver', 'pregunta anterior', 'deshacer',
+];
+const TALK_TO_HUMAN_PHRASES = [
+  'talk to a person', 'talk to someone', 'talk to a human', 'speak with someone',
+  'i want a person', 'real person', 'just call me', 'put me on the phone',
+  'hablar con una persona', 'hablar con alguien', 'hablar con un humano',
+  'quiero una persona', 'persona real', 'que me llamen', 'pasame con alguien',
+];
+const CHANGE_LANGUAGE_EN = [
+  'better in english', 'switch to english', 'in english', 'speak english',
+  'english please', 'change to english', 'mejor en ingles', 'cambiar a ingles',
+];
+const CHANGE_LANGUAGE_ES = [
+  'better in spanish', 'switch to spanish', 'in spanish', 'speak spanish',
+  'spanish please', 'change to spanish', 'mejor en espanol', 'cambiar a espanol',
+];
+const STOP_PHRASES = [
+  'stop', 'cancel', 'never mind', 'forget it',
+  'olvidalo', 'no importa', 'cancelar', 'detener',
+];
+
+export function detectGlobalIntent(text: string): GlobalIntent {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!lower) return null;
+  // Short messages are more likely to be commands. Long messages are more
+  // likely to be actual content — but we still check for unambiguous phrases.
+  for (const p of CHANGE_LANGUAGE_ES) if (lower.includes(p)) return 'CHANGE_LANGUAGE_ES';
+  for (const p of CHANGE_LANGUAGE_EN) if (lower.includes(p)) return 'CHANGE_LANGUAGE_EN';
+  // Restart / go-back / stop should match WORD-LEVEL to avoid eating words
+  // like "restarting my plan" from being treated as a control command.
+  const tokens = lower.split(/[^a-z0-9]+/);
+  const tokenSet = new Set(tokens);
+  if (tokens.length <= 4) {
+    for (const p of RESTART_PHRASES) if (lower.includes(p)) return 'RESTART';
+    for (const p of GO_BACK_PHRASES) if (lower.includes(p)) return 'GO_BACK';
+    for (const p of STOP_PHRASES) if (tokenSet.has(p)) return 'STOP_CONVERSATION';
+  }
+  for (const p of TALK_TO_HUMAN_PHRASES) if (lower.includes(p)) return 'TALK_TO_HUMAN';
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REFLECTION HELPER
+//
+// Produces a one-sentence acknowledgement of what the bot has captured so far.
+// Used at the transition from location → concern so the caller feels heard.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function reflectBack(name: string, zip: string, state: string, lang: SupportLang): string {
+  const stateName = stateDisplayName(state, lang);
+  const locationBit = zip && stateName
+    ? `${stateName} (ZIP ${zip})`
+    : zip
+      ? `ZIP ${zip}`
+      : stateName;
+
+  if (lang === 'es') {
+    if (name && locationBit) return `Gracias, ${name}. Veo que está en ${locationBit}.`;
+    if (name) return `Gracias, ${name}.`;
+    if (locationBit) return `Gracias. Veo que está en ${locationBit}.`;
+    return 'Gracias.';
+  }
+  if (name && locationBit) return `Thank you, ${name}. I see you're in ${locationBit}.`;
+  if (name) return `Thank you, ${name}.`;
+  if (locationBit) return `Thank you. I see you're in ${locationBit}.`;
+  return 'Thank you.';
+}
+
+function stateDisplayName(state: string, lang: SupportLang): string {
+  const map_en: Record<string, string> = {
+    NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida',
+    Other: 'your state',
+  };
+  const map_es: Record<string, string> = {
+    NY: 'Nueva York', NJ: 'Nueva Jersey', CT: 'Connecticut', FL: 'Florida',
+    Other: 'su estado',
+  };
+  const m = lang === 'es' ? map_es : map_en;
+  return m[state] || '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -393,8 +535,10 @@ export interface CaseState {
   sensitive_data_intercepted: boolean;
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
+  wants_callback?: boolean;
   consent_to_contact: boolean;
   first_name: string;
+  last_name?: string;
   phone: string;
   state: string;
   zip: string;
@@ -454,6 +598,10 @@ export function buildCaseSummary(s: CaseState): string {
   const needed = listMissingInfo(s, 'en');
   const neededStr = needed.length > 0 ? needed.join(', ') : 'none';
 
+  const wantsCallStr = s.wants_callback === undefined
+    ? 'not asked'
+    : s.wants_callback ? 'YES' : 'NO';
+
   return [
     '[Customer Service Box]',
     `Submitted: ${new Date().toISOString()}`,
@@ -470,6 +618,7 @@ export function buildCaseSummary(s: CaseState): string {
     `State: ${s.state || 'not provided'}`,
     `ZIP: ${s.zip || 'not provided'}`,
     `Best time to call: ${s.best_time_to_call || 'not specified'}`,
+    `Wants advisor call: ${wantsCallStr}`,
     `Consent to contact: ${s.consent_to_contact ? 'YES' : 'NO'}`,
     `Privacy warning shown: ${s.privacy_warning_shown ? 'YES' : 'NO'}`,
     `Sensitive info blocked: ${s.sensitive_data_intercepted ? 'YES' : 'NO'}`,
