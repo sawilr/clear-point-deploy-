@@ -46,58 +46,56 @@ check('"estoy en NJ" → NJ', detectDeclaredState('estoy en NJ') === 'NJ');
 check('"I live in connecticut" → CT', detectDeclaredState('I live in connecticut') === 'CT');
 check('plain "hello" → null', detectDeclaredState('hello') === null);
 
-console.log('\n=== FAKE LEAD: suspicious name "test" ===');
+console.log('\n=== FAKE LEAD V20: suspicious name "test" at advisor handoff ===');
+// V20 — name only requested at advisor handoff. Simulate that flow.
 let s = createInitialState();
-s = processMessage('english', s).newState;
-s = processMessage('test', s).newState;
-check('"test" name → flagged probableFakeLead', s.probableFakeLead === true, `flagged=${s.probableFakeLead}`);
-check('"test" name → nameIsValid false', s.nameIsValid === false);
-check('"test" name → dataConfidenceScore dropped', (s.dataConfidenceScore ?? 100) <= 70);
-check('"test" name → inconsistency recorded', (s.inconsistencies || []).some((i) => i.startsWith('name_suspicious')));
-// Bot still proceeds professionally — no accusation
-s = processMessage('10001', s).newState;
-check('still advanced past ZIP', s.step === 'asking_problem');
+s = processMessage('english', s).newState;        // → asking_topic
+s = processMessage('Talk to advisor', s).newState; // → asking_name
+check('V20 setup: step = asking_name', s.step === 'asking_name', `step=${s.step}`);
+const tRes = processMessage('test', s);
+s = tRes.newState;
+check('"test" name → REJECTED (graceful skip path)',
+  /does not look like a name|no problem/i.test(tRes.response));
+check('"test" name → inconsistency recorded',
+  (s.inconsistencies || []).some((i) => i.startsWith('name_suspicious')));
+check('"test" name → dataConfidenceScore dropped',
+  (s.dataConfidenceScore ?? 100) <= 70);
+check('"test" name → step bounced back to conversation', s.step === 'conversation');
 
-console.log('\n=== INCONSISTENCY: ZIP + declared state mismatch ===');
-// User says they live in FL, types NY ZIP
+console.log('\n=== INCONSISTENCY V20: ZIP + declared state mismatch ===');
+// V20 flow — user describes their issue with their state, then later provides ZIP.
 s = createInitialState();
 s = processMessage('english', s).newState;
-s = processMessage('Maria', s).newState;
-// User declares FL in their problem statement
+// User declares FL in their problem statement (no name/ZIP step in V20)
 s = processMessage('I live in Florida and I have a bill', s).newState;
-s = processMessage('10001', s).newState; // NY ZIP
+s = processMessage('10001', s).newState; // bare 5-digit ZIP captured in conversation
 check('ZIP 10001 + declared FL → mismatch flagged',
   (s.inconsistencies || []).some((i) => i.startsWith('zip_state_mismatch')),
   `inconsistencies=${(s.inconsistencies || []).join(',')}`);
 check('probableFakeLead = true', s.probableFakeLead === true);
 check('confidence score dropped significantly', (s.dataConfidenceScore ?? 100) <= 50);
 
-console.log('\n=== INCONSISTENCY: phone is fake number ===');
+console.log('\n=== INCONSISTENCY V20: phone is fake number ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
-s = processMessage('Maria', s).newState;
-s = processMessage('10001', s).newState;
-// At conversation step, mention fake phone in problem
+// V20 — user goes straight to topic without name/ZIP. Phone appears in message.
 s = processMessage('Call me at 1234567890 please', s).newState;
 check('fake phone → flagged', (s.inconsistencies || []).some((i) => i.startsWith('phone_'))
   || (s.inconsistencies || []).length > 0);
 check('phoneNumber captured anyway (for advisor visibility)', s.phoneNumber === '1234567890');
 
-console.log('\n=== CLEAN LEAD: passes all validation ===');
+console.log('\n=== CLEAN LEAD V20: passes all validation ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
-s = processMessage('Maria', s).newState;
-s = processMessage('10001', s).newState;
+// V20 — user describes problem directly, no name/ZIP step.
 s = processMessage('I have a doctor bill', s).newState;
 check('clean lead: probableFakeLead = false', s.probableFakeLead !== true);
 check('clean lead: dataConfidenceScore unchanged', s.dataConfidenceScore === 100);
 check('clean lead: no inconsistencies', (s.inconsistencies || []).length === 0);
 
-console.log('\n=== ANTONIO REGRESSION (Wave 17 must still pass) ===');
+console.log('\n=== ANTONIO REGRESSION V20 (Wave 17 must still pass) ===');
 s = createInitialState();
 s = processMessage('español', s).newState;
-s = processMessage('Antonio', s).newState;
-s = processMessage('10001', s).newState;
 s = processMessage('tengo un cobro de medicamentos', s).newState;
 s = processMessage('DE LA FARMACIA', s).newState;
 check('billSource=pharmacy preserved', s.billSource === 'pharmacy');

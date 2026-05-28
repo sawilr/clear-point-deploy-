@@ -62,7 +62,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (messages.length === 0) {
       setMessages([{
         id: 'welcome',
-        text: '🇺🇸 English or 🇪🇸 Español?\n\nFor better service, what language do you prefer?\n\n¿Qué idioma prefiere para servirle mejor?',
+        text: "Hi, I'm the ClearPoint Support Guide. I can help organize questions about Medicare bills, letters, coverage, medications, doctors, enrollment, or cost help.\n\nHola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar preguntas sobre facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
         sender: 'bot',
         timestamp: new Date(),
       }]);
@@ -231,7 +231,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     setSubmitState('idle');
     setMessages([{
       id: 'welcome-' + Date.now(),
-      text: '🇺🇸 English or 🇪🇸 Español?\n\nFor better service, what language do you prefer?\n\n¿Qué idioma prefiere para servirle mejor?',
+      text: "Hi, I'm the ClearPoint Support Guide. I can help organize questions about Medicare bills, letters, coverage, medications, doctors, enrollment, or cost help.\n\nHola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar preguntas sobre facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
       sender: 'bot',
       timestamp: new Date(),
     }]);
@@ -328,13 +328,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
                 onClick={() => handleLanguageSelect('en')}
                 className="px-6 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition shadow-sm"
               >
-                🇺🇸 English
+                English
               </button>
               <button
                 onClick={() => handleLanguageSelect('es')}
                 className="px-6 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition shadow-sm"
               >
-                🇪🇸 Español
+                Español
               </button>
             </div>
           )}

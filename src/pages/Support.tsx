@@ -21,8 +21,8 @@ export default function Support() {
         eyebrowEs="Servicio al Cliente"
         headline="ClearPoint Support Guide"
         headlineEs="Guía de Soporte ClearPoint"
-        subheadline="Organize your Medicare question or concern so a licensed advisor can review it and follow up. Bilingual guidance. No pressure. No cost for our service."
-        subheadlineEs="Organice su pregunta o situación de Medicare para que un asesor licenciado pueda revisarla y darle seguimiento. Orientación bilingüe. Sin presión. Sin costo por nuestro servicio."
+        subheadline="Organize your Medicare question so a licensed advisor can review it and follow up. Bilingual. No pressure. No cost for our service."
+        subheadlineEs="Organice su pregunta de Medicare para que un asesor licenciado la revise y le dé seguimiento. Bilingüe. Sin presión. Sin costo por nuestro servicio."
         variant="page"
         compact
         tighter

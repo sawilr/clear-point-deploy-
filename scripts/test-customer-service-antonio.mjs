@@ -17,22 +17,16 @@ function check(label, cond, detail = '') {
 
 console.log('\n=== ANTONIO SCREENSHOT REPLAY ===');
 
-// Step 1: pick Spanish
+// Step 1: pick Spanish — V20 goes language → asking_topic (chips), no name/ZIP.
 let s = createInitialState();
 let r = processMessage('español', s);
 s = r.newState;
 check('Step 1: language=es', s.language === 'es');
+check('Step 1 V20: step → asking_topic (not asking_name)', s.step === 'asking_topic');
 
-// Step 2: name
-r = processMessage('Antonio', s);
-s = r.newState;
-check('Step 2: name=Antonio', s.name === 'Antonio');
-
-// Step 3: ZIP
-r = processMessage('10001', s);
-s = r.newState;
-check('Step 3: state=NY', s.state === 'NY');
-check('Step 3: step=asking_problem', s.step === 'asking_problem');
+// V20 — name/ZIP no longer auto-collected. Skip directly to topic.
+// (Antonio context memory is still the critical regression; flow now starts
+// with the user describing the bill.)
 
 // Step 4: tell about the bill
 r = processMessage('tengo un cobro de medicamentos', s);
@@ -81,8 +75,6 @@ check('Step 7: bot mentions dual eligibility benefit',
 console.log('\n=== ANTONIO ENGLISH EQUIVALENT ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
-s = processMessage('Antonio', s).newState;
-s = processMessage('10001', s).newState;
 s = processMessage('I have a drug bill', s).newState;
 s = processMessage('from the pharmacy', s).newState;
 check('EN: billSource=pharmacy', s.billSource === 'pharmacy');

@@ -1,17 +1,44 @@
 // ============================================================================
-// CUSTOMER SERVICE ENGINE V15 — PROFESSIONAL ENTERPRISE
-// NO language mixing. NO auto-detect. YES name + ZIP validation.
-// State machine: language → name → ZIP → problem → conversation.
+// CUSTOMER SERVICE ENGINE V20 — ISSUE-FIRST, IDENTITY AT HANDOFF
+//
+// World-class pattern (Intercom Fin, Klarna, Botpress 2026):
+//   language → topic chips → conversation → (only at handoff) identity.
+//
+// Name + ZIP are NEVER required to start helping the user. They are
+// collected at the END only when the user requests advisor follow-up.
 // ============================================================================
 
 export type Language = 'en' | 'es' | null;
 
 export type ConversationStep =
   | 'asking_language'
-  | 'asking_name'
-  | 'asking_zip'
-  | 'asking_problem'
-  | 'conversation';
+  | 'asking_topic'          // V20: step 2 — show 7 topic chips, gather intent
+  | 'asking_name'           // legacy / identity at handoff
+  | 'asking_zip'            // legacy / identity at handoff
+  | 'asking_problem'        // legacy
+  | 'conversation'
+  | 'collecting_identity';  // V20: terminal pre-handoff (name → phone)
+
+// V20 — topic chips shown immediately after language pick.
+export const TOPIC_CHIPS_EN = [
+  'Bill',
+  'Letter',
+  'Coverage',
+  'Medications',
+  'Doctor/Provider',
+  'Enrollment',
+  'Talk to advisor',
+] as const;
+
+export const TOPIC_CHIPS_ES = [
+  'Factura',
+  'Carta',
+  'Cobertura',
+  'Medicamentos',
+  'Doctor/Proveedor',
+  'Inscripción',
+  'Hablar con asesor',
+] as const;
 
 export interface ConversationState {
   conversationId: string;
@@ -64,6 +91,10 @@ export interface ConversationState {
   repeatedSamePromptCount?: number;
   /** Quick-reply chip labels the UI should render right now. */
   quickReplies?: string[];
+  // ─── Wave 20: deferred identity collection ───
+  /** Set when the user picked "Talk to advisor" — engine collects name + ZIP
+   *  and then finalizes (needsHuman=true) instead of bouncing to triage. */
+  pendingAdvisorHandoff?: boolean;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -90,9 +121,17 @@ function getStateFromZip(zip: string): string | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SUSPICIOUS_NAMES = new Set([
+  // Classic placeholders
   'test', 'prueba', 'aaa', 'bbb', 'ccc', '123', 'asdf', 'qwerty', 'qwertyu',
   'user', 'admin', 'nombre', 'name', 'fake', 'falso', 'sample', 'demo',
   'foo', 'bar', 'baz', 'xxx', 'yyy', 'zzz', 'null', 'undefined',
+  // V20 — common throwaway placeholders the user types instead of a real name
+  'toto', 'tata', 'titi', 'nono', 'nooo', 'noo', 'nope', 'yes', 'si', 'sí',
+  'no', 'ok', 'okay', 'k', 'a', 'b', 'c', 'd', 'x', 'q', 'qq',
+  'hola', 'hello', 'hi', 'hey', 'sup',
+  // Insults that callers sometimes type into the name field
+  'idiota', 'pendejo', 'cabron', 'culero', 'mierda', 'puta',
+  'idiot', 'stupid', 'dumb', 'asshole', 'fuck', 'shit',
 ]);
 
 export function validateName(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
@@ -196,10 +235,26 @@ export function detectAbuseOrFrustration(text: string): {
   const mild =
     /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
   if (mild.test(lower)) return { detected: true, severity: 'mild' };
+  // V20 — soft refusals that signal disengagement. "nooo" / "ya no" / "no quiero"
+  // are not insults but still mean the form is failing. Treat as mild.
+  const soft = /^(no+|nope|nah|no quiero|ya no|d[eé]jalo|d[eé]jeme|leave me alone)\.?$/i;
+  if (soft.test(lower.trim())) return { detected: true, severity: 'mild' };
   return { detected: false, severity: 'mild' };
 }
 
-/** Returns the recovery menu + chip labels for the current language. */
+/**
+ * V20 — strict language switch detector. Only fires on an EXACT, intentional
+ * request. "factura" alone does NOT switch a Spanish-locked session to
+ * English just because of a single Spanish word in an English text.
+ */
+export function detectExplicitLanguageSwitch(text: string): 'en' | 'es' | null {
+  const t = text.toLowerCase().trim().replace(/[.,!?]+$/, '');
+  if (/^(english|in english|switch to english|speak english|h[aá]bla(me|r)? (en )?ingl[eé]s|english please|cambiar a ingl[eé]s|cambiar al ingl[eé]s)$/i.test(t)) return 'en';
+  if (/^(espa[ñn]ol|spanish|in spanish|switch to spanish|h[aá]bla(me|r)? (en )?espa[ñn]ol|speak spanish|spanish please|cambiar a espa[ñn]ol|cambiar al espa[ñn]ol)$/i.test(t)) return 'es';
+  return null;
+}
+
+/** V20 — recovery menu + chip labels using Sawil's exact spec wording. */
 function getRecoveryResponse(state: ConversationState): { response: string; chips: string[] } {
   const isSpanish = state.language === 'es';
   if (isSpanish) {
@@ -207,16 +262,16 @@ function getRecoveryResponse(state: ConversationState): { response: string; chip
       ? `Entiendo que está molesto, ${state.name}. Vamos a hacerlo más fácil.`
       : 'Entiendo que está molesto. Vamos a hacerlo más fácil.';
     return {
-      response: `${opener} No le voy a pedir el ZIP ahora. Dígame qué necesita revisar: una factura, una carta, cobertura, medicamentos, doctor/proveedor, inscripción o prefiere hablar con un asesor.`,
-      chips: ['Factura', 'Carta', 'Cobertura', 'Medicamentos', 'Doctor/Proveedor', 'Hablar con asesor'],
+      response: `${opener} No le voy a pedir ZIP ni información personal ahora. ¿Qué necesita revisar?`,
+      chips: [...TOPIC_CHIPS_ES],
     };
   }
   const opener = state.name
     ? `I understand you're frustrated, ${state.name}. Let's make this easier.`
     : "I understand you're frustrated. Let's make this easier.";
   return {
-    response: `${opener} I won't ask for ZIP right now. What do you need help with: a bill, a letter, coverage, medications, doctor/provider, enrollment, or would you rather speak with an advisor?`,
-    chips: ['Bill', 'Letter', 'Coverage', 'Medications', 'Doctor/Provider', 'Talk to advisor'],
+    response: `${opener} I won't ask for ZIP or personal information right now. What do you need help with?`,
+    chips: [...TOPIC_CHIPS_EN],
   };
 }
 
@@ -404,26 +459,50 @@ export function processMessage(
     }
   }
 
+  // V20 — strict language switch (only on explicit request).
+  if (newState.language && newState.step !== 'asking_language') {
+    const sw = detectExplicitLanguageSwitch(userMessage);
+    if (sw && sw !== newState.language) {
+      newState.language = sw;
+      const out = sw === 'es'
+        ? 'Perfecto, ahora hablo en español. ¿Qué necesita revisar?'
+        : 'Got it, switching to English. What do you need help with?';
+      newState.quickReplies = sw === 'es' ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
   // ───── STEP 1: ASKING LANGUAGE ─────
   if (newState.step === 'asking_language') {
     const msg = userMessage.toLowerCase();
     if (msg.includes('english') || msg === 'en') {
       newState.language = 'en';
-      newState.step = 'asking_name';
-      const out = "Great. What's your first name? (Just first name please)";
+      newState.step = 'asking_topic';
+      const out = 'Great. What do you need help with today?';
+      newState.quickReplies = [...TOPIC_CHIPS_EN];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (msg.includes('español') || msg.includes('espanol') || msg === 'es') {
       newState.language = 'es';
-      newState.step = 'asking_name';
-      const out = 'Perfecto. ¿Cuál es su nombre? (Solo nombre por favor)';
+      newState.step = 'asking_topic';
+      const out = 'Perfecto. ¿Qué necesita revisar hoy?';
+      newState.quickReplies = [...TOPIC_CHIPS_ES];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     const out = 'Please select English or Español. Por favor seleccione English o Español.';
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
+  }
+
+  // ───── STEP 2 (V20): ASKING TOPIC ─────
+  // User clicks a chip OR types the issue in their own words. Either way,
+  // we route into the conversation block without asking for name or ZIP.
+  if (newState.step === 'asking_topic') {
+    newState.step = 'conversation';
+    // Fall through to the conversation block below.
   }
 
   // ───── STEP 2: ASKING NAME ─────
@@ -451,21 +530,28 @@ export function processMessage(
       safety++;
     }
     const rawName = cleaned.split(/\s+/)[0]?.replace(/[.,;:!?]+$/, '') || '';
-    // V18 validation — if obviously suspicious ("test"/"aaa"/etc.) we still
-    // accept it to keep the conversation moving but flag the lead silently.
     const nv = validateName(rawName);
-    if (!nv.cleaned || nv.cleaned.length < 2) {
-      const out = isSpanish ? 'Por favor, dígame su nombre.' : 'Please tell me your name.';
+    // V20 — strict name validation. Suspicious / fake names (TOTO, nooo,
+    // insults, repeated chars) are REJECTED with a graceful skip path.
+    if (!nv.isValid) {
+      newState.failedNameAttempts = (newState.failedNameAttempts || 0) + 1;
+      flagInconsistency(newState, `name_${nv.reason || 'invalid'}`, 30);
+      // Return to conversation with topic chips. The user can keep going
+      // without giving us a real name — identity is optional.
+      newState.step = 'conversation';
+      newState.quickReplies = isSpanish ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      const out = isSpanish
+        ? 'Parece que eso no es un nombre. No hay problema. Podemos seguir sin nombre por ahora. ¿Qué necesita revisar?'
+        : 'That does not look like a name. No problem. We can continue without a name for now. What do you need help with?';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     newState.name = nv.cleaned;
-    newState.nameIsValid = nv.isValid;
-    if (!nv.isValid) flagInconsistency(newState, `name_${nv.reason}`, 30);
+    newState.nameIsValid = true;
     newState.step = 'asking_zip';
     const out = isSpanish
-      ? `Gracias ${newState.name}. ¿Cuál es su código postal? (Solo trabajamos en NY, NJ, FL, CT)`
-      : `Thanks ${newState.name}. What's your ZIP code? (We only serve NY, NJ, FL, CT)`;
+      ? `Gracias ${newState.name}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
+      : `Thanks ${newState.name}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
   }
@@ -486,10 +572,10 @@ export function processMessage(
         if ((newState.failedZipAttempts || 0) >= 2) {
           return enterRecoveryMode(newState, 'zip_loop');
         }
-        // First miss → rephrase, offer an alternative path.
+        // V20 first miss — Sawil's exact wording.
         const out = isSpanish
-          ? `Necesito un código postal de 5 dígitos para saber si servimos su área (por ejemplo 10001, 33101, 07001). Si prefiere, dígame directamente qué necesita revisar y seguimos.`
-          : `I need a 5-digit ZIP code to know if we serve your area (for example 10001, 33101, 07001). If you prefer, just tell me what you need to look at and we'll continue.`;
+          ? 'Ese no parece ser un ZIP de 5 dígitos. Puede escribirlo de nuevo o decirme primero qué necesita revisar.'
+          : 'That does not look like a 5-digit ZIP. You can enter it again or tell me what you need help with first.';
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -508,6 +594,16 @@ export function processMessage(
       newState.zipCodeIsValid = false;
       newState.isValidState = false;
       flagInconsistency(newState, `zip_not_in_service_area: ${zip}`, 25);
+      // V20 — finalize handoff anyway if user wanted an advisor.
+      if (newState.pendingAdvisorHandoff) {
+        newState.step = 'conversation';
+        newState.needsHuman = true;
+        const outA = isSpanish
+          ? `Gracias, ${newState.name}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ, FL y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
+          : `Thank you, ${newState.name}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, FL, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
+        newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
+        return { response: outA, newState, needsHuman: true };
+      }
       newState.step = 'asking_problem';
       const out = isSpanish
         ? `Gracias. Actualmente solo servimos NY, NJ, FL y CT. Aun así puedo orientarle con preguntas generales de Medicare. Cuénteme qué está pasando.`
@@ -519,6 +615,16 @@ export function processMessage(
     newState.zipCodeIsValid = true;
     newState.state = detectedState;
     newState.isValidState = true;
+    // V20 — if we were collecting identity for advisor handoff, finalize it.
+    if (newState.pendingAdvisorHandoff) {
+      newState.step = 'conversation';
+      newState.needsHuman = true;
+      const outA = isSpanish
+        ? `Gracias, ${newState.name}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
+        : `Thank you, ${newState.name}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+      newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
+      return { response: outA, newState, needsHuman: true };
+    }
     newState.step = 'asking_problem';
     const out = isSpanish
       ? `Gracias ${newState.name}. Cuénteme qué está pasando con Medicare. Descríbalo con sus propias palabras.`
@@ -714,12 +820,31 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    // Wave 19 — explicit "talk to advisor" / "hablar con asesor" handoff.
+    // V20 — "Talk to advisor" / "Hablar con asesor". Identity is asked
+    // ONLY now (at handoff). If we already have the name, jump to ZIP.
+    // If we already have both, finalize the handoff.
     if (problemType === 'advisor') {
+      newState.pendingAdvisorHandoff = true;
+      if (!newState.name) {
+        newState.step = 'asking_name';
+        const out = isSpanish
+          ? 'Por supuesto. Para que un asesor pueda darle seguimiento, ¿cuál es su primer nombre?'
+          : 'Of course. So an advisor can follow up, what is your first name?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      if (!newState.zipCode) {
+        newState.step = 'asking_zip';
+        const out = isSpanish
+          ? `Gracias ${newState.name}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
+          : `Thanks ${newState.name}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Por supuesto${newState.name ? ', ' + newState.name : ''}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
-        : `Of course${newState.name ? ', ' + newState.name : ''}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+        ? `Gracias, ${newState.name}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
+        : `Thank you, ${newState.name}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }
