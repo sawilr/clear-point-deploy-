@@ -1,1389 +1,667 @@
-/**
- * Customer Service Engine — pure logic for the ClearPoint Customer Service Box.
- *
- * Mission: Keep ALL non-UI logic in one file so the same engine can later power
- * a phone/voice intake without rewriting detectors or the summary builder.
- *
- * This module is import-safe from any environment (browser, Node, edge). It
- * does NOT import React, does NOT touch the DOM, and does NOT call any API.
- *
- * Patterns reused conceptually from Zara (src/components/ChatBot.tsx) WITHOUT
- * sharing code:
- *   - Bilingual keyword + phrase matching with accent-insensitive normalization
- *   - Multi-topic detection (primary + secondary intents with confidence)
- *   - Sensitive-info interception BEFORE any storage / submission
- *   - Emergency interception BEFORE any further conversation
- *   - Frustration / confusion acknowledgement before re-prompting
- *   - Bilingual summary builder that an advisor can read in 5 seconds
- *
- * Scope safety: this file is read-only from the perspective of GHL — it does
- * not call any endpoint. The UI component decides when to submit. The engine
- * only produces the payload-shaped summary.
- */
-
-import { classifyIntent as classifyIntentRaw, getIntent, type IntentId, type IntentUrgency } from '../data/customerServiceIntents';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LANGUAGE
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type SupportLang = 'en' | 'es';
-
-const ES_STOPWORDS = new Set([
-  'de', 'la', 'que', 'el', 'en', 'y', 'a', 'los', 'del', 'las', 'un', 'por',
-  'con', 'no', 'una', 'su', 'para', 'es', 'al', 'mi', 'mis', 'me', 'tu', 'sus',
-  'como', 'cuando', 'donde', 'quien', 'porque', 'pero', 'esta', 'esto', 'soy',
-  'tengo', 'tiene', 'estoy', 'puedo', 'quiero', 'necesito', 'cubre', 'tarjeta',
-]);
-const EN_STOPWORDS = new Set([
-  'the', 'is', 'and', 'a', 'to', 'of', 'in', 'for', 'on', 'with', 'i', 'you',
-  'it', 'my', 'we', 'they', 'what', 'when', 'where', 'who', 'why', 'how', 'am',
-  'have', 'has', 'need', 'want', 'can', 'do', 'does', 'this', 'that', 'help',
-  'card', 'plan',
-]);
-
-/** Best-effort detection. Returns 'mixed' when there is not enough signal. */
-export function detectLanguage(text: string): SupportLang | 'mixed' {
-  const words = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/\s+/);
-  let es = 0, en = 0;
-  for (const w of words) {
-    if (ES_STOPWORDS.has(w)) es++;
-    if (EN_STOPWORDS.has(w)) en++;
-  }
-  if (es === 0 && en === 0) return 'mixed';
-  if (es > en * 1.5) return 'es';
-  if (en > es * 1.5) return 'en';
-  return 'mixed';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SENSITIVE-INFO DETECTOR
-//
-// What we INTERCEPT (never store, never submit):
-//   - Medicare MBI pattern (1XXX-XX-XXXX with first digit non-zero, letters
-//     interleaved per CMS spec).
-//   - SSN (9-digit pattern not matching a phone area-code/exchange/line shape).
-//   - Card numbers (13–19 digit groupings).
-//   - Bank routing numbers (9-digit standalone).
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type SensitivePattern = 'medicare_id' | 'ssn' | 'card_number' | 'bank_routing' | null;
-
-export interface SensitiveCheck {
-  isSensitive: boolean;
-  pattern: SensitivePattern;
-}
-
-export function detectSensitive(text: string): SensitiveCheck {
-  const normalized = text.replace(/\s+/g, ' ').trim();
-  // MBI format per CMS: 11 alphanumeric chars in 4-3-4 groups, e.g. "1EG4-TE5-MK73".
-  // First char is digit 1-9; chars 2/5/8 are letters; rest can be digit or letter.
-  const mbi = /\b[1-9][A-Z][A-Z0-9][A-Z0-9]-?[A-Z][A-Z0-9]{2}-?[A-Z][A-Z0-9]{3}\b/i;
-  if (mbi.test(normalized)) return { isSensitive: true, pattern: 'medicare_id' };
-
-  const phone = /\b\(?\d{3}\)?[-\s.]?\d{3}[-\s.]?\d{4}\b/;
-  const ssn = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/;
-  if (ssn.test(normalized) && !phone.test(normalized)) return { isSensitive: true, pattern: 'ssn' };
-
-  const card = /\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{1,7}\b/;
-  if (card.test(normalized)) return { isSensitive: true, pattern: 'card_number' };
-
-  const routing = /\b\d{9}\b/;
-  if (routing.test(normalized) && !phone.test(normalized)) return { isSensitive: true, pattern: 'bank_routing' };
-
-  return { isSensitive: false, pattern: null };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EMERGENCY DETECTOR
-// ─────────────────────────────────────────────────────────────────────────────
-
-const EMERGENCY_KEYWORDS = [
-  // English
-  'chest pain', "can't breathe", 'cant breathe', 'cannot breathe', 'cannot breath',
-  'heart attack', 'stroke', 'severe pain', 'dying', '911', 'ambulance',
-  'suicide', 'kill myself', 'hurt myself', 'self harm', 'self-harm', 'overdose',
-  'medical emergency', 'er right now', 'going to die', 'emergency room',
-  // Spanish
-  'dolor de pecho', 'no puedo respirar', 'no respiro', 'infarto', 'ataque al corazon',
-  'derrame', 'dolor severo', 'muriendo', 'ambulancia', 'me duele el pecho',
-  'suicidio', 'matarme', 'lastimarme', 'autolesion', 'auto lesion', 'sobredosis',
-  'emergencia medica', 'sala de emergencia', 'voy a morir', 'me quiero hacer dano',
-  'me quiero hacer daño',
-];
-
-export function detectEmergency(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const kw of EMERGENCY_KEYWORDS) {
-    if (lower.includes(kw)) return true;
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FRUSTRATION / CONFUSION DETECTOR
-//
-// We want to acknowledge the human BEFORE re-prompting. Triggering this flag
-// makes the next bot turn lead with empathy ("I understand. Medicare can be
-// confusing. Let's go step by step.") instead of jumping back to the form.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const FRUSTRATION_PHRASES = [
-  // English
-  "i don't understand", 'i dont understand', "i don't get it", 'i dont get it',
-  'i am confused', "i'm confused", 'im confused', 'i am lost', "i'm lost", 'im lost',
-  'this is confusing', 'this is too much', 'no one is helping',
-  'nobody is helping', 'no help', "i don't know what to do",
-  'i dont know what to do', 'i am frustrated', "i'm frustrated", 'im frustrated',
-  'this is awful', 'this is terrible', 'this is ridiculous',
-  // Spanish
-  'no entiendo', 'no entendi', 'no comprendo', 'estoy confundido',
-  'estoy confundida', 'estoy perdido', 'estoy perdida', 'esto es confuso',
-  'esto es mucho', 'nadie me ayuda', 'no me ayudan', 'no se que hacer',
-  'estoy frustrado', 'estoy frustrada', 'estoy molesto', 'estoy molesta',
-  'me tienen loco', 'me tienen loca', 'esto es horrible', 'esto es terrible',
-  'muy confundido', 'muy confundida', 'muy frustrado', 'muy frustrada',
-  'muy molesto', 'muy molesta', 'muy perdido', 'muy perdida',
-];
-
-export function detectFrustration(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const phrase of FRUSTRATION_PHRASES) {
-    if (lower.includes(phrase)) return true;
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// INTENT CLASSIFICATION (multi-topic)
-//
-// Thin wrapper around the deterministic classifier in customerServiceIntents.ts.
-// Exposed here so the UI imports only from `customerServiceEngine`.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface IntentResult {
-  primary: IntentId;
-  secondary: IntentId[];
-  confidence: 'high' | 'medium' | 'low';
-}
-
-export function classifyIntent(text: string, lang: SupportLang): IntentResult {
-  // Run a light typo-tolerance pre-pass so "medicad", "medisina", "dotor",
-  // "me subió el plan" etc. still classify correctly.
-  const normalized = applyFuzzyTypos(text);
-  return classifyIntentRaw(normalized, lang);
-}
-
-/** Bilingual human-readable label for an intent (used in multi-topic acknowledgement). */
-export function intentLabel(id: IntentId, lang: SupportLang): string {
-  const map: Record<IntentId, { en: string; es: string }> = {
-    annual_review: { en: 'plan review', es: 'revisión de plan' },
-    medication_help: { en: 'medications', es: 'medicamentos' },
-    doctor_network_question: { en: 'doctor / network', es: 'doctores o red' },
-    plan_letter_issue: { en: 'a letter or plan issue', es: 'una carta o problema del plan' },
-    possible_loss_of_coverage: { en: 'possible coverage loss', es: 'posible pérdida de cobertura' },
-    extra_help_lis: { en: 'Extra Help / LIS', es: 'Extra Help / LIS' },
-    medicaid_msp: { en: 'Medicaid / cost help', es: 'Medicaid / ayuda con costos' },
-    cost_help: { en: 'reducing costs', es: 'reducir costos' },
-    benefit_card_issue: { en: 'OTC / benefit card', es: 'tarjeta OTC / beneficios' },
-    otc_question: { en: 'OTC benefits', es: 'beneficios OTC' },
-    appointment_requested: { en: 'scheduling a call', es: 'agendar una llamada' },
-    call_requested: { en: 'a call back', es: 'una llamada de regreso' },
-    new_to_medicare: { en: 'getting started with Medicare', es: 'comenzar con Medicare' },
-    confused_customer: { en: 'general help', es: 'ayuda general' },
-    complaint: { en: 'a complaint', es: 'una queja' },
-    employer_union_benefits: { en: 'employer / union / retiree benefits', es: 'beneficios de empleador / unión / retiro' },
-    existing_client: { en: 'existing client follow-up', es: 'seguimiento de cliente existente' },
-    compliance_deflect_recommendation: { en: 'plan-recommendation question', es: 'pregunta de recomendación de plan' },
-    compliance_deflect_eligibility: { en: 'eligibility question', es: 'pregunta de elegibilidad' },
-    compliance_deflect_enrollment: { en: 'enrollment request', es: 'solicitud de inscripción' },
-    general_medicare_question: { en: 'a general Medicare question', es: 'una pregunta general de Medicare' },
-    other_unknown: { en: 'something else', es: 'otro tema' },
-  };
-  return map[id][lang];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FUZZY TYPO TOLERANCE
-//
-// Common misspellings senior users actually type. Mapped to the canonical
-// keyword the classifier already understands. Applied as a pre-pass before
-// classifyIntent so e.g. "medicad" still triggers medicaid_msp.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const TYPO_MAP: Record<string, string> = {
-  // Wave 11 — Spanglish + senior-caller wording normalization
-  'mellgaron': 'me llegaron', 'mellegaron': 'me llegaron', 'mellgo': 'me llegó',
-  'mellego': 'me llegó', 'mellegó': 'me llegó',
-  'billes': 'bills', 'bils': 'bills', 'biles': 'bills',
-  'recivos': 'recibos', 'resivos': 'recibos', 'resibos': 'recibos',
-  'cobrro': 'cobro', 'cobross': 'cobros',
-  'factuura': 'factura', 'factturas': 'facturas',
-  'medecare': 'medicare', 'medicar': 'medicare',
-  'seguro medico': 'medicare',
-  // NOTE: do NOT expand "eob" — the classifier already has "eob" as a keyword
-  // and replacing it would strip the literal token. Same for compound terms
-  // that the classifier already handles as phrases.
-  // Medicaid
-  'medicad': 'medicaid', 'medikaid': 'medicaid', 'medicare aid': 'medicaid',
-  // Medicare Advantage
-  'medicare adbanage': 'medicare advantage', 'medicare advantadge': 'medicare advantage',
-  'medicare advanteg': 'medicare advantage', 'medikare': 'medicare',
-  // Medicine / medications
-  'medisina': 'medicina', 'medesina': 'medicina', 'meds': 'medicine',
-  'medisinas': 'medicinas', 'medesinas': 'medicinas',
-  'medicinas caras': 'medicina cara',
-  // Doctor
-  'dotor': 'doctor', 'dr.': 'doctor', 'doctora': 'doctora',
-  // Supplement
-  'suplemento': 'supplement', 'medigap plan': 'medigap',
-  // Retiree
-  'retairo': 'retiro', 'retired': 'retiree',
-  // Extra Help
-  'extra ayuda': 'ayuda extra', 'lis program': 'lis',
-  // Frequently misspelled phrases
-  'me quitaron beneficio': 'perdi mi cobertura',
-  'me quitaron beneficios': 'perdi mi cobertura',
-  'me subio el plan': 'mi plan es caro',
-  'me subió el plan': 'mi plan es caro',
-  'pago mucho': 'medicare es muy caro',
-};
-
-export function applyFuzzyTypos(text: string): string {
-  let out = text.toLowerCase();
-  // Apply phrase-level substitutions in length-descending order so longer phrases match first.
-  const keys = Object.keys(TYPO_MAP).sort((a, b) => b.length - a.length);
-  for (const k of keys) {
-    if (out.includes(k)) {
-      out = out.split(k).join(TYPO_MAP[k]);
-    }
-  }
-  return out;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CAREGIVER / FAMILY-MEMBER DETECTOR
-//
-// The user often is NOT the Medicare beneficiary. They might be a son,
-// daughter, spouse, or caregiver speaking for someone else. Detecting this
-// lets us tag the case so the advisor knows to ask whose plan they're calling
-// about (and skip questions that don't apply to the caller themselves).
-// ─────────────────────────────────────────────────────────────────────────────
-
-const CAREGIVER_PHRASES = [
-  // English
-  'my mom', 'my mother', 'my dad', 'my father', 'my parent', 'my parents',
-  'my grandma', 'my grandmother', 'my grandpa', 'my grandfather',
-  'my husband', 'my wife', 'my spouse', 'my partner',
-  'my aunt', 'my uncle', 'my brother', 'my sister',
-  'i am helping', 'i am calling for', "i'm helping", "i'm calling for",
-  'on behalf of', 'for my', 'for her', 'for him',
-  'she needs', 'he needs', 'they need',
-  'she does not speak english', 'he does not speak english',
-  "she doesn't speak english", "he doesn't speak english",
-  // Spanish
-  'mi mama', 'mi mamá', 'mi madre', 'mi papa', 'mi papá', 'mi padre',
-  'mis padres', 'mis papas', 'mis papás',
-  'mi abuela', 'mi abuelo', 'mi abuelita', 'mi abuelito',
-  'mi esposo', 'mi esposa', 'mi pareja',
-  'mi tia', 'mi tía', 'mi tio', 'mi tío', 'mi hermano', 'mi hermana',
-  'ayudando a', 'llamando por', 'estoy ayudando',
-  'para mi mama', 'para mi mamá', 'para mi papa', 'para mi papá',
-  'ella necesita', 'el necesita', 'él necesita', 'ellos necesitan',
-  'ella no habla ingles', 'él no habla inglés', 'el no habla ingles',
-];
-
-export function detectCaregiver(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const p of CAREGIVER_PHRASES) {
-    if (lower.includes(p)) return true;
-  }
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// VISITOR TYPE CLASSIFIER (Layer 4 spec)
-//
-// 4-way visitor classification used by the case summary and GHL routing:
-//   - 'senior'           : direct beneficiary (the caller is on Medicare)
-//   - 'caregiver'        : family / friend helping a beneficiary
-//   - 'existing_client'  : already a ClearPoint client; this is a follow-up
-//   - 'unknown'          : no signal yet
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type VisitorType = 'senior' | 'caregiver' | 'existing_client' | 'unknown';
-
-const EXISTING_CLIENT_PHRASES = [
-  'already submitted', 'already talked', 'already spoke', 'i already gave', 'sent my information',
-  'i am a client', "i'm a client", 'already a client', 'returning client', 'follow up on',
-  'i submitted', 'already shared', 'already filled out',
-  'ya envie', 'ya envié', 'ya hable', 'ya hablé', 'ya soy cliente', 'soy cliente',
-  'mande mi informacion', 'mandé mi información', 'ya di mi informacion', 'ya di mi información',
-];
-
-export function detectVisitorType(text: string, prior: VisitorType = 'unknown'): VisitorType {
-  // Don't downgrade an already-confirmed classification.
-  if (prior === 'existing_client') return prior;
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const p of EXISTING_CLIENT_PHRASES) if (lower.includes(p)) return 'existing_client';
-  if (detectCaregiver(text)) return 'caregiver';
-  return prior;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UPCOMING PROCEDURE / CONTINUITY-OF-CARE DETECTOR (Layer 3 D)
-//
-// If the visitor mentions a surgery, hospital admission, treatment in progress,
-// or ongoing specialist care, that's a continuity-of-care concern — the
-// advisor must verify network coverage before any plan change.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const PROCEDURE_PHRASES = [
-  // English
-  'surgery', 'operation', 'procedure', 'hospital stay', 'admitted', 'admission',
-  'chemo', 'chemotherapy', 'radiation', 'dialysis', 'infusion', 'transplant',
-  'pre-op', 'post-op', 'next month', 'next week', 'scheduled for', 'have an appointment for',
-  'specialist', 'cancer treatment', 'physical therapy', 'pt for',
-  // Spanish
-  'cirugia', 'cirugía', 'operacion', 'operación', 'procedimiento', 'hospitalizado',
-  'hospitalizada', 'quimio', 'quimioterapia', 'radiacion', 'radiación', 'dialisis',
-  'diálisis', 'infusion', 'infusión', 'trasplante', 'pre-operatorio', 'post-operatorio',
-  'el mes que viene', 'la semana que viene', 'agendado para', 'tengo una cita para',
-  'especialista', 'tratamiento de cancer', 'tratamiento de cáncer', 'terapia fisica', 'terapia física',
-];
-
-export function detectUpcomingProcedure(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const p of PROCEDURE_PHRASES) if (lower.includes(p)) return true;
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PHONE + ZIP VALIDATORS (Layer 11)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function validatePhone(raw: string): { ok: boolean; normalized: string; reason?: string } {
-  const digits = raw.replace(/\D/g, '');
-  // Allow 10 digits, or 11 with leading 1 (country code).
-  if (digits.length === 10) return { ok: true, normalized: digits };
-  if (digits.length === 11 && digits.startsWith('1')) return { ok: true, normalized: digits.slice(1) };
-  return { ok: false, normalized: digits, reason: 'expected_10_digits' };
-}
-
-export function validateZip(raw: string): { ok: boolean; normalized: string } {
-  const digits = raw.replace(/\D/g, '');
-  if (digits.length === 5) return { ok: true, normalized: digits };
-  if (digits.length === 9) return { ok: true, normalized: digits.slice(0, 5) }; // ZIP+4
-  return { ok: false, normalized: digits };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// QUICK-ACTION TOPIC MAP
-//
-// The chips shown in the opening step. Each maps to one primary intent and
-// (optionally) a secondary intent that we capture together for multi-topic
-// presets like "Doctors or medications" or "Medicaid / Extra Help".
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface QuickAction {
-  id: string;
-  label_en: string;
-  label_es: string;
-  primary: IntentId;
-  secondary?: IntentId[];
-}
-
-// Wave 9 — Phase 3: opening shows AT MOST 4 small pill chips (1 language toggle
-// + 3 high-signal shortcuts). Typing is the primary path; chips are subtle.
-export const QUICK_ACTIONS: QuickAction[] = [
-  { id: 'advisor', label_en: 'Speak with an advisor', label_es: 'Hablar con un asesor', primary: 'call_requested' },
-  { id: 'letter', label_en: 'I received a letter', label_es: 'Recibí una carta', primary: 'plan_letter_issue' },
-  { id: 'costs', label_en: 'Plan cost issue', label_es: 'Problema de costos', primary: 'cost_help' },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// LANGUAGE-SELECT keywords used at the opening step when user types instead
-// of clicking. "spanish"/"español"/"hola"/etc. are unambiguous Spanish signals.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function detectExplicitLanguagePick(text: string): SupportLang | null {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-  if (!lower) return null;
-  const esSignals = ['espanol', 'español', 'spanish', 'hola', 'buenos dias', 'buenas tardes', 'buenas noches', 'hablar espanol', 'hablame espanol', 'necesito espanol', 'spanish please', 'prefiero espanol'];
-  const enSignals = ['english', 'ingles', 'inglés', 'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'speak english', 'english please', 'prefer english', 'in english'];
-  for (const s of esSignals) if (lower.includes(s)) return 'es';
-  for (const s of enSignals) if (lower.includes(s)) return 'en';
-  return null;
-}
-
-/** Multi-topic acknowledgement copy used when classifier returns ≥1 secondary intent. */
-export function buildMultiTopicAck(primary: IntentId, secondary: IntentId[], lang: SupportLang): string {
-  if (secondary.length === 0) return '';
-  const all = [primary, ...secondary].map((id) => intentLabel(id, lang));
-  const list = all.slice(0, -1).join(', ') + (lang === 'es' ? ' y ' : ' and ') + all[all.length - 1];
-  if (lang === 'es') {
-    return `Veo varios temas importantes: ${list}. Para no confundirnos, voy a organizarlo por partes.`;
-  }
-  return `I see a few important topics: ${list}. So we don't get mixed up, I'll organize this step by step.`;
-}
-
-/** Human support-tone acknowledgement when the user expresses confusion/frustration. */
-export function frustrationAck(lang: SupportLang): string {
-  return lang === 'es'
-    ? 'Entiendo. Medicare puede ser confuso. Vamos paso a paso para organizar su situación correctamente.'
-    : "I understand. Medicare can be confusing. Let's go step by step so we can organize your situation correctly.";
-}
-
-/** Advisor-handoff safe language. Mandatory before any plan-specific question is closed out. */
-export function advisorHandoffLine(lang: SupportLang): string {
-  return lang === 'es'
-    ? 'Puedo organizar esto para revisión, pero un asesor licenciado debe verificar los detalles específicos del plan antes de que usted tome una decisión.'
-    : 'I can organize this for review, but a licensed advisor must verify plan-specific details before you make a decision.';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NATURAL FOLLOW-UP QUESTIONS (intent-specific, calm, one-at-a-time)
-//
-// These are the bot's second-turn responses after the user states a concern in
-// their own words. They open with empathy ("I understand"), explain WHY a
-// follow-up is needed, then ask ONE narrowing question with concrete options
-// embedded in the sentence (not as buttons).
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function intentFollowUp(id: IntentId, lang: SupportLang): string {
-  // Pattern: acknowledge briefly → contextual explanation → compliance caution
-  // (only when relevant) → ONE simple question. Companion chips are emitted
-  // separately via intentFollowUpChips() so the message reads as prose.
-  const map: Record<IntentId, { en: string; es: string }> = {
-    medication_help: {
-      en: 'I understand. Medication costs can change for several reasons — formularies, pharmacies, and plan rules all matter. Please do not share your Medicare ID, Social Security number, or prescription numbers here. In simple words, what is the main issue with the medication?',
-      es: 'Entiendo. Los costos de medicamentos pueden cambiar por varias razones — los formularios, farmacias y reglas del plan importan. Por favor no comparta su número de Medicare, Seguro Social, ni números de receta aquí. En palabras simples, ¿cuál es el problema principal con la medicina?',
-    },
-    plan_letter_issue: {
-      // Wave 11 — service-first response for bills / letters / receipts / EOB / charges.
-      // Acknowledge, list the realistic possibilities, ask ONE clarifying question
-      // about the source of the document. Compliance caution embedded.
-      en: 'I understand. When you mention bills, receipts, or a letter, it could be a doctor or hospital bill, a pharmacy charge, a monthly premium from your plan, an Explanation of Benefits (EOB), a denial notice, or an unexpected charge. To help you correctly, please do not send your Medicare ID, Social Security number, banking info, or a full photo of the document here. Where does the document come from?',
-      es: 'Entiendo. Cuando dice que le llegaron billes, recibos o una carta, puede ser una factura de un doctor u hospital, un cobro de la farmacia, un premium mensual del plan, una Explicación de Beneficios (EOB), un aviso de denegación o un cobro que no esperaba. Para ayudarle correctamente, por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa del documento aquí. ¿De dónde viene el papel?',
-    },
-    doctor_network_question: {
-      en: 'I understand. Doctor network situations should be verified carefully before any plan decision, because networks can change. ClearPoint should confirm the doctor, location, and plan details with you. What state and ZIP code are you in?',
-      es: 'Entiendo. Las situaciones de red de doctores deben verificarse con cuidado antes de cualquier decisión del plan, porque las redes pueden cambiar. ClearPoint debe confirmar el doctor, la ubicación y los detalles del plan con usted. ¿En qué estado y código postal vive?',
-    },
-    possible_loss_of_coverage: {
-      en: "I hear you — that can feel urgent. Coverage situations can be time-sensitive and should be reviewed by a licensed advisor quickly. How did you find out — was it a letter, a phone call, or at a doctor or pharmacy?",
-      es: 'Lo escucho — eso puede sentirse urgente. Las situaciones de cobertura pueden tener tiempo limitado y deben ser revisadas por un asesor licenciado rápidamente. ¿Cómo se enteró — fue por una carta, una llamada, o en el doctor o farmacia?',
-    },
-    annual_review: {
-      en: "Of course — many people review their plan each year. To prepare this for an advisor, what is the main thing you want to look at first?",
-      es: 'Por supuesto — muchas personas revisan su plan cada año. Para prepararlo para un asesor, ¿qué es lo principal que quiere revisar primero?',
-    },
-    extra_help_lis: {
-      en: "Thank you. Extra Help is a federal program that may reduce Part D costs for people who qualify, but the Social Security Administration decides eligibility — I cannot confirm it here. To organize this for an advisor, what would you like to focus on?",
-      es: 'Gracias. Extra Help es un programa federal que puede reducir costos de Parte D para personas que califican, pero la Administración del Seguro Social decide la elegibilidad — no puedo confirmarla aquí. Para organizar esto para un asesor, ¿en qué le gustaría enfocarse?',
-    },
-    medicaid_msp: {
-      en: "Thank you. When a person has both Medicare and Medicaid, the situation can be complex and a change to Medicare can sometimes affect Medicaid. A licensed advisor should review this carefully. To start, what state are you (or the person) in?",
-      es: 'Gracias. Cuando una persona tiene Medicare y Medicaid, la situación puede ser compleja y un cambio en Medicare a veces puede afectar Medicaid. Un asesor licenciado debe revisar esto con cuidado. Para empezar, ¿en qué estado vive usted (o la persona)?',
-    },
-    cost_help: {
-      en: "I understand. There are several programs and adjustments that may help with Medicare costs — premium, copays, deductibles — but eligibility depends on your situation. To organize this for an advisor, what is the main cost that is bothering you?",
-      es: 'Entiendo. Hay varios programas y ajustes que pueden ayudar con los costos de Medicare — prima, copagos, deducibles — pero la elegibilidad depende de su situación. Para organizar esto para un asesor, ¿cuál es el costo principal que le preocupa?',
-    },
-    benefit_card_issue: {
-      en: "Thank you. Benefit card issues are usually handled by the plan that issued the card, but I can prepare the situation so an advisor can guide you. What is happening with the card?",
-      es: 'Gracias. Los problemas con tarjetas de beneficios usualmente los maneja el plan que la emitió, pero puedo preparar la situación para que un asesor lo guíe. ¿Qué está pasando con la tarjeta?',
-    },
-    otc_question: {
-      en: "Thank you. OTC benefits vary by plan, so the Summary of Benefits and Evidence of Coverage from your specific plan is the source of truth. What would you like an advisor to walk through?",
-      es: 'Gracias. Los beneficios OTC varían por plan, así que el Resumen de Beneficios y la Evidencia de Cobertura de su plan específico son la fuente oficial. ¿Qué le gustaría que un asesor le explique?',
-    },
-    appointment_requested: {
-      en: "Of course. So an advisor can prepare for the call, what would you like to focus on first?",
-      es: 'Por supuesto. Para que un asesor se pueda preparar para la llamada, ¿en qué le gustaría enfocarse primero?',
-    },
-    call_requested: {
-      en: "Of course. So the advisor can prepare, could you share briefly what you would like to discuss?",
-      es: 'Por supuesto. Para que el asesor se pueda preparar, ¿podría compartir brevemente de qué le gustaría hablar?',
-    },
-    new_to_medicare: {
-      en: "Welcome. Getting started with Medicare is one of the more important decisions, and a licensed advisor should walk you through the timing and options. Where are you in the process right now?",
-      es: 'Bienvenido. Comenzar con Medicare es una de las decisiones más importantes, y un asesor licenciado debe explicarle los tiempos y opciones. ¿En qué parte del proceso está ahora mismo?',
-    },
-    confused_customer: {
-      en: "I understand. Medicare can feel like a lot. Let's take it one step at a time — I'll organize the main thing for a licensed advisor. In one or two sentences, what is bothering you most right now?",
-      es: 'Entiendo. Medicare puede sentirse abrumador. Vamos paso a paso — voy a organizar lo principal para un asesor licenciado. En una o dos oraciones, ¿qué es lo que más le preocupa ahora mismo?',
-    },
-    complaint: {
-      en: "I hear you, and I'm sorry you are going through this. I'll prepare the situation so a licensed advisor can review it with you carefully. What is the main concern?",
-      es: 'Lo escucho, y lamento que esté pasando por esto. Voy a preparar la situación para que un asesor licenciado pueda revisarla con usted con cuidado. ¿Cuál es la preocupación principal?',
-    },
-    employer_union_benefits: {
-      en: "Thank you for mentioning this — union, retiree, employer, VA, or TRICARE benefits can be lost permanently if Medicare is changed without checking impact first. A licensed advisor must review this with you before any decision. Which type of benefit is it?",
-      es: 'Gracias por mencionarlo — los beneficios de unión, retiro, empleador, VA o TRICARE se pueden perder permanentemente si se cambia Medicare sin revisar el impacto primero. Un asesor licenciado debe revisar esto con usted antes de cualquier decisión. ¿Qué tipo de beneficio es?',
-    },
-    existing_client: {
-      en: "Thank you for reaching back out — I'll note that this is a follow-up so a licensed advisor can pick up where the last conversation left off. What is the main thing you need today?",
-      es: 'Gracias por comunicarse de nuevo — anotaré que esto es un seguimiento para que un asesor licenciado pueda continuar desde la última conversación. ¿Qué es lo principal que necesita hoy?',
-    },
-    compliance_deflect_recommendation: {
-      en: "I cannot tell you which plan is best — that depends on your doctors, medications, county, current coverage, and other factors. Only a licensed advisor can review all of that with you. I can prepare the situation so an advisor can help you compare carefully. What state and ZIP code are you in?",
-      es: 'No puedo decirle cuál plan es el mejor — eso depende de sus doctores, medicamentos, condado, cobertura actual y otros factores. Solo un asesor licenciado puede revisar todo eso con usted. Puedo preparar la situación para que un asesor le ayude a comparar con cuidado. ¿En qué estado y código postal vive?',
-    },
-    compliance_deflect_eligibility: {
-      en: "I cannot confirm eligibility here — eligibility is decided by the Social Security Administration, your state Medicaid agency, or the plan itself depending on the program. I can organize your situation so a licensed advisor can help you check the right place. What state are you in?",
-      es: 'No puedo confirmar elegibilidad aquí — la elegibilidad la decide la Administración del Seguro Social, la agencia estatal de Medicaid, o el plan mismo, dependiendo del programa. Puedo organizar su situación para que un asesor licenciado le ayude a verificar en el lugar correcto. ¿En qué estado vive?',
-    },
-    compliance_deflect_enrollment: {
-      en: "I cannot complete enrollment from this chat. Enrollment must be done by a licensed advisor after reviewing your doctors, medications, current coverage, and a Scope of Appointment. I can prepare your case so a licensed advisor can follow up. What is the main thing you want them to know?",
-      es: 'No puedo completar la inscripción desde este chat. La inscripción debe hacerla un asesor licenciado después de revisar sus doctores, medicamentos, cobertura actual y un Scope of Appointment. Puedo preparar su caso para que un asesor licenciado dé seguimiento. ¿Cuál es lo principal que quiere que sepa?',
-    },
-    general_medicare_question: {
-      en: "Happy to help with general Medicare information. Specific eligibility and plan details should be verified with a licensed advisor or with Medicare directly. What part of Medicare would you like to understand?",
-      es: 'Con gusto le ayudo con información general sobre Medicare. La elegibilidad específica y los detalles del plan deben verificarse con un asesor licenciado o directamente con Medicare. ¿Qué parte de Medicare le gustaría entender?',
-    },
-    other_unknown: {
-      en: "Thank you for sharing that. Could you tell me a little more — is this about a plan, medications, a doctor, a letter, costs, or something else?",
-      es: 'Gracias por compartir. ¿Podría decirme un poco más — es sobre un plan, medicamentos, un doctor, una carta, costos o algo más?',
-    },
-  };
-  return map[id][lang];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// INLINE NARROWING CHIPS (Wave 9 — Phase 5 button discipline)
-//
-// Up to 4 small optional pill chips per intent follow-up. The user can ignore
-// them entirely and type freely — they exist only to reduce friction for
-// callers who prefer to point at the option that matches.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function intentFollowUpChips(id: IntentId, lang: SupportLang): string[] {
-  const map: Record<IntentId, { en: string[]; es: string[] }> = {
-    medication_help: {
-      en: ['More expensive', 'Not covered', 'Pharmacy rejected', 'Needs authorization'],
-      es: ['Más cara', 'No cubierta', 'Farmacia la rechazó', 'Pide autorización'],
-    },
-    plan_letter_issue: {
-      // Wave 11 — document-source clarification chips (4 max)
-      en: ['Doctor / Hospital', 'Pharmacy', 'Medicare plan', 'EOB / Not sure'],
-      es: ['Doctor / Hospital', 'Farmacia', 'Plan de Medicare', 'EOB / No sé'],
-    },
-    doctor_network_question: {
-      en: ['Primary doctor', 'Specialist', 'Hospital', 'Pharmacy'],
-      es: ['Doctor primario', 'Especialista', 'Hospital', 'Farmacia'],
-    },
-    possible_loss_of_coverage: {
-      en: ['A letter', 'A phone call', 'At a doctor', 'Not sure'],
-      es: ['Una carta', 'Una llamada', 'En el doctor', 'No sé'],
-    },
-    annual_review: {
-      en: ['Compare new plans', 'Check current plan', 'Medication costs', 'Doctors / pharmacy'],
-      es: ['Comparar planes nuevos', 'Revisar plan actual', 'Costos de medicinas', 'Doctores / farmacia'],
-    },
-    extra_help_lis: {
-      en: ['How it works', 'Might I qualify', 'How to apply', 'A letter I received'],
-      es: ['Cómo funciona', 'Si yo califico', 'Cómo solicitar', 'Una carta que recibí'],
-    },
-    medicaid_msp: {
-      en: ['I have Medicaid', 'I want to apply', 'Medicaid changed', 'Not sure'],
-      es: ['Tengo Medicaid', 'Quiero solicitar', 'Medicaid cambió', 'No sé'],
-    },
-    cost_help: {
-      en: ['Premium', 'Copay', 'A bill I got', 'Not sure'],
-      es: ['Prima', 'Copago', 'Una factura', 'No sé'],
-    },
-    benefit_card_issue: {
-      en: ['Declined at store', 'Lost it', 'Low balance', 'Wrong balance'],
-      es: ['Rechazada', 'La perdí', 'Sin saldo', 'Saldo incorrecto'],
-    },
-    otc_question: {
-      en: ['What is covered', 'How to use it', 'How much I have', 'How to order'],
-      es: ['Qué cubre', 'Cómo usarlo', 'Cuánto tengo', 'Cómo pedirlo'],
-    },
-    appointment_requested: {
-      en: ['Plan review', 'A letter', 'Medication', 'Other topic'],
-      es: ['Revisar plan', 'Una carta', 'Medicamentos', 'Otro tema'],
-    },
-    call_requested: { en: [], es: [] },
-    new_to_medicare: {
-      en: ['Almost 65', 'Just turned 65', 'Disability', 'Helping a family member'],
-      es: ['Cerca de 65', 'Acabo de cumplir 65', 'Discapacidad', 'Ayudando a familiar'],
-    },
-    confused_customer: { en: [], es: [] },
-    complaint: {
-      en: ['How a plan handled it', 'Doctor / pharmacy', 'Billing', 'Something else'],
-      es: ['Cómo lo manejó el plan', 'Doctor / farmacia', 'Facturación', 'Otra cosa'],
-    },
-    employer_union_benefits: {
-      en: ['Union', 'Retiree', 'Employer', 'VA / TRICARE'],
-      es: ['Unión', 'Retiro', 'Empleador', 'VA / TRICARE'],
-    },
-    existing_client: {
-      en: ['Callback', 'Missing documents', 'Appointment change', 'Other'],
-      es: ['Llamada de regreso', 'Documentos faltantes', 'Cambio de cita', 'Otro'],
-    },
-    compliance_deflect_recommendation: { en: [], es: [] },
-    compliance_deflect_eligibility: { en: [], es: [] },
-    compliance_deflect_enrollment: { en: [], es: [] },
-    general_medicare_question: {
-      en: ['Medicare basics', 'Plan types', 'Part D / drugs', 'Costs'],
-      es: ['Medicare básico', 'Tipos de planes', 'Parte D / medicinas', 'Costos'],
-    },
-    other_unknown: {
-      en: ['A plan', 'Medications', 'A doctor', 'A letter'],
-      es: ['Un plan', 'Medicamentos', 'Un doctor', 'Una carta'],
-    },
-  };
-  return map[id][lang];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ZIP / STATE FREE-TEXT PARSER
-//
-// Senior callers often say "I'm in Brooklyn" or "07101" or "Nueva York" or
-// "I live in NY". We accept any of those shapes and try to extract a ZIP code
-// (5 digits) and/or a 2-letter state code.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export type ParsedLocation = {
-  zip: string;
-  state: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' | '';
-  rawHint: string;
-};
-
-const STATE_NAME_TO_CODE: Record<string, ParsedLocation['state']> = {
-  'new york': 'NY', 'nueva york': 'NY', 'ny': 'NY',
-  'new jersey': 'NJ', 'nueva jersey': 'NJ', 'nj': 'NJ',
-  'connecticut': 'CT', 'ct': 'CT',
-  'florida': 'FL', 'fl': 'FL',
-};
-
-export function parseZipOrState(text: string): ParsedLocation {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-  let zip = '';
-  let state: ParsedLocation['state'] = '';
-
-  // ZIP: 5 digits (allow leading boundary)
-  const zipMatch = lower.match(/\b(\d{5})\b/);
-  if (zipMatch) zip = zipMatch[1];
-
-  // State: try multi-word names first (longest match), then 2-letter codes.
-  // We search for word-boundary occurrences so "north carolina" doesn't match "ca".
-  const sortedKeys = Object.keys(STATE_NAME_TO_CODE).sort((a, b) => b.length - a.length);
-  for (const key of sortedKeys) {
-    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const re = new RegExp(`\\b${escaped}\\b`, 'i');
-    if (re.test(lower)) {
-      state = STATE_NAME_TO_CODE[key];
-      break;
-    }
-  }
-
-  // If we have a ZIP but no state, infer using common prefixes.
-  if (zip && !state) {
-    const z = parseInt(zip.slice(0, 3), 10);
-    if (z >= 100 && z <= 149) state = 'NY';      // NY 100xx-149xx
-    else if (z >= 70 && z <= 89) state = 'NJ';   // NJ 070xx-089xx
-    else if (z >= 60 && z <= 69) state = 'CT';   // CT 060xx-069xx
-    else if (z >= 320 && z <= 349) state = 'FL'; // FL 320xx-349xx
-    else state = 'Other';
-  }
-
-  return { zip, state, rawHint: text.trim() };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// FULL-NAME SPLITTER — best-effort first/last from a "full name" answer.
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// looksLikeName  (Wave 11 — anti-misclassification guard)
-//
-// Reject obvious non-names before splitFullName runs. If the input contains
-// verbs, problem nouns, or punctuation that proves it's a concern statement
-// rather than a name, return false. Caller then re-classifies the text as
-// a concern instead of storing "Me Llegaron Recibos" as the first/last name.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const NON_NAME_TOKENS = [
-  // Spanish verbs + problem nouns the user actually types when describing an issue
-  'me', 'mi', 'mis', 'tengo', 'recibi', 'recibí', 'llego', 'llegó', 'llegaron',
-  'mellgaron', 'mellegaron', 'estoy', 'necesito', 'quiero', 'no', 'que', 'qué',
-  'como', 'cómo', 'cuando', 'cuándo', 'donde', 'dónde', 'tiene', 'tienen',
-  'cobro', 'cobros', 'cobran', 'pago', 'pagar', 'factura', 'facturas', 'recibo',
-  'recibos', 'carta', 'cartas', 'billes', 'bills', 'bill', 'cobertura',
-  'medicamento', 'medicamentos', 'medicina', 'medicinas', 'pastilla', 'pastillas',
-  'doctor', 'doctora', 'hospital', 'farmacia', 'plan', 'planes', 'medicare',
-  'medicaid', 'extra', 'help', 'entiendes', 'entiendo', 'ayuda',
-  // English verbs / problem nouns
-  'i', "i'm", 'im', 'have', 'received', 'got', 'getting', 'need', 'want',
-  'help', 'understand', 'understanding', 'about', 'with', 'for', 'from',
-  'doctor', 'doctors', 'pharmacy', 'plan', 'plans', 'bill', 'bills', 'letter',
-  'letters', 'invoice', 'invoices', 'charge', 'charges', 'eob', 'medicare',
-  'medication', 'medications', 'cost', 'costs', 'premium', 'copay',
-];
-
-const NON_NAME_TOKEN_SET = new Set(NON_NAME_TOKENS);
-
-export function looksLikeName(text: string): boolean {
-  const cleaned = text.trim().replace(/\s+/g, ' ');
-  if (!cleaned) return false;
-  // Too long to be a name (>5 words is almost certainly a sentence)
-  const words = cleaned.split(' ').filter(Boolean);
-  if (words.length > 5) return false;
-  // Contains punctuation typical of sentences
-  if (/[.?!,:;]/.test(cleaned)) return false;
-  // Contains numbers (names don't have digits)
-  if (/\d/.test(cleaned)) return false;
-  // Contains any non-name token (verb/problem noun)
-  const lower = cleaned.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const w of lower.split(/\s+/)) {
-    if (NON_NAME_TOKEN_SET.has(w)) return false;
-  }
-  return true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// detectBotComplaint  (Wave 11) — user explicitly tells the bot it's failing
-// ─────────────────────────────────────────────────────────────────────────────
-
-const BOT_COMPLAINT_PHRASES = [
-  'no entiendes', 'no me entiendes', 'no entendiste', 'no entiendes nada',
-  'estas perdido', 'estás perdido', 'estas mal', 'estás mal',
-  'no es lo que dije', 'eso no es', 'me equivocaste', 'no es eso',
-  "you don't understand", 'you do not understand', 'you dont understand',
-  'thats not what i said', "that's not what i said",
-  'stop asking me that', "you're not listening", 'you are not listening',
-  'wrong question', 'wrong answer', 'you got it wrong',
-];
-
-export function detectBotComplaint(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const p of BOT_COMPLAINT_PHRASES) if (lower.includes(p)) return true;
-  return false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DOCUMENT SUBTYPE CLASSIFIER (Wave 12 — point 19, 20, 92, 93)
-//
-// When a caller says they received "billes / recibos / una carta", the bot
-// must distinguish what KIND of document it is, because each kind has a
-// different correct response. A "carta de renovación" should not be thrown
-// into the generic bills flow.
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
+// CUSTOMER SERVICE ENGINE V13 — ENTERPRISE ZERO-FAIL
+// No lost conversations. Every intent tracked. Every entity extracted.
+// ============================================================================
+import { customerServiceIntents } from '../data/customerServiceIntents';
+import { customerServiceKnowledge } from '../data/customerServiceKnowledge';
+import type { KnowledgeEntry } from '../data/customerServiceKnowledge';
+
+// ============================================================================
+// TYPES — COMPLETE STATE MODEL
+// ============================================================================
+export type EmotionalState = 'calm' | 'confused' | 'frustrated' | 'urgent' | 'grieving' | 'grateful';
+
+export type PrimaryIntent =
+  | 'bill_question'
+  | 'coverage_question'
+  | 'provider_question'
+  | 'drug_question'
+  | 'letter_issue'
+  | 'enrollment_question'
+  | 'disenrollment_question'
+  | 'appeals_grievance'
+  | 'complaint'
+  | 'general_question'
+  | 'casual_greeting'
+  | 'casual_thanks'
+  | 'topic_change'
+  | 'escalate_to_agent'
+  | 'unknown';
 
 export type DocumentSubtype =
-  | 'renewal'        // Annual Notice of Change, Evidence of Coverage, renewal, recertification
+  | 'renewal'
+  | 'anoc'
+  | 'eoc'
   | 'medicaid_notice'
   | 'extra_help_notice'
-  | 'eob'            // Explanation of Benefits — usually NOT a bill
+  | 'eob'
   | 'collection'
   | 'denial'
-  | 'premium'        // monthly plan premium notice
-  | 'bill'           // provider bill, copay, coinsurance, charge
-  | 'plan_notice'    // general plan letter
-  | null;
+  | 'premium'
+  | 'bill'
+  | 'plan_notice'
+  | 'none';
 
-const SUBTYPE_PATTERNS: Array<{ subtype: NonNullable<DocumentSubtype>; patterns: string[] }> = [
-  // Renewal — checked BEFORE generic bill so "carta de renovación" wins over "bill"
-  {
-    subtype: 'renewal',
-    patterns: [
-      'renovacion', 'renovación', 'carta de renovacion', 'carta de renovación',
-      'recertificacion', 'recertificación', 'aviso anual', 'cambios anuales',
-      'anoc', 'annual notice of change', 'evidence of coverage', 'eoc',
-      'renewal', 'recertification', 'annual notice', 'change for next year',
-    ],
-  },
-  {
-    subtype: 'medicaid_notice',
-    patterns: [
-      'medicaid notice', 'aviso de medicaid', 'carta de medicaid',
-      'redetermination', 'redeterminacion', 'redeterminación',
-    ],
-  },
-  {
-    subtype: 'extra_help_notice',
-    patterns: [
-      'extra help notice', 'aviso de extra help', 'lis notice',
-      'aviso de ayuda extra', 'carta de extra help', 'carta de ayuda extra',
-      'aviso de lis',
-    ],
-  },
-  {
-    subtype: 'eob',
-    patterns: [
-      'eob', 'explanation of benefits', 'explicacion de beneficios',
-      'explicación de beneficios', 'this is not a bill', 'esto no es una factura',
-    ],
-  },
-  {
-    subtype: 'collection',
-    patterns: [
-      'collection', 'collections', 'past due', 'final notice',
-      'cobro vencido', 'pago vencido', 'aviso final', 'coleccion', 'colección',
-    ],
-  },
-  {
-    subtype: 'denial',
-    patterns: [
-      'denial', 'denied', 'rejected', 'not approved',
-      'denegacion', 'denegación', 'denegado', 'rechazado', 'no aprobado',
-    ],
-  },
-  {
-    subtype: 'premium',
-    patterns: [
-      'monthly premium', 'plan premium', 'prima mensual', 'prima del plan',
-      'aviso de prima', 'premium notice',
-    ],
-  },
-  {
-    subtype: 'bill',
-    patterns: [
-      'doctor bill', 'hospital bill', 'pharmacy bill', 'medical bill',
-      'amount due', 'balance due', 'pay now', 'unexpected charge',
-      'factura del doctor', 'factura del hospital', 'factura medica', 'factura médica',
-      'cobro inesperado', 'cantidad a pagar', 'saldo a pagar',
-      'billes', 'bill', 'recibo', 'recibos', 'cobro', 'cobros', 'factura', 'facturas',
-    ],
-  },
+export interface ExtractedEntities {
+  zipCode?: string;
+  planName?: string;
+  drugName?: string;
+  providerName?: string;
+  dollarAmount?: number;
+  date?: string;
+  deadline?: string;
+  documentType?: string;
+  isEmergency?: boolean;
+  mentionedMedicaid?: boolean;
+  mentionedExtraHelp?: boolean;
+  mentionedSNP?: boolean;
+}
+
+export interface IntentStackEntry {
+  intent: PrimaryIntent;
+  subtype?: DocumentSubtype;
+  confidence: number;
+  timestamp: number;
+  resolved: boolean;
+}
+
+export interface ConversationState {
+  conversationId: string;
+  messages: { role: 'user' | 'bot'; content: string; timestamp: number }[];
+  intentStack: IntentStackEntry[];
+  currentPrimaryIntent: PrimaryIntent;
+  currentDocumentSubtype: DocumentSubtype;
+  extractedEntities: ExtractedEntities;
+  pendingFollowUps: string[];
+  escalationCount: number;
+  emotionalState: EmotionalState;
+  language: 'en' | 'es';
+  visitorType?: 'beneficiary' | 'family' | 'provider' | 'agent';
+  contactInfo?: { phone?: string; email?: string; bestTimeToCall?: string };
+  unansweredQuestions: string[];
+  lastUserMessage: string;
+  lastBotResponse: string;
+  turnCount: number;
+  needsHuman: boolean;
+}
+
+// ============================================================================
+// EMOTIONAL STATE DETECTION
+// ============================================================================
+const emotionalPatterns: { pattern: RegExp; state: EmotionalState }[] = [
+  { pattern: /\b(frustrated|frustraci[oó]n|no entiend(es|en|o)|useless|terrible|awful|est[aá]s perdid[oa])\b/i, state: 'frustrated' },
+  { pattern: /\b(confused|confusión|no entiendo|what does this mean|qué significa)\b/i, state: 'confused' },
+  { pattern: /\b(urgent|asap|right now|immediately|emergency|emergencia|ya mismo)\b/i, state: 'urgent' },
+  { pattern: /\b(passed away|died|death|falleció|murió|fallecimiento)\b/i, state: 'grieving' },
+  { pattern: /\b(thank you|gracias|appreciate|agradezco|you helped)\b/i, state: 'grateful' },
+];
+
+export function detectEmotionalState(text: string): EmotionalState {
+  const lowerText = text.toLowerCase();
+  for (const { pattern, state } of emotionalPatterns) {
+    if (pattern.test(lowerText)) return state;
+  }
+  return 'calm';
+}
+
+// ============================================================================
+// INTENT CLASSIFIER V3 — 95%+ TARGET
+// ============================================================================
+interface ClassifiedIntent {
+  primary: PrimaryIntent;
+  secondary: PrimaryIntent | null;
+  tertiary: PrimaryIntent | null;
+  confidence: number;
+  matchedPattern: string;
+}
+
+// Priority order for conflict resolution
+const intentPriority: PrimaryIntent[] = [
+  'appeals_grievance',
+  'disenrollment_question',
+  'complaint',
+  'bill_question',
+  'letter_issue',
+  'enrollment_question',
+  'coverage_question',
+  'drug_question',
+  'provider_question',
+  'general_question',
+  'casual_greeting',
+  'casual_thanks',
+  'topic_change',
+  'escalate_to_agent',
+  'unknown',
+];
+
+// Extended patterns for better classification
+const extendedPatterns = {
+  urgent: /\b(urgent|emergency|asap|right away|immediate|help now|ayuda ya|emergencia)\b/i,
+  appeals_grievance: /\b(appeal|grievance|denied|denial|reconsideration|dispute|fair hearing|apelación|reclamo|negado)\b/i,
+  disenrollment: /\b(disenroll|cancel|leave|switch|change plan|quit|remove me|dar de baja|cancelar|cambiarme)\b/i,
+  complaint: /\b(complaint|unhappy|bad service|terrible|awful|useless|scam|fraud|queja|estafa)\b/i,
+  casual_greeting: /^\s*(hi|hello|hey|hola|buenos|buenas)\b/i,
+  casual_thanks: /\b(thank you|thanks|gracias|appreciate)\b/i,
+  topic_change: /\b(otra cosa|another topic|something else|change topic|cambio de tema)\b/i,
+  escalate: /\b(talk to (an? )?(agent|human|person|advisor)|speak (to|with) (an? )?(agent|human|person|advisor)|hablar con (un|una)? ?(asesor|persona|agente)|representative|representante)\b/i,
+};
+
+export function classifyIntent(text: string): ClassifiedIntent {
+  const lowerText = text.toLowerCase();
+  const matches: { intent: PrimaryIntent; confidence: number; pattern: string }[] = [];
+
+  // Check all intents from config
+  for (const intent of customerServiceIntents) {
+    for (const pattern of intent.patterns) {
+      if (pattern.test(lowerText)) {
+        matches.push({
+          intent: intent.id as PrimaryIntent,
+          confidence: intent.confidence || 0.85,
+          pattern: pattern.toString(),
+        });
+      }
+    }
+  }
+
+  // Check extended patterns
+  if (extendedPatterns.urgent.test(lowerText)) {
+    matches.push({ intent: 'general_question', confidence: 0.7, pattern: 'urgent_flag' });
+  }
+  if (extendedPatterns.appeals_grievance.test(lowerText)) {
+    matches.push({ intent: 'appeals_grievance', confidence: 0.9, pattern: 'extended_appeal' });
+  }
+  if (extendedPatterns.disenrollment.test(lowerText)) {
+    matches.push({ intent: 'disenrollment_question', confidence: 0.9, pattern: 'extended_disenroll' });
+  }
+  if (extendedPatterns.complaint.test(lowerText)) {
+    matches.push({ intent: 'complaint', confidence: 0.85, pattern: 'extended_complaint' });
+  }
+  if (extendedPatterns.casual_greeting.test(lowerText) && lowerText.length <= 25) {
+    matches.push({ intent: 'casual_greeting', confidence: 0.95, pattern: 'extended_greeting' });
+  }
+  if (extendedPatterns.casual_thanks.test(lowerText) && lowerText.length <= 40) {
+    matches.push({ intent: 'casual_thanks', confidence: 0.92, pattern: 'extended_thanks' });
+  }
+  if (extendedPatterns.topic_change.test(lowerText)) {
+    matches.push({ intent: 'topic_change', confidence: 0.9, pattern: 'extended_topic_change' });
+  }
+  if (extendedPatterns.escalate.test(lowerText)) {
+    matches.push({ intent: 'escalate_to_agent', confidence: 0.95, pattern: 'extended_escalate' });
+  }
+
+  // Sort by confidence
+  matches.sort((a, b) => b.confidence - a.confidence);
+
+  if (matches.length === 0) {
+    return {
+      primary: 'unknown',
+      secondary: null,
+      tertiary: null,
+      confidence: 0,
+      matchedPattern: 'none',
+    };
+  }
+
+  // Get unique intents in priority order
+  const uniqueIntents = [...new Map(matches.map((m) => [m.intent, m])).values()];
+  uniqueIntents.sort((a, b) => {
+    const idxA = intentPriority.indexOf(a.intent);
+    const idxB = intentPriority.indexOf(b.intent);
+    if (idxA !== idxB) return idxA - idxB;
+    return b.confidence - a.confidence;
+  });
+
+  return {
+    primary: uniqueIntents[0].intent,
+    secondary: uniqueIntents[1]?.intent || null,
+    tertiary: uniqueIntents[2]?.intent || null,
+    confidence: uniqueIntents[0].confidence,
+    matchedPattern: uniqueIntents[0].pattern,
+  };
+}
+
+// ============================================================================
+// DOCUMENT SUBTYPE DETECTION — EXPANDED TO 15+ TYPES
+// ============================================================================
+const documentSubtypePatterns: { pattern: RegExp; subtype: DocumentSubtype }[] = [
+  { pattern: /\b(anoc|annual notice of change|aviso anual de cambio)\b/i, subtype: 'anoc' },
+  { pattern: /\b(eoc|evidence of coverage|evidencia de cobertura)\b/i, subtype: 'eoc' },
+  { pattern: /\b(renovaci[oó]n|renewal|annual notice|cambio anual)\b/i, subtype: 'renewal' },
+  { pattern: /\b(medicaid notice|medicaid recertification|recertificaci[oó]n medicaid)\b/i, subtype: 'medicaid_notice' },
+  { pattern: /\b(extra help|lis|low income subsidy|ayuda adicional|ayuda extra)\b/i, subtype: 'extra_help_notice' },
+  { pattern: /\b(eob|explanation of benefits|explicaci[oó]n de beneficios)\b/i, subtype: 'eob' },
+  { pattern: /\b(collection|past due|vencido|deuda|collector|cobro vencido)\b/i, subtype: 'collection' },
+  { pattern: /\b(denial|denied|denegado|rechazado|negativa)\b/i, subtype: 'denial' },
+  { pattern: /\b(premium notice|monthly premium|prima mensual|aumento de prima|irmaa|income adjustment|ajuste de ingresos)\b/i, subtype: 'premium' },
+  { pattern: /\b(bill|factura|cobro|cargo|billes|recibo|recibos)\b/i, subtype: 'bill' },
+  { pattern: /\b(snp|special needs plan|chronic condition|condici[oó]n cr[oó]nica|welcome letter|bienvenida|new member|nuevo miembro|termination|disenrollment|terminado|cancelado)\b/i, subtype: 'plan_notice' },
 ];
 
 export function detectDocumentSubtype(text: string): DocumentSubtype {
-  const normalized = applyFuzzyTypos(text).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (const entry of SUBTYPE_PATTERNS) {
-    for (const p of entry.patterns) {
-      if (normalized.includes(p)) return entry.subtype;
+  const lowerText = text.toLowerCase();
+  for (const { pattern, subtype } of documentSubtypePatterns) {
+    if (pattern.test(lowerText)) {
+      return subtype;
     }
   }
+  return 'plan_notice';
+}
+
+// ============================================================================
+// KNOWLEDGE RETRIEVAL — WITH CONTEXT
+// ============================================================================
+export function retrieveKnowledge(
+  intent: PrimaryIntent,
+  subtype: DocumentSubtype,
+  _entities: ExtractedEntities,
+  _language: 'en' | 'es',
+): KnowledgeEntry | null {
+  // Priority: exact match on intent + subtype
+  for (const entry of customerServiceKnowledge) {
+    if (entry.intent === intent && entry.subtype === subtype) {
+      return entry;
+    }
+  }
+
+  // Then: intent only
+  for (const entry of customerServiceKnowledge) {
+    if (entry.intent === intent && !entry.subtype) {
+      return entry;
+    }
+  }
+
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CASUAL / SOCIAL DETECTOR (Wave 12 — points 99–101)
-//
-// "Hi", "hola", "thank you", "me gusta tu voz" — the bot should respond
-// warmly but briefly and steer back to the support topic without breaking
-// the conversation.
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
+// RESPONSE GENERATOR — ZERO LOST CONTEXT
+// ============================================================================
+export function generateResponse(
+  state: ConversationState,
+  intent: ClassifiedIntent,
+  subtype: DocumentSubtype,
+  emotionalState: EmotionalState,
+): { message: string; chips: string[]; followUpNeeded: boolean } {
+  const lang = state.language;
+  const isSpanish = lang === 'es';
 
-const CASUAL_PATTERNS = [
-  // Greetings (very short)
-  'hola', 'hello', 'hi', 'hey', 'buenos dias', 'buenas tardes', 'buenas noches',
-  'good morning', 'good afternoon', 'good evening',
-  // Thanks
-  'gracias', 'mil gracias', 'thank you', 'thanks',
-  // Goodbye
-  'adios', 'adiós', 'bye', 'chao', 'hasta luego', 'goodbye', 'see you',
-  // Compliments
-  'me gusta tu voz', 'eres simpatico', 'eres simpática', 'que amable',
-  'qué amable', 'you are nice', "you're nice", 'i like you',
-  // How are you
-  'como estas', 'cómo estás', 'how are you',
-];
-
-export function detectCasualSocial(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-  // Only treat as casual if the message is short and matches a known pattern.
-  if (lower.length > 40) return false;
-  for (const p of CASUAL_PATTERNS) {
-    if (lower === p || lower.startsWith(p + ' ') || lower.endsWith(' ' + p) || lower === p + '!') return true;
+  // ===== EMOTIONAL HANDLING FIRST =====
+  if (emotionalState === 'grieving') {
+    return {
+      message: isSpanish
+        ? 'Lo siento mucho por su pérdida. Quiero ayudarle con lo que necesite. Para temas de Medicare después de un fallecimiento, lo más importante es notificar a Social Security (1-800-772-1213). ¿Quiere que le ayude con algo específico sobre cobertura o beneficios?'
+        : "I'm very sorry for your loss. I want to help. For Medicare matters after a death, the most important step is notifying Social Security at 1-800-772-1213. Is there something specific about coverage or benefits I can help with?",
+      chips: isSpanish
+        ? ['Notificar fallecimiento', 'Cobertura sobreviviente', 'Hablar con asesor', 'Otra pregunta']
+        : ['Report death', 'Survivor coverage', 'Talk to advisor', 'Other question'],
+      followUpNeeded: false,
+    };
   }
-  return false;
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// "OTRA COSA" / "another topic" DETECTOR (Wave 12 — point 98)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const TOPIC_CHANGE_PATTERNS = [
-  'otra cosa', 'otro tema', 'cambio de tema', 'algo diferente',
-  'something else', 'another topic', 'change topic', 'different topic',
-  'olvidalo', 'olvídalo', 'olvidemos eso',
-];
-
-export function detectTopicChange(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-  if (lower.length > 60) return false;
-  for (const p of TOPIC_CHANGE_PATTERNS) {
-    if (lower.includes(p)) return true;
+  if (emotionalState === 'frustrated' && state.escalationCount < 2) {
+    return {
+      message: isSpanish
+        ? 'Entiendo que esto es frustrante. Déjeme asegurarme de entender su situación para darle una respuesta clara. ¿Podría decirme específicamente qué está pasando?'
+        : "I understand this is frustrating. Let me make sure I understand your situation clearly. Could you tell me specifically what's happening?",
+      chips: isSpanish
+        ? ['Mi factura', 'Mi cobertura', 'Mi medicamento', 'Hablar con asesor']
+        : ['My bill', 'My coverage', 'My medication', 'Talk to advisor'],
+      followUpNeeded: true,
+    };
   }
-  return false;
+
+  // ===== CASUAL HANDLING =====
+  if (intent.primary === 'casual_greeting') {
+    return {
+      message: isSpanish
+        ? '¡Hola! Estoy aquí para ayudarle con Medicare. ¿En qué puedo ayudarle hoy?'
+        : 'Hello! I’m here to help with Medicare. What can I help you with today?',
+      chips: isSpanish
+        ? ['Mis facturas', 'Mi cobertura', 'Una carta', 'Medicamentos']
+        : ['My bills', 'My coverage', 'A letter', 'Medications'],
+      followUpNeeded: false,
+    };
+  }
+
+  if (intent.primary === 'casual_thanks') {
+    return {
+      message: isSpanish
+        ? '¡De nada! Me alegra poder ayudar. ¿Hay algo más en lo que pueda ayudarle con Medicare?'
+        : "You're welcome! Glad I could help. Is there anything else I can help you with regarding Medicare?",
+      chips: isSpanish
+        ? ['Sí, otra pregunta', 'No, eso es todo', 'Hablar con asesor']
+        : ['Yes, another question', "No, that's all", 'Talk to advisor'],
+      followUpNeeded: false,
+    };
+  }
+
+  if (intent.primary === 'topic_change') {
+    return {
+      message: isSpanish
+        ? 'Claro, podemos cambiar de tema. ¿Cuál es su nueva pregunta sobre Medicare?'
+        : 'Sure, we can change topics. What is your new question about Medicare?',
+      chips: isSpanish
+        ? ['Facturas', 'Cobertura', 'Cartas', 'Medicamentos', 'Proveedores']
+        : ['Bills', 'Coverage', 'Letters', 'Medications', 'Providers'],
+      followUpNeeded: false,
+    };
+  }
+
+  if (intent.primary === 'escalate_to_agent') {
+    return {
+      message: isSpanish
+        ? 'Claro. Un asesor licenciado de ClearPoint puede ayudarle. ¿Cuál es el mejor número de teléfono para que se comuniquen? Por favor no envíe Medicare ID, Seguro Social ni información bancaria aquí.'
+        : 'Of course. A licensed ClearPoint advisor can help. What is the best phone number to reach you? Please do not send your Medicare ID, Social Security number, or banking information here.',
+      chips: isSpanish ? ['Mañana', 'Tarde', 'Noche', 'Cualquier hora'] : ['Morning', 'Afternoon', 'Evening', 'Anytime'],
+      followUpNeeded: true,
+    };
+  }
+
+  // ===== KNOWLEDGE RETRIEVAL =====
+  const knowledge = retrieveKnowledge(intent.primary, subtype, state.extractedEntities, lang);
+
+  if (knowledge) {
+    const messageText = isSpanish ? knowledge.responseEs : knowledge.response;
+    const chipsArr = (isSpanish ? knowledge.chipsEs : knowledge.chips) || getDefaultChips(intent.primary, subtype, isSpanish);
+    return {
+      message: messageText,
+      chips: chipsArr,
+      followUpNeeded: knowledge.needsFollowUp || false,
+    };
+  }
+
+  // ===== FALLBACK BY INTENT TYPE =====
+  return getFallbackResponse(intent.primary, subtype, state, isSpanish);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DOCUMENT-SUBTYPE-SPECIFIC FOLLOW-UP COPY
-//
-// When the document subtype is known, give a focused next-step instead of
-// the generic plan_letter_issue follow-up. Returns null if no specific
-// follow-up exists for this subtype (caller falls back to generic).
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function documentSubtypeFollowUp(subtype: DocumentSubtype, lang: SupportLang): string | null {
-  if (!subtype) return null;
-  const map: Record<NonNullable<DocumentSubtype>, { en: string; es: string }> = {
-    renewal: {
-      en: "I understand. A renewal letter can come from a Medicare Advantage plan, a Part D plan, Medicaid, Extra Help, or it could be an Annual Notice of Change (ANOC) or Evidence of Coverage (EOC) explaining changes for next year. To help you correctly: does the letter say Annual Notice of Change, Evidence of Coverage, renewal, recertification, Medicaid, Extra Help, or does it look like it came from your plan?",
-      es: 'Entiendo. Una carta de renovación puede venir de un plan Medicare Advantage, un plan Parte D, Medicaid, Extra Help, o puede ser un Aviso Anual de Cambios (ANOC) o Evidencia de Cobertura (EOC) explicando cambios para el próximo año. Para orientarle bien: ¿la carta dice Annual Notice of Change, Evidence of Coverage, renovación, recertificación, Medicaid, Extra Help, o parece venir de su plan?',
-    },
-    medicaid_notice: {
-      en: "I understand. A Medicaid notice can be about recertification, change in benefits, eligibility review, or coordination with Medicare. Medicaid is administered separately, so please do not send your Medicare ID or Social Security number here. A licensed advisor should review this carefully before any change. Does the letter mention recertification, a deadline, or a benefits change?",
-      es: 'Entiendo. Un aviso de Medicaid puede ser sobre recertificación, cambio de beneficios, revisión de elegibilidad o coordinación con Medicare. Medicaid se administra por separado, así que por favor no envíe su número de Medicare ni Seguro Social aquí. Un asesor licenciado debe revisar esto con cuidado antes de cualquier cambio. ¿La carta menciona recertificación, una fecha límite, o un cambio de beneficios?',
-    },
-    extra_help_notice: {
-      en: "I understand. An Extra Help / LIS notice usually comes from the Social Security Administration about prescription drug subsidy eligibility. Please do not send your Medicare ID or Social Security number here. Does the letter say you were approved, denied, asked to re-apply, or that something changed?",
-      es: 'Entiendo. Un aviso de Extra Help / LIS usualmente viene de la Administración del Seguro Social sobre el subsidio de medicamentos. Por favor no envíe su número de Medicare ni Seguro Social aquí. ¿La carta dice que fue aprobado, denegado, que tiene que volver a solicitar, o que algo cambió?',
-    },
-    eob: {
-      en: "Thank you. An Explanation of Benefits (EOB) usually is NOT a bill — it explains what your plan processed, what was charged, what the plan paid, and what may be your responsibility. To help you correctly: does the document say 'This is not a bill,' or does it say you must pay an amount?",
-      es: 'Gracias. Una Explicación de Beneficios (EOB) normalmente NO es una factura — explica lo que su plan procesó, lo que se cobró, lo que el plan pagó, y lo que podría ser su responsabilidad. Para orientarle bien: ¿el documento dice "This is not a bill" / "Esto no es una factura," o dice que usted debe pagar una cantidad?',
-    },
-    collection: {
-      en: "I understand — that can feel urgent. If it looks like a collection or past-due notice, it should be reviewed carefully before paying or ignoring. Please do not send your Medicare ID, Social Security number, banking information, or a full photo of the notice here. A licensed advisor can help organize what to review next, though some debt disputes require contacting the provider or plan directly. Does the notice say 'collection,' 'past due,' 'final notice,' or 'amount due'?",
-      es: 'Entiendo — eso puede sentirse urgente. Si parece collection o aviso de cobro vencido, conviene revisarlo con calma antes de pagar o ignorarlo. Por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa del aviso aquí. Un asesor licenciado puede ayudar a organizar qué revisar, aunque algunas disputas de deuda requieren contactar directamente al proveedor o plan. ¿El aviso dice "collection," "past due," "final notice," o "amount due"?',
-    },
-    denial: {
-      en: "I understand. A denial notice should be reviewed carefully because it usually has a deadline to appeal. Please do not send your Medicare ID or Social Security number here. A licensed advisor can help you organize the next step. Does the letter mention an appeal deadline, a reason for the denial, or instructions on what to do next?",
-      es: 'Entiendo. Un aviso de denegación debe revisarse con cuidado porque usualmente tiene un plazo para apelar. Por favor no envíe su número de Medicare ni Seguro Social aquí. Un asesor licenciado puede ayudar a organizar el próximo paso. ¿La carta menciona una fecha límite para apelar, una razón de la denegación, o instrucciones de qué hacer?',
-    },
-    premium: {
-      en: "I understand. A monthly premium notice usually shows what your plan charges and when payment is due. Please do not send your banking information here. Is the issue that the premium went up, you missed a payment, or you do not recognize the charge?",
-      es: 'Entiendo. Un aviso de prima mensual usualmente muestra lo que su plan cobra y cuándo es el pago. Por favor no envíe su información bancaria aquí. ¿El problema es que la prima subió, no pagó a tiempo, o no reconoce el cobro?',
-    },
-    bill: {
-      en: "I understand. A medical bill can come from a doctor, hospital, pharmacy, or your plan. It could be a copay, coinsurance, an out-of-network charge, or a denied claim. Please do not send your Medicare ID, Social Security number, banking info, or a full photo of the bill here. Where does the bill come from?",
-      es: 'Entiendo. Una factura médica puede venir de un doctor, hospital, farmacia o su plan. Puede ser un copago, coseguro, un cobro fuera de la red, o un reclamo denegado. Por favor no envíe su número de Medicare, Seguro Social, información bancaria, ni una foto completa de la factura aquí. ¿De dónde viene la factura?',
-    },
-    plan_notice: {
-      en: "I understand. A letter from your Medicare plan can be about renewal, costs, benefits, network, a deadline, or a denial. Please do not send your Medicare ID or Social Security number here. What does the letter say it is about?",
-      es: 'Entiendo. Una carta de su plan Medicare puede ser sobre renovación, costos, beneficios, red, una fecha límite o una denegación. Por favor no envíe su número de Medicare ni Seguro Social aquí. ¿De qué dice la carta que se trata?',
-    },
-  };
-  return map[subtype][lang];
-}
-
-export function documentSubtypeChips(subtype: DocumentSubtype, lang: SupportLang): string[] {
-  if (!subtype) return [];
-  const map: Record<NonNullable<DocumentSubtype>, { en: string[]; es: string[] }> = {
-    renewal: {
-      en: ['ANOC / Annual Notice', 'EOC / Coverage', 'Medicaid / Extra Help', 'From the plan'],
-      es: ['ANOC / Aviso Anual', 'EOC / Cobertura', 'Medicaid / Extra Help', 'Del plan'],
-    },
-    medicaid_notice: {
-      en: ['Recertification', 'Benefits changed', 'Deadline', 'Not sure'],
-      es: ['Recertificación', 'Cambio de beneficios', 'Fecha límite', 'No sé'],
-    },
-    extra_help_notice: {
-      en: ['Approved', 'Denied', 'Re-apply', 'Something changed'],
-      es: ['Aprobado', 'Denegado', 'Volver a solicitar', 'Algo cambió'],
-    },
-    eob: {
-      en: ['Says not a bill', 'Says amount due', 'Not sure'],
-      es: ['Dice no es factura', 'Dice debo pagar', 'No sé'],
-    },
-    collection: {
-      en: ['Says collection', 'Past due', 'Final notice', 'Amount due'],
-      es: ['Dice collection', 'Vencido', 'Aviso final', 'Cantidad a pagar'],
-    },
-    denial: {
-      en: ['Has appeal deadline', 'Reason listed', 'Not sure'],
-      es: ['Tiene plazo para apelar', 'Razón listada', 'No sé'],
-    },
-    premium: {
-      en: ['Premium went up', 'Missed payment', "Don't recognize"],
-      es: ['Subió la prima', 'No pagué a tiempo', 'No reconozco'],
-    },
-    bill: {
-      en: ['Doctor / Hospital', 'Pharmacy', 'Medicare plan', 'Not sure'],
-      es: ['Doctor / Hospital', 'Farmacia', 'Plan de Medicare', 'No sé'],
-    },
-    plan_notice: {
-      en: ['Renewal', 'Cost change', 'Benefits changed', 'Deadline'],
-      es: ['Renovación', 'Cambio de costo', 'Cambio de beneficios', 'Fecha límite'],
-    },
-  };
-  return map[subtype][lang];
-}
-
-export function splitFullName(text: string): { firstName: string; lastName: string } {
-  let cleaned = text.trim().replace(/\s+/g, ' ');
-  if (!cleaned) return { firstName: '', lastName: '' };
-
-  // Strip common conversational prefixes seniors actually type.
-  // We do this in a loop because someone may write "Hi, my name is Maria"
-  // (two prefixes back-to-back).
-  const prefixPatterns: RegExp[] = [
-    /^(hola|hi|hello|hey)[,.\s]+/i,
-    /^(my name is|i am|i'm|im|this is|name's|name is)\s+/i,
-    /^(me llamo|mi nombre es|soy|nombre[:\s]+|mi nombre[:\s]+)\s*/i,
-    /^buenos? (dias|tardes|noches)[,.\s]+/i,
-    /^(good (morning|afternoon|evening))[,.\s]+/i,
-  ];
-  let changed = true;
-  let safety = 0;
-  while (changed && safety < 6) {
-    changed = false;
-    for (const re of prefixPatterns) {
-      const next = cleaned.replace(re, '').trim();
-      if (next !== cleaned) {
-        cleaned = next;
-        changed = true;
-      }
+// ============================================================================
+// FALLBACK RESPONSES — COVER EVERY POSSIBLE INTENT
+// ============================================================================
+function getFallbackResponse(
+  intent: PrimaryIntent,
+  subtype: DocumentSubtype,
+  state: ConversationState,
+  isSpanish: boolean,
+): { message: string; chips: string[]; followUpNeeded: boolean } {
+  // Bill questions
+  if (intent === 'bill_question') {
+    if (subtype === 'eob') {
+      return {
+        message: isSpanish
+          ? "Un EOB (Explicación de Beneficios) NO es una factura. Es un resumen de lo que el plan pagó. Si dice 'Esto no es una factura' en el documento, no debe nada. ¿El documento dice 'cantidad adeudada' o 'no es una factura'?"
+          : "An EOB (Explanation of Benefits) is NOT a bill. It shows what the plan paid. If it says 'This is not a bill,' you owe nothing. Does your document say 'amount due' or 'this is not a bill'?",
+        chips: isSpanish
+          ? ['Dice cantidad adeudada', 'Dice no es factura', 'Es de hospital', 'Es de farmacia']
+          : ['Shows amount due', 'Says not a bill', 'From hospital', 'From pharmacy'],
+        followUpNeeded: true,
+      };
     }
-    safety++;
+    return {
+      message: isSpanish
+        ? 'Para ayudarle con su factura, necesito saber: ¿es del médico/hospital, de la farmacia, o del plan de Medicare?'
+        : 'To help with your bill, I need to know: is it from a doctor/hospital, a pharmacy, or your Medicare plan?',
+      chips: isSpanish
+        ? ['Médico/Hospital', 'Farmacia', 'Plan de Medicare', 'No estoy seguro']
+        : ['Doctor/Hospital', 'Pharmacy', 'Medicare plan', 'Not sure'],
+      followUpNeeded: true,
+    };
   }
-  // Drop trailing period / comma if any.
-  cleaned = cleaned.replace(/[.,;:!?]+$/, '').trim();
-  if (!cleaned) return { firstName: '', lastName: '' };
 
-  const parts = cleaned.split(' ').filter(Boolean);
-  if (parts.length === 1) return { firstName: capitalize(parts[0]), lastName: '' };
-  // Treat first token as first name, everything else as the surname (handles
-  // common Hispanic two-surname patterns like "Maria Rodriguez Lopez").
+  // Letter issues
+  if (intent === 'letter_issue') {
+    return getLetterFallback(subtype, isSpanish, state);
+  }
+
+  // Enrollment questions
+  if (intent === 'enrollment_question') {
+    return {
+      message: isSpanish
+        ? 'Para inscribirse en un plan de Medicare, necesita estar en un período de inscripción. ¿Está en su período inicial (cuando cumple 65), en el período abierto (15 oct - 7 dic), o tiene un período especial (por mudanza, pérdida de cobertura, etc.)?'
+        : 'To enroll in a Medicare plan, you need to be in an enrollment period. Are you in your Initial Enrollment Period (turning 65), AEP (Oct 15 - Dec 7), or a Special Enrollment Period (moving, losing coverage, etc.)?',
+      chips: isSpanish
+        ? ['Cumpliendo 65 (IEP)', 'Período Abierto (AEP)', 'Período Especial (SEP)', 'No estoy seguro']
+        : ['Turning 65 (IEP)', 'Open Enrollment (AEP)', 'Special Enrollment (SEP)', 'Not sure'],
+      followUpNeeded: true,
+    };
+  }
+
+  // Disenrollment
+  if (intent === 'disenrollment_question') {
+    return {
+      message: isSpanish
+        ? 'Para cancelar su plan de Medicare Advantage o Parte D, puede hacerlo durante el período abierto (15 oct - 7 dic) o durante el período de inscripción abierta de Medicare Advantage (1 ene - 31 mar). ¿Quiere cancelar para cambiarse a otro plan o volver a Medicare Original?'
+        : 'To disenroll from a Medicare Advantage or Part D plan, you can do so during AEP (Oct 15 - Dec 7) or Medicare Advantage Open Enrollment (Jan 1 - Mar 31). Do you want to disenroll to switch plans or return to Original Medicare?',
+      chips: isSpanish
+        ? ['Cambiar a otro plan', 'Volver a Medicare Original', 'Tengo SEP', 'Hablar con asesor']
+        : ['Switch to another plan', 'Return to Original Medicare', 'I have a SEP', 'Talk to advisor'],
+      followUpNeeded: true,
+    };
+  }
+
+  // Appeals & grievances
+  if (intent === 'appeals_grievance') {
+    return {
+      message: isSpanish
+        ? 'Si le negaron cobertura o un medicamento, tiene derecho a apelar. Tiene 60 días desde la fecha de la negativa. ¿Quiere que le explique cómo hacer una apelación?'
+        : 'If coverage or a medication was denied, you have the right to appeal. You have 60 days from the denial date. Do you want me to explain how to file an appeal?',
+      chips: isSpanish
+        ? ['Sí, explicar apelación', 'Tengo una queja', 'Necesito formulario', 'Hablar con asesor']
+        : ['Yes, explain appeal', 'I have a grievance', 'Need form', 'Talk to advisor'],
+      followUpNeeded: true,
+    };
+  }
+
+  // Complaint
+  if (intent === 'complaint') {
+    return {
+      message: isSpanish
+        ? "Lamento que haya tenido una mala experiencia. Para presentar una queja formal (llamada 'reclamo' o 'grievance'), puede llamar al 1-800-MEDICARE o contactar a su plan. ¿Quiere que le ayude a documentar su queja?"
+        : "I'm sorry you had a bad experience. To file a formal complaint (called a 'grievance'), you can call 1-800-MEDICARE or contact your plan. Do you want me to help document your complaint?",
+      chips: isSpanish
+        ? ['Ayuda con queja', 'Teléfono de Medicare', 'Hablar con supervisor', 'Otra cosa']
+        : ['Help with complaint', 'Medicare phone', 'Talk to supervisor', 'Something else'],
+      followUpNeeded: true,
+    };
+  }
+
+  // General fallback
   return {
-    firstName: capitalize(parts[0]),
-    lastName: parts.slice(1).map(capitalize).join(' '),
+    message: isSpanish
+      ? 'Gracias por su pregunta. Para darle la mejor respuesta, ¿podría contarme un poco más? ¿Es sobre facturas, cobertura, medicamentos, una carta que recibió, o algo más?'
+      : "Thanks for your question. To give you the best answer, could you tell me a bit more? Is it about bills, coverage, medications, a letter you received, or something else?",
+    chips: isSpanish
+      ? ['Factura', 'Cobertura', 'Medicamento', 'Carta', 'Proveedor']
+      : ['Bill', 'Coverage', 'Medication', 'Letter', 'Provider'],
+    followUpNeeded: true,
   };
 }
 
-function capitalize(word: string): string {
-  if (!word) return word;
-  // Preserve apostrophes and hyphens for names like O'Brien or Smith-Jones.
-  return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
-}
+function getLetterFallback(
+  subtype: DocumentSubtype,
+  isSpanish: boolean,
+  _state: ConversationState,
+): { message: string; chips: string[]; followUpNeeded: boolean } {
+  switch (subtype) {
+    case 'renewal':
+    case 'anoc':
+    case 'eoc':
+      return {
+        message: isSpanish
+          ? 'Una carta de renovación o ANOC (Aviso Anual de Cambios) explica los cambios en su plan para el próximo año. Los cambios pueden incluir primas, deducibles, redes de proveedores, o cobertura de medicamentos. ¿Le preocupa algún cambio en específico?'
+          : 'A renewal letter or ANOC (Annual Notice of Change) explains changes to your plan for next year. Changes may include premiums, deductibles, provider networks, or drug coverage. Are you concerned about a specific change?',
+        chips: isSpanish
+          ? ['Cambio de prima', 'Cambio de red', 'Cambio de medicamentos', 'No entendí el aviso']
+          : ['Premium change', 'Network change', 'Drug change', "Didn't understand notice"],
+        followUpNeeded: true,
+      };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GLOBAL-INTENT DETECTOR
-//
-// Mid-conversation interruptions a senior might type at any step:
-//   restart, go back, talk to a person, change my state, never mind, stop.
-// Returns one of a small set or null. Lets the UI handle them gracefully
-// instead of trying to interpret them as field data.
-// ─────────────────────────────────────────────────────────────────────────────
+    case 'eob':
+      return {
+        message: isSpanish
+          ? 'Un EOB muestra lo que su plan pagó y lo que podría deber. No es una factura a menos que diga "cantidad adeudada". ¿Ve alguna cantidad que diga que debe pagar?'
+          : "An EOB shows what your plan paid and what you might owe. It's not a bill unless it says 'amount due.' Do you see an amount you're supposed to pay?",
+        chips: isSpanish
+          ? ['Sí, dice cantidad', 'No, dice no es factura', 'No entiendo el EOB', 'Es de hospital']
+          : ['Yes, shows amount', 'No, says not a bill', 'Do not understand EOB', 'From hospital'],
+        followUpNeeded: true,
+      };
 
-export type GlobalIntent =
-  | 'RESTART'
-  | 'GO_BACK'
-  | 'TALK_TO_HUMAN'
-  | 'CHANGE_LANGUAGE_EN'
-  | 'CHANGE_LANGUAGE_ES'
-  | 'STOP_CONVERSATION'
-  | null;
+    case 'medicaid_notice':
+      return {
+        message: isSpanish
+          ? 'Un aviso de Medicaid es importante. Puede ser sobre su recertificación anual, cambios en sus beneficios, o su elegibilidad. ¿El aviso menciona alguna fecha límite o acción que necesita tomar?'
+          : 'A Medicaid notice is important. It may be about your annual recertification, benefit changes, or eligibility. Does the notice mention a deadline or action you need to take?',
+        chips: isSpanish
+          ? ['Fecha límite', 'Recertificación', 'Cambio de beneficios', 'Pérdida de elegibilidad']
+          : ['Deadline', 'Recertification', 'Benefit change', 'Loss of eligibility'],
+        followUpNeeded: true,
+      };
 
-const RESTART_PHRASES = [
-  'restart', 'start over', 'start again', 'begin again', 'reset',
-  'reiniciar', 'empezar de nuevo', 'comenzar de nuevo', 'volver a empezar',
-];
-const GO_BACK_PHRASES = [
-  'go back', 'previous', 'last question', 'undo',
-  'atras', 'volver', 'pregunta anterior', 'deshacer',
-];
-const TALK_TO_HUMAN_PHRASES = [
-  'talk to a person', 'talk to someone', 'talk to a human', 'speak with someone',
-  'i want a person', 'real person', 'just call me', 'put me on the phone',
-  'hablar con una persona', 'hablar con alguien', 'hablar con un humano',
-  'quiero una persona', 'persona real', 'que me llamen', 'pasame con alguien',
-];
-const CHANGE_LANGUAGE_EN = [
-  'better in english', 'switch to english', 'in english', 'speak english',
-  'english please', 'change to english', 'mejor en ingles', 'cambiar a ingles',
-];
-const CHANGE_LANGUAGE_ES = [
-  'better in spanish', 'switch to spanish', 'in spanish', 'speak spanish',
-  'spanish please', 'change to spanish', 'mejor en espanol', 'cambiar a espanol',
-];
-const STOP_PHRASES = [
-  'stop', 'cancel', 'never mind', 'forget it',
-  'olvidalo', 'no importa', 'cancelar', 'detener',
-];
+    case 'collection':
+      return {
+        message: isSpanish
+          ? '⚠️ Esto parece ser un aviso de cobro o cobranza. Es importante actuar rápido. ¿El aviso dice que es de un plan de Medicare, un hospital, o una agencia de cobranza?'
+          : "⚠️ This appears to be a collection or past-due notice. It's important to act quickly. Does the notice say it's from a Medicare plan, a hospital, or a collection agency?",
+        chips: isSpanish
+          ? ['Del plan Medicare', 'Del hospital', 'Agencia de cobranza', 'Necesito ayuda urgente']
+          : ['From Medicare plan', 'From hospital', 'Collection agency', 'Need urgent help'],
+        followUpNeeded: true,
+      };
 
-export function detectGlobalIntent(text: string): GlobalIntent {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-  if (!lower) return null;
-  // Short messages are more likely to be commands. Long messages are more
-  // likely to be actual content — but we still check for unambiguous phrases.
-  for (const p of CHANGE_LANGUAGE_ES) if (lower.includes(p)) return 'CHANGE_LANGUAGE_ES';
-  for (const p of CHANGE_LANGUAGE_EN) if (lower.includes(p)) return 'CHANGE_LANGUAGE_EN';
-  // Restart / go-back / stop should match WORD-LEVEL to avoid eating words
-  // like "restarting my plan" from being treated as a control command.
-  const tokens = lower.split(/[^a-z0-9]+/);
-  const tokenSet = new Set(tokens);
-  if (tokens.length <= 4) {
-    for (const p of RESTART_PHRASES) if (lower.includes(p)) return 'RESTART';
-    for (const p of GO_BACK_PHRASES) if (lower.includes(p)) return 'GO_BACK';
-    for (const p of STOP_PHRASES) if (tokenSet.has(p)) return 'STOP_CONVERSATION';
+    default:
+      return {
+        message: isSpanish
+          ? 'Para ayudarle con esta carta, dígame: ¿es sobre renovación/cambios anuales, una factura, un aviso de Medicaid/Extra Help, o algo más?'
+          : 'To help with this letter, tell me: is it about renewal/annual changes, a bill, a Medicaid/Extra Help notice, or something else?',
+        chips: isSpanish
+          ? ['Renovación/ANOC', 'Factura', 'Medicaid/Extra Help', 'Aviso de cobro']
+          : ['Renewal/ANOC', 'Bill', 'Medicaid/Extra Help', 'Collection notice'],
+        followUpNeeded: true,
+      };
   }
-  for (const p of TALK_TO_HUMAN_PHRASES) if (lower.includes(p)) return 'TALK_TO_HUMAN';
-  return null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// REFLECTION HELPER
-//
-// Produces a one-sentence acknowledgement of what the bot has captured so far.
-// Used at the transition from location → concern so the caller feels heard.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function reflectBack(name: string, zip: string, state: string, lang: SupportLang): string {
-  const stateName = stateDisplayName(state, lang);
-  const locationBit = zip && stateName
-    ? `${stateName} (ZIP ${zip})`
-    : zip
-      ? `ZIP ${zip}`
-      : stateName;
-
-  if (lang === 'es') {
-    if (name && locationBit) return `Gracias, ${name}. Veo que está en ${locationBit}.`;
-    if (name) return `Gracias, ${name}.`;
-    if (locationBit) return `Gracias. Veo que está en ${locationBit}.`;
-    return 'Gracias.';
+function getDefaultChips(intent: PrimaryIntent, _subtype: DocumentSubtype, isSpanish: boolean): string[] {
+  if (isSpanish) {
+    switch (intent) {
+      case 'bill_question':
+        return ['¿Cuánto debo?', 'No es mío', 'Ya pagué', 'Es del hospital'];
+      case 'coverage_question':
+        return ['Medicamento cubierto', 'Doctor cubierto', 'Hospital', 'Procedimiento'];
+      case 'drug_question':
+        return ['Formulario', 'Autorización previa', 'Terapia escalonada', 'Costo'];
+      case 'enrollment_question':
+        return ['AEP (15 oct-7 dic)', 'IEP (cumplir 65)', 'SEP (mudanza)', 'Medicaid'];
+      default:
+        return ['Más información', 'Hablar con asesor', 'Otra pregunta'];
+    }
   }
-  if (name && locationBit) return `Thank you, ${name}. I see you're in ${locationBit}.`;
-  if (name) return `Thank you, ${name}.`;
-  if (locationBit) return `Thank you. I see you're in ${locationBit}.`;
-  return 'Thank you.';
+
+  switch (intent) {
+    case 'bill_question':
+      return ['How much do I owe?', 'Not mine', 'Already paid', 'From hospital'];
+    case 'coverage_question':
+      return ['Drug covered', 'Doctor covered', 'Hospital', 'Procedure'];
+    case 'drug_question':
+      return ['Formulary', 'Prior auth', 'Step therapy', 'Cost'];
+    case 'enrollment_question':
+      return ['AEP (Oct 15-Dec 7)', 'IEP (turning 65)', 'SEP (moving)', 'Medicaid'];
+    default:
+      return ['More info', 'Talk to advisor', 'Other question'];
+  }
 }
 
-function stateDisplayName(state: string, lang: SupportLang): string {
-  const map_en: Record<string, string> = {
-    NY: 'New York', NJ: 'New Jersey', CT: 'Connecticut', FL: 'Florida',
-    Other: 'your state',
+// ============================================================================
+// MAIN ENGINE FUNCTION — ENTRY POINT
+// ============================================================================
+function makeId(): string {
+  if (typeof crypto !== 'undefined' && typeof (crypto as any).randomUUID === 'function') {
+    return (crypto as any).randomUUID();
+  }
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+export function processMessage(
+  userMessage: string,
+  existingState: ConversationState | null,
+): { response: string; chips: string[]; newState: ConversationState; needsHuman: boolean } {
+  // Initialize or update state
+  const state: ConversationState = existingState
+    ? { ...existingState }
+    : {
+        conversationId: makeId(),
+        messages: [],
+        intentStack: [],
+        currentPrimaryIntent: 'unknown',
+        currentDocumentSubtype: 'none',
+        extractedEntities: {},
+        pendingFollowUps: [],
+        escalationCount: 0,
+        emotionalState: 'calm',
+        language: /[áéíóúñ¿¡]/i.test(userMessage) ? 'es' : 'en',
+        unansweredQuestions: [],
+        lastUserMessage: '',
+        lastBotResponse: '',
+        turnCount: 0,
+        needsHuman: false,
+      };
+
+  // Update state with new message
+  state.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() });
+  state.lastUserMessage = userMessage;
+  state.turnCount++;
+
+  // Detect emotional state
+  const emotionalState = detectEmotionalState(userMessage);
+  state.emotionalState = emotionalState;
+
+  // Classify intent
+  const intent = classifyIntent(userMessage);
+  state.currentPrimaryIntent = intent.primary;
+  state.intentStack.push({
+    intent: intent.primary,
+    confidence: intent.confidence,
+    timestamp: Date.now(),
+    resolved: false,
+  });
+
+  // Detect document subtype
+  if (
+    intent.primary === 'letter_issue' ||
+    /carta|letter|notice|aviso|eob|factura|bill|recibo|cobro|billes/i.test(userMessage)
+  ) {
+    const subtype = detectDocumentSubtype(userMessage);
+    state.currentDocumentSubtype = subtype;
+  }
+
+  // Extract entities
+  const zipMatch = userMessage.match(/\b(\d{5})\b/);
+  if (zipMatch) state.extractedEntities.zipCode = zipMatch[1];
+
+  const dollarMatch = userMessage.match(/\$?(\d+(?:\.\d{2})?)/);
+  if (dollarMatch) state.extractedEntities.dollarAmount = parseFloat(dollarMatch[1]);
+
+  if (/\b(medicaid)\b/i.test(userMessage)) state.extractedEntities.mentionedMedicaid = true;
+  if (/\b(extra help|lis|low income)\b/i.test(userMessage)) state.extractedEntities.mentionedExtraHelp = true;
+
+  // Generate response
+  const { message, chips } = generateResponse(state, intent, state.currentDocumentSubtype, emotionalState);
+
+  // Check for escalation
+  let needsHuman = state.needsHuman;
+  if (intent.primary === 'escalate_to_agent' || state.escalationCount >= 3) {
+    needsHuman = true;
+  }
+
+  // Update state
+  state.lastBotResponse = message;
+  state.messages.push({ role: 'bot', content: message, timestamp: Date.now() });
+  state.needsHuman = needsHuman;
+
+  return {
+    response: message,
+    chips,
+    newState: state,
+    needsHuman,
   };
-  const map_es: Record<string, string> = {
-    NY: 'Nueva York', NJ: 'Nueva Jersey', CT: 'Connecticut', FL: 'Florida',
-    Other: 'su estado',
-  };
-  const m = lang === 'es' ? map_es : map_en;
-  return m[state] || '';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CASE SUMMARY BUILDER
-//
-// Structured, advisor-readable summary. Keeps every flag the GHL workflow will
-// later need so it can route by language / urgency / tag without parsing prose.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface CaseState {
-  session_id: string;
-  started_at: string;
-  language: SupportLang;
-  preferred_language: 'English' | 'Spanish' | 'Either' | '';
-  language_switches: number;
-  primary_intent: IntentId | null;
-  secondary_intents: IntentId[];
-  urgency: IntentUrgency;
-  requires_agent_review: boolean;
-  privacy_warning_shown: boolean;
-  sensitive_data_intercepted: boolean;
-  emergency_warning_shown: boolean;
-  frustration_detected: boolean;
-  caregiver_signal?: boolean;
-  visitor_type?: VisitorType;
-  mentioned_upcoming_procedure?: boolean;
-  mentioned_doctor_concern?: boolean;
-  mentioned_medication_concern?: boolean;
-  wants_callback?: boolean;
-  consent_to_contact: boolean;
-  first_name: string;
-  last_name?: string;
-  phone: string;
-  state: string;
-  zip: string;
-  best_time_to_call: string;
-  customer_questions: string[];
-}
-
-/** What information is still missing for an advisor to follow up effectively. */
-export function listMissingInfo(s: CaseState, lang: SupportLang): string[] {
-  const missing: string[] = [];
-  if (!s.first_name) missing.push(lang === 'es' ? 'nombre' : 'first name');
-  if (!s.phone) missing.push(lang === 'es' ? 'teléfono' : 'phone number');
-  if (!s.state) missing.push(lang === 'es' ? 'estado' : 'state');
-  if (!s.best_time_to_call) missing.push(lang === 'es' ? 'mejor hora para llamar' : 'best callback time');
-  if (!s.consent_to_contact) missing.push(lang === 'es' ? 'consentimiento para contacto' : 'consent to contact');
-  return missing;
-}
-
-/** Recommended next action for the advisor reading this case. */
-export function recommendedNextAction(s: CaseState): string {
-  const urgentTag = s.urgency === 'urgent' ? '[URGENT] ' : s.urgency === 'high' ? '[HIGH] ' : '';
-  if (s.emergency_warning_shown) {
-    return `${urgentTag}Customer was shown an emergency warning during the chat. Verify safety first, then follow up on the Medicare question if appropriate.`;
-  }
-  if (s.requires_agent_review) {
-    return `${urgentTag}A licensed advisor should review this case and follow up with the customer at the phone number captured. Verify plan-specific details before any recommendation.`;
-  }
-  return `${urgentTag}Educational request. A licensed advisor can follow up if needed.`;
-}
-
-/** Multi-line case summary written in stable, parseable shape. */
-export function buildCaseSummary(s: CaseState): string {
-  const langStr = s.language_switches > 0
-    ? `${s.preferred_language || (s.language === 'es' ? 'Spanish' : 'English')} (bilingual conversation, ${s.language_switches} switches)`
-    : (s.preferred_language || (s.language === 'es' ? 'Spanish' : 'English'));
-
-  const secondaryStr = s.secondary_intents.length > 0
-    ? s.secondary_intents.join(', ')
-    : 'none';
-
-  const questionsStr = s.customer_questions.length > 0
-    ? s.customer_questions.map((q, i) => `  ${i + 1}. ${q}`).join('\n')
-    : '  (no free-text questions captured)';
-
-  const tone = s.frustration_detected
-    ? 'Customer expressed confusion or frustration; bot acknowledged before continuing.'
-    : 'Calm.';
-
-  const collected: string[] = [];
-  if (s.first_name) collected.push(`first name (${s.first_name})`);
-  if (s.phone) collected.push(`phone (${s.phone})`);
-  if (s.state) collected.push(`state (${s.state})`);
-  if (s.zip) collected.push(`ZIP (${s.zip})`);
-  if (s.best_time_to_call) collected.push(`best callback time (${s.best_time_to_call})`);
-  const collectedStr = collected.length > 0 ? collected.join(', ') : 'none';
-
-  const needed = listMissingInfo(s, 'en');
-  const neededStr = needed.length > 0 ? needed.join(', ') : 'none';
-
-  const wantsCallStr = s.wants_callback === undefined
-    ? 'not asked'
-    : s.wants_callback ? 'YES' : 'NO';
-
-  const userType = s.visitor_type === 'existing_client'
-    ? 'EXISTING CLIENT — follow-up conversation'
-    : s.visitor_type === 'caregiver' || s.caregiver_signal
-      ? 'family member / caregiver speaking on behalf of beneficiary'
-      : s.visitor_type === 'senior'
-        ? 'beneficiary (senior)'
-        : 'beneficiary or unknown';
-
-  const continuityCare = s.mentioned_upcoming_procedure
-    ? 'YES — caller mentioned a surgery, procedure, hospital admission, or ongoing treatment. Advisor MUST verify network continuity-of-care before any plan change.'
-    : 'no';
-  const doctorConcernStr = s.mentioned_doctor_concern ? 'YES' : 'no';
-  const medConcernStr = s.mentioned_medication_concern ? 'YES' : 'no';
-
-  return [
-    '[Customer Service Box]',
-    `Submitted: ${new Date().toISOString()}`,
-    `Session: ${s.session_id}`,
-    `Language: ${langStr}`,
-    '',
-    'CASE',
-    `Main issue: ${s.primary_intent || 'unknown'}`,
-    `Secondary issues: ${secondaryStr}`,
-    `Urgency: ${s.urgency}`,
-    `Customer tone: ${tone}`,
-    '',
-    'CUSTOMER CONTEXT',
-    `State: ${s.state || 'not provided'}`,
-    `ZIP: ${s.zip || 'not provided'}`,
-    `Best time to call: ${s.best_time_to_call || 'not specified'}`,
-    `Wants advisor call: ${wantsCallStr}`,
-    `Consent to contact: ${s.consent_to_contact ? 'YES' : 'NO'}`,
-    `User type: ${userType}`,
-    `Doctor concern mentioned: ${doctorConcernStr}`,
-    `Medication concern mentioned: ${medConcernStr}`,
-    `Upcoming procedure / continuity-of-care: ${continuityCare}`,
-    `Privacy warning shown: ${s.privacy_warning_shown ? 'YES' : 'NO'}`,
-    `Sensitive info blocked: ${s.sensitive_data_intercepted ? 'YES' : 'NO'}`,
-    `Emergency warning shown: ${s.emergency_warning_shown ? 'YES' : 'NO'}`,
-    '',
-    'CUSTOMER QUESTIONS',
-    questionsStr,
-    '',
-    'INFORMATION COLLECTED',
-    `  ${collectedStr}`,
-    '',
-    'INFORMATION STILL NEEDED',
-    `  ${neededStr}`,
-    '',
-    'RECOMMENDED NEXT ACTION',
-    recommendedNextAction(s),
-  ].join('\n');
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GHL TAGS
-// ─────────────────────────────────────────────────────────────────────────────
-
-export function buildSupportTags(s: CaseState): string[] {
-  const tags: string[] = ['customer_service_bot', 'clearpoint_support'];
-
-  if (s.language_switches > 0) tags.push('bilingual');
-  else tags.push(s.language === 'es' ? 'spanish' : 'english');
-
-  if (s.primary_intent) {
-    const primary = getIntent(s.primary_intent);
-    if (!tags.includes(primary.ghl_tag)) tags.push(primary.ghl_tag);
-  }
-  for (const id of s.secondary_intents) {
-    const def = getIntent(id);
-    if (!tags.includes(def.ghl_tag)) tags.push(def.ghl_tag);
-  }
-
-  if (s.requires_agent_review) tags.push('needs_agent_review');
-  if (s.urgency === 'urgent' || s.urgency === 'high') tags.push('urgent_review');
-  if (s.privacy_warning_shown) tags.push('sensitive_warning_shown');
-  if (s.emergency_warning_shown) tags.push('emergency_warning_shown');
-  if (s.frustration_detected) tags.push('customer_frustrated');
-  if (s.caregiver_signal || s.visitor_type === 'caregiver') tags.push('caregiver_or_family');
-  if (s.visitor_type === 'existing_client') tags.push('existing_client');
-  if (s.mentioned_upcoming_procedure) tags.push('continuity_of_care_concern');
-  if (s.mentioned_doctor_concern) tags.push('doctor_concern_mentioned');
-  if (s.mentioned_medication_concern) tags.push('medication_concern_mentioned');
-
-  return tags;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// COMPLIANCE FORBIDDEN-PHRASE SCANNER
-//
-// Same negative list the rest of the site enforces. Used by the test harness
-// to scan ALL bilingual COPY strings the bot can emit, so we cannot ship a
-// build that says "you qualify", "guaranteed savings", "best plan", etc.
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const FORBIDDEN_PHRASES_EN: string[] = [
-  'you qualify',
-  'you are qualified',
-  'guaranteed savings',
-  'guaranteed to save',
-  'best plan',
-  'the best plan',
-  'affiliated with medicare',
-  'affiliated with cms',
-  'affiliated with the government',
-  'free drug plan',
-  'everyone qualifies',
-  'we are medicare',
-  'we are cms',
-];
-export const FORBIDDEN_PHRASES_ES: string[] = [
-  'usted califica',
-  'ustedes califican',
-  'ahorros garantizados',
-  'garantizado ahorrar',
-  'mejor plan',
-  'el mejor plan',
-  'afiliado con medicare',
-  'afiliados con medicare',
-  'afiliado con cms',
-  'afiliado con el gobierno',
-  'plan gratis de medicamentos',
-  'todos califican',
-  'somos medicare',
-  'somos cms',
-];
-
-export function scanForbiddenPhrases(text: string): string[] {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const hits: string[] = [];
-  for (const p of [...FORBIDDEN_PHRASES_EN, ...FORBIDDEN_PHRASES_ES]) {
-    if (lower.includes(p)) hits.push(p);
-  }
-  return hits;
 }

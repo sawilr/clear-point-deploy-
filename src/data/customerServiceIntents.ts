@@ -483,3 +483,70 @@ export function getIntent(id: IntentId): IntentDefinition {
   }
   return found;
 }
+
+// ============================================================================
+// V13 ADAPTER — IntentPattern shape expected by customerServiceEngine v13
+// ============================================================================
+// Maps the existing 22-intent IntentDefinition[] (keyword+phrase based) to the
+// new V13 import shape (regex pattern based). The V13 engine imports
+// `customerServiceIntents` and `IntentPattern` from this file.
+
+export interface IntentPattern {
+  id: string;
+  patterns: RegExp[];
+  confidence?: number;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function intentToV13Patterns(def: IntentDefinition): IntentPattern {
+  const allPhrases = [...def.phrases_en, ...def.phrases_es];
+  const allKeywords = [...def.keywords_en, ...def.keywords_es];
+  const patterns: RegExp[] = [];
+  // Multi-word phrases — substring match
+  for (const p of allPhrases) {
+    if (p && p.trim()) patterns.push(new RegExp(escapeRegex(p), 'i'));
+  }
+  // Single-word keywords — word-boundary match
+  for (const k of allKeywords) {
+    if (k && k.trim()) patterns.push(new RegExp(`\\b${escapeRegex(k)}\\b`, 'i'));
+  }
+  return {
+    id: mapIntentIdToV13(def.id),
+    patterns,
+    confidence: def.escalate_to_agent ? 0.9 : 0.85,
+  };
+}
+
+function mapIntentIdToV13(id: IntentId): string {
+  const map: Record<IntentId, string> = {
+    annual_review: 'enrollment_question',
+    medication_help: 'drug_question',
+    doctor_network_question: 'provider_question',
+    plan_letter_issue: 'letter_issue',
+    possible_loss_of_coverage: 'coverage_question',
+    extra_help_lis: 'general_question',
+    medicaid_msp: 'coverage_question',
+    cost_help: 'bill_question',
+    benefit_card_issue: 'coverage_question',
+    otc_question: 'coverage_question',
+    appointment_requested: 'escalate_to_agent',
+    call_requested: 'escalate_to_agent',
+    new_to_medicare: 'enrollment_question',
+    confused_customer: 'general_question',
+    complaint: 'complaint',
+    employer_union_benefits: 'coverage_question',
+    existing_client: 'general_question',
+    compliance_deflect_recommendation: 'coverage_question',
+    compliance_deflect_eligibility: 'general_question',
+    compliance_deflect_enrollment: 'enrollment_question',
+    general_medicare_question: 'general_question',
+    other_unknown: 'unknown',
+  };
+  return map[id] || 'unknown';
+}
+
+export const customerServiceIntents: IntentPattern[] = INTENTS.map(intentToV13Patterns);
+
