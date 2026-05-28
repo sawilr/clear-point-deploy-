@@ -1,34 +1,33 @@
 /**
- * Customer Service Box — ClearPoint Support Intake
+ * Customer Service Box — natural-conversation intake
  *
  * Inline (page-resident) chat surface for /support. NOT a floating launcher.
  *
- * Architecture lineage:
- *   - Zara (src/components/ChatBot.tsx) is the reference for UX patterns:
- *     bubble styling, typing pacing/queue, monotonic bottom-follow scroll,
- *     header layout, senior-friendly spacing, privacy band inside the scroll
- *     body, options-in-bubble rendering, grid-vs-stack button layout.
- *   - This file does NOT import from ChatBot.tsx. Zara remains locked.
- *   - All pure logic (detectors, summary, tags) lives in src/lib/customerServiceEngine.ts
- *     so a future phone/voice intake can reuse it without React.
+ * UX direction (Wave 6):
+ *   - Conversational, NOT button-heavy. Removes the 9-intent grid as the
+ *     primary first step. The bot asks for name, ZIP/state, and the concern
+ *     in plain language, then classifies silently and asks an intent-specific
+ *     natural follow-up. One question at a time. Calm tone.
  *
- * Compliance:
- *   - No "you qualify", no "best plan", no "guaranteed savings", no
- *     "affiliated with Medicare/CMS/government". All COPY runs through the
- *     forbidden-phrase scanner in tests.
- *   - Sensitive info (MBI / SSN / card / routing) is intercepted in detector
- *     and NEVER appended to messages or summary.
- *   - Emergency keywords pause the flow and route to 911.
+ *   - Buttons are reserved for: language pick (the one place they're natural),
+ *     privacy "I understand", best-time chips, state-shortcut chips (only if
+ *     classifier couldn't parse the location), and the consent send. No big
+ *     grid of intents.
  *
- * GHL: submits via existing submitLeadToGHL() from src/lib/ghl.ts using
- *   source = 'customer_service_bot'. No new endpoint, no new env vars.
+ * Architecture lineage from Zara:
+ *   - Typing queue, monotonic bottom-follow scroll, header/footer chrome,
+ *     bubble styling. Zero shared code with src/components/ChatBot.tsx.
+ *
+ * Pure logic in src/lib/customerServiceEngine.ts (no React). Designed so a
+ * future phone/voice intake can reuse the same detectors, classifier, and
+ * summary builder.
  */
 
 import { useEffect, useReducer, useRef, useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { Headphones, MessageCircle, Phone, RotateCcw, Send } from 'lucide-react';
-import { type IntentId, type IntentUrgency, getIntent } from '../data/customerServiceIntents';
+import { type IntentId, type IntentUrgency } from '../data/customerServiceIntents';
 import {
   classifyIntent,
   detectEmergency,
@@ -40,24 +39,29 @@ import {
   buildSupportTags,
   frustrationAck,
   advisorHandoffLine,
+  intentFollowUp,
+  parseZipOrState,
+  splitFullName,
   type CaseState,
   type SupportLang,
 } from '../lib/customerServiceEngine';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// STATE MACHINE
+// STATE MACHINE  (natural conversation flow)
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Step =
-  | 'language_pick'
-  | 'privacy_acknowledge'
-  | 'intent_pick'
-  | 'collecting_first_name'
-  | 'collecting_phone'
-  | 'collecting_state'
-  | 'collecting_zip_optional'
-  | 'collecting_best_time'
-  | 'consent_review'
+  | 'language_pick'        // pick EN/ES (only place buttons are mandatory)
+  | 'privacy_acknowledge'  // "I understand"
+  | 'collecting_full_name' // free text
+  | 'collecting_location'  // free text → ZIP / state parsed
+  | 'state_fallback'       // shown ONLY if parser couldn't infer state from "Other"
+  | 'collecting_concern'   // free text (NO BUTTON GRID — this is the key UX shift)
+  | 'intent_followup'      // free text answer to intent-specific follow-up
+  | 'asking_callback_pref' // "Would you like an advisor to call you?" (Yes/No)
+  | 'collecting_phone'     // free text — only when caller opted in OR case requires
+  | 'collecting_best_time' // chips: Morning / Afternoon / Evening / Anytime
+  | 'consent_review'       // checkbox + send
   | 'submitting'
   | 'submitted'
   | 'submission_failed'
@@ -66,21 +70,14 @@ type Step =
 type Pace = 'short' | 'long' | 'slow';
 type MsgRole = 'bot' | 'user';
 
-interface Option {
-  label: string;
-  value: string;
-}
-
 interface Message {
   id: string;
   role: MsgRole;
   text: string;
-  options?: Option[];
 }
 
 interface QueuedMsg {
   text: string;
-  options?: Option[];
   pace?: Pace;
 }
 
@@ -89,7 +86,7 @@ interface State {
   started_at: string;
   turn_count: number;
   language: SupportLang;
-  preferred_language: 'English' | 'Spanish' | 'Either' | '';
+  preferred_language: 'English' | 'Spanish' | '';
   language_switches: number;
   primary_intent: IntentId | null;
   secondary_intents: IntentId[];
@@ -100,8 +97,10 @@ interface State {
   sensitive_data_intercepted: boolean;
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
+  wants_callback: boolean;
   consent_to_contact: boolean;
   first_name: string;
+  last_name: string;
   phone: string;
   state: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' | '';
   zip: string;
@@ -118,17 +117,19 @@ type Action =
   | { type: 'INIT'; lang: SupportLang }
   | { type: 'PICK_LANGUAGE'; lang: SupportLang }
   | { type: 'ACKNOWLEDGE_PRIVACY' }
-  | { type: 'SET_INTENT'; primary: IntentId; secondary: IntentId[]; confidence: 'high' | 'medium' | 'low' }
   | { type: 'ADD_USER_MSG'; text: string }
-  | { type: 'ADD_BOT_MSG'; text: string; options?: Option[] }
+  | { type: 'ADD_BOT_MSG'; text: string }
   | { type: 'EMERGENCY_DETECTED' }
   | { type: 'ACK_EMERGENCY' }
   | { type: 'SENSITIVE_INTERCEPTED' }
   | { type: 'FRUSTRATION_FLAG' }
-  | { type: 'COLLECT_FIRST_NAME'; value: string }
+  | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
+  | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
+  | { type: 'COLLECT_STATE_FALLBACK'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
+  | { type: 'SET_INTENT'; primary: IntentId; secondary: IntentId[]; confidence: 'high' | 'medium' | 'low'; requires_agent_review: boolean; urgency: IntentUrgency }
+  | { type: 'CONCERN_CAPTURED' }
+  | { type: 'WANTS_CALLBACK'; value: boolean }
   | { type: 'COLLECT_PHONE'; value: string }
-  | { type: 'COLLECT_STATE'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
-  | { type: 'COLLECT_ZIP'; value: string }
   | { type: 'COLLECT_BEST_TIME'; value: string }
   | { type: 'SET_CONSENT'; value: boolean }
   | { type: 'SUBMITTING' }
@@ -158,8 +159,10 @@ function initialState(lang: SupportLang): State {
     sensitive_data_intercepted: false,
     emergency_warning_shown: false,
     frustration_detected: false,
+    wants_callback: false,
     consent_to_contact: false,
     first_name: '',
+    last_name: '',
     phone: '',
     state: '',
     zip: '',
@@ -191,33 +194,10 @@ function reduce(state: State, action: Action): State {
       return {
         ...state,
         privacy_warning_shown: true,
-        current_step: 'intent_pick',
+        current_step: 'collecting_full_name',
       };
-
-    case 'SET_INTENT': {
-      const primary = getIntent(action.primary);
-      let urgency: IntentUrgency = primary.default_urgency;
-      let needsReview = primary.escalate_to_agent;
-      for (const sid of action.secondary) {
-        const s = getIntent(sid);
-        if (s.default_urgency === 'urgent') urgency = 'urgent';
-        else if (s.default_urgency === 'high' && urgency !== 'urgent') urgency = 'high';
-        if (s.escalate_to_agent) needsReview = true;
-      }
-      return {
-        ...state,
-        primary_intent: action.primary,
-        secondary_intents: action.secondary,
-        confidence: action.confidence,
-        urgency,
-        requires_agent_review: needsReview,
-        current_step: 'collecting_first_name',
-      };
-    }
 
     case 'ADD_USER_MSG': {
-      // Mid-conversation language switch detection. Only after turn 1 so we
-      // don't override the user's explicit language pick.
       const detected = detectLanguage(action.text);
       let nextLang = state.language;
       let switches = state.language_switches;
@@ -236,16 +216,14 @@ function reduce(state: State, action: Action): State {
     }
 
     case 'ADD_BOT_MSG':
-      return {
-        ...state,
-        messages: [...state.messages, { id: uid(), role: 'bot', text: action.text, options: action.options }],
-      };
+      return { ...state, messages: [...state.messages, { id: uid(), role: 'bot', text: action.text }] };
 
     case 'EMERGENCY_DETECTED':
       return { ...state, emergency_warning_shown: true, current_step: 'emergency_paused', urgency: 'urgent' };
 
     case 'ACK_EMERGENCY':
-      return { ...state, current_step: state.primary_intent ? 'collecting_first_name' : 'intent_pick' };
+      // After emergency, continue from wherever we were (but skip to concern if nothing collected)
+      return { ...state, current_step: state.primary_intent ? 'asking_callback_pref' : 'collecting_concern' };
 
     case 'SENSITIVE_INTERCEPTED':
       return { ...state, sensitive_data_intercepted: true };
@@ -253,33 +231,71 @@ function reduce(state: State, action: Action): State {
     case 'FRUSTRATION_FLAG':
       return { ...state, frustration_detected: true };
 
-    case 'COLLECT_FIRST_NAME':
-      return { ...state, first_name: action.value.trim(), current_step: 'collecting_phone' };
+    case 'COLLECT_FULL_NAME':
+      return { ...state, first_name: action.first, last_name: action.last, current_step: 'collecting_location' };
+
+    case 'COLLECT_LOCATION': {
+      // If parser inferred a state, jump straight to concern. Otherwise route
+      // through the state-fallback chips so we don't lose location entirely.
+      return {
+        ...state,
+        zip: action.zip,
+        state: action.state,
+        current_step: action.state ? 'collecting_concern' : 'state_fallback',
+      };
+    }
+
+    case 'COLLECT_STATE_FALLBACK':
+      return { ...state, state: action.value, current_step: 'collecting_concern' };
+
+    case 'SET_INTENT':
+      return {
+        ...state,
+        primary_intent: action.primary,
+        secondary_intents: action.secondary,
+        confidence: action.confidence,
+        urgency: action.urgency,
+        requires_agent_review: action.requires_agent_review,
+        current_step: 'intent_followup',
+      };
+
+    case 'CONCERN_CAPTURED':
+      return { ...state, current_step: 'asking_callback_pref' };
+
+    case 'WANTS_CALLBACK':
+      return {
+        ...state,
+        wants_callback: action.value,
+        // If they don't want a call, still ask phone for the case file
+        // (advisor follow-up may still be required) but frame it gently.
+        current_step: 'collecting_phone',
+      };
+
     case 'COLLECT_PHONE':
-      return { ...state, phone: action.value.trim(), current_step: 'collecting_state' };
-    case 'COLLECT_STATE':
-      return { ...state, state: action.value, current_step: 'collecting_zip_optional' };
-    case 'COLLECT_ZIP':
-      return { ...state, zip: action.value.trim(), current_step: 'collecting_best_time' };
+      return { ...state, phone: action.value.trim(), current_step: 'collecting_best_time' };
+
     case 'COLLECT_BEST_TIME':
       return { ...state, best_time_to_call: action.value.trim(), current_step: 'consent_review' };
+
     case 'SET_CONSENT':
       return { ...state, consent_to_contact: action.value };
+
     case 'SUBMITTING':
       return { ...state, current_step: 'submitting' };
+
     case 'SUBMIT_OK':
       return { ...state, submitted: true, submission_ref: action.ref, current_step: 'submitted' };
+
     case 'SUBMIT_FAIL':
       return { ...state, submission_error: action.error, current_step: 'submission_failed' };
+
     case 'SET_STEP':
       return { ...state, current_step: action.step };
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// COPY (bilingual)
-//
-// All strings the bot can emit. Run through scanForbiddenPhrases() in tests.
+// COPY — short, calm, one-thing-at-a-time
 // ─────────────────────────────────────────────────────────────────────────────
 
 const COPY = {
@@ -288,23 +304,78 @@ const COPY = {
   tagline_en: 'ClearPoint Support Intake · Bilingual · No cost',
   tagline_es: 'Soporte ClearPoint · Bilingüe · Sin costo',
 
-  language_prompt_en: "Hi, I'm the ClearPoint Customer Service Box. I can help organize your Medicare question or concern so a licensed advisor can review it and follow up. Would you prefer English or Spanish?",
-  language_prompt_es: 'Hola, soy la Caja de Servicio al Cliente de ClearPoint. Puedo ayudarle a organizar su pregunta o situación de Medicare para que un asesor licenciado pueda revisarla y darle seguimiento. ¿Prefiere inglés o español?',
+  // Step 1 — language
+  welcome_en: 'Welcome to ClearPoint. Before we begin, would you prefer English or Spanish?',
+  welcome_es: 'Bienvenido a ClearPoint. Antes de empezar, ¿prefiere español o inglés?',
 
-  greeting_en: "Hi, I'm the ClearPoint Customer Service Box. I can help organize your Medicare question or concern so a licensed advisor can review it and follow up.",
-  greeting_es: 'Hola, soy la Caja de Servicio al Cliente de ClearPoint. Puedo ayudarle a organizar su pregunta o situación de Medicare para que un asesor licenciado pueda revisarla y darle seguimiento.',
+  // Step 2 — privacy (short, human, no jargon)
+  privacy_en: 'Thank you. I can help organize your Medicare question so a licensed advisor can review it. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here.',
+  privacy_es: 'Gracias. Puedo ayudarle a organizar su pregunta de Medicare para que un asesor licenciado pueda revisarla. Por favor no envíe número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí.',
+  privacy_continue_en: 'I understand',
+  privacy_continue_es: 'Entiendo',
 
-  privacy_band_en: 'Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here. This tool helps organize your question only. A licensed ClearPoint advisor will follow up. ClearPoint is an independent private agency — it is not Medicare, CMS, or any federal program.',
-  privacy_band_es: 'Por favor no envíe su número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí. Esta herramienta solo ayuda a organizar su pregunta. Un asesor licenciado de ClearPoint dará seguimiento. ClearPoint es una agencia privada e independiente — no es Medicare, CMS, ni ningún programa federal.',
+  // Step 3 — name
+  ask_name_en: 'To start, what is your full name?',
+  ask_name_es: 'Para empezar, ¿cuál es su nombre completo?',
 
-  acknowledge_to_continue_en: "When you're ready, tap Continue and tell me what you'd like help with.",
-  acknowledge_to_continue_es: 'Cuando esté listo, presione Continuar y dígame en qué le puedo ayudar.',
-  continue_en: 'Continue',
-  continue_es: 'Continuar',
+  // Step 4 — location
+  ask_location_en: 'Thank you, {first}. What ZIP code or state are you in? This helps us organize your request correctly.',
+  ask_location_es: 'Gracias, {first}. ¿Cuál es su ZIP code o estado? Esto nos ayuda a organizar su solicitud correctamente.',
 
-  intent_pick_en: 'What can I help you organize today? Tap a topic or type your question in your own words.',
-  intent_pick_es: '¿Con qué le puedo ayudar a organizar hoy? Toque un tema o escriba su pregunta con sus propias palabras.',
+  // Step 4b — fallback if parser couldn't infer the state
+  state_fallback_en: 'Just to be sure — which state do you live in?',
+  state_fallback_es: 'Solo para confirmar — ¿en qué estado vive?',
 
+  // Step 5 — concern (free text, the key UX shift — no button grid)
+  ask_concern_en: 'Now tell me, in your own words, what would you like help with?',
+  ask_concern_es: 'Ahora dígame, en sus propias palabras, ¿con qué situación necesita ayuda?',
+
+  // Step 6 — multi-topic ack uses engine.buildMultiTopicAck()
+  // Step 7 — intent follow-up uses engine.intentFollowUp()
+
+  // Step 8 — callback preference
+  ask_callback_pref_en: "I have what I need to organize this. Would you like a licensed advisor to call you about it?",
+  ask_callback_pref_es: 'Tengo lo necesario para organizar esto. ¿Le gustaría que un asesor licenciado le llame al respecto?',
+  yes_en: 'Yes, please',
+  yes_es: 'Sí, por favor',
+  no_en: 'No, just save it',
+  no_es: 'No, solo guárdelo',
+
+  // Step 8b — phone (only after callback pref)
+  ask_phone_en: 'What is the best phone number for a licensed advisor to contact you?',
+  ask_phone_es: '¿Cuál es el mejor número de teléfono para que un asesor licenciado pueda comunicarse con usted?',
+  ask_phone_optional_en: 'If you change your mind, what number should we keep on file just in case? (You can type Skip.)',
+  ask_phone_optional_es: 'Si cambia de opinión, ¿qué número guardamos por si acaso? (Puede escribir Omitir.)',
+  skip_en: 'Skip',
+  skip_es: 'Omitir',
+
+  // Step 8c — best time
+  ask_best_time_en: 'What is the best time to call?',
+  ask_best_time_es: '¿Cuál es el mejor horario para llamarle?',
+
+  // Step 9 — consent
+  consent_question_en: 'One last step — do we have your permission to contact you about this request?',
+  consent_question_es: 'Un último paso — ¿nos da permiso para contactarle sobre esta solicitud?',
+  consent_text_en: 'I agree to be contacted by a licensed ClearPoint advisor at the phone number I provided regarding my Medicare question. Message and data rates may apply.',
+  consent_text_es: 'Acepto que un asesor licenciado de ClearPoint me contacte al número de teléfono que proporcioné respecto a mi pregunta de Medicare. Pueden aplicar tarifas de mensajes y datos.',
+  consent_yes_en: 'Yes, send my case',
+  consent_yes_es: 'Sí, enviar mi caso',
+
+  // Step 10 — submitted / failed
+  submitting_en: 'Sending your case to a licensed advisor…',
+  submitting_es: 'Enviando su caso a un asesor licenciado…',
+  submitted_title_en: 'Got it. A licensed advisor will follow up.',
+  submitted_title_es: 'Listo. Un asesor licenciado se comunicará con usted.',
+  submitted_body_en: 'A bilingual ClearPoint advisor will review your case and contact you at the phone number you provided.',
+  submitted_body_es: 'Un asesor bilingüe de ClearPoint revisará su caso y le contactará al número que proporcionó.',
+  failed_title_en: 'Something went wrong sending your case.',
+  failed_title_es: 'Algo salió mal al enviar su caso.',
+  failed_body_en: 'Please call us directly at 1-866-310-8702 or try again. Your information was not stored.',
+  failed_body_es: 'Por favor llámenos directamente al 1-866-310-8702 o intente de nuevo. Su información no se guardó.',
+  retry_en: 'Try again',
+  retry_es: 'Intentar de nuevo',
+
+  // Emergency
   emergency_title_en: 'This chat is not for medical emergencies',
   emergency_title_es: 'Este chat no es para emergencias médicas',
   emergency_text_en: 'This chat is not for medical emergencies. Please call 911 or seek immediate medical help. When you are safe, you can come back and I will help organize your Medicare question.',
@@ -314,43 +385,11 @@ const COPY = {
   call_911_en: 'Call 911',
   call_911_es: 'Llamar al 911',
 
+  // Sensitive intercept
   sensitive_intercept_en: "It looks like you typed sensitive information (a Medicare ID, Social Security number, card, or banking number). For your safety I'm not saving that — please share those details only with a licensed advisor through a secure channel.",
   sensitive_intercept_es: 'Parece que escribió información sensible (un número de Medicare, Seguro Social, tarjeta o banco). Por su seguridad no lo estoy guardando — comparta esos datos solo con un asesor licenciado a través de un canal seguro.',
 
-  ask_first_name_en: "Let's start with your first name:",
-  ask_first_name_es: 'Empecemos con su nombre:',
-  ask_phone_en: 'Your phone number, so a licensed advisor can follow up:',
-  ask_phone_es: 'Su número de teléfono, para que un asesor licenciado pueda comunicarse:',
-  ask_state_en: 'Which state do you live in?',
-  ask_state_es: '¿En qué estado vive?',
-  ask_zip_en: 'Your ZIP code (optional — type it, or tap Skip):',
-  ask_zip_es: 'Su código postal (opcional — escríbalo o presione Omitir):',
-  ask_best_time_en: 'What time of day works best for a callback?',
-  ask_best_time_es: '¿A qué hora del día le viene mejor recibir una llamada?',
-  skip_en: 'Skip',
-  skip_es: 'Omitir',
-
-  consent_text_en: 'I agree to be contacted by a licensed ClearPoint advisor at the phone number I provided regarding my Medicare question. Message and data rates may apply.',
-  consent_text_es: 'Acepto que un asesor licenciado de ClearPoint me contacte al número de teléfono que proporcioné respecto a mi pregunta de Medicare. Pueden aplicar tarifas de mensajes y datos.',
-  consent_review_title_en: 'Ready to send to a licensed advisor?',
-  consent_review_title_es: '¿Listo para enviar a un asesor licenciado?',
-  consent_yes_en: 'Yes, send my case',
-  consent_yes_es: 'Sí, enviar mi caso',
-
-  submitting_en: 'Sending your case to a licensed advisor…',
-  submitting_es: 'Enviando su caso a un asesor licenciado…',
-  submitted_title_en: 'Got it. A licensed advisor will follow up.',
-  submitted_title_es: 'Listo. Un asesor licenciado se comunicará con usted.',
-  submitted_body_en: 'A bilingual ClearPoint advisor will review your case and contact you at the phone number you provided.',
-  submitted_body_es: 'Un asesor bilingüe de ClearPoint revisará su caso y le contactará al número que proporcionó.',
-
-  failed_title_en: 'Something went wrong sending your case.',
-  failed_title_es: 'Algo salió mal al enviar su caso.',
-  failed_body_en: 'Please call us directly at 1-866-310-8702 or try again. Your information was not stored.',
-  failed_body_es: 'Por favor llámenos directamente al 1-866-310-8702 o intente de nuevo. Su información no se guardó.',
-  retry_en: 'Try again',
-  retry_es: 'Intentar de nuevo',
-
+  // Reset / chrome
   reset_en: 'Start over',
   reset_es: 'Empezar de nuevo',
   send_en: 'Send',
@@ -359,32 +398,13 @@ const COPY = {
   type_here_es: 'Escriba su mensaje…',
   call_now_en: 'Call now',
   call_now_es: 'Llamar ahora',
+
+  // Summary intro
+  summary_intro_en: 'Perfect. I have organized your case. A licensed advisor will review it before discussing plan-specific details with you.',
+  summary_intro_es: 'Perfecto. Organicé su caso. Un asesor licenciado lo revisará antes de hablar de detalles específicos de planes con usted.',
 };
 
-const PRIMARY_BUTTONS_EN: { id: IntentId; label: string }[] = [
-  { id: 'annual_review', label: 'Review my plan' },
-  { id: 'medication_help', label: 'Medication help' },
-  { id: 'doctor_network_question', label: 'Doctor or network question' },
-  { id: 'plan_letter_issue', label: 'Letter or plan issue' },
-  { id: 'extra_help_lis', label: 'Extra Help / Medicaid' },
-  { id: 'benefit_card_issue', label: 'OTC / benefit card' },
-  { id: 'appointment_requested', label: 'Schedule a call' },
-  { id: 'new_to_medicare', label: 'New to Medicare' },
-  { id: 'other_unknown', label: 'Something else' },
-];
-const PRIMARY_BUTTONS_ES: { id: IntentId; label: string }[] = [
-  { id: 'annual_review', label: 'Revisar mi plan' },
-  { id: 'medication_help', label: 'Ayuda con medicamentos' },
-  { id: 'doctor_network_question', label: 'Doctores o red' },
-  { id: 'plan_letter_issue', label: 'Carta o problema con mi plan' },
-  { id: 'extra_help_lis', label: 'Extra Help / Medicaid' },
-  { id: 'benefit_card_issue', label: 'Tarjeta OTC / beneficios' },
-  { id: 'appointment_requested', label: 'Agendar una llamada' },
-  { id: 'new_to_medicare', label: 'Nuevo en Medicare' },
-  { id: 'other_unknown', label: 'Otro tema' },
-];
-
-const STATE_BUTTONS = [
+const STATE_FALLBACK_BUTTONS = [
   { value: 'NY' as const, label_en: 'New York', label_es: 'Nueva York' },
   { value: 'NJ' as const, label_en: 'New Jersey', label_es: 'Nueva Jersey' },
   { value: 'CT' as const, label_en: 'Connecticut', label_es: 'Connecticut' },
@@ -399,7 +419,6 @@ const TIME_BUTTONS_ES = ['Mañana', 'Tarde', 'Noche', 'Cualquier hora'];
 // ─────────────────────────────────────────────────────────────────────────────
 
 function getTypingDelay(text: string, pace: Pace = 'short'): number {
-  // Rough WPM model: cap so a long message doesn't take 10s. Senior-friendly.
   const baseMs = pace === 'slow' ? 800 : pace === 'long' ? 600 : 350;
   const perChar = pace === 'slow' ? 22 : pace === 'long' ? 18 : 14;
   return Math.min(baseMs + text.length * perChar, 2400);
@@ -424,31 +443,22 @@ export function CustomerServiceBot() {
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
 
-  // Typing queue refs — same pattern Zara uses to prevent overlapping messages.
   const queueRef = useRef<QueuedMsg[]>([]);
   const processingRef = useRef(false);
   const generationRef = useRef(0);
 
-  // Scroll refs — pure monotonic bottom-follow (Zara pattern).
   const bodyRef = useRef<HTMLDivElement>(null);
   const userPinnedUpRef = useRef(false);
   const prevMsgLenRef = useRef(0);
   const prevTypingRef = useRef(false);
   const inputFocusedRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // ─── sessionStorage persistence ────────────────────────────────────────
+  // ── Persist + scroll lifecycle ────────────────────────────────────────
   useEffect(() => {
-    try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(state));
-    } catch { /* ignore */ }
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(state)); } catch { /* ignore */ }
   }, [state]);
 
-  // ─── Page-level language sync → bot ────────────────────────────────────
-  // Only meaningful for the first render (user hasn't picked yet). Once the
-  // user picks a language inside the bot we hand it back via setLang(), so
-  // both surfaces stay in lock-step from that point on.
-
-  // ─── Scroll lifecycle (monotonic bottom-follow) ────────────────────────
   function safeScrollToBottom() {
     const c = bodyRef.current;
     if (!c) return;
@@ -457,31 +467,26 @@ export function CustomerServiceBot() {
   function handleScroll() {
     const c = bodyRef.current;
     if (!c) return;
-    const distFromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-    if (distFromBottom > 200) userPinnedUpRef.current = true;
-    else if (distFromBottom < 40) userPinnedUpRef.current = false;
+    const dist = c.scrollHeight - c.scrollTop - c.clientHeight;
+    if (dist > 200) userPinnedUpRef.current = true;
+    else if (dist < 40) userPinnedUpRef.current = false;
   }
   useEffect(() => {
     const prevLen = prevMsgLenRef.current;
     prevMsgLenRef.current = state.messages.length;
     const grew = state.messages.length > prevLen;
-
     const wasTyping = prevTypingRef.current;
     prevTypingRef.current = isTyping;
     const typingEdge = isTyping && !wasTyping;
-
     if (inputFocusedRef.current && !grew) return;
-
     requestAnimationFrame(() => {
       if (userPinnedUpRef.current) return;
       if (grew || typingEdge) safeScrollToBottom();
     });
   }, [state.messages.length, isTyping]);
 
-  // ─── Typing queue (Zara pattern) ──────────────────────────────────────
-  function sleep(ms: number) {
-    return new Promise<void>((r) => window.setTimeout(r, ms));
-  }
+  // ── Typing queue ──────────────────────────────────────────────────────
+  function sleep(ms: number) { return new Promise<void>((r) => window.setTimeout(r, ms)); }
   async function processQueue(generation: number) {
     if (processingRef.current) return;
     processingRef.current = true;
@@ -496,7 +501,7 @@ export function CustomerServiceBot() {
         return;
       }
       setIsTyping(false);
-      dispatch({ type: 'ADD_BOT_MSG', text: next.text, options: next.options });
+      dispatch({ type: 'ADD_BOT_MSG', text: next.text });
       await sleep(getPostGap(next.pace));
     }
     processingRef.current = false;
@@ -513,59 +518,37 @@ export function CustomerServiceBot() {
     void processQueue(generation);
   }
 
-  // ─── Welcome on mount ──────────────────────────────────────────────────
+  // ── Mount: emit the welcome ──────────────────────────────────────────
   const mountedRef = useRef(false);
   useEffect(() => {
     if (mountedRef.current) return;
     mountedRef.current = true;
-    enqueueBot([
-      { text: initialLang === 'es' ? COPY.language_prompt_es : COPY.language_prompt_en, pace: 'slow' },
-    ]);
-    // We intentionally don't depend on initialLang — first mount only.
+    enqueueBot([{ text: initialLang === 'es' ? COPY.welcome_es : COPY.welcome_en, pace: 'long' }]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ─── Language pick ────────────────────────────────────────────────────
+  // ── Language pick ───────────────────────────────────────────────────
   function handlePickLanguage(l: SupportLang) {
-    // Mirror selection on the page so Hero, footer, header toggle all sync.
     setLang(l);
     dispatch({ type: 'ADD_USER_MSG', text: l === 'es' ? 'Español' : 'English' });
     dispatch({ type: 'PICK_LANGUAGE', lang: l });
     enqueueBot([
-      { text: l === 'es' ? COPY.greeting_es : COPY.greeting_en, pace: 'long' },
-      { text: l === 'es' ? COPY.acknowledge_to_continue_es : COPY.acknowledge_to_continue_en, pace: 'short' },
+      { text: l === 'es' ? COPY.privacy_es : COPY.privacy_en, pace: 'long' },
     ]);
   }
 
-  // ─── Privacy acknowledge ──────────────────────────────────────────────
   function handleAcknowledgePrivacy() {
     dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
-    enqueueBot([
-      { text: state.language === 'es' ? COPY.intent_pick_es : COPY.intent_pick_en, pace: 'short' },
-    ]);
+    enqueueBot([{ text: state.language === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' }]);
   }
 
-  // ─── Intent button click ──────────────────────────────────────────────
-  function handleIntentButton(intentId: IntentId) {
-    const intent = getIntent(intentId);
-    const label = state.language === 'es'
-      ? PRIMARY_BUTTONS_ES.find((b) => b.id === intentId)?.label || intentId
-      : PRIMARY_BUTTONS_EN.find((b) => b.id === intentId)?.label || intentId;
-    dispatch({ type: 'ADD_USER_MSG', text: label });
-    dispatch({ type: 'SET_INTENT', primary: intentId, secondary: [], confidence: 'high' });
-    enqueueBot([
-      { text: state.language === 'es' ? intent.next_question_es : intent.next_question_en, pace: 'long' },
-      { text: state.language === 'es' ? COPY.ask_first_name_es : COPY.ask_first_name_en, pace: 'short' },
-    ]);
-  }
-
-  // ─── Free-text user submit ────────────────────────────────────────────
+  // ── Free-text user submit  (this is the single entry point for typed input) ──
   function handleUserSubmit() {
     const text = inputText.trim();
     if (!text) return;
     setInputText('');
 
-    // ── 1. EMERGENCY first — even before storing the message ──
+    // 1. Emergency — never store; pause immediately.
     if (detectEmergency(text)) {
       dispatch({ type: 'ADD_USER_MSG', text });
       dispatch({ type: 'EMERGENCY_DETECTED' });
@@ -573,78 +556,147 @@ export function CustomerServiceBot() {
       return;
     }
 
-    // ── 2. SENSITIVE — never store the raw text ──
-    const sens = detectSensitive(text);
-    if (sens.isSensitive) {
+    // 2. Sensitive — never store the raw text.
+    if (detectSensitive(text).isSensitive) {
       dispatch({ type: 'SENSITIVE_INTERCEPTED' });
       enqueueBot([{ text: state.language === 'es' ? COPY.sensitive_intercept_es : COPY.sensitive_intercept_en, pace: 'long' }]);
       return;
     }
 
-    // ── 3. FRUSTRATION — acknowledge before re-prompting ──
+    // 3. Frustration — acknowledge first, then re-prompt the same step.
     if (detectFrustration(text)) {
       dispatch({ type: 'FRUSTRATION_FLAG' });
       dispatch({ type: 'ADD_USER_MSG', text });
       enqueueBot([{ text: frustrationAck(state.language), pace: 'long' }]);
-      // Re-prompt the user's current step instead of stopping cold
-      const step = state.current_step;
-      const reprompt = state.language === 'es' ? rePromptES(step) : rePromptEN(step);
+      const reprompt = state.language === 'es' ? rePromptES(state.current_step) : rePromptEN(state.current_step);
       if (reprompt) enqueueBot([{ text: reprompt, pace: 'short' }]);
       return;
     }
 
-    // ── 4. Normal flow ──
+    // 4. Normal flow — branch by current step.
     dispatch({ type: 'ADD_USER_MSG', text });
-    const step = state.current_step;
 
-    if (step === 'intent_pick') {
-      const result = classifyIntent(text, state.language);
-      dispatch({ type: 'SET_INTENT', primary: result.primary, secondary: result.secondary, confidence: result.confidence });
-      const intent = getIntent(result.primary);
-      const msgs: QueuedMsg[] = [];
-      if (result.secondary.length > 0) {
-        msgs.push({ text: buildMultiTopicAck(result.primary, result.secondary, state.language), pace: 'long' });
+    switch (state.current_step) {
+      case 'collecting_full_name': {
+        const { firstName, lastName } = splitFullName(text);
+        dispatch({ type: 'COLLECT_FULL_NAME', first: firstName, last: lastName });
+        const lang = state.language;
+        const askLoc = (lang === 'es' ? COPY.ask_location_es : COPY.ask_location_en)
+          .replace('{first}', firstName || (lang === 'es' ? 'gracias' : 'thanks'));
+        enqueueBot([{ text: askLoc, pace: 'short' }]);
+        return;
       }
-      msgs.push({ text: state.language === 'es' ? intent.next_question_es : intent.next_question_en, pace: 'long' });
-      msgs.push({ text: state.language === 'es' ? COPY.ask_first_name_es : COPY.ask_first_name_en, pace: 'short' });
-      enqueueBot(msgs);
-      return;
-    }
 
-    if (step === 'collecting_first_name') {
-      dispatch({ type: 'COLLECT_FIRST_NAME', value: text });
-      enqueueBot([{ text: state.language === 'es' ? COPY.ask_phone_es : COPY.ask_phone_en, pace: 'short' }]);
-      return;
-    }
-    if (step === 'collecting_phone') {
-      dispatch({ type: 'COLLECT_PHONE', value: text });
-      enqueueBot([{ text: state.language === 'es' ? COPY.ask_state_es : COPY.ask_state_en, pace: 'short' }]);
-      return;
-    }
-    if (step === 'collecting_zip_optional') {
-      dispatch({ type: 'COLLECT_ZIP', value: text });
-      enqueueBot([{ text: state.language === 'es' ? COPY.ask_best_time_es : COPY.ask_best_time_en, pace: 'short' }]);
-      return;
-    }
-    if (step === 'collecting_best_time') {
-      dispatch({ type: 'COLLECT_BEST_TIME', value: text });
-      return;
+      case 'collecting_location': {
+        const parsed = parseZipOrState(text);
+        dispatch({ type: 'COLLECT_LOCATION', zip: parsed.zip, state: parsed.state });
+        const lang = state.language;
+        if (parsed.state) {
+          // Proceed directly to concern.
+          enqueueBot([{ text: lang === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
+        } else {
+          // Couldn't infer state — show fallback chips.
+          enqueueBot([{ text: lang === 'es' ? COPY.state_fallback_es : COPY.state_fallback_en, pace: 'short' }]);
+        }
+        return;
+      }
+
+      case 'state_fallback':
+        // Typed-text path is unlikely here (we expect chip click), but accept it.
+        // Try parsing the text again for a state name match.
+        {
+          const parsed = parseZipOrState(text);
+          if (parsed.state) {
+            dispatch({ type: 'COLLECT_STATE_FALLBACK', value: parsed.state });
+          } else {
+            dispatch({ type: 'COLLECT_STATE_FALLBACK', value: 'Other' });
+          }
+          enqueueBot([{ text: state.language === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
+        }
+        return;
+
+      case 'collecting_concern': {
+        const result = classifyIntent(text, state.language);
+        const primaryDef = getIntentDef(result.primary);
+        let urgency: IntentUrgency = primaryDef.default_urgency;
+        let needsReview = primaryDef.escalate_to_agent;
+        for (const sid of result.secondary) {
+          const s = getIntentDef(sid);
+          if (s.default_urgency === 'urgent') urgency = 'urgent';
+          else if (s.default_urgency === 'high' && urgency !== 'urgent') urgency = 'high';
+          if (s.escalate_to_agent) needsReview = true;
+        }
+        dispatch({
+          type: 'SET_INTENT',
+          primary: result.primary,
+          secondary: result.secondary,
+          confidence: result.confidence,
+          urgency,
+          requires_agent_review: needsReview,
+        });
+
+        const msgs: QueuedMsg[] = [];
+        if (result.secondary.length > 0) {
+          msgs.push({ text: buildMultiTopicAck(result.primary, result.secondary, state.language), pace: 'long' });
+        }
+        msgs.push({ text: intentFollowUp(result.primary, state.language), pace: 'long' });
+        enqueueBot(msgs);
+        return;
+      }
+
+      case 'intent_followup': {
+        // We have enough to organize the case. Bridge to callback preference.
+        dispatch({ type: 'CONCERN_CAPTURED' });
+        enqueueBot([{ text: state.language === 'es' ? COPY.ask_callback_pref_es : COPY.ask_callback_pref_en, pace: 'short' }]);
+        return;
+      }
+
+      case 'collecting_phone': {
+        if (/^skip$|^omitir$/i.test(text.trim())) {
+          dispatch({ type: 'COLLECT_PHONE', value: '' });
+        } else {
+          dispatch({ type: 'COLLECT_PHONE', value: text });
+        }
+        enqueueBot([{ text: state.language === 'es' ? COPY.ask_best_time_es : COPY.ask_best_time_en, pace: 'short' }]);
+        return;
+      }
+
+      case 'collecting_best_time': {
+        dispatch({ type: 'COLLECT_BEST_TIME', value: text });
+        enqueueBot([{ text: state.language === 'es' ? COPY.consent_question_es : COPY.consent_question_en, pace: 'short' }]);
+        return;
+      }
     }
   }
 
-  function handleStateButton(st: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other') {
-    const label = STATE_BUTTONS.find((b) => b.value === st);
-    dispatch({ type: 'ADD_USER_MSG', text: state.language === 'es' ? (label?.label_es || st) : (label?.label_en || st) });
-    dispatch({ type: 'COLLECT_STATE', value: st });
-    enqueueBot([{ text: state.language === 'es' ? COPY.ask_zip_es : COPY.ask_zip_en, pace: 'short' }]);
+  // ── Chip handlers ────────────────────────────────────────────────────
+  function handleStateFallback(value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other') {
+    const label = STATE_FALLBACK_BUTTONS.find((b) => b.value === value);
+    dispatch({ type: 'ADD_USER_MSG', text: state.language === 'es' ? (label?.label_es || value) : (label?.label_en || value) });
+    dispatch({ type: 'COLLECT_STATE_FALLBACK', value });
+    enqueueBot([{ text: state.language === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
   }
-  function handleSkipZip() {
-    dispatch({ type: 'COLLECT_ZIP', value: '' });
-    enqueueBot([{ text: state.language === 'es' ? COPY.ask_best_time_es : COPY.ask_best_time_en, pace: 'short' }]);
+
+  function handleCallbackPref(wantsCall: boolean) {
+    const lang = state.language;
+    dispatch({ type: 'ADD_USER_MSG', text: wantsCall ? (lang === 'es' ? COPY.yes_es : COPY.yes_en) : (lang === 'es' ? COPY.no_es : COPY.no_en) });
+    dispatch({ type: 'WANTS_CALLBACK', value: wantsCall });
+    if (wantsCall) {
+      enqueueBot([{ text: lang === 'es' ? COPY.ask_phone_es : COPY.ask_phone_en, pace: 'short' }]);
+    } else {
+      enqueueBot([{ text: lang === 'es' ? COPY.ask_phone_optional_es : COPY.ask_phone_optional_en, pace: 'short' }]);
+    }
   }
-  function handleTimeButton(label: string) {
+
+  function handleTimeChip(label: string) {
     dispatch({ type: 'ADD_USER_MSG', text: label });
     dispatch({ type: 'COLLECT_BEST_TIME', value: label });
+    enqueueBot([{ text: state.language === 'es' ? COPY.consent_question_es : COPY.consent_question_en, pace: 'short' }]);
+  }
+
+  function handleAcknowledgeEmergency() {
+    dispatch({ type: 'ACK_EMERGENCY' });
+    enqueueBot([{ text: state.language === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
   }
 
   async function handleSubmit() {
@@ -677,8 +729,8 @@ export function CustomerServiceBot() {
       page_url: typeof window !== 'undefined' ? window.location.href : '',
       form_name: 'Customer Service Box',
       first_name: state.first_name,
-      last_name: '',
-      full_name: state.first_name,
+      last_name: state.last_name,
+      full_name: `${state.first_name} ${state.last_name}`.trim(),
       phone: state.phone,
       email: '',
       zip_code: state.zip,
@@ -689,7 +741,7 @@ export function CustomerServiceBot() {
       consent_to_contact: state.consent_to_contact,
       consent_text: state.language === 'es' ? COPY.consent_text_es : COPY.consent_text_en,
       lead_notes: buildCaseSummary(caseState),
-      bot_transcript_summary: `Customer Service Box · Primary: ${state.primary_intent} · Secondary: ${state.secondary_intents.join(', ') || 'none'} · Urgency: ${state.urgency}${state.frustration_detected ? ' · Frustration acknowledged' : ''}`,
+      bot_transcript_summary: `Customer Service Box · Primary: ${state.primary_intent} · Secondary: ${state.secondary_intents.join(', ') || 'none'} · Urgency: ${state.urgency}${state.wants_callback ? ' · Caller requested call' : ''}${state.frustration_detected ? ' · Frustration acknowledged' : ''}`,
       tags: buildSupportTags(caseState),
       created_at: new Date().toISOString(),
       derived_state: state.state || '',
@@ -712,46 +764,37 @@ export function CustomerServiceBot() {
     setInputText('');
     const currentLang: SupportLang = pageLang === 'es' ? 'es' : 'en';
     dispatch({ type: 'RESET', lang: currentLang });
-    // Re-queue the welcome
     window.setTimeout(() => {
-      enqueueBot([{ text: currentLang === 'es' ? COPY.language_prompt_es : COPY.language_prompt_en, pace: 'slow' }], true);
+      enqueueBot([{ text: currentLang === 'es' ? COPY.welcome_es : COPY.welcome_en, pace: 'long' }], true);
     }, 100);
   }
 
-  function handleAcknowledgeEmergency() {
-    dispatch({ type: 'ACK_EMERGENCY' });
-    enqueueBot([{ text: state.language === 'es' ? COPY.intent_pick_es : COPY.intent_pick_en, pace: 'short' }]);
-  }
-
-  // ─── Input row enabled? ───────────────────────────────────────────────
   const inputEnabled =
-    state.current_step === 'intent_pick' ||
-    state.current_step === 'collecting_first_name' ||
+    state.current_step === 'collecting_full_name' ||
+    state.current_step === 'collecting_location' ||
+    state.current_step === 'state_fallback' ||
+    state.current_step === 'collecting_concern' ||
+    state.current_step === 'intent_followup' ||
     state.current_step === 'collecting_phone' ||
-    state.current_step === 'collecting_zip_optional' ||
     state.current_step === 'collecting_best_time';
 
-  // ─────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────
   // RENDER
-  // ─────────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────
 
   const lang = state.language;
 
   return (
     <div className="bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 max-w-3xl mx-auto overflow-hidden flex flex-col">
-      {/* ── Header bar (Zara-pattern earth-800) ── */}
+      {/* Header */}
       <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-full bg-sage-300 flex items-center justify-center text-earth-900 flex-shrink-0" aria-hidden="true">
             <Headphones className="w-5 h-5" />
           </div>
           <div className="leading-tight">
-            <div className="text-[15px] font-semibold">
-              {lang === 'es' ? COPY.brand_es : COPY.brand_en}
-            </div>
-            <div className="text-[11px] text-cream-200 font-normal">
-              {lang === 'es' ? COPY.tagline_es : COPY.tagline_en}
-            </div>
+            <div className="text-[15px] font-semibold">{lang === 'es' ? COPY.brand_es : COPY.brand_en}</div>
+            <div className="text-[11px] text-cream-200 font-normal">{lang === 'es' ? COPY.tagline_es : COPY.tagline_en}</div>
           </div>
         </div>
         <button
@@ -764,16 +807,12 @@ export function CustomerServiceBot() {
         </button>
       </header>
 
-      {/* ── Scrollable body — privacy band INSIDE so it scrolls away ── */}
+      {/* Body */}
       <div
         ref={bodyRef}
         onScroll={handleScroll}
         className="flex-1 overflow-y-auto overscroll-contain min-h-0 max-h-[62vh] md:max-h-[640px]"
       >
-        <div className="bg-gold-100 border-b border-gold-200 px-4 py-2.5 text-[12px] text-earth-700 leading-[1.5]">
-          <p>{lang === 'es' ? COPY.privacy_band_es : COPY.privacy_band_en}</p>
-        </div>
-
         <div className="px-3 py-3 space-y-3">
           {state.messages.map((m) => (
             <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -806,7 +845,7 @@ export function CustomerServiceBot() {
             </div>
           )}
 
-          {/* ── Step-specific action panels (rendered AFTER messages so they sit at bottom) ── */}
+          {/* Step-specific action panels ────────────────────────────── */}
           {state.current_step === 'language_pick' && !isTyping && (
             <ActionRow>
               <ActionButton onClick={() => handlePickLanguage('en')}>English</ActionButton>
@@ -816,32 +855,18 @@ export function CustomerServiceBot() {
 
           {state.current_step === 'privacy_acknowledge' && !isTyping && (
             <ActionRow>
-              <ActionButton onClick={handleAcknowledgePrivacy} variant="primary">
-                {lang === 'es' ? COPY.continue_es : COPY.continue_en}
+              <ActionButton onClick={handleAcknowledgePrivacy}>
+                {lang === 'es' ? COPY.privacy_continue_es : COPY.privacy_continue_en}
               </ActionButton>
             </ActionRow>
           )}
 
-          {state.current_step === 'intent_pick' && !isTyping && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              {(lang === 'es' ? PRIMARY_BUTTONS_ES : PRIMARY_BUTTONS_EN).map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => handleIntentButton(b.id)}
-                  className="w-full text-left px-4 py-3 bg-cream-50 border border-cream-200 text-earth-800 rounded-lg text-[14px] font-medium min-h-[48px] hover:bg-gold-100 hover:border-gold-300 transition-colors"
-                >
-                  {b.label}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {state.current_step === 'collecting_state' && !isTyping && (
+          {state.current_step === 'state_fallback' && !isTyping && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-1">
-              {STATE_BUTTONS.map((s) => (
+              {STATE_FALLBACK_BUTTONS.map((s) => (
                 <button
                   key={s.value}
-                  onClick={() => handleStateButton(s.value)}
+                  onClick={() => handleStateFallback(s.value)}
                   className="px-3 py-3 bg-cream-50 border border-cream-200 text-earth-800 rounded-lg text-[14px] font-medium min-h-[48px] hover:bg-gold-100 hover:border-gold-300 transition-colors"
                 >
                   {lang === 'es' ? s.label_es : s.label_en}
@@ -850,10 +875,13 @@ export function CustomerServiceBot() {
             </div>
           )}
 
-          {state.current_step === 'collecting_zip_optional' && !isTyping && (
+          {state.current_step === 'asking_callback_pref' && !isTyping && (
             <ActionRow>
-              <ActionButton onClick={handleSkipZip} variant="ghost">
-                {lang === 'es' ? COPY.skip_es : COPY.skip_en}
+              <ActionButton onClick={() => handleCallbackPref(true)} variant="primary">
+                {lang === 'es' ? COPY.yes_es : COPY.yes_en}
+              </ActionButton>
+              <ActionButton onClick={() => handleCallbackPref(false)} variant="ghost">
+                {lang === 'es' ? COPY.no_es : COPY.no_en}
               </ActionButton>
             </ActionRow>
           )}
@@ -863,7 +891,7 @@ export function CustomerServiceBot() {
               {(lang === 'es' ? TIME_BUTTONS_ES : TIME_BUTTONS_EN).map((label) => (
                 <button
                   key={label}
-                  onClick={() => handleTimeButton(label)}
+                  onClick={() => handleTimeChip(label)}
                   className="px-3 py-3 bg-cream-50 border border-cream-200 text-earth-800 rounded-lg text-[14px] font-medium min-h-[48px] hover:bg-gold-100 hover:border-gold-300 transition-colors"
                 >
                   {label}
@@ -893,9 +921,7 @@ export function CustomerServiceBot() {
               <p className="text-earth-700 text-[14px] leading-relaxed">{lang === 'es' ? COPY.submitted_body_es : COPY.submitted_body_en}</p>
               <p className="text-earth-500 text-xs">Ref: {state.submission_ref}</p>
               <div className="pt-1">
-                <ActionButton onClick={handleReset} variant="primary">
-                  {lang === 'es' ? COPY.reset_es : COPY.reset_en}
-                </ActionButton>
+                <ActionButton onClick={handleReset} variant="primary">{lang === 'es' ? COPY.reset_es : COPY.reset_en}</ActionButton>
               </div>
             </div>
           )}
@@ -934,7 +960,7 @@ export function CustomerServiceBot() {
         </div>
       </div>
 
-      {/* ── Footer call + advisor + input row ── */}
+      {/* Footer chrome */}
       <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white">
         <a
           href="tel:18663108702"
@@ -950,12 +976,14 @@ export function CustomerServiceBot() {
         </span>
       </div>
 
+      {/* Input row — always rendered, disabled outside text-entry steps */}
       <form
         onSubmit={(e) => { e.preventDefault(); handleUserSubmit(); }}
         className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 bg-white"
       >
         <div className="flex gap-2 min-w-0">
           <input
+            ref={inputRef}
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
@@ -981,8 +1009,13 @@ export function CustomerServiceBot() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SMALL UI HELPERS
+// HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Local copy of getIntent — engine doesn't re-export it, and we want to keep
+// the dependency surface tight.
+import { getIntent as _getIntent } from '../data/customerServiceIntents';
+function getIntentDef(id: IntentId) { return _getIntent(id); }
 
 function ActionRow({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap gap-2 pt-1">{children}</div>;
@@ -1001,11 +1034,7 @@ function ActionButton({
     variant === 'ghost'
       ? 'bg-cream-100 border border-cream-300 text-earth-800 hover:bg-cream-200'
       : 'bg-earth-800 text-cream-50 hover:bg-earth-900';
-  return (
-    <button onClick={onClick} className={`${base} ${styles}`}>
-      {children}
-    </button>
-  );
+  return <button onClick={onClick} className={`${base} ${styles}`}>{children}</button>;
 }
 
 function ConsentReview({
@@ -1021,24 +1050,28 @@ function ConsentReview({
 }) {
   return (
     <div className="bg-white border border-earth-300 rounded-xl p-5 space-y-3">
-      <h3 className="font-serif text-lg text-earth-900">
-        {lang === 'es' ? COPY.consent_review_title_es : COPY.consent_review_title_en}
-      </h3>
-      <dl className="space-y-1.5 text-[14px]">
-        <Row label_en="First name" label_es="Nombre" value={s.first_name} lang={lang} />
-        <Row label_en="Phone" label_es="Teléfono" value={s.phone} lang={lang} />
-        <Row label_en="State" label_es="Estado" value={s.state} lang={lang} />
-        <Row label_en="ZIP" label_es="ZIP" value={s.zip || '—'} lang={lang} />
-        <Row label_en="Best time" label_es="Mejor hora" value={s.best_time_to_call} lang={lang} />
-        <Row label_en="Main topic" label_es="Tema principal" value={s.primary_intent || ''} lang={lang} />
+      <p className="text-[14px] text-earth-800 leading-relaxed">
+        {lang === 'es' ? COPY.summary_intro_es : COPY.summary_intro_en}
+      </p>
+      <dl className="space-y-1.5 text-[14px] bg-cream-50 border border-cream-200 rounded-lg p-3">
+        <Row label_en="Name" label_es="Nombre" value={`${s.first_name} ${s.last_name}`.trim()} lang={lang} />
+        <Row label_en="ZIP / State" label_es="ZIP / Estado" value={[s.zip, s.state].filter(Boolean).join(' · ') || '—'} lang={lang} />
+        <Row label_en="Main topic" label_es="Tema principal" value={s.primary_intent || '—'} lang={lang} />
         {s.secondary_intents.length > 0 && (
-          <Row label_en="Secondary topics" label_es="Temas secundarios" value={s.secondary_intents.join(', ')} lang={lang} />
+          <Row label_en="Other topics" label_es="Otros temas" value={s.secondary_intents.join(', ')} lang={lang} />
         )}
         <Row label_en="Urgency" label_es="Urgencia" value={s.urgency} lang={lang} />
+        <Row label_en="Wants callback" label_es="Quiere llamada" value={s.wants_callback ? (lang === 'es' ? 'Sí' : 'Yes') : (lang === 'es' ? 'No' : 'No')} lang={lang} />
+        {s.phone && <Row label_en="Phone" label_es="Teléfono" value={s.phone} lang={lang} />}
+        {s.best_time_to_call && <Row label_en="Best time" label_es="Mejor hora" value={s.best_time_to_call} lang={lang} />}
       </dl>
 
-      <p className="text-[12px] text-earth-600 leading-relaxed bg-cream-50 border border-cream-200 rounded-lg p-3">
+      <p className="text-[12px] text-earth-600 leading-relaxed">
         {advisorHandoffLine(lang)}
+      </p>
+
+      <p className="text-[14px] text-earth-800">
+        {lang === 'es' ? COPY.consent_question_es : COPY.consent_question_en}
       </p>
 
       <label className="flex items-start gap-2 cursor-pointer">
@@ -1074,31 +1107,33 @@ function Row({ label_en, label_es, value, lang }: { label_en: string; label_es: 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FRUSTRATION RE-PROMPTS
+// Frustration re-prompts (one per text-entry step)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function rePromptEN(step: Step): string {
   switch (step) {
-    case 'intent_pick': return "Take your time. When you're ready, tap a topic or type your question in your own words.";
-    case 'collecting_first_name': return 'No rush — what is your first name?';
-    case 'collecting_phone': return 'No rush — what is your phone number so a licensed advisor can reach you?';
-    case 'collecting_state': return 'Which state do you live in?';
-    case 'collecting_zip_optional': return 'You can type a ZIP code or just tap Skip.';
+    case 'collecting_full_name': return 'No rush — what is your full name?';
+    case 'collecting_location': return 'No rush — what is your ZIP code or the state you live in?';
+    case 'state_fallback': return 'Which state do you live in?';
+    case 'collecting_concern': return 'In your own words — what would you like help with today?';
+    case 'intent_followup': return "Take your time. Whichever option fits best, just type it.";
+    case 'collecting_phone': return 'No rush — what phone number should we save for the advisor?';
     case 'collecting_best_time': return 'What time of day works best for a callback?';
     default: return '';
   }
 }
 function rePromptES(step: Step): string {
   switch (step) {
-    case 'intent_pick': return 'Tome su tiempo. Cuando esté listo, toque un tema o escriba su pregunta con sus propias palabras.';
-    case 'collecting_first_name': return 'Sin prisa — ¿cuál es su nombre?';
-    case 'collecting_phone': return 'Sin prisa — ¿cuál es su número de teléfono para que un asesor licenciado pueda comunicarse?';
-    case 'collecting_state': return '¿En qué estado vive?';
-    case 'collecting_zip_optional': return 'Puede escribir un código postal o simplemente presionar Omitir.';
+    case 'collecting_full_name': return 'Sin prisa — ¿cuál es su nombre completo?';
+    case 'collecting_location': return 'Sin prisa — ¿cuál es su ZIP code o el estado donde vive?';
+    case 'state_fallback': return '¿En qué estado vive?';
+    case 'collecting_concern': return 'En sus propias palabras — ¿con qué le gustaría ayuda hoy?';
+    case 'intent_followup': return 'Tome su tiempo. Cualquiera de las opciones que mejor le quede, solo escríbala.';
+    case 'collecting_phone': return 'Sin prisa — ¿qué número de teléfono guardamos para el asesor?';
     case 'collecting_best_time': return '¿A qué hora del día le viene mejor recibir una llamada?';
     default: return '';
   }
 }
 
 // Exports for QA harness
-export { COPY, PRIMARY_BUTTONS_EN, PRIMARY_BUTTONS_ES };
+export { COPY };

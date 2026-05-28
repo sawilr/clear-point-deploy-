@@ -221,6 +221,158 @@ export function advisorHandoffLine(lang: SupportLang): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NATURAL FOLLOW-UP QUESTIONS (intent-specific, calm, one-at-a-time)
+//
+// These are the bot's second-turn responses after the user states a concern in
+// their own words. They open with empathy ("I understand"), explain WHY a
+// follow-up is needed, then ask ONE narrowing question with concrete options
+// embedded in the sentence (not as buttons).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function intentFollowUp(id: IntentId, lang: SupportLang): string {
+  const map: Record<IntentId, { en: string; es: string }> = {
+    medication_help: {
+      en: 'I understand. Medication costs can change for several reasons. To organize this correctly, is the issue that the medication became more expensive, is not covered, was rejected at the pharmacy, or requires prior authorization?',
+      es: 'Entiendo. Los costos de medicamentos pueden cambiar por varias razones. Para organizar esto bien, ¿el problema es que la medicina salió más cara, no está cubierta, la farmacia la rechazó, o le pidieron autorización previa?',
+    },
+    plan_letter_issue: {
+      en: 'I understand. Letters from Medicare or your plan can be confusing. Does the letter mention cancellation, renewal, payment, a deadline, or a change in benefits?',
+      es: 'Entiendo. Las cartas de Medicare o del plan pueden ser confusas. ¿La carta menciona cancelación, renovación, pago, fecha límite, o cambio de beneficios?',
+    },
+    doctor_network_question: {
+      en: 'I understand. To organize this well, is this about your primary doctor, a specialist, a hospital, a pharmacy, or the plan network in general?',
+      es: 'Entiendo. Para organizarlo bien, ¿se trata de su doctor primario, un especialista, un hospital, una farmacia, o la red del plan en general?',
+    },
+    possible_loss_of_coverage: {
+      en: "I understand — that sounds stressful. So we capture this correctly, did you receive a letter or notice, was something said by phone, or did you find out at a doctor or pharmacy?",
+      es: 'Entiendo — eso suena estresante. Para anotarlo bien, ¿recibió una carta o aviso, le dijeron algo por teléfono, o se enteró en el doctor o farmacia?',
+    },
+    annual_review: {
+      en: "Of course — many people review their plan each year. To organize this for an advisor, is your main goal to compare new plans, check that your current plan still works, look at medication costs, or check your doctors and pharmacy?",
+      es: 'Por supuesto — muchas personas revisan su plan cada año. Para organizar esto para un asesor, ¿su objetivo principal es comparar nuevos planes, verificar que su plan actual aún le sirva, revisar costos de medicamentos, o revisar sus doctores y farmacia?',
+    },
+    extra_help_lis: {
+      en: "Thank you. To organize this for the advisor, are you asking how Extra Help works, whether you might qualify, how to apply, or about a letter you received about it?",
+      es: 'Gracias. Para organizar esto para el asesor, ¿está preguntando cómo funciona Extra Help, si usted podría calificar, cómo solicitarlo, o sobre una carta que recibió al respecto?',
+    },
+    medicaid_msp: {
+      en: "Thank you. Is the question about already having Medicaid alongside Medicare, applying for Medicaid or a Medicare Savings Program, or a recent change in your Medicaid status?",
+      es: 'Gracias. ¿La pregunta es sobre ya tener Medicaid junto con Medicare, solicitar Medicaid o un Programa de Ahorro de Medicare, o un cambio reciente en su estatus de Medicaid?',
+    },
+    cost_help: {
+      en: "I understand. To organize this for the advisor, is your concern the monthly premium, a copay for a doctor or prescription, an unexpected bill, or something else?",
+      es: 'Entiendo. Para organizar esto para el asesor, ¿le preocupa la prima mensual, un copago de doctor o receta, una factura inesperada, o algo más?',
+    },
+    benefit_card_issue: {
+      en: "Thank you. So we organize this correctly, is the card being declined at a store, lost or never received, low on funds, or showing the wrong balance?",
+      es: 'Gracias. Para organizarlo bien, ¿la tarjeta es rechazada en la tienda, está perdida o nunca la recibió, sin fondos, o muestra un saldo incorrecto?',
+    },
+    otc_question: {
+      en: "Thank you. Are you asking about what OTC items are covered, how to use the benefit, how much you have available, or how to order?",
+      es: 'Gracias. ¿Está preguntando qué artículos OTC están cubiertos, cómo usar el beneficio, cuánto tiene disponible, o cómo pedirlos?',
+    },
+    appointment_requested: {
+      en: "Of course. So an advisor can prepare, is this for a plan review, a question about a letter, a medication issue, or a different topic?",
+      es: 'Por supuesto. Para que un asesor se pueda preparar, ¿es para una revisión de plan, una pregunta sobre una carta, un problema con medicamentos, u otro tema?',
+    },
+    call_requested: {
+      en: "Of course. So the advisor can prepare, could you share briefly what you would like to discuss on the call?",
+      es: 'Por supuesto. Para que el asesor se pueda preparar, ¿podría compartir brevemente de qué le gustaría hablar en la llamada?',
+    },
+    new_to_medicare: {
+      en: "Welcome. So we organize this correctly, are you getting close to age 65, already past 65, qualifying due to disability, or helping a family member who is new to Medicare?",
+      es: 'Bienvenido. Para organizarlo bien, ¿está cerca de cumplir 65, ya pasó los 65, califica por discapacidad, o está ayudando a un familiar que es nuevo en Medicare?',
+    },
+    confused_customer: {
+      en: "I understand. Medicare can be confusing. Let's go step by step. First I'll identify the main issue, then I'll prepare a summary for a licensed advisor to review. Could you share — in one or two sentences — what is bothering you most right now?",
+      es: 'Entiendo. Medicare puede ser confuso. Vamos paso a paso. Primero voy a identificar el problema principal y luego preparo un resumen para que un asesor licenciado lo revise. ¿Podría compartir — en una o dos oraciones — qué es lo que más le preocupa ahora mismo?',
+    },
+    complaint: {
+      en: "I hear you. So I can prepare this for the advisor, is the concern about how a plan handled something, how a doctor or pharmacy treated you, a billing issue, or something else?",
+      es: 'Lo escucho. Para preparar esto para el asesor, ¿la queja es sobre cómo un plan manejó algo, cómo un doctor o farmacia lo trató, un problema de facturación, o algo más?',
+    },
+    general_medicare_question: {
+      en: "Of course. So I capture the question correctly, is it about how Medicare works in general, the difference between plan types, prescription coverage, or something else?",
+      es: 'Por supuesto. Para anotar la pregunta correctamente, ¿es sobre cómo funciona Medicare en general, la diferencia entre tipos de planes, cobertura de medicamentos, o algo más?',
+    },
+    other_unknown: {
+      en: "Thank you for sharing that. Could you give me one more detail — for example, is this about your plan, your medications, your doctor, a letter, or costs?",
+      es: 'Gracias por compartir. ¿Podría darme un detalle más — por ejemplo, es sobre su plan, sus medicamentos, su doctor, una carta, o costos?',
+    },
+  };
+  return map[id][lang];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ZIP / STATE FREE-TEXT PARSER
+//
+// Senior callers often say "I'm in Brooklyn" or "07101" or "Nueva York" or
+// "I live in NY". We accept any of those shapes and try to extract a ZIP code
+// (5 digits) and/or a 2-letter state code.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ParsedLocation = {
+  zip: string;
+  state: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' | '';
+  rawHint: string;
+};
+
+const STATE_NAME_TO_CODE: Record<string, ParsedLocation['state']> = {
+  'new york': 'NY', 'nueva york': 'NY', 'ny': 'NY',
+  'new jersey': 'NJ', 'nueva jersey': 'NJ', 'nj': 'NJ',
+  'connecticut': 'CT', 'ct': 'CT',
+  'florida': 'FL', 'fl': 'FL',
+};
+
+export function parseZipOrState(text: string): ParsedLocation {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  let zip = '';
+  let state: ParsedLocation['state'] = '';
+
+  // ZIP: 5 digits (allow leading boundary)
+  const zipMatch = lower.match(/\b(\d{5})\b/);
+  if (zipMatch) zip = zipMatch[1];
+
+  // State: try multi-word names first (longest match), then 2-letter codes.
+  // We search for word-boundary occurrences so "north carolina" doesn't match "ca".
+  const sortedKeys = Object.keys(STATE_NAME_TO_CODE).sort((a, b) => b.length - a.length);
+  for (const key of sortedKeys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`\\b${escaped}\\b`, 'i');
+    if (re.test(lower)) {
+      state = STATE_NAME_TO_CODE[key];
+      break;
+    }
+  }
+
+  // If we have a ZIP but no state, infer using common prefixes.
+  if (zip && !state) {
+    const z = parseInt(zip.slice(0, 3), 10);
+    if (z >= 100 && z <= 149) state = 'NY';      // NY 100xx-149xx
+    else if (z >= 70 && z <= 89) state = 'NJ';   // NJ 070xx-089xx
+    else if (z >= 60 && z <= 69) state = 'CT';   // CT 060xx-069xx
+    else if (z >= 320 && z <= 349) state = 'FL'; // FL 320xx-349xx
+    else state = 'Other';
+  }
+
+  return { zip, state, rawHint: text.trim() };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FULL-NAME SPLITTER — best-effort first/last from a "full name" answer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function splitFullName(text: string): { firstName: string; lastName: string } {
+  const cleaned = text.trim().replace(/\s+/g, ' ');
+  if (!cleaned) return { firstName: '', lastName: '' };
+  const parts = cleaned.split(' ');
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  // Treat first token as first name, everything else as the surname (handles
+  // common Hispanic two-surname patterns like "Maria Rodriguez Lopez").
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CASE SUMMARY BUILDER
 //
 // Structured, advisor-readable summary. Keeps every flag the GHL workflow will

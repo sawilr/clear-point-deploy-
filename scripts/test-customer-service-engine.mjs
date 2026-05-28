@@ -24,7 +24,7 @@ import {
   buildSupportTags,
   scanForbiddenPhrases,
 } from '../src/lib/customerServiceEngine.ts';
-import { COPY, PRIMARY_BUTTONS_EN, PRIMARY_BUTTONS_ES } from '../src/components/CustomerServiceBot.tsx';
+import { COPY } from '../src/components/CustomerServiceBot.tsx';
 
 let total = 0;
 let pass = 0;
@@ -45,12 +45,7 @@ for (const [k, v] of allCopyEntries) {
   assert(`COPY.${k} forbidden-phrase scan`, hits.length === 0, hits.join(', '));
   if (hits.length) copyFails++;
 }
-for (const b of [...PRIMARY_BUTTONS_EN, ...PRIMARY_BUTTONS_ES]) {
-  const hits = scanForbiddenPhrases(b.label);
-  assert(`button ${b.id} "${b.label}" scan`, hits.length === 0, hits.join(', '));
-  if (hits.length) copyFails++;
-}
-console.log(`  ${copyFails === 0 ? '✓' : '✗'} ${allCopyEntries.length + PRIMARY_BUTTONS_EN.length + PRIMARY_BUTTONS_ES.length} strings scanned, ${copyFails} forbidden-phrase hits`);
+console.log(`  ${copyFails === 0 ? '✓' : '✗'} ${allCopyEntries.length} strings scanned, ${copyFails} forbidden-phrase hits`);
 
 // ── 2. ENGLISH FLOW ──
 console.log('\n=== 2. ENGLISH FLOW ===');
