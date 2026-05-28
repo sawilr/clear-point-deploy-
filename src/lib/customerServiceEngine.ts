@@ -168,7 +168,10 @@ export interface IntentResult {
 }
 
 export function classifyIntent(text: string, lang: SupportLang): IntentResult {
-  return classifyIntentRaw(text, lang);
+  // Run a light typo-tolerance pre-pass so "medicad", "medisina", "dotor",
+  // "me subió el plan" etc. still classify correctly.
+  const normalized = applyFuzzyTypos(text);
+  return classifyIntentRaw(normalized, lang);
 }
 
 /** Bilingual human-readable label for an intent (used in multi-topic acknowledgement). */
@@ -189,10 +192,137 @@ export function intentLabel(id: IntentId, lang: SupportLang): string {
     new_to_medicare: { en: 'getting started with Medicare', es: 'comenzar con Medicare' },
     confused_customer: { en: 'general help', es: 'ayuda general' },
     complaint: { en: 'a complaint', es: 'una queja' },
+    employer_union_benefits: { en: 'employer / union / retiree benefits', es: 'beneficios de empleador / unión / retiro' },
     general_medicare_question: { en: 'a general Medicare question', es: 'una pregunta general de Medicare' },
     other_unknown: { en: 'something else', es: 'otro tema' },
   };
   return map[id][lang];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FUZZY TYPO TOLERANCE
+//
+// Common misspellings senior users actually type. Mapped to the canonical
+// keyword the classifier already understands. Applied as a pre-pass before
+// classifyIntent so e.g. "medicad" still triggers medicaid_msp.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TYPO_MAP: Record<string, string> = {
+  // Medicaid
+  'medicad': 'medicaid', 'medikaid': 'medicaid', 'medicare aid': 'medicaid',
+  // Medicare Advantage
+  'medicare adbanage': 'medicare advantage', 'medicare advantadge': 'medicare advantage',
+  'medicare advanteg': 'medicare advantage', 'medikare': 'medicare',
+  // Medicine / medications
+  'medisina': 'medicina', 'medesina': 'medicina', 'meds': 'medicine',
+  'medisinas': 'medicinas', 'medesinas': 'medicinas',
+  'medicinas caras': 'medicina cara',
+  // Doctor
+  'dotor': 'doctor', 'dr.': 'doctor', 'doctora': 'doctora',
+  // Supplement
+  'suplemento': 'supplement', 'medigap plan': 'medigap',
+  // Retiree
+  'retairo': 'retiro', 'retired': 'retiree',
+  // Extra Help
+  'extra ayuda': 'ayuda extra', 'lis program': 'lis',
+  // Frequently misspelled phrases
+  'me quitaron beneficio': 'perdi mi cobertura',
+  'me quitaron beneficios': 'perdi mi cobertura',
+  'me subio el plan': 'mi plan es caro',
+  'me subió el plan': 'mi plan es caro',
+  'pago mucho': 'medicare es muy caro',
+};
+
+export function applyFuzzyTypos(text: string): string {
+  let out = text.toLowerCase();
+  // Apply phrase-level substitutions in length-descending order so longer phrases match first.
+  const keys = Object.keys(TYPO_MAP).sort((a, b) => b.length - a.length);
+  for (const k of keys) {
+    if (out.includes(k)) {
+      out = out.split(k).join(TYPO_MAP[k]);
+    }
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAREGIVER / FAMILY-MEMBER DETECTOR
+//
+// The user often is NOT the Medicare beneficiary. They might be a son,
+// daughter, spouse, or caregiver speaking for someone else. Detecting this
+// lets us tag the case so the advisor knows to ask whose plan they're calling
+// about (and skip questions that don't apply to the caller themselves).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAREGIVER_PHRASES = [
+  // English
+  'my mom', 'my mother', 'my dad', 'my father', 'my parent', 'my parents',
+  'my grandma', 'my grandmother', 'my grandpa', 'my grandfather',
+  'my husband', 'my wife', 'my spouse', 'my partner',
+  'my aunt', 'my uncle', 'my brother', 'my sister',
+  'i am helping', 'i am calling for', "i'm helping", "i'm calling for",
+  'on behalf of', 'for my', 'for her', 'for him',
+  'she needs', 'he needs', 'they need',
+  'she does not speak english', 'he does not speak english',
+  "she doesn't speak english", "he doesn't speak english",
+  // Spanish
+  'mi mama', 'mi mamá', 'mi madre', 'mi papa', 'mi papá', 'mi padre',
+  'mis padres', 'mis papas', 'mis papás',
+  'mi abuela', 'mi abuelo', 'mi abuelita', 'mi abuelito',
+  'mi esposo', 'mi esposa', 'mi pareja',
+  'mi tia', 'mi tía', 'mi tio', 'mi tío', 'mi hermano', 'mi hermana',
+  'ayudando a', 'llamando por', 'estoy ayudando',
+  'para mi mama', 'para mi mamá', 'para mi papa', 'para mi papá',
+  'ella necesita', 'el necesita', 'él necesita', 'ellos necesitan',
+  'ella no habla ingles', 'él no habla inglés', 'el no habla ingles',
+];
+
+export function detectCaregiver(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const p of CAREGIVER_PHRASES) {
+    if (lower.includes(p)) return true;
+  }
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUICK-ACTION TOPIC MAP
+//
+// The chips shown in the opening step. Each maps to one primary intent and
+// (optionally) a secondary intent that we capture together for multi-topic
+// presets like "Doctors or medications" or "Medicaid / Extra Help".
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface QuickAction {
+  id: string;
+  label_en: string;
+  label_es: string;
+  primary: IntentId;
+  secondary?: IntentId[];
+}
+
+export const QUICK_ACTIONS: QuickAction[] = [
+  { id: 'medicare', label_en: 'Medicare help', label_es: 'Ayuda con Medicare', primary: 'general_medicare_question' },
+  { id: 'costs', label_en: 'Plan costs', label_es: 'Costos del plan', primary: 'cost_help' },
+  { id: 'rx_dr', label_en: 'Doctors or medications', label_es: 'Doctores o medicamentos', primary: 'doctor_network_question', secondary: ['medication_help'] },
+  { id: 'medicaid_lis', label_en: 'Medicaid / Extra Help', label_es: 'Medicaid / Ayuda Extra', primary: 'medicaid_msp', secondary: ['extra_help_lis'] },
+  { id: 'letter', label_en: 'I received a letter', label_es: 'Recibí una carta', primary: 'plan_letter_issue' },
+  { id: 'advisor', label_en: 'Speak with an advisor', label_es: 'Hablar con un asesor', primary: 'call_requested' },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LANGUAGE-SELECT keywords used at the opening step when user types instead
+// of clicking. "spanish"/"español"/"hola"/etc. are unambiguous Spanish signals.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function detectExplicitLanguagePick(text: string): SupportLang | null {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!lower) return null;
+  const esSignals = ['espanol', 'español', 'spanish', 'hola', 'buenos dias', 'buenas tardes', 'buenas noches', 'hablar espanol', 'hablame espanol', 'necesito espanol', 'spanish please', 'prefiero espanol'];
+  const enSignals = ['english', 'ingles', 'inglés', 'hi', 'hello', 'hey', 'good morning', 'good afternoon', 'speak english', 'english please', 'prefer english', 'in english'];
+  for (const s of esSignals) if (lower.includes(s)) return 'es';
+  for (const s of enSignals) if (lower.includes(s)) return 'en';
+  return null;
 }
 
 /** Multi-topic acknowledgement copy used when classifier returns ≥1 secondary intent. */
@@ -290,6 +420,10 @@ export function intentFollowUp(id: IntentId, lang: SupportLang): string {
     complaint: {
       en: "I hear you. So I can prepare this for the advisor, is the concern about how a plan handled something, how a doctor or pharmacy treated you, a billing issue, or something else?",
       es: 'Lo escucho. Para preparar esto para el asesor, ¿la queja es sobre cómo un plan manejó algo, cómo un doctor o farmacia lo trató, un problema de facturación, o algo más?',
+    },
+    employer_union_benefits: {
+      en: "Thank you for mentioning this — employer, union, retiree, federal, state, VA, or TRICARE benefits can be lost permanently if a Medicare change is made without checking impact. To organize this safely, could you tell me which type of benefit this is (employer, union, retiree, VA, or other) and whether you still have a benefits administrator or contact you can reach?",
+      es: 'Gracias por mencionarlo — los beneficios de empleador, unión, retiro, federales, estatales, VA o TRICARE se pueden perder permanentemente si se hace un cambio en Medicare sin revisar el impacto. Para organizar esto con seguridad, ¿podría decirme qué tipo de beneficio es (empleador, unión, retiro, VA u otro) y si todavía tiene un administrador de beneficios o contacto al que pueda comunicarse?',
     },
     general_medicare_question: {
       en: "Of course. So I capture the question correctly, is it about how Medicare works in general, the difference between plan types, prescription coverage, or something else?",
@@ -535,6 +669,7 @@ export interface CaseState {
   sensitive_data_intercepted: boolean;
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
+  caregiver_signal?: boolean;
   wants_callback?: boolean;
   consent_to_contact: boolean;
   first_name: string;
@@ -602,6 +737,10 @@ export function buildCaseSummary(s: CaseState): string {
     ? 'not asked'
     : s.wants_callback ? 'YES' : 'NO';
 
+  const userType = s.caregiver_signal
+    ? 'family member / caregiver speaking on behalf of beneficiary'
+    : 'beneficiary or unknown';
+
   return [
     '[Customer Service Box]',
     `Submitted: ${new Date().toISOString()}`,
@@ -620,6 +759,7 @@ export function buildCaseSummary(s: CaseState): string {
     `Best time to call: ${s.best_time_to_call || 'not specified'}`,
     `Wants advisor call: ${wantsCallStr}`,
     `Consent to contact: ${s.consent_to_contact ? 'YES' : 'NO'}`,
+    `User type: ${userType}`,
     `Privacy warning shown: ${s.privacy_warning_shown ? 'YES' : 'NO'}`,
     `Sensitive info blocked: ${s.sensitive_data_intercepted ? 'YES' : 'NO'}`,
     `Emergency warning shown: ${s.emergency_warning_shown ? 'YES' : 'NO'}`,
@@ -662,6 +802,7 @@ export function buildSupportTags(s: CaseState): string[] {
   if (s.privacy_warning_shown) tags.push('sensitive_warning_shown');
   if (s.emergency_warning_shown) tags.push('emergency_warning_shown');
   if (s.frustration_detected) tags.push('customer_frustrated');
+  if (s.caregiver_signal) tags.push('caregiver_or_family');
 
   return tags;
 }

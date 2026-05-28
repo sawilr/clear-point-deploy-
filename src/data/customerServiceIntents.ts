@@ -40,6 +40,7 @@ export type IntentId =
   | 'new_to_medicare'
   | 'confused_customer'
   | 'complaint'
+  | 'employer_union_benefits'
   | 'general_medicare_question'
   | 'other_unknown';
 
@@ -93,10 +94,10 @@ export const INTENTS: IntentDefinition[] = [
   },
   {
     id: 'medication_help',
-    keywords_en: ['medication', 'pill', 'drug', 'prescription', 'pharmacy', 'formulary', 'rx', 'copay', 'generic', 'brand'],
-    keywords_es: ['medicina', 'medicamento', 'pastilla', 'receta', 'farmacia', 'formulario', 'copago', 'generico', 'marca'],
-    phrases_en: ['my medication', 'expensive medication', 'drug not covered', 'pharmacy charged', 'pill cost', 'cant afford my medication', 'prescription too expensive', 'changed my drug'],
-    phrases_es: ['mi medicina', 'medicina cara', 'no cubre mi medicamento', 'la farmacia me cobro', 'costo de pastilla', 'no puedo pagar mi medicina', 'receta muy cara', 'cambio mi medicamento'],
+    keywords_en: ['medication', 'medications', 'pill', 'pills', 'drug', 'drugs', 'prescription', 'prescriptions', 'pharmacy', 'formulary', 'rx', 'copay', 'generic', 'brand'],
+    keywords_es: ['medicina', 'medicinas', 'medicamento', 'medicamentos', 'pastilla', 'pastillas', 'receta', 'recetas', 'farmacia', 'formulario', 'copago', 'generico', 'marca'],
+    phrases_en: ['my medication', 'my medications', 'expensive medication', 'drug not covered', 'pharmacy charged', 'pill cost', 'cant afford my medication', 'prescription too expensive', 'changed my drug', 'medications went up', 'meds went up'],
+    phrases_es: ['mi medicina', 'mis medicinas', 'medicina cara', 'medicinas caras', 'no cubre mi medicamento', 'la farmacia me cobro', 'costo de pastilla', 'no puedo pagar mi medicina', 'receta muy cara', 'cambio mi medicamento', 'medicinas subieron', 'medicina subio', 'medicinas mas caras'],
     escalate_to_agent: true,
     require_privacy_warning: true,
     default_urgency: 'normal',
@@ -272,6 +273,19 @@ export const INTENTS: IntentDefinition[] = [
     next_question_en: 'I\'m sorry you\'re going through this — let\'s organize the issue so a licensed advisor can review it carefully. Could you share your first name and briefly what happened?',
     next_question_es: 'Lamento que esté pasando por esto — organicemos el asunto para que un asesor licenciado pueda revisarlo con cuidado. ¿Podría decirme su nombre y brevemente qué pasó?',
     ghl_tag: 'complaint',
+  },
+  {
+    id: 'employer_union_benefits',
+    keywords_en: ['union', 'retiree', 'employer', 'federal', 'state benefits', 'va', 'tricare', 'cobra', '1199', 'uft', 'nyc'],
+    keywords_es: ['union', 'unión', 'retiro', 'retirado', 'empleador', 'federal', 'jubilado'],
+    phrases_en: ['union benefits', 'retiree benefits', 'employer coverage', 'employer benefits', 'federal benefits', 'state benefits', 'i have union', 'i have retiree', 'va benefits', 'tricare benefits', 'cobra coverage', 'nyc retiree', 'union plan', 'retiree plan'],
+    phrases_es: ['beneficios de union', 'beneficios de unión', 'beneficios de retiro', 'plan de retiro', 'plan de jubilacion', 'beneficios del empleador', 'tengo union', 'tengo unión', 'tengo retiro', 'beneficios federales', 'beneficios del estado', 'va beneficios', 'tricare beneficios', 'beneficios de retirado'],
+    escalate_to_agent: true,
+    require_privacy_warning: false,
+    default_urgency: 'high',
+    next_question_en: "Before any Medicare change, employer, union, retiree, federal, state, VA, or TRICARE benefits should be checked carefully — some can be lost permanently. A licensed advisor must review the impact with you. Could you share your first name, the state you live in, and which type of benefit you have?",
+    next_question_es: 'Antes de cualquier cambio en Medicare, los beneficios de empleador, unión, retiro, federales, estatales, VA o TRICARE deben revisarse con cuidado — algunos se pueden perder permanentemente. Un asesor licenciado debe revisar el impacto con usted. ¿Podría decirme su nombre, el estado donde vive y qué tipo de beneficio tiene?',
+    ghl_tag: 'employer_union_benefits',
   },
   {
     id: 'general_medicare_question',

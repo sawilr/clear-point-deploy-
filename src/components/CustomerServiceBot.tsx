@@ -30,7 +30,9 @@ import { Headphones, MessageCircle, Phone, RotateCcw, Send } from 'lucide-react'
 import { type IntentId, type IntentUrgency } from '../data/customerServiceIntents';
 import {
   classifyIntent,
+  detectCaregiver,
   detectEmergency,
+  detectExplicitLanguagePick,
   detectFrustration,
   detectGlobalIntent,
   detectLanguage,
@@ -42,6 +44,7 @@ import {
   advisorHandoffLine,
   intentFollowUp,
   parseZipOrState,
+  QUICK_ACTIONS,
   reflectBack,
   splitFullName,
   type CaseState,
@@ -99,6 +102,7 @@ interface State {
   sensitive_data_intercepted: boolean;
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
+  caregiver_signal: boolean;
   wants_callback: boolean;
   consent_to_contact: boolean;
   first_name: string;
@@ -125,6 +129,7 @@ type Action =
   | { type: 'ACK_EMERGENCY' }
   | { type: 'SENSITIVE_INTERCEPTED' }
   | { type: 'FRUSTRATION_FLAG' }
+  | { type: 'CAREGIVER_FLAG' }
   | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
   | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
   | { type: 'COLLECT_STATE_FALLBACK'; value: 'NY' | 'NJ' | 'CT' | 'FL' | 'Other' }
@@ -167,6 +172,7 @@ function initialState(lang: SupportLang): State {
     sensitive_data_intercepted: false,
     emergency_warning_shown: false,
     frustration_detected: false,
+    caregiver_signal: false,
     wants_callback: false,
     consent_to_contact: false,
     first_name: '',
@@ -242,6 +248,9 @@ function reduce(state: State, action: Action): State {
 
     case 'FRUSTRATION_FLAG':
       return { ...state, frustration_detected: true };
+
+    case 'CAREGIVER_FLAG':
+      return { ...state, caregiver_signal: true };
 
     case 'COLLECT_FULL_NAME':
       return { ...state, first_name: action.first, last_name: action.last, current_step: 'collecting_location' };
@@ -578,16 +587,7 @@ export function CustomerServiceBot() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Language pick ───────────────────────────────────────────────────
-  function handlePickLanguage(l: SupportLang) {
-    setLang(l);
-    dispatch({ type: 'ADD_USER_MSG', text: l === 'es' ? 'Español' : 'English' });
-    dispatch({ type: 'PICK_LANGUAGE', lang: l });
-    enqueueBot([
-      { text: l === 'es' ? COPY.privacy_es : COPY.privacy_en, pace: 'long' },
-    ]);
-  }
-
+  // ── Language pick (legacy entry point retained for the privacy_acknowledge JSX) ──
   function handleAcknowledgePrivacy() {
     dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
     enqueueBot([{ text: state.language === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' }]);
@@ -609,7 +609,31 @@ export function CustomerServiceBot() {
   }
 
   // ── Free-text user submit  (single entry point for typed input) ──
+  //
+  // Wrapped in try/catch (Phase 16). If ANY classifier, detector, or dispatch
+  // call throws, we fall back to a friendly message in the user's language
+  // and re-enable typing so the bot is never stuck in a frozen state.
   function handleUserSubmit() {
+    try {
+      handleUserSubmitInner();
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Customer Service Box — handleUserSubmit failed:', err);
+      // Cancel any in-flight typing queue.
+      generationRef.current += 1;
+      queueRef.current = [];
+      processingRef.current = false;
+      setIsTyping(false);
+      enqueueBot([{
+        text: state.language === 'es'
+          ? 'Algo salió mal, pero sigo aquí. Intente de nuevo o presione "Hablar con un asesor".'
+          : "Something went wrong, but I'm still here. Please try again or choose \"Speak with an advisor\".",
+        pace: 'short',
+      }]);
+    }
+  }
+
+  function handleUserSubmitInner() {
     const text = inputText.trim();
     if (!text) return;
     setInputText('');
@@ -699,7 +723,12 @@ export function CustomerServiceBot() {
       return null;
     })();
 
-    // 7. Normal flow — branch by current step.
+    // 7. Caregiver/family-member signal — record once for the case file.
+    if (!state.caregiver_signal && detectCaregiver(text)) {
+      dispatch({ type: 'CAREGIVER_FLAG' });
+    }
+
+    // 8. Normal flow — branch by current step.
     dispatch({ type: 'ADD_USER_MSG', text });
 
     if (sideChannel) {
@@ -714,6 +743,94 @@ export function CustomerServiceBot() {
     }
 
     switch (state.current_step) {
+      // ── WAVE 8: opening step (was language_pick) ──
+      // The input is now ALWAYS enabled. A caller who types instead of
+      // clicking one of the EN/ES chips gets the smoothest possible path:
+      //   - "hola" / "español" / "spanish"   → flip to Spanish, continue
+      //   - "hi" / "english" / "good morning"→ flip to English, continue
+      //   - free text with a Medicare topic  → capture intent + skip to name
+      //   - anything else                    → assume current page language,
+      //                                        treat their text as concern info,
+      //                                        and ask for name
+      case 'language_pick': {
+        // Pick language from explicit signal first, fall back to inferred.
+        const explicit = detectExplicitLanguagePick(text);
+        const inferred = detectLanguage(text);
+        const picked: SupportLang =
+          explicit ??
+          (inferred === 'es' || inferred === 'en' ? inferred : state.language);
+        if (picked !== state.language) {
+          setLang(picked);
+          dispatch({ type: 'SWITCH_LANGUAGE', lang: picked });
+        }
+        dispatch({ type: 'PICK_LANGUAGE', lang: picked });
+
+        // If the typed text already contains a classifiable Medicare concern,
+        // capture it as a side-channel intent so we don't waste the caller's
+        // first message.
+        const r = classifyWithAggregation(text, picked);
+        if (r.confidence === 'high' || r.confidence === 'medium') {
+          dispatch({
+            type: 'SET_INTENT_SIDE_CHANNEL',
+            primary: r.primary,
+            secondary: r.secondary,
+            confidence: r.confidence,
+            urgency: r.urgency,
+            requires_agent_review: r.requires_agent_review,
+          });
+        }
+
+        enqueueBot([
+          { text: picked === 'es' ? COPY.privacy_es : COPY.privacy_en, pace: 'long' },
+        ]);
+        return;
+      }
+
+      case 'privacy_acknowledge': {
+        // Any typed text at the privacy step counts as implicit acknowledgement
+        // ("ok", "entiendo", "sure", "got it", or even the caller's first real
+        // question). Side-channel intent (if any) is already recorded above.
+        dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
+        enqueueBot([
+          { text: state.language === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' },
+        ]);
+        return;
+      }
+
+      case 'asking_callback_pref': {
+        // Caller typed instead of clicking Yes/No. Try to infer.
+        const t = text.toLowerCase().trim();
+        const yes = /\b(yes|si|sí|yeah|yep|sure|claro|ok|okay|por favor)\b/i.test(t);
+        const no = /\b(no|nope|don'?t|do not|nah|gracias no|no gracias)\b/i.test(t);
+        if (yes && !no) {
+          dispatch({ type: 'WANTS_CALLBACK', value: true });
+          enqueueBot([{ text: state.language === 'es' ? COPY.ask_phone_es : COPY.ask_phone_en, pace: 'short' }]);
+        } else if (no && !yes) {
+          dispatch({ type: 'WANTS_CALLBACK', value: false });
+          enqueueBot([{ text: state.language === 'es' ? COPY.ask_phone_optional_es : COPY.ask_phone_optional_en, pace: 'short' }]);
+        } else {
+          // Ambiguous answer — clarify gently, stay in this step.
+          enqueueBot([{
+            text: state.language === 'es'
+              ? '¿Le gustaría que un asesor licenciado le llame? Sí o no, por favor.'
+              : "Would you like a licensed advisor to call you? Just yes or no, please.",
+            pace: 'short',
+          }]);
+        }
+        return;
+      }
+
+      case 'consent_review': {
+        // Typed at the consent step — gently remind to check the box.
+        enqueueBot([{
+          text: state.language === 'es'
+            ? 'Casi terminamos. Marque la casilla de consentimiento y luego presione "Sí, enviar mi caso".'
+            : "Almost done. Please check the consent box and then press \"Yes, send my case\".",
+          pace: 'short',
+        }]);
+        return;
+      }
+
       case 'collecting_full_name': {
         const { firstName, lastName } = splitFullName(text);
         dispatch({ type: 'COLLECT_FULL_NAME', first: firstName, last: lastName });
@@ -825,6 +942,59 @@ export function CustomerServiceBot() {
     enqueueBot([{ text: state.language === 'es' ? COPY.ask_concern_es : COPY.ask_concern_en, pace: 'short' }]);
   }
 
+  // ── Quick action chip (Phase 14 Flow A) ───────────────────────────────
+  // Click captures the topic and routes the conversation through the same
+  // path as a typed concern — but skips the open-concern question because
+  // the user already told us what they want to do.
+  function handleQuickAction(qaId: string) {
+    const qa = QUICK_ACTIONS.find((q) => q.id === qaId);
+    if (!qa) return;
+    const lang = state.language;
+    dispatch({ type: 'ADD_USER_MSG', text: lang === 'es' ? qa.label_es : qa.label_en });
+
+    // Move past the language pick (the user's click implicitly confirms current lang).
+    dispatch({ type: 'PICK_LANGUAGE', lang });
+
+    // Capture the chip's preset intent + any secondary as side-channel so the
+    // location step can skip the concern question and go straight to the
+    // intent-specific follow-up.
+    const primaryDef = (function () {
+      // Inline because we don't have getIntentDef in this file scope context.
+      // Safer to recompute urgency + escalation via classifyWithAggregation.
+      // But classifier needs text — use the label text instead.
+      const r = classifyWithAggregation(lang === 'es' ? qa.label_es : qa.label_en, lang);
+      return r;
+    })();
+    dispatch({
+      type: 'SET_INTENT_SIDE_CHANNEL',
+      primary: qa.primary,
+      secondary: qa.secondary || primaryDef.secondary,
+      confidence: 'high',
+      urgency: primaryDef.urgency,
+      requires_agent_review: primaryDef.requires_agent_review,
+    });
+
+    // Queue the privacy notice → name question.
+    enqueueBot([
+      { text: lang === 'es' ? COPY.privacy_es : COPY.privacy_en, pace: 'long' },
+      { text: lang === 'es' ? COPY.ask_name_es : COPY.ask_name_en, pace: 'short' },
+    ]);
+    // The PICK_LANGUAGE reducer already moved us to privacy_acknowledge.
+    // Auto-acknowledge so we land on collecting_full_name when the name
+    // question lands (the privacy band stays visible at the top of the body).
+    dispatch({ type: 'ACKNOWLEDGE_PRIVACY' });
+  }
+
+  // ── Quick language toggle (single chip) ───────────────────────────────
+  function handleQuickLanguageToggle() {
+    const next: SupportLang = state.language === 'es' ? 'en' : 'es';
+    setLang(next);
+    dispatch({ type: 'SWITCH_LANGUAGE', lang: next });
+    // Re-emit the welcome in the new language. Use clearExisting so we don't
+    // pile language-mismatched messages from a stale queue.
+    enqueueBot([{ text: next === 'es' ? COPY.welcome_es : COPY.welcome_en, pace: 'long' }], true);
+  }
+
   function handleCallbackPref(wantsCall: boolean) {
     const lang = state.language;
     dispatch({ type: 'ADD_USER_MSG', text: wantsCall ? (lang === 'es' ? COPY.yes_es : COPY.yes_en) : (lang === 'es' ? COPY.no_es : COPY.no_en) });
@@ -864,6 +1034,7 @@ export function CustomerServiceBot() {
       sensitive_data_intercepted: state.sensitive_data_intercepted,
       emergency_warning_shown: state.emergency_warning_shown,
       frustration_detected: state.frustration_detected,
+      caregiver_signal: state.caregiver_signal,
       wants_callback: state.wants_callback,
       consent_to_contact: state.consent_to_contact,
       first_name: state.first_name,
@@ -919,14 +1090,16 @@ export function CustomerServiceBot() {
     }, 100);
   }
 
+  // INPUT IS ALWAYS ENABLED unless a submission is in flight or the conversation
+  // is paused for a real reason (emergency / already submitted / fatal failure).
+  // This is the Wave 8 freeze-fix: the previous logic disabled input at the
+  // language_pick + privacy_acknowledge steps, which made the input box look
+  // greyed-out at the moment a senior caller first tried to type.
   const inputEnabled =
-    state.current_step === 'collecting_full_name' ||
-    state.current_step === 'collecting_location' ||
-    state.current_step === 'state_fallback' ||
-    state.current_step === 'collecting_concern' ||
-    state.current_step === 'intent_followup' ||
-    state.current_step === 'collecting_phone' ||
-    state.current_step === 'collecting_best_time';
+    state.current_step !== 'submitting' &&
+    state.current_step !== 'submitted' &&
+    state.current_step !== 'submission_failed' &&
+    state.current_step !== 'emergency_paused';
 
   // ────────────────────────────────────────────────────────────────────
   // RENDER
@@ -997,10 +1170,36 @@ export function CustomerServiceBot() {
 
           {/* Step-specific action panels ────────────────────────────── */}
           {state.current_step === 'language_pick' && !isTyping && (
-            <ActionRow>
-              <ActionButton onClick={() => handlePickLanguage('en')}>English</ActionButton>
-              <ActionButton onClick={() => handlePickLanguage('es')}>Español</ActionButton>
-            </ActionRow>
+            <div className="space-y-3 pt-1">
+              {/* Quick-action chips (Phase 14 Flow A) — clickable shortcuts
+                  for common topics. Senior can type freely instead. */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {QUICK_ACTIONS.map((qa) => (
+                  <button
+                    key={qa.id}
+                    onClick={() => handleQuickAction(qa.id)}
+                    className="w-full text-left px-4 py-3 bg-cream-50 border border-cream-200 text-earth-800 rounded-lg text-[14px] font-medium min-h-[48px] hover:bg-gold-100 hover:border-gold-300 transition-colors"
+                  >
+                    {lang === 'es' ? qa.label_es : qa.label_en}
+                  </button>
+                ))}
+              </div>
+              {/* Language toggle — single chip flips to the opposite language. */}
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-[12px] text-earth-500">
+                  {lang === 'es'
+                    ? 'O escriba su pregunta abajo en sus propias palabras.'
+                    : 'Or type your question below in your own words.'}
+                </span>
+                <button
+                  onClick={() => handleQuickLanguageToggle()}
+                  className="px-3 py-2 bg-white border border-cream-300 text-earth-700 rounded-lg text-[12px] font-semibold hover:bg-cream-50 transition-colors flex-shrink-0"
+                  aria-label={lang === 'es' ? 'Cambiar a inglés' : 'Switch to Spanish'}
+                >
+                  🌐 {lang === 'es' ? 'English' : 'Español'}
+                </button>
+              </div>
+            </div>
           )}
 
           {state.current_step === 'privacy_acknowledge' && !isTyping && (
