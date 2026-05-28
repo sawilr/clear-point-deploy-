@@ -34,6 +34,21 @@ export interface ConversationState {
   dualEligible?: boolean;
   /** Most recent dollar amount the user mentioned. */
   amountMentioned?: string;
+  // ─── Wave 18: fraud / data-quality detection ───
+  /** True if the name passed validation (length, characters, not suspicious). */
+  nameIsValid?: boolean;
+  /** True if the ZIP code passed validation (5 digits + service-area prefix). */
+  zipCodeIsValid?: boolean;
+  /** Two-letter state code the user TYPED ("I live in FL" / "vivo en NY"). */
+  stateDeclaredByUser?: string;
+  /** Phone number once captured (normalized to 10 digits). */
+  phoneNumber?: string;
+  /** Set when ZIP + declared state disagree, or when name/ZIP/phone fail validation. */
+  probableFakeLead?: boolean;
+  /** Human-readable inconsistency list for the advisor to review. */
+  inconsistencies?: string[];
+  /** 0-100. Starts at 100 and decreases each time data validation fails. */
+  dataConfidenceScore?: number;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -50,6 +65,87 @@ function getStateFromZip(zip: string): string | null {
     if (prefixes.includes(prefix)) return state;
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 18 — VALIDATORS (anti-fraud / data quality)
+//
+// The bot never accuses the caller. It just records inconsistencies so the
+// licensed advisor sees the lead quality before reaching out.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SUSPICIOUS_NAMES = new Set([
+  'test', 'prueba', 'aaa', 'bbb', 'ccc', '123', 'asdf', 'qwerty', 'qwertyu',
+  'user', 'admin', 'nombre', 'name', 'fake', 'falso', 'sample', 'demo',
+  'foo', 'bar', 'baz', 'xxx', 'yyy', 'zzz', 'null', 'undefined',
+]);
+
+export function validateName(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
+  const lettersOnly = raw.trim().replace(/[^a-zA-ZáéíóúñÁÉÍÓÚÑ\s-']/g, '');
+  if (!lettersOnly || lettersOnly.length < 2) {
+    return { isValid: false, cleaned: '', reason: 'too_short' };
+  }
+  if (lettersOnly.length > 30) {
+    return { isValid: false, cleaned: lettersOnly.slice(0, 30), reason: 'too_long' };
+  }
+  const lower = lettersOnly.toLowerCase();
+  if (SUSPICIOUS_NAMES.has(lower)) {
+    return { isValid: false, cleaned: lettersOnly, reason: 'suspicious_name' };
+  }
+  // Reject all-same-character ("AAA" etc.) and obvious keyboard rolls.
+  if (/^([a-z])\1+$/i.test(lower)) {
+    return { isValid: false, cleaned: lettersOnly, reason: 'repeated_chars' };
+  }
+  return { isValid: true, cleaned: lettersOnly.charAt(0).toUpperCase() + lettersOnly.slice(1).toLowerCase() };
+}
+
+const FAKE_PHONES = new Set([
+  '1234567890', '0000000000', '1111111111', '2222222222', '3333333333',
+  '4444444444', '5555555555', '6666666666', '7777777777', '8888888888',
+  '9999999999', '0123456789',
+]);
+
+export function validatePhone(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
+  const digits = raw.replace(/\D/g, '');
+  let normalized = digits;
+  if (normalized.length === 11 && normalized.startsWith('1')) normalized = normalized.slice(1);
+  if (normalized.length !== 10) return { isValid: false, cleaned: normalized, reason: 'invalid_length' };
+  if (FAKE_PHONES.has(normalized)) return { isValid: false, cleaned: normalized, reason: 'fake_number' };
+  // Area-code must not start with 0 or 1 (NANP rule).
+  if (/^[01]/.test(normalized)) return { isValid: false, cleaned: normalized, reason: 'invalid_area_code' };
+  // Exchange code (digits 4-6) must not start with 0 or 1 either.
+  if (/^.{3}[01]/.test(normalized)) return { isValid: false, cleaned: normalized, reason: 'invalid_exchange' };
+  return { isValid: true, cleaned: normalized };
+}
+
+/**
+ * Detects what state the user TYPED (separate from the ZIP-derived state).
+ * Looks for "I live in FL", "vivo en Nueva York", "estoy en New Jersey", etc.
+ */
+const STATE_NAME_TO_CODE: Record<string, string> = {
+  'new york': 'NY', 'nueva york': 'NY', 'ny': 'NY',
+  'new jersey': 'NJ', 'nueva jersey': 'NJ', 'nj': 'NJ',
+  'connecticut': 'CT', 'ct': 'CT',
+  'florida': 'FL', 'fl': 'FL',
+};
+export function detectDeclaredState(text: string): string | null {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const m = lower.match(/\b(?:vivo en|i live in|estoy en|i am in|live in|en el estado de|in the state of)\s+([a-z ]{2,20})/);
+  if (!m) return null;
+  const candidate = m[1].trim();
+  // Try longest match first
+  const keys = Object.keys(STATE_NAME_TO_CODE).sort((a, b) => b.length - a.length);
+  for (const k of keys) {
+    if (candidate.startsWith(k) || candidate === k) return STATE_NAME_TO_CODE[k];
+  }
+  return null;
+}
+
+/** Decrements the running data-confidence score and records the inconsistency. */
+function flagInconsistency(state: ConversationState, reason: string, penalty: number): void {
+  state.probableFakeLead = true;
+  state.inconsistencies = [...(state.inconsistencies || []), reason];
+  state.dataConfidenceScore = Math.max(0, (state.dataConfidenceScore ?? 100) - penalty);
 }
 
 function makeId(): string {
@@ -71,6 +167,11 @@ export function createInitialState(): ConversationState {
     turnCount: 0,
     needsHuman: false,
     isValidState: false,
+    nameIsValid: false,
+    zipCodeIsValid: false,
+    probableFakeLead: false,
+    inconsistencies: [],
+    dataConfidenceScore: 100,
   };
 }
 
@@ -171,6 +272,20 @@ export function processMessage(
   newState.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() });
   newState.turnCount++;
 
+  // V18: ALWAYS detect declared state, no matter which step we're on. This
+  // covers callers who say "I live in Florida" before they enter a ZIP.
+  const declared = detectDeclaredState(userMessage);
+  if (declared && !newState.stateDeclaredByUser) {
+    newState.stateDeclaredByUser = declared;
+    if (newState.state && newState.state !== declared) {
+      flagInconsistency(
+        newState,
+        `zip_state_mismatch: zip ${newState.zipCode} → ${newState.state}, user said ${declared}`,
+        50,
+      );
+    }
+  }
+
   const isSpanish = newState.language === 'es';
 
   // ───── STEP 1: ASKING LANGUAGE ─────
@@ -219,13 +334,18 @@ export function processMessage(
       }
       safety++;
     }
-    const name = cleaned.split(/\s+/)[0]?.replace(/[.,;:!?]+$/, '') || '';
-    if (name.length < 2) {
+    const rawName = cleaned.split(/\s+/)[0]?.replace(/[.,;:!?]+$/, '') || '';
+    // V18 validation — if obviously suspicious ("test"/"aaa"/etc.) we still
+    // accept it to keep the conversation moving but flag the lead silently.
+    const nv = validateName(rawName);
+    if (!nv.cleaned || nv.cleaned.length < 2) {
       const out = isSpanish ? 'Por favor, dígame su nombre.' : 'Please tell me your name.';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    newState.name = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+    newState.name = nv.cleaned;
+    newState.nameIsValid = nv.isValid;
+    if (!nv.isValid) flagInconsistency(newState, `name_${nv.reason}`, 30);
     newState.step = 'asking_zip';
     const out = isSpanish
       ? `Gracias ${newState.name}. ¿Cuál es su código postal? (Solo trabajamos en NY, NJ, FL, CT)`
@@ -245,9 +365,16 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
     const detectedState = getStateFromZip(zip);
+    // V18: cross-check ZIP against any state the user already declared
+    // earlier (e.g. "I live in Florida" but typed a NY ZIP).
+    if (newState.stateDeclaredByUser && detectedState && newState.stateDeclaredByUser !== detectedState) {
+      flagInconsistency(newState, `zip_state_mismatch: zip ${zip} → ${detectedState}, user said ${newState.stateDeclaredByUser}`, 50);
+    }
     if (!detectedState) {
       newState.zipCode = zip;
+      newState.zipCodeIsValid = false;
       newState.isValidState = false;
+      flagInconsistency(newState, `zip_not_in_service_area: ${zip}`, 25);
       newState.step = 'asking_problem';
       const out = isSpanish
         ? `Gracias. Actualmente solo servimos NY, NJ, FL y CT. Aun así puedo orientarle con preguntas generales de Medicare. Cuénteme qué está pasando.`
@@ -256,6 +383,7 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
     newState.zipCode = zip;
+    newState.zipCodeIsValid = true;
     newState.state = detectedState;
     newState.isValidState = true;
     newState.step = 'asking_problem';
@@ -284,6 +412,27 @@ export function processMessage(
     if (detectDualEligible(history)) newState.dualEligible = true;
     const amt = detectAmount(history);
     if (amt) newState.amountMentioned = amt;
+
+    // ── WAVE 18: declared-state + phone detection (silently) ──
+    const declared = detectDeclaredState(userMessage);
+    if (declared) {
+      newState.stateDeclaredByUser = declared;
+      // If we already know the ZIP-derived state and it doesn't match, flag.
+      if (newState.state && newState.state !== declared) {
+        flagInconsistency(
+          newState,
+          `zip_state_mismatch: zip ${newState.zipCode} → ${newState.state}, user said ${declared}`,
+          50,
+        );
+      }
+    }
+    // Phone — scan the latest message only (most likely place a number appears).
+    const phoneMatch = userMessage.match(/\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/);
+    if (phoneMatch) {
+      const pv = validatePhone(phoneMatch[0]);
+      newState.phoneNumber = pv.cleaned;
+      if (!pv.isValid) flagInconsistency(newState, `phone_${pv.reason}`, 25);
+    }
 
     // ── Emotional priority responses ──
     if (emotion === 'grieving') {
