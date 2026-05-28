@@ -114,6 +114,156 @@ function getStateFromZip(zip: string): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WAVE 21 — SAFETY HELPERS
+//
+// Bot must NEVER show "undefined" / "null" / "NaN" / "[object Object]" in
+// user-facing copy. Every name interpolation goes through safeName/withName.
+// Every final response is run through sanitizeResponse before display.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns name only if defined + non-empty + not a placeholder. */
+export function safeName(name?: string | null): string {
+  if (!name || typeof name !== 'string') return '';
+  const trimmed = name.trim();
+  if (!trimmed) return '';
+  const lower = trimmed.toLowerCase();
+  if (lower === 'undefined' || lower === 'null' || lower === 'nan' || lower === '[object object]') return '';
+  return trimmed;
+}
+
+/** Returns ", Name" if name is safe, "" otherwise. Use as suffix inside templates. */
+export function withName(name?: string | null): string {
+  const n = safeName(name);
+  return n ? `, ${n}` : '';
+}
+
+/** Final guard before any bot response reaches the user. */
+export function sanitizeResponse(text: string, fallbackEs: boolean): string {
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    return fallbackEs
+      ? 'Perdón, no pude procesar eso bien. Vamos a hacerlo simple: ¿es sobre factura, carta, cobertura, medicamentos, doctor/proveedor o inscripción?'
+      : "Sorry, I could not process that clearly. Let's make it simple: is this about a bill, letter, coverage, medications, doctor/provider, or enrollment?";
+  }
+  // Strip stray "undefined" / "null" tokens that may leak from a broken template.
+  let cleaned = text
+    .replace(/,\s*undefined\b/gi, '')
+    .replace(/\bundefined\b/gi, '')
+    .replace(/\bnull\b/g, '')
+    .replace(/\bNaN\b/g, '')
+    .replace(/\[object Object\]/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,!?])/g, '$1')
+    .trim();
+  if (!cleaned) {
+    return fallbackEs
+      ? 'Perdón, no pude procesar eso bien. Vamos a hacerlo simple: ¿es sobre factura, carta, cobertura, medicamentos, doctor/proveedor o inscripción?'
+      : "Sorry, I could not process that clearly. Let's make it simple: is this about a bill, letter, coverage, medications, doctor/provider, or enrollment?";
+  }
+  return cleaned;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 21 — FUZZY TYPO MATCHER (Damerau-Levenshtein)
+//
+// Catches misspellings BEFORE intent detection runs. Examples:
+//   hopital, ospital, hospitl, hostpital → hospital
+//   facyuta, factuta, fatura, facura     → factura
+//   farmasia, farmacai, pharmcy          → farmacia
+//   dotor, doctol, médico                → doctor
+//   medicare typos, medicaid typos, etc.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Damerau-Levenshtein distance — counts insert/delete/substitute + adjacent swap. */
+function damerauLevenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const d: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) d[i][0] = i;
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i][j] = Math.min(
+        d[i - 1][j] + 1,
+        d[i][j - 1] + 1,
+        d[i - 1][j - 1] + cost,
+      );
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+  }
+  return d[m][n];
+}
+
+/** Maps canonical concept → list of accepted forms (also matches close typos). */
+const FUZZY_CONCEPTS: Record<string, string[]> = {
+  hospital: ['hospital', 'hospitals', 'ospital', 'hopital', 'hospita', 'hostpital', 'hospitl', 'hospitall', 'hospitales', 'er', 'emergency room', 'sala de emergencias'],
+  pharmacy: ['farmacia', 'farmacias', 'farmasia', 'farmacai', 'pharmacy', 'pharmcy', 'pharmacia', 'drogueria', 'droguería', 'cvs', 'walgreens', 'walmart', 'rite aid'],
+  doctor:   ['doctor', 'doctors', 'doctora', 'doctoras', 'dotor', 'doctol', 'medico', 'médico', 'medica', 'médica', 'physician', 'provider', 'specialist', 'especialista', 'pcp'],
+  bill:     ['bill', 'bills', 'billes', 'bil', 'factura', 'facturas', 'facyuta', 'factuta', 'fatura', 'facura', 'cobro', 'cobros', 'cuenta', 'cuentas', 'invoice'],
+  letter:   ['letter', 'lettter', 'leter', 'carta', 'cartas', 'carra', 'aviso', 'avisos', 'notice', 'notification'],
+  plan:     ['plan', 'planes', 'plans', 'medicare plan', 'plan de medicare', 'mi plan', 'el plan'],
+  medicare: ['medicare', 'medicar', 'medicare', 'medeicare', 'mediare', 'medicarie'],
+  medicaid: ['medicaid', 'medicaide', 'medicad', 'medicadi', 'medi-cal'],
+};
+
+/**
+ * Returns the canonical concept name if any token in `text` fuzzy-matches one
+ * of its accepted forms within Damerau-Levenshtein distance ≤ 1 for short
+ * words and ≤ 2 for longer words. Stops at the first match found.
+ */
+export function fuzzyConcept(text: string): string | null {
+  const cleaned = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const tokens = cleaned.split(/[^a-z0-9]+/i).filter((t) => t.length >= 2);
+  const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const [concept, forms] of Object.entries(FUZZY_CONCEPTS)) {
+    for (const form of forms) {
+      // Exact word-boundary match (NOT substring — "medica" must not match inside "medicamentos").
+      // Allow either real word boundary or single-word match.
+      if (new RegExp(`(?:^|\\W)${escapeRe(form)}(?:$|\\W)`, 'i').test(cleaned)) return concept;
+      // Fuzzy at token level — only for tokens of similar length to avoid
+      // matching short forms inside long unrelated words.
+      for (const tok of tokens) {
+        // Length must be within 2 to even consider — prevents "medicamentos"
+        // matching "medico" via giant edit count.
+        if (Math.abs(tok.length - form.length) > 2) continue;
+        const dist = damerauLevenshtein(tok, form);
+        const allow = form.length <= 4 ? 1 : form.length <= 7 ? 1 : 2;
+        if (dist <= allow) return concept;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Wave 21 — parses dollar amounts in many human formats:
+ *   $10,000  $10.50  10 dollars  10 dolares  10k  10K  10 mil  10000
+ *   $10.5k   diez mil (limited)
+ */
+export function parseAmount(text: string): number | null {
+  const cleaned = text.toLowerCase().replace(/[,]/g, '');
+  // "10k" / "10K" / "$10k" / "1.5k"
+  const kMatch = cleaned.match(/\$?\s*(\d+(?:\.\d+)?)\s*k\b/);
+  if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000);
+  // "10 mil"
+  const milMatch = cleaned.match(/(\d+(?:\.\d+)?)\s*mil\b/);
+  if (milMatch) return Math.round(parseFloat(milMatch[1]) * 1000);
+  // "$10000" / "$10000.50"
+  const dollarMatch = cleaned.match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+  if (dollarMatch) return Math.round(parseFloat(dollarMatch[1]));
+  // "10 dolares" / "10 dollars" / "10 de copay"
+  const wordMatch = cleaned.match(/(\d+(?:\.\d{1,2})?)\s*(d[oó]lares?|dollars?|de copay|de copago|copay|copago)/);
+  if (wordMatch) return Math.round(parseFloat(wordMatch[1]));
+  // Bare number ≥ 4 digits — likely a dollar figure
+  const bareMatch = cleaned.match(/\b(\d{4,7})\b/);
+  if (bareMatch) return parseInt(bareMatch[1], 10);
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // WAVE 18 — VALIDATORS (anti-fraud / data quality)
 //
 // The bot never accuses the caller. It just records inconsistencies so the
@@ -258,16 +408,18 @@ export function detectExplicitLanguageSwitch(text: string): 'en' | 'es' | null {
 function getRecoveryResponse(state: ConversationState): { response: string; chips: string[] } {
   const isSpanish = state.language === 'es';
   if (isSpanish) {
-    const opener = state.name
-      ? `Entiendo que está molesto, ${state.name}. Vamos a hacerlo más fácil.`
+    const sn = safeName(state.name);
+    const opener = sn
+      ? `Entiendo que está molesto, ${sn}. Vamos a hacerlo más fácil.`
       : 'Entiendo que está molesto. Vamos a hacerlo más fácil.';
     return {
       response: `${opener} No le voy a pedir ZIP ni información personal ahora. ¿Qué necesita revisar?`,
       chips: [...TOPIC_CHIPS_ES],
     };
   }
-  const opener = state.name
-    ? `I understand you're frustrated, ${state.name}. Let's make this easier.`
+  const snEn = safeName(state.name);
+  const opener = snEn
+    ? `I understand you're frustrated, ${snEn}. Let's make this easier.`
     : "I understand you're frustrated. Let's make this easier.";
   return {
     response: `${opener} I won't ask for ZIP or personal information right now. What do you need help with?`,
@@ -385,11 +537,17 @@ function fullUserHistory(state: ConversationState, currentMessage: string): stri
 }
 
 function detectBillSource(history: string): 'provider' | 'pharmacy' | 'plan' | null {
-  // Pharmacy wins over generic plan if both appear, because the call usually
-  // started with the bill discussion.
+  // V21 — fuzzy match catches typos: hopital, facyuta, farmasia, dotor, etc.
+  // Exact regex still runs first for speed.
+  // Pharmacy wins over generic plan if both appear.
   if (/\b(farmacia|pharmacy|drug ?store|cvs|walgreens|walmart pharmacy|de la farmacia|from (the )?pharmacy)\b/i.test(history)) return 'pharmacy';
   if (/\b(doctor|doctora|m[eé]dico|hospital|cl[ií]nica|provider|specialist|especialista|del m[eé]dico|del hospital|from (the )?doctor|from (the )?hospital)\b/i.test(history)) return 'provider';
   if (/\b(plan de medicare|medicare plan|advantage plan|del plan|from (the )?plan|monthly premium|prima mensual)\b/i.test(history)) return 'plan';
+  // Fuzzy fallback for misspellings
+  const fuzzy = fuzzyConcept(history);
+  if (fuzzy === 'pharmacy') return 'pharmacy';
+  if (fuzzy === 'hospital' || fuzzy === 'doctor') return 'provider';
+  if (fuzzy === 'plan') return 'plan';
   return null;
 }
 
@@ -398,11 +556,9 @@ function detectDualEligible(history: string): boolean {
 }
 
 function detectAmount(history: string): string | null {
-  // Match "$18", "18 dolares", "18 dollars", "18 de copago", "$18.50", etc.
-  const m = history.match(/\$?\s*(\d{1,4}(?:\.\d{2})?)\s*(d[oó]lares?|dollars?|de copay|de copago|copay|copago)/i);
-  if (m) return m[1];
-  const m2 = history.match(/\$\s*(\d{1,4}(?:\.\d{2})?)/);
-  if (m2) return m2[1];
+  // V21 — use the unified parser which understands $X, X dollars, Xk, X mil.
+  const parsed = parseAmount(history);
+  if (parsed !== null && parsed > 0) return String(parsed);
   return null;
 }
 
@@ -550,8 +706,8 @@ export function processMessage(
     newState.nameIsValid = true;
     newState.step = 'asking_zip';
     const out = isSpanish
-      ? `Gracias ${newState.name}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
-      : `Thanks ${newState.name}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
+      ? `Gracias${withName(newState.name)}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
+      : `Thanks${withName(newState.name)}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
   }
@@ -599,8 +755,8 @@ export function processMessage(
         newState.step = 'conversation';
         newState.needsHuman = true;
         const outA = isSpanish
-          ? `Gracias, ${newState.name}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ, FL y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
-          : `Thank you, ${newState.name}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, FL, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
+          ? `Gracias${withName(newState.name)}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ, FL y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
+          : `Thank you${withName(newState.name)}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, FL, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
         newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
         return { response: outA, newState, needsHuman: true };
       }
@@ -620,15 +776,15 @@ export function processMessage(
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Gracias, ${newState.name}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
-        : `Thank you, ${newState.name}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+        ? `Gracias${withName(newState.name)}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
+        : `Thank you${withName(newState.name)}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
     newState.step = 'asking_problem';
     const out = isSpanish
-      ? `Gracias ${newState.name}. Cuénteme qué está pasando con Medicare. Descríbalo con sus propias palabras.`
-      : `Thanks ${newState.name}. Tell me what's going on with Medicare. Describe it in your own words.`;
+      ? `Gracias${withName(newState.name)}. Cuénteme qué está pasando con Medicare. Descríbalo con sus propias palabras.`
+      : `Thanks${withName(newState.name)}. Tell me what's going on with Medicare. Describe it in your own words.`;
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
     } // close `if (zip.length === 5)`
@@ -655,10 +811,20 @@ export function processMessage(
         flagInconsistency(newState, `zip_not_in_service_area: ${bareZip}`, 25);
       }
     }
-    const problemType = detectProblemType(userMessage);
+    const rawProblemType = detectProblemType(userMessage);
     const emotion = detectEmotion(userMessage);
     newState.currentProblem = userMessage;
-    newState.intent = problemType;
+    // V21 — STICKY INTENT. If we already have a strong topic (bill/letter/
+    // coverage/drug/etc.) and the new message reads as 'general' (likely a
+    // typo or clarification), keep the old intent. This stops the bot from
+    // dropping out of the bill flow because the user typed "hopital".
+    const oldIntent = newState.intent;
+    const strongOld = oldIntent && oldIntent !== 'general' && oldIntent !== 'casual';
+    const effectiveIntent = (rawProblemType === 'general' && strongOld)
+      ? oldIntent
+      : rawProblemType;
+    newState.intent = effectiveIntent;
+    const problemType = effectiveIntent;
     newState.emotionalState = emotion;
 
     // ── WAVE 17 CONTEXT SCAN ──
@@ -695,15 +861,15 @@ export function processMessage(
     // ── Emotional priority responses ──
     if (emotion === 'grieving') {
       const out = isSpanish
-        ? `Lo siento mucho por su pérdida, ${newState.name}. Para temas de Medicare después de un fallecimiento, lo mejor es llamar al Social Security: 1-800-772-1213. ¿Necesita ayuda con algo específico?`
-        : `I'm very sorry for your loss, ${newState.name}. For Medicare matters after a death, please call Social Security: 1-800-772-1213. Do you need help with something specific?`;
+        ? `Lo siento mucho por su pérdida${withName(newState.name)}. Para temas de Medicare después de un fallecimiento, lo mejor es llamar al Social Security: 1-800-772-1213. ¿Necesita ayuda con algo específico?`
+        : `I'm very sorry for your loss${withName(newState.name)}. For Medicare matters after a death, please call Social Security: 1-800-772-1213. Do you need help with something specific?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (emotion === 'frustrated') {
       const out = isSpanish
-        ? `Entiendo su frustración, ${newState.name}. Déjeme ayudarle. ¿Puede contarme exactamente qué está pasando?`
-        : `I understand your frustration, ${newState.name}. Let me help you. Can you tell me exactly what's happening?`;
+        ? `Entiendo su frustración${withName(newState.name)}. Déjeme ayudarle. ¿Puede contarme exactamente qué está pasando?`
+        : `I understand your frustration${withName(newState.name)}. Let me help you. Can you tell me exactly what's happening?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -728,8 +894,8 @@ export function processMessage(
     // and never named a source, ask the drug-specific question.
     if (problemType === 'drug' && !newState.billSource && !newState.amountMentioned) {
       const out = isSpanish
-        ? `Sobre medicamentos, ${newState.name}. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
-        : `About medications, ${newState.name}. Is the issue the cost, not covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
+        ? `Sobre medicamentos${withName(newState.name)}. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
+        : `About medications${withName(newState.name)}. Is the issue the cost, not covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -742,8 +908,8 @@ export function processMessage(
       // Pharmacy source + dual eligible + amount known → fullest context response
       if (src === 'pharmacy' && dual && amount) {
         const out = isSpanish
-          ? `Anotado, ${newState.name}. Tiene Medicare y Medicaid (doble elegibilidad) y pagó $${amount} en la farmacia. Para personas con Medicare + Medicaid los copagos de medicamentos suelen ser mucho más bajos. No puedo confirmar la cantidad exacta aquí, pero un asesor licenciado puede revisar el formulario, la farmacia y si Extra Help / LIS se está aplicando. ¿Quiere que un asesor revise esto?`
-          : `Got it, ${newState.name}. You have both Medicare and Medicaid (dual eligible) and paid $${amount} at the pharmacy. For people with Medicare + Medicaid the drug copays are usually much lower. I can't confirm the exact amount here, but a licensed advisor can review the formulary, the pharmacy, and whether Extra Help / LIS is being applied. Would you like an advisor to review this?`;
+          ? `Anotado${withName(newState.name)}. Tiene Medicare y Medicaid (doble elegibilidad) y pagó $${amount} en la farmacia. Para personas con Medicare + Medicaid los copagos de medicamentos suelen ser mucho más bajos. No puedo confirmar la cantidad exacta aquí, pero un asesor licenciado puede revisar el formulario, la farmacia y si Extra Help / LIS se está aplicando. ¿Quiere que un asesor revise esto?`
+          : `Got it${withName(newState.name)}. You have both Medicare and Medicaid (dual eligible) and paid $${amount} at the pharmacy. For people with Medicare + Medicaid the drug copays are usually much lower. I can't confirm the exact amount here, but a licensed advisor can review the formulary, the pharmacy, and whether Extra Help / LIS is being applied. Would you like an advisor to review this?`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -751,8 +917,8 @@ export function processMessage(
       // Pharmacy source + dual eligible (no amount yet)
       if (src === 'pharmacy' && dual) {
         const out = isSpanish
-          ? `Gracias, ${newState.name}. Tiene Medicare y Medicaid (doble elegibilidad). Eso es importante — los copagos de medicamentos suelen ser muy bajos. ¿Cuánto pagó esta vez en la farmacia?`
-          : `Thanks, ${newState.name}. You have both Medicare and Medicaid (dual eligible). That matters — drug copays are usually very low. How much did you pay at the pharmacy this time?`;
+          ? `Gracias${withName(newState.name)}. Tiene Medicare y Medicaid (doble elegibilidad). Eso es importante — los copagos de medicamentos suelen ser muy bajos. ¿Cuánto pagó esta vez en la farmacia?`
+          : `Thanks${withName(newState.name)}. You have both Medicare and Medicaid (dual eligible). That matters — drug copays are usually very low. How much did you pay at the pharmacy this time?`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -760,17 +926,35 @@ export function processMessage(
       // Pharmacy source known (no dual signal)
       if (src === 'pharmacy') {
         const out = isSpanish
-          ? `Anotado, ${newState.name}. Es un cobro de la farmacia. ¿El problema es que es muy caro, que no esperaba ese costo, o que no le cubrieron el medicamento?`
-          : `Got it, ${newState.name}. Pharmacy charge. Is the issue that it's too expensive, that you didn't expect that cost, or that the medication wasn't covered?`;
+          ? `Anotado${withName(newState.name)}. Es un cobro de la farmacia. ¿El problema es que es muy caro, que no esperaba ese costo, o que no le cubrieron el medicamento?`
+          : `Got it${withName(newState.name)}. Pharmacy charge. Is the issue that it's too expensive, that you didn't expect that cost, or that the medication wasn't covered?`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
 
-      // Provider source known
+      // V21 — Provider source + amount known → Sawil's exact spec wording.
+      // High-amount hospital bill drill-down with "amount due / balance due /
+      // patient responsibility" question.
+      if (src === 'provider' && amount) {
+        const amountFormatted = Number(amount).toLocaleString('en-US');
+        const out = isSpanish
+          ? `Entiendo. Una factura de $${amountFormatted} puede ser seria, pero primero hay que confirmar si realmente dice que usted debe esa cantidad o si solo muestra cargos del hospital al plan. No envíe fotos con Medicare ID, Seguro Social ni datos bancarios aquí. ¿El documento dice "amount due", "balance due", "patient responsibility" o algo parecido?`
+          : `Got it. A bill for $${amountFormatted} can be serious, but first we need to confirm whether it actually says you owe that amount or if it just shows charges the hospital sent to the plan. Please do not send photos with Medicare ID, Social Security, or banking details here. Does the document say "amount due", "balance due", "patient responsibility", or something similar?`;
+        newState.quickReplies = isSpanish
+          ? ['Amount due / balance due', 'Patient responsibility', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
+          : ['Amount due / balance due', 'Patient responsibility', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Provider source known (no amount yet) — V21 spec wording.
       if (src === 'provider') {
         const out = isSpanish
-          ? `Anotado, ${newState.name}. Es una factura del doctor u hospital. ¿La cantidad parece correcta, o cree que hay un error en el cobro?`
-          : `Got it, ${newState.name}. It's a doctor or hospital bill. Does the amount look right, or do you think there's an error?`;
+          ? `Entiendo. Parece que la factura viene del médico u hospital. ¿La factura dice cuánto usted debe pagar, o solo muestra lo que el hospital cobró al plan?`
+          : `Got it. It looks like the bill is from a doctor or hospital. Does the bill say how much you owe, or does it just show what the hospital charged the plan?`;
+        newState.quickReplies = isSpanish
+          ? ['Dice cantidad adeudada', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
+          : ['Shows amount owed', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -778,16 +962,16 @@ export function processMessage(
       // Plan source known
       if (src === 'plan') {
         const out = isSpanish
-          ? `Anotado, ${newState.name}. Es del plan de Medicare. ¿Es una prima mensual, un copago, o un cobro inesperado?`
-          : `Got it, ${newState.name}. It's from your Medicare plan. Is it a monthly premium, a copay, or an unexpected charge?`;
+          ? `Anotado${withName(newState.name)}. Es del plan de Medicare. ¿Es una prima mensual, un copago, o un cobro inesperado?`
+          : `Got it${withName(newState.name)}. It's from your Medicare plan. Is it a monthly premium, a copay, or an unexpected charge?`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
 
       // No source captured yet — ask the source question ONCE
       const out = isSpanish
-        ? `Entiendo, ${newState.name}. ¿Esta factura es del médico u hospital, de la farmacia, o del plan de Medicare? Por favor no envíe Medicare ID, Seguro Social, ni datos bancarios aquí.`
-        : `Got it, ${newState.name}. Is this bill from a doctor or hospital, a pharmacy, or your Medicare plan? Please do not send Medicare ID, Social Security, or banking info here.`;
+        ? `Entiendo${withName(newState.name)}. ¿Esta factura es del médico u hospital, de la farmacia, o del plan de Medicare? Por favor no envíe Medicare ID, Seguro Social, ni datos bancarios aquí.`
+        : `Got it${withName(newState.name)}. Is this bill from a doctor or hospital, a pharmacy, or your Medicare plan? Please do not send Medicare ID, Social Security, or banking info here.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -836,22 +1020,22 @@ export function processMessage(
       if (!newState.zipCode) {
         newState.step = 'asking_zip';
         const out = isSpanish
-          ? `Gracias ${newState.name}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
-          : `Thanks ${newState.name}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
+          ? `Gracias${withName(newState.name)}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`
+          : `Thanks${withName(newState.name)}. What is your ZIP code? This helps confirm the service area. Or you can tell me what is going on first.`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Gracias, ${newState.name}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
-        : `Thank you, ${newState.name}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+        ? `Gracias${withName(newState.name)}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
+        : `Thank you${withName(newState.name)}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }
     if (problemType === 'casual') {
       const out = isSpanish
-        ? `Hola ${newState.name}. ¿En qué puedo ayudarle con Medicare hoy?`
-        : `Hi ${newState.name}. How can I help you with Medicare today?`;
+        ? `Hola${withName(newState.name)}. ¿En qué puedo ayudarle con Medicare hoy?`
+        : `Hi${withName(newState.name)}. How can I help you with Medicare today?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -861,23 +1045,23 @@ export function processMessage(
     // and respond with that context instead of "give me more detail".
     if (newState.dualEligible && newState.billSource) {
       const out = isSpanish
-        ? `Gracias, ${newState.name}. Anoto que tiene Medicare y Medicaid, y que esto se refiere a ${newState.billSource === 'pharmacy' ? 'una factura de la farmacia' : newState.billSource === 'provider' ? 'una factura del médico u hospital' : 'el plan de Medicare'}. Eso ayuda mucho. ¿Cuál es el monto que ve, o qué le preocupa más sobre el cobro?`
-        : `Thanks, ${newState.name}. I'm noting that you have Medicare and Medicaid, and that this is about ${newState.billSource === 'pharmacy' ? 'a pharmacy bill' : newState.billSource === 'provider' ? 'a doctor or hospital bill' : 'your Medicare plan'}. That helps a lot. What's the amount you're seeing, or what concerns you most about the charge?`;
+        ? `Gracias${withName(newState.name)}. Anoto que tiene Medicare y Medicaid, y que esto se refiere a ${newState.billSource === 'pharmacy' ? 'una factura de la farmacia' : newState.billSource === 'provider' ? 'una factura del médico u hospital' : 'el plan de Medicare'}. Eso ayuda mucho. ¿Cuál es el monto que ve, o qué le preocupa más sobre el cobro?`
+        : `Thanks${withName(newState.name)}. I'm noting that you have Medicare and Medicaid, and that this is about ${newState.billSource === 'pharmacy' ? 'a pharmacy bill' : newState.billSource === 'provider' ? 'a doctor or hospital bill' : 'your Medicare plan'}. That helps a lot. What's the amount you're seeing, or what concerns you most about the charge?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (newState.dualEligible) {
       const out = isSpanish
-        ? `Anotado, ${newState.name} — tiene Medicare y Medicaid (doble elegibilidad). Eso es importante porque sus costos de medicamentos y servicios suelen ser muy bajos. ¿Sobre qué situación quiere que le ayude?`
-        : `Got it, ${newState.name} — you have both Medicare and Medicaid (dual eligible). That matters because your drug and service costs are usually very low. What situation can I help you organize?`;
+        ? `Anotado${withName(newState.name)} — tiene Medicare y Medicaid (doble elegibilidad). Eso es importante porque sus costos de medicamentos y servicios suelen ser muy bajos. ¿Sobre qué situación quiere que le ayude?`
+        : `Got it${withName(newState.name)} — you have both Medicare and Medicaid (dual eligible). That matters because your drug and service costs are usually very low. What situation can I help you organize?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
 
     // Default
     const out = isSpanish
-      ? `Gracias por contarme, ${newState.name}. ¿Puede darme un poco más de detalle sobre su situación?`
-      : `Thanks for telling me, ${newState.name}. Can you give me a bit more detail about your situation?`;
+      ? `Gracias por contarme${withName(newState.name)}. ¿Puede darme un poco más de detalle sobre su situación?`
+      : `Thanks for telling me${withName(newState.name)}. Can you give me a bit more detail about your situation?`;
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
   }

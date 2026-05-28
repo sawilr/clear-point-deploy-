@@ -8,6 +8,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   processMessage,
   createInitialState,
+  sanitizeResponse,
   type ConversationState,
   type Language,
 } from '../lib/customerServiceEngine';
@@ -196,6 +197,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         ? 'Algo salió mal, pero sigo aquí. Por favor intente de nuevo.'
         : "Something went wrong, but I'm still here. Please try again.";
     }
+    // Wave 21 — final safety guard. Never let "undefined" / "null" / "NaN"
+    // reach the user, even if a template slipped through.
+    response = sanitizeResponse(response, (newState.language || state.language) === 'es');
 
     // Sync page-level language when chip selection occurs
     if (newState.language && newState.language !== state.language) {
