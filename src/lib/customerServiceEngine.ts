@@ -193,6 +193,10 @@ export function intentLabel(id: IntentId, lang: SupportLang): string {
     confused_customer: { en: 'general help', es: 'ayuda general' },
     complaint: { en: 'a complaint', es: 'una queja' },
     employer_union_benefits: { en: 'employer / union / retiree benefits', es: 'beneficios de empleador / unión / retiro' },
+    existing_client: { en: 'existing client follow-up', es: 'seguimiento de cliente existente' },
+    compliance_deflect_recommendation: { en: 'plan-recommendation question', es: 'pregunta de recomendación de plan' },
+    compliance_deflect_eligibility: { en: 'eligibility question', es: 'pregunta de elegibilidad' },
+    compliance_deflect_enrollment: { en: 'enrollment request', es: 'solicitud de inscripción' },
     general_medicare_question: { en: 'a general Medicare question', es: 'una pregunta general de Medicare' },
     other_unknown: { en: 'something else', es: 'otro tema' },
   };
@@ -283,6 +287,82 @@ export function detectCaregiver(text: string): boolean {
     if (lower.includes(p)) return true;
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISITOR TYPE CLASSIFIER (Layer 4 spec)
+//
+// 4-way visitor classification used by the case summary and GHL routing:
+//   - 'senior'           : direct beneficiary (the caller is on Medicare)
+//   - 'caregiver'        : family / friend helping a beneficiary
+//   - 'existing_client'  : already a ClearPoint client; this is a follow-up
+//   - 'unknown'          : no signal yet
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type VisitorType = 'senior' | 'caregiver' | 'existing_client' | 'unknown';
+
+const EXISTING_CLIENT_PHRASES = [
+  'already submitted', 'already talked', 'already spoke', 'i already gave', 'sent my information',
+  'i am a client', "i'm a client", 'already a client', 'returning client', 'follow up on',
+  'i submitted', 'already shared', 'already filled out',
+  'ya envie', 'ya envié', 'ya hable', 'ya hablé', 'ya soy cliente', 'soy cliente',
+  'mande mi informacion', 'mandé mi información', 'ya di mi informacion', 'ya di mi información',
+];
+
+export function detectVisitorType(text: string, prior: VisitorType = 'unknown'): VisitorType {
+  // Don't downgrade an already-confirmed classification.
+  if (prior === 'existing_client') return prior;
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const p of EXISTING_CLIENT_PHRASES) if (lower.includes(p)) return 'existing_client';
+  if (detectCaregiver(text)) return 'caregiver';
+  return prior;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UPCOMING PROCEDURE / CONTINUITY-OF-CARE DETECTOR (Layer 3 D)
+//
+// If the visitor mentions a surgery, hospital admission, treatment in progress,
+// or ongoing specialist care, that's a continuity-of-care concern — the
+// advisor must verify network coverage before any plan change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PROCEDURE_PHRASES = [
+  // English
+  'surgery', 'operation', 'procedure', 'hospital stay', 'admitted', 'admission',
+  'chemo', 'chemotherapy', 'radiation', 'dialysis', 'infusion', 'transplant',
+  'pre-op', 'post-op', 'next month', 'next week', 'scheduled for', 'have an appointment for',
+  'specialist', 'cancer treatment', 'physical therapy', 'pt for',
+  // Spanish
+  'cirugia', 'cirugía', 'operacion', 'operación', 'procedimiento', 'hospitalizado',
+  'hospitalizada', 'quimio', 'quimioterapia', 'radiacion', 'radiación', 'dialisis',
+  'diálisis', 'infusion', 'infusión', 'trasplante', 'pre-operatorio', 'post-operatorio',
+  'el mes que viene', 'la semana que viene', 'agendado para', 'tengo una cita para',
+  'especialista', 'tratamiento de cancer', 'tratamiento de cáncer', 'terapia fisica', 'terapia física',
+];
+
+export function detectUpcomingProcedure(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const p of PROCEDURE_PHRASES) if (lower.includes(p)) return true;
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHONE + ZIP VALIDATORS (Layer 11)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function validatePhone(raw: string): { ok: boolean; normalized: string; reason?: string } {
+  const digits = raw.replace(/\D/g, '');
+  // Allow 10 digits, or 11 with leading 1 (country code).
+  if (digits.length === 10) return { ok: true, normalized: digits };
+  if (digits.length === 11 && digits.startsWith('1')) return { ok: true, normalized: digits.slice(1) };
+  return { ok: false, normalized: digits, reason: 'expected_10_digits' };
+}
+
+export function validateZip(raw: string): { ok: boolean; normalized: string } {
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 5) return { ok: true, normalized: digits };
+  if (digits.length === 9) return { ok: true, normalized: digits.slice(0, 5) }; // ZIP+4
+  return { ok: false, normalized: digits };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -427,6 +507,22 @@ export function intentFollowUp(id: IntentId, lang: SupportLang): string {
       en: "Thank you for mentioning this — union, retiree, employer, VA, or TRICARE benefits can be lost permanently if Medicare is changed without checking impact first. A licensed advisor must review this with you before any decision. Which type of benefit is it?",
       es: 'Gracias por mencionarlo — los beneficios de unión, retiro, empleador, VA o TRICARE se pueden perder permanentemente si se cambia Medicare sin revisar el impacto primero. Un asesor licenciado debe revisar esto con usted antes de cualquier decisión. ¿Qué tipo de beneficio es?',
     },
+    existing_client: {
+      en: "Thank you for reaching back out — I'll note that this is a follow-up so a licensed advisor can pick up where the last conversation left off. What is the main thing you need today?",
+      es: 'Gracias por comunicarse de nuevo — anotaré que esto es un seguimiento para que un asesor licenciado pueda continuar desde la última conversación. ¿Qué es lo principal que necesita hoy?',
+    },
+    compliance_deflect_recommendation: {
+      en: "I cannot tell you which plan is best — that depends on your doctors, medications, county, current coverage, and other factors. Only a licensed advisor can review all of that with you. I can prepare the situation so an advisor can help you compare carefully. What state and ZIP code are you in?",
+      es: 'No puedo decirle cuál plan es el mejor — eso depende de sus doctores, medicamentos, condado, cobertura actual y otros factores. Solo un asesor licenciado puede revisar todo eso con usted. Puedo preparar la situación para que un asesor le ayude a comparar con cuidado. ¿En qué estado y código postal vive?',
+    },
+    compliance_deflect_eligibility: {
+      en: "I cannot confirm eligibility here — eligibility is decided by the Social Security Administration, your state Medicaid agency, or the plan itself depending on the program. I can organize your situation so a licensed advisor can help you check the right place. What state are you in?",
+      es: 'No puedo confirmar elegibilidad aquí — la elegibilidad la decide la Administración del Seguro Social, la agencia estatal de Medicaid, o el plan mismo, dependiendo del programa. Puedo organizar su situación para que un asesor licenciado le ayude a verificar en el lugar correcto. ¿En qué estado vive?',
+    },
+    compliance_deflect_enrollment: {
+      en: "I cannot complete enrollment from this chat. Enrollment must be done by a licensed advisor after reviewing your doctors, medications, current coverage, and a Scope of Appointment. I can prepare your case so a licensed advisor can follow up. What is the main thing you want them to know?",
+      es: 'No puedo completar la inscripción desde este chat. La inscripción debe hacerla un asesor licenciado después de revisar sus doctores, medicamentos, cobertura actual y un Scope of Appointment. Puedo preparar su caso para que un asesor licenciado dé seguimiento. ¿Cuál es lo principal que quiere que sepa?',
+    },
     general_medicare_question: {
       en: "Happy to help with general Medicare information. Specific eligibility and plan details should be verified with a licensed advisor or with Medicare directly. What part of Medicare would you like to understand?",
       es: 'Con gusto le ayudo con información general sobre Medicare. La elegibilidad específica y los detalles del plan deben verificarse con un asesor licenciado o directamente con Medicare. ¿Qué parte de Medicare le gustaría entender?',
@@ -507,6 +603,13 @@ export function intentFollowUpChips(id: IntentId, lang: SupportLang): string[] {
       en: ['Union', 'Retiree', 'Employer', 'VA / TRICARE'],
       es: ['Unión', 'Retiro', 'Empleador', 'VA / TRICARE'],
     },
+    existing_client: {
+      en: ['Callback', 'Missing documents', 'Appointment change', 'Other'],
+      es: ['Llamada de regreso', 'Documentos faltantes', 'Cambio de cita', 'Otro'],
+    },
+    compliance_deflect_recommendation: { en: [], es: [] },
+    compliance_deflect_eligibility: { en: [], es: [] },
+    compliance_deflect_enrollment: { en: [], es: [] },
     general_medicare_question: {
       en: ['Medicare basics', 'Plan types', 'Part D / drugs', 'Costs'],
       es: ['Medicare básico', 'Tipos de planes', 'Parte D / medicinas', 'Costos'],
@@ -752,6 +855,10 @@ export interface CaseState {
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
   caregiver_signal?: boolean;
+  visitor_type?: VisitorType;
+  mentioned_upcoming_procedure?: boolean;
+  mentioned_doctor_concern?: boolean;
+  mentioned_medication_concern?: boolean;
   wants_callback?: boolean;
   consent_to_contact: boolean;
   first_name: string;
@@ -819,9 +926,19 @@ export function buildCaseSummary(s: CaseState): string {
     ? 'not asked'
     : s.wants_callback ? 'YES' : 'NO';
 
-  const userType = s.caregiver_signal
-    ? 'family member / caregiver speaking on behalf of beneficiary'
-    : 'beneficiary or unknown';
+  const userType = s.visitor_type === 'existing_client'
+    ? 'EXISTING CLIENT — follow-up conversation'
+    : s.visitor_type === 'caregiver' || s.caregiver_signal
+      ? 'family member / caregiver speaking on behalf of beneficiary'
+      : s.visitor_type === 'senior'
+        ? 'beneficiary (senior)'
+        : 'beneficiary or unknown';
+
+  const continuityCare = s.mentioned_upcoming_procedure
+    ? 'YES — caller mentioned a surgery, procedure, hospital admission, or ongoing treatment. Advisor MUST verify network continuity-of-care before any plan change.'
+    : 'no';
+  const doctorConcernStr = s.mentioned_doctor_concern ? 'YES' : 'no';
+  const medConcernStr = s.mentioned_medication_concern ? 'YES' : 'no';
 
   return [
     '[Customer Service Box]',
@@ -842,6 +959,9 @@ export function buildCaseSummary(s: CaseState): string {
     `Wants advisor call: ${wantsCallStr}`,
     `Consent to contact: ${s.consent_to_contact ? 'YES' : 'NO'}`,
     `User type: ${userType}`,
+    `Doctor concern mentioned: ${doctorConcernStr}`,
+    `Medication concern mentioned: ${medConcernStr}`,
+    `Upcoming procedure / continuity-of-care: ${continuityCare}`,
     `Privacy warning shown: ${s.privacy_warning_shown ? 'YES' : 'NO'}`,
     `Sensitive info blocked: ${s.sensitive_data_intercepted ? 'YES' : 'NO'}`,
     `Emergency warning shown: ${s.emergency_warning_shown ? 'YES' : 'NO'}`,
@@ -884,7 +1004,11 @@ export function buildSupportTags(s: CaseState): string[] {
   if (s.privacy_warning_shown) tags.push('sensitive_warning_shown');
   if (s.emergency_warning_shown) tags.push('emergency_warning_shown');
   if (s.frustration_detected) tags.push('customer_frustrated');
-  if (s.caregiver_signal) tags.push('caregiver_or_family');
+  if (s.caregiver_signal || s.visitor_type === 'caregiver') tags.push('caregiver_or_family');
+  if (s.visitor_type === 'existing_client') tags.push('existing_client');
+  if (s.mentioned_upcoming_procedure) tags.push('continuity_of_care_concern');
+  if (s.mentioned_doctor_concern) tags.push('doctor_concern_mentioned');
+  if (s.mentioned_medication_concern) tags.push('medication_concern_mentioned');
 
   return tags;
 }

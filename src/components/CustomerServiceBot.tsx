@@ -37,6 +37,9 @@ import {
   detectGlobalIntent,
   detectLanguage,
   detectSensitive,
+  detectUpcomingProcedure,
+  detectVisitorType,
+  validatePhone,
   buildCaseSummary,
   buildMultiTopicAck,
   buildSupportTags,
@@ -104,6 +107,10 @@ interface State {
   emergency_warning_shown: boolean;
   frustration_detected: boolean;
   caregiver_signal: boolean;
+  visitor_type: 'senior' | 'caregiver' | 'existing_client' | 'unknown';
+  mentioned_upcoming_procedure: boolean;
+  mentioned_doctor_concern: boolean;
+  mentioned_medication_concern: boolean;
   followup_chips_dismissed: boolean;
   wants_callback: boolean;
   consent_to_contact: boolean;
@@ -132,6 +139,10 @@ type Action =
   | { type: 'SENSITIVE_INTERCEPTED' }
   | { type: 'FRUSTRATION_FLAG' }
   | { type: 'CAREGIVER_FLAG' }
+  | { type: 'SET_VISITOR_TYPE'; value: 'senior' | 'caregiver' | 'existing_client' | 'unknown' }
+  | { type: 'PROCEDURE_MENTIONED' }
+  | { type: 'DOCTOR_CONCERN_MENTIONED' }
+  | { type: 'MEDICATION_CONCERN_MENTIONED' }
   | { type: 'DISMISS_FOLLOWUP_CHIPS' }
   | { type: 'COLLECT_FULL_NAME'; first: string; last: string }
   | { type: 'COLLECT_LOCATION'; zip: string; state: State['state'] }
@@ -176,6 +187,10 @@ function initialState(lang: SupportLang): State {
     emergency_warning_shown: false,
     frustration_detected: false,
     caregiver_signal: false,
+    visitor_type: 'unknown',
+    mentioned_upcoming_procedure: false,
+    mentioned_doctor_concern: false,
+    mentioned_medication_concern: false,
     followup_chips_dismissed: false,
     wants_callback: false,
     consent_to_contact: false,
@@ -258,7 +273,21 @@ function reduce(state: State, action: Action): State {
       return { ...state, frustration_detected: true };
 
     case 'CAREGIVER_FLAG':
-      return { ...state, caregiver_signal: true };
+      return { ...state, caregiver_signal: true, visitor_type: state.visitor_type === 'unknown' ? 'caregiver' : state.visitor_type };
+
+    case 'SET_VISITOR_TYPE':
+      // Don't downgrade existing_client (it's the highest-priority classification).
+      if (state.visitor_type === 'existing_client') return state;
+      return { ...state, visitor_type: action.value };
+
+    case 'PROCEDURE_MENTIONED':
+      return { ...state, mentioned_upcoming_procedure: true };
+
+    case 'DOCTOR_CONCERN_MENTIONED':
+      return { ...state, mentioned_doctor_concern: true };
+
+    case 'MEDICATION_CONCERN_MENTIONED':
+      return { ...state, mentioned_medication_concern: true };
 
     case 'DISMISS_FOLLOWUP_CHIPS':
       return { ...state, followup_chips_dismissed: true };
@@ -761,9 +790,29 @@ export function CustomerServiceBot() {
       return null;
     })();
 
-    // 7. Caregiver/family-member signal — record once for the case file.
+    // 7a. Caregiver/family-member signal — record once for the case file.
     if (!state.caregiver_signal && detectCaregiver(text)) {
       dispatch({ type: 'CAREGIVER_FLAG' });
+    }
+
+    // 7b. Visitor type — record existing_client if signaled in this turn.
+    const visitorTypeNext = detectVisitorType(text, state.visitor_type);
+    if (visitorTypeNext !== state.visitor_type) {
+      dispatch({ type: 'SET_VISITOR_TYPE', value: visitorTypeNext });
+    }
+
+    // 7c. Continuity-of-care flag — surgery, treatment, hospital stay, etc.
+    if (!state.mentioned_upcoming_procedure && detectUpcomingProcedure(text)) {
+      dispatch({ type: 'PROCEDURE_MENTIONED' });
+    }
+
+    // 7d. Doctor + medication concern flags (any mention, anywhere in the flow).
+    const lowerText = text.toLowerCase();
+    if (!state.mentioned_doctor_concern && /(doctor|doctora|doctor|physician|specialist|provider|primary care|mi doctor|mi doctora|especialista|proveedor)/i.test(lowerText)) {
+      dispatch({ type: 'DOCTOR_CONCERN_MENTIONED' });
+    }
+    if (!state.mentioned_medication_concern && /(medication|medicine|medicines|pill|prescription|drug|pharmacy|formulary|medicina|medicinas|medicamento|pastilla|receta|farmacia)/i.test(lowerText)) {
+      dispatch({ type: 'MEDICATION_CONCERN_MENTIONED' });
     }
 
     // 8. Normal flow — branch by current step.
@@ -957,9 +1006,21 @@ export function CustomerServiceBot() {
       case 'collecting_phone': {
         if (/^skip$|^omitir$/i.test(text.trim())) {
           dispatch({ type: 'COLLECT_PHONE', value: '' });
-        } else {
-          dispatch({ type: 'COLLECT_PHONE', value: text });
+          enqueueBot([{ text: state.language === 'es' ? COPY.ask_best_time_es : COPY.ask_best_time_en, pace: 'short' }]);
+          return;
         }
+        // Validate US 10-digit phone format. Retry once with a clearer ask.
+        const phone = validatePhone(text);
+        if (!phone.ok) {
+          enqueueBot([{
+            text: state.language === 'es'
+              ? 'No reconocí ese número. Por favor escriba un número de teléfono de 10 dígitos, o escriba "Omitir" para continuar sin un número.'
+              : "I didn't recognize that number. Please type a 10-digit phone number, or type \"Skip\" to continue without one.",
+            pace: 'short',
+          }]);
+          return;
+        }
+        dispatch({ type: 'COLLECT_PHONE', value: phone.normalized });
         enqueueBot([{ text: state.language === 'es' ? COPY.ask_best_time_es : COPY.ask_best_time_en, pace: 'short' }]);
         return;
       }
@@ -1085,6 +1146,10 @@ export function CustomerServiceBot() {
       emergency_warning_shown: state.emergency_warning_shown,
       frustration_detected: state.frustration_detected,
       caregiver_signal: state.caregiver_signal,
+      visitor_type: state.visitor_type,
+      mentioned_upcoming_procedure: state.mentioned_upcoming_procedure,
+      mentioned_doctor_concern: state.mentioned_doctor_concern,
+      mentioned_medication_concern: state.mentioned_medication_concern,
       wants_callback: state.wants_callback,
       consent_to_contact: state.consent_to_contact,
       first_name: state.first_name,

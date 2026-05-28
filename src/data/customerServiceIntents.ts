@@ -41,6 +41,10 @@ export type IntentId =
   | 'confused_customer'
   | 'complaint'
   | 'employer_union_benefits'
+  | 'existing_client'
+  | 'compliance_deflect_recommendation'
+  | 'compliance_deflect_eligibility'
+  | 'compliance_deflect_enrollment'
   | 'general_medicare_question'
   | 'other_unknown';
 
@@ -273,6 +277,58 @@ export const INTENTS: IntentDefinition[] = [
     next_question_en: 'I\'m sorry you\'re going through this — let\'s organize the issue so a licensed advisor can review it carefully. Could you share your first name and briefly what happened?',
     next_question_es: 'Lamento que esté pasando por esto — organicemos el asunto para que un asesor licenciado pueda revisarlo con cuidado. ¿Podría decirme su nombre y brevemente qué pasó?',
     ghl_tag: 'complaint',
+  },
+  {
+    id: 'existing_client',
+    keywords_en: ['already', 'submitted', 'previously', 'before', 'returning', 'client', 'follow-up', 'followup'],
+    keywords_es: ['ya', 'antes', 'anteriormente', 'regresando', 'cliente', 'seguimiento'],
+    phrases_en: ['already submitted', 'already talked', 'already spoke', 'i already', 'sent my information', 'i am a client', "i'm a client", 'follow up on', 'missed a call', 'nobody called', 'no one called', 'need to follow up', 'need documents', 'change my appointment'],
+    phrases_es: ['ya envie', 'ya envié', 'ya hable', 'ya hablé', 'ya soy cliente', 'soy cliente', 'mande mi informacion', 'mandé mi información', 'seguimiento de', 'nadie me llamo', 'nadie me llamó', 'me perdi la llamada', 'me perdí la llamada', 'cambiar mi cita'],
+    escalate_to_agent: true,
+    require_privacy_warning: false,
+    default_urgency: 'normal',
+    next_question_en: "Thank you for reaching back out. So a licensed advisor can follow up correctly, what is the main thing you need today — a callback, missing documents, or an appointment change?",
+    next_question_es: 'Gracias por comunicarse de nuevo. Para que un asesor licenciado pueda dar seguimiento correctamente, ¿qué es lo principal que necesita hoy — una llamada de regreso, documentos faltantes, o un cambio de cita?',
+    ghl_tag: 'existing_client_followup',
+  },
+  {
+    id: 'compliance_deflect_recommendation',
+    keywords_en: ['best plan', 'best medicare', 'top plan', 'recommend'],
+    keywords_es: ['mejor plan', 'plan mejor', 'recomienda'],
+    phrases_en: ['what is the best plan', 'whats the best plan', 'best medicare plan', 'recommend a plan', 'which plan should i pick', 'which plan is best', 'best for me'],
+    phrases_es: ['cual es el mejor plan', 'cuál es el mejor plan', 'que plan me recomienda', 'qué plan me recomienda', 'que plan es mejor', 'qué plan es mejor', 'cual es mejor para mi', 'cuál es mejor para mí'],
+    escalate_to_agent: true,
+    require_privacy_warning: false,
+    default_urgency: 'normal',
+    next_question_en: "I cannot tell you which plan is best — that depends on your doctors, medications, county, current coverage, and other factors, and only a licensed advisor can review all of that with you. I can prepare the situation so an advisor can review it properly. To start, what state and ZIP code are you in?",
+    next_question_es: 'No puedo decirle cuál plan es el mejor — eso depende de sus doctores, medicamentos, condado, cobertura actual y otros factores, y solo un asesor licenciado puede revisar todo eso con usted. Puedo preparar la situación para que un asesor la revise correctamente. Para empezar, ¿en qué estado y código postal vive?',
+    ghl_tag: 'compliance_best_plan_question',
+  },
+  {
+    id: 'compliance_deflect_eligibility',
+    keywords_en: ['qualify', 'qualified', 'eligible', 'eligibility'],
+    keywords_es: ['califico', 'calificar', 'elegible', 'elegibilidad'],
+    phrases_en: ['do i qualify', 'am i qualified', 'am i eligible', 'do i meet', 'will i qualify', 'can i get'],
+    phrases_es: ['califico para', 'soy elegible', 'puedo recibir', 'tengo derecho a', 'puedo conseguir', 'me dan'],
+    escalate_to_agent: true,
+    require_privacy_warning: false,
+    default_urgency: 'normal',
+    next_question_en: "I cannot confirm eligibility here — eligibility is decided by the Social Security Administration, your state Medicaid agency, or the plan itself, depending on the program. I can organize your situation so a licensed advisor can help you check the right place. What state are you in?",
+    next_question_es: 'No puedo confirmar elegibilidad aquí — la elegibilidad la decide la Administración del Seguro Social, la agencia estatal de Medicaid, o el plan mismo, dependiendo del programa. Puedo organizar su situación para que un asesor licenciado le ayude a verificar en el lugar correcto. ¿En qué estado vive?',
+    ghl_tag: 'compliance_eligibility_question',
+  },
+  {
+    id: 'compliance_deflect_enrollment',
+    keywords_en: ['enroll me', 'sign me up', 'enroll now'],
+    keywords_es: ['inscribir', 'inscribame', 'inscríbeme', 'inscribir ahora'],
+    phrases_en: ['can you enroll me', 'enroll me now', 'sign me up', 'enroll me in', 'put me in a plan'],
+    phrases_es: ['me puedes inscribir', 'me puede inscribir', 'inscribame ahora', 'inscríbame ahora', 'inscribir ahora', 'pongame en un plan', 'póngame en un plan'],
+    escalate_to_agent: true,
+    require_privacy_warning: false,
+    default_urgency: 'normal',
+    next_question_en: "I cannot complete enrollment from this chat. Enrollment must be done by a licensed advisor after reviewing your doctors, medications, coverage, and a Scope of Appointment. I can prepare your case for a licensed advisor to follow up. What is the main thing you want them to know?",
+    next_question_es: 'No puedo completar la inscripción desde este chat. La inscripción debe hacerla un asesor licenciado después de revisar sus doctores, medicamentos, cobertura y un Scope of Appointment. Puedo preparar su caso para que un asesor licenciado dé seguimiento. ¿Cuál es lo principal que quiere que sepa?',
+    ghl_tag: 'compliance_enroll_request',
   },
   {
     id: 'employer_union_benefits',
