@@ -635,7 +635,7 @@ export function processMessage(
     if (msg.includes('english') || msg === 'en') {
       newState.language = 'en';
       newState.step = 'asking_topic';
-      const out = 'Great. What do you need help with today?';
+      const out = "Wonderful. No rush — tell me what you'd like to look at today, and we'll go through it together.";
       newState.quickReplies = [...TOPIC_CHIPS_EN];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
@@ -643,7 +643,7 @@ export function processMessage(
     if (msg.includes('español') || msg.includes('espanol') || msg === 'es') {
       newState.language = 'es';
       newState.step = 'asking_topic';
-      const out = 'Perfecto. ¿Qué necesita revisar hoy?';
+      const out = 'Con mucho gusto. Sin prisa — dígame qué le gustaría revisar hoy, y lo vemos juntos.';
       newState.quickReplies = [...TOPIC_CHIPS_ES];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
@@ -932,20 +932,19 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // V22 — Provider source + amount known. Wording matches Sawil's exact
-      // V22 spec for the "Español → Factura → hopital → 10k" flow.
+      // V22 — Provider source + amount known. H.E.A.R.T. service layer:
+      //   Hear (reflect) → Empathize → Acknowledge → Respond (plain language) → Trust handoff.
+      // USTED form. Jargon translated. Calm, validating tone for senior callers.
       if (src === 'provider' && amount) {
         const amountFormatted = Number(amount).toLocaleString('en-US');
-        // Detect whether the user specifically named "hospital" (vs. doctor)
-        // so we can insert "de hospital" / "from a hospital" in the response.
         const history = fullUserHistory(newState, userMessage);
         const isHospital = /\b(hospital|hospitals|ospital|hopital|hospita|hostpital|hospitl|hospitall|hospitales|emergency room|sala de emergencias)\b/i.test(history)
           || fuzzyConcept(history) === 'hospital';
-        const sourceEs = isHospital ? ' de hospital' : ' del médico u hospital';
-        const sourceEn = isHospital ? ' from a hospital' : ' from a doctor or hospital';
+        const sourceEs = isHospital ? 'de hospital' : 'del médico u hospital';
+        const sourceEn = isHospital ? 'from a hospital' : 'from a doctor or hospital';
         const out = isSpanish
-          ? `Entiendo. Una factura de $${amountFormatted}${sourceEs} puede ser seria, pero primero hay que confirmar si realmente dice que usted debe esa cantidad o si solo muestra cargos del hospital. ¿El documento dice "amount due", "balance due", "patient responsibility" o algo parecido?`
-          : `Got it. A bill for $${amountFormatted}${sourceEn} can be serious, but first we need to confirm if it actually says you owe that amount or if it just shows charges from the hospital. Does the document say "amount due", "balance due", "patient responsibility", or something similar?`;
+          ? `Entiendo. Una factura de $${amountFormatted} ${sourceEs} es una preocupación seria — esa cantidad es muy alta para procesarla solo. Antes de asumir que usted debe esa cantidad, vamos a confirmar qué dice el documento exactamente. A veces lo que aparece es solo el cargo total al plan, no lo que usted paga. ¿Puede ver si dice "amount due" (cantidad a pagar), "balance due" (saldo pendiente), o "patient responsibility" (responsabilidad del paciente)? Si prefiere, un asesor licenciado puede revisarlo con usted sin costo.`
+          : `I understand. A $${amountFormatted} bill ${sourceEn} is a serious worry — that amount is a lot to process alone. Before assuming you owe that amount, let's confirm what the document actually says. Sometimes what shows up is just the total charge sent to the plan, not what you actually owe. Can you see if it says "amount due", "balance due", or "patient responsibility"? If you'd prefer, a licensed advisor can review it with you at no cost.`;
         newState.quickReplies = isSpanish
           ? ['Dice amount due', 'Dice balance due', 'Dice patient responsibility', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
           : ['Says amount due', 'Says balance due', 'Says patient responsibility', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
@@ -984,29 +983,29 @@ export function processMessage(
 
     if (problemType === 'letter') {
       const out = isSpanish
-        ? `Recibió una carta. ¿Es sobre renovación/cambios anuales (ANOC/EOC), Medicaid, Extra Help, IRMAA, o un aviso de cobro? No envíe Medicare ID, Seguro Social, ni una foto completa con datos sensibles.`
-        : `You received a letter. Is it about renewal/annual changes (ANOC/EOC), Medicaid, Extra Help, IRMAA, or a collection notice? Please do not send Medicare ID, Social Security, or a full photo with sensitive details.`;
+        ? `Entiendo. Recibir una carta de Medicare puede generar dudas — vamos a entenderla juntos. ¿Es sobre renovación o cambios anuales del plan (ANOC/EOC), una notificación de Medicaid, sobre Extra Help, un aviso de IRMAA, o un cobro pendiente? Por su seguridad, no envíe su número de Medicare, Seguro Social, ni fotos completas con datos sensibles.`
+        : `I understand. Getting a letter from Medicare can be confusing — let's go through it together. Is it about plan renewal or annual changes (ANOC/EOC), a Medicaid notice, Extra Help, an IRMAA notice, or a collection notice? For your safety, please do not send your Medicare number, Social Security, or full photos with sensitive details.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (problemType === 'coverage') {
       const out = isSpanish
-        ? `Sobre cobertura. ¿Quiere saber si un doctor, hospital o procedimiento está cubierto? No puedo confirmarlo aquí — un asesor licenciado debe verificarlo con el plan, su condado y la red actual.`
-        : `About coverage. Do you want to know if a doctor, hospital, or procedure is covered? I cannot confirm it here — a licensed advisor must verify with the plan, your county, and the current network.`;
+        ? `Entiendo. La cobertura es uno de los temas más importantes — y también uno de los que cambia con más frecuencia. ¿Quiere saber si un doctor, hospital, o un procedimiento específico está cubierto? Yo no puedo confirmarlo aquí porque depende del plan, su condado, y la red en este momento. Un asesor licenciado puede verificarlo por usted sin costo.`
+        : `I understand. Coverage is one of the most important questions — and also one that changes often. Do you want to know if a specific doctor, hospital, or procedure is covered? I can't confirm it here because it depends on the plan, your county, and the network right now. A licensed advisor can verify it for you at no cost.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (problemType === 'enrollment') {
       const out = isSpanish
-        ? `Sobre inscripción. ¿Está cumpliendo 65 (IEP), quiere cambiar durante AEP (15 oct - 7 dic), o tiene un evento especial como mudanza (SEP)?`
-        : `About enrollment. Are you turning 65 (IEP), wanting to switch during AEP (Oct 15 - Dec 7), or do you have a special event like moving (SEP)?`;
+        ? `Entiendo. La inscripción a Medicare tiene varias ventanas y cada una tiene sus reglas. ¿Cuál es su situación: está cumpliendo 65 años (IEP), quiere cambiar durante el periodo anual (AEP, del 15 de octubre al 7 de diciembre), o tuvo un evento especial como una mudanza (SEP)? Sin presión — un asesor licenciado puede revisar las opciones con usted.`
+        : `I understand. Medicare enrollment has different windows, each with its own rules. Which situation fits you: turning 65 (IEP), switching during the annual period (AEP, Oct 15 - Dec 7), or did you have a special event like moving (SEP)? No pressure — a licensed advisor can walk through the options with you.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (problemType === 'appeal') {
       const out = isSpanish
-        ? `Sobre apelaciones. Tiene 60 días desde la denegación para apelar. ¿Quiere que un asesor licenciado le ayude a organizar la apelación?`
-        : `About appeals. You have 60 days from the denial to appeal. Would you like a licensed advisor to help organize the appeal?`;
+        ? `Entiendo. Recibir una denegación es frustrante, pero usted tiene derecho a apelar. La ventana suele ser de 60 días desde la fecha del aviso, y un asesor licenciado puede ayudarle a organizar los documentos y los plazos correctamente. ¿Le gustaría que un asesor le acompañe en este proceso?`
+        : `I understand. Getting a denial is frustrating, but you have the right to appeal. The window is usually 60 days from the notice date, and a licensed advisor can help you organize the documents and timelines correctly. Would you like an advisor to walk you through this?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -1018,8 +1017,8 @@ export function processMessage(
       if (!newState.name) {
         newState.step = 'asking_name';
         const out = isSpanish
-          ? 'Por supuesto. Para que un asesor pueda darle seguimiento, ¿cuál es su primer nombre?'
-          : 'Of course. So an advisor can follow up, what is your first name?';
+          ? 'Con mucho gusto. Para que un asesor licenciado pueda comunicarse con usted personalmente, ¿cuál es su primer nombre?'
+          : "Of course, I'd be glad to help. So a licensed advisor can reach out to you personally, what is your first name?";
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -1033,8 +1032,8 @@ export function processMessage(
       }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Gracias${withName(newState.name)}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
-        : `Thank you${withName(newState.name)}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe — alguien con experiencia real, sin presión y sin costo. Le contactarán pronto. Si necesita hablar antes, llame al 1-866-310-8702 y mencione que ya inició su consulta aquí. Gracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual advisor — someone with real experience, no pressure, and no cost to you. They will reach out soon. If you need to talk sooner, call 1-866-310-8702 and mention you already started your case here. Thank you for trusting us.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }

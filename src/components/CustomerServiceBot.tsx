@@ -63,7 +63,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (messages.length === 0) {
       setMessages([{
         id: 'welcome',
-        text: "Hi, I'm the ClearPoint Support Guide. I can help organize questions about Medicare bills, letters, coverage, medications, doctors, enrollment, or cost help.\n\nHola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar preguntas sobre facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
+        text: "Welcome. I'm the ClearPoint Support Guide, and I'm here to help. Together we can organize any Medicare question — bills, letters, coverage, medications, doctors, enrollment, or cost help — at your pace.\n\nBienvenido. Soy la Guía de Soporte de ClearPoint y estoy aquí para ayudarle. Juntos podemos organizar cualquier pregunta sobre Medicare — facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo — sin prisa.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
         sender: 'bot',
         timestamp: new Date(),
       }]);
