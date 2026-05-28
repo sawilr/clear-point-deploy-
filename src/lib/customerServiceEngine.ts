@@ -427,6 +427,66 @@ function getRecoveryResponse(state: ConversationState): { response: string; chip
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 23 — INTERRUPTION HANDLING LAYER
+//
+// A real human customer service agent can be interrupted at ANY moment:
+//   · "wait, let me check" → pause, don't advance
+//   · "actually it's $1,000 not $10,000" → accept correction, update slot
+//   · "what is IRMAA?" → drop the current question, explain plainly, resume
+//   · "I'd rather talk to an advisor" → escalate immediately
+//   · sudden topic switch ("oh and also about medications") → switch context
+//
+// These detectors run BEFORE the step-specific logic so they can override
+// the form-style flow at any turn.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** "wait, give me a sec" / "espere", "déjeme ver". User wants to pause. */
+export function detectPauseRequest(text: string): boolean {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (t.length > 80) return false; // long messages aren't pauses
+  return /\b(espere|esperar|esperate|esperame|dame un (segundo|momento|minuto|ratito|toque)|dejeme ver|dejame ver|un (segundo|momento|minuto|momentito|ratito)|momentito|ahorita|wait|wait a (sec|second|moment|minute)|hold on|hang on|one (sec|second|moment|minute)|give me a (sec|second|moment|minute)|let me (check|look|see|grab|find))\b/i.test(t);
+}
+
+/** "actually it was $1,000", "no era X era Y", "perdón, me corrijo". */
+export function detectCorrection(text: string): boolean {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /\b(perdon|disculpe|me corrijo|en realidad|no era|no es eso|en lugar de|mejor dicho|quise decir|quería decir|de hecho|actually|wait no|i meant|i mean to say|in fact|correction|let me correct|sorry i meant)\b/i.test(t);
+}
+
+/** "what is IRMAA?" / "¿qué significa amount due?". Wants a definition. */
+export function detectClarificationRequest(text: string): boolean {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\?\s*$/.test(t) && t.length < 80) {
+    if (/\b(que (es|significa|quiere decir)|que es eso|que significa eso|no entiendo|no entendi|no comprendo|como|how|what (is|does|do)|what['']s|explique|expliqueme|me explica|explain|clarify|can you (tell|explain)|repita|repeat|otra vez)\b/i.test(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * True when intent shifted to a clearly different topic.
+ * bill ↔ drug are NOT a switch — a pharmacy bill is both a bill and a drug issue.
+ * Same for coverage ↔ drug (coverage of meds).
+ */
+function isTopicSwitch(oldIntent: string | undefined, newRaw: string): boolean {
+  if (!oldIntent) return false;
+  // Group related topics — switches only fire across groups.
+  const groupFor = (t: string): string => {
+    if (t === 'bill' || t === 'drug') return 'money_or_drugs';
+    if (t === 'letter') return 'letter';
+    if (t === 'coverage') return 'coverage';
+    if (t === 'enrollment') return 'enrollment';
+    if (t === 'appeal') return 'appeal';
+    return 'other';
+  };
+  const oldGroup = groupFor(oldIntent);
+  const newGroup = groupFor(newRaw);
+  if (oldGroup === 'other' || newGroup === 'other') return false;
+  return oldGroup !== newGroup;
+}
+
 /** Switch the conversation into recovery mode with chips. Mutates `state`. */
 function enterRecoveryMode(
   state: ConversationState,
@@ -612,6 +672,48 @@ export function processMessage(
       newState.frustrationCount = (newState.frustrationCount || 0) + 1;
       newState.emotionalState = ab.severity === 'severe' ? 'angry' : 'frustrated';
       return enterRecoveryMode(newState, 'frustration');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WAVE 23 — INTERRUPTION HANDLING
+  //
+  // Real humans can be interrupted at any point. The bot must accept pauses,
+  // corrections, and clarification requests without losing context.
+  // Skipped at asking_language step.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.language) {
+    // PAUSE — "wait, let me check the paper"
+    if (detectPauseRequest(userMessage)) {
+      const out = isSpanish
+        ? 'Por supuesto, tómese su tiempo. Aquí estoy cuando esté listo. No hay prisa.'
+        : 'Of course, take your time. I will be here when you are ready. No rush.';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // CLARIFICATION — "what does IRMAA mean?"
+    if (detectClarificationRequest(userMessage)) {
+      const out = isSpanish
+        ? 'Claro, con mucho gusto se lo explico de manera sencilla. ¿Me puede decir exactamente cuál palabra o frase quiere que aclare? Si es algo del documento que tiene en mano, escríbamelo tal cual está y se lo traduzco.'
+        : "Of course, I'd be glad to explain it in simple terms. Can you tell me exactly which word or phrase you'd like me to clarify? If it's something from the document in front of you, type it as it appears and I'll translate it for you.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // CORRECTION — "actually it was $1,000 not $10,000"
+    if (detectCorrection(userMessage)) {
+      // Re-parse amount from this message — it likely contains the correct value.
+      const newAmt = parseAmount(userMessage);
+      if (newAmt !== null && newAmt > 0) {
+        newState.amountMentioned = String(newAmt);
+      }
+      const out = isSpanish
+        ? `Perfecto, gracias por aclararlo. Anotado${withName(newState.name)}. Sigamos con la información correcta.`
+        : `Perfect, thank you for clarifying. Noted${withName(newState.name)}. Let's continue with the right information.`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      // Don't return — fall through so the conversation handler can use the
+      // updated amount in its next response. Actually we DO return here so
+      // the user sees the acknowledgment first; they can ask their follow-up.
+      return { response: out, newState, needsHuman: false };
     }
   }
 
@@ -814,28 +916,42 @@ export function processMessage(
     const rawProblemType = detectProblemType(userMessage);
     const emotion = detectEmotion(userMessage);
     newState.currentProblem = userMessage;
-    // V21 — STICKY INTENT. If we already have a strong topic (bill/letter/
-    // coverage/drug/etc.) and the new message reads as 'general' (likely a
-    // typo or clarification), keep the old intent. This stops the bot from
-    // dropping out of the bill flow because the user typed "hopital".
+    // V21 STICKY + V23 TOPIC SWITCH:
+    //   · Typo / general → keep old intent (sticky)
+    //   · Clearly different strong topic → release sticky, switch, reset slots
+    //   · Same topic or new fresh topic → take new intent
     const oldIntent = newState.intent;
     const strongOld = oldIntent && oldIntent !== 'general' && oldIntent !== 'casual';
-    const effectiveIntent = (rawProblemType === 'general' && strongOld)
-      ? oldIntent
-      : rawProblemType;
+    let effectiveIntent: string = rawProblemType;
+    let didTopicSwitch = false;
+    if (rawProblemType === 'general' && strongOld) {
+      effectiveIntent = oldIntent as string;
+    } else if (isTopicSwitch(oldIntent, rawProblemType)) {
+      effectiveIntent = rawProblemType;
+      didTopicSwitch = true;
+      // Reset slot data tied to the OLD topic so the new flow starts clean.
+      newState.billSource = undefined;
+      newState.amountMentioned = undefined;
+    }
     newState.intent = effectiveIntent;
     const problemType = effectiveIntent;
     newState.emotionalState = emotion;
+    // The topic-specific handler responses below all open with an "Entiendo"
+    // / "I understand" empathy frame, which naturally acknowledges the
+    // switch.
 
     // ── WAVE 17 CONTEXT SCAN ──
     // Scan the entire user history (plus this message) so we never re-ask
-    // for something the caller already told us.
-    const history = fullUserHistory(newState, userMessage);
-    const newSource = detectBillSource(history);
-    if (newSource && !newState.billSource) newState.billSource = newSource;
-    if (detectDualEligible(history)) newState.dualEligible = true;
-    const amt = detectAmount(history);
-    if (amt) newState.amountMentioned = amt;
+    // for something the caller already told us. Skipped on topic switch so
+    // the old topic's data doesn't bleed into the new flow.
+    if (!didTopicSwitch) {
+      const history = fullUserHistory(newState, userMessage);
+      const newSource = detectBillSource(history);
+      if (newSource && !newState.billSource) newState.billSource = newSource;
+      if (detectDualEligible(history)) newState.dualEligible = true;
+      const amt = detectAmount(history);
+      if (amt) newState.amountMentioned = amt;
+    }
 
     // ── WAVE 18: declared-state + phone detection (silently) ──
     const declared = detectDeclaredState(userMessage);

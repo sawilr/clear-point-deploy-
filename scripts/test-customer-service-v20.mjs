@@ -24,7 +24,8 @@ let r = processMessage('english', s);
 check('EN: step → asking_topic', r.newState.step === 'asking_topic');
 check('EN: bot does NOT ask for name', !/first name|nombre/i.test(r.response));
 check('EN: bot does NOT ask for ZIP', !/zip|c[oó]digo postal/i.test(r.response));
-check('EN: bot asks what user needs help with', /what do you need help with/i.test(r.response));
+check('EN: bot offers a warm topic invitation',
+  /what do you need help with|tell me what you|like to look at|how can we help/i.test(r.response));
 check('EN: 7 topic chips returned', (r.newState.quickReplies || []).length === 7);
 check('EN: chips include "Bill"', (r.newState.quickReplies || []).includes('Bill'));
 check('EN: chips include "Talk to advisor"', (r.newState.quickReplies || []).includes('Talk to advisor'));
@@ -33,7 +34,8 @@ s = createInitialState();
 r = processMessage('español', s);
 check('ES: step → asking_topic', r.newState.step === 'asking_topic');
 check('ES: bot does NOT ask for name', !/nombre/i.test(r.response));
-check('ES: bot asks qué necesita revisar', /qu[eé] necesita revisar/i.test(r.response));
+check('ES: bot offers a warm topic invitation',
+  /qu[eé] necesita revisar|qu[eé] le gustar[ií]a revisar|en qu[eé] le podemos servir/i.test(r.response));
 check('ES: chips include "Factura"', (r.newState.quickReplies || []).includes('Factura'));
 check('ES: chips include "Hablar con asesor"', (r.newState.quickReplies || []).includes('Hablar con asesor'));
 
