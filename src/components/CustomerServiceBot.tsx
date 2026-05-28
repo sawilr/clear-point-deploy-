@@ -314,7 +314,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           {messages.map((m) => (
             <div key={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3.5 text-[14.5px] leading-[1.55] whitespace-pre-wrap ${
+                className={`max-w-[85%] rounded-2xl px-4 py-3.5 text-[16px] sm:text-[16px] leading-[1.6] whitespace-pre-wrap ${
                   m.sender === 'user'
                     ? 'bg-earth-800 text-cream-50 rounded-br-md'
                     : 'bg-white text-earth-800 shadow-xs border border-cream-200 rounded-bl-md'

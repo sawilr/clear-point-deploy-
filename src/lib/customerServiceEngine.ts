@@ -465,6 +465,43 @@ export function detectClarificationRequest(text: string): boolean {
   return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 24 — CMS / TPMO COMPLIANCE + SAFETY ESCALATION
+//
+// Crisis (988): if the caller mentions suicide, self-harm, or "giving up
+// on living", the bot MUST stop everything and route to 988 + 911.
+//
+// PHI leak: callers sometimes type their Medicare ID, SSN, or full card
+// number. The bot interrupts politely and warns. Engine never stores it
+// for the advisor — that data dies in transit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns true if message contains crisis / self-harm / suicide language. */
+export function detectCrisisLanguage(text: string): boolean {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Spanish crisis phrases
+  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|pensar en suicid|suicid|quitarme la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo)\b/i.test(t)) return true;
+  // English crisis phrases
+  if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t take it anymore)\b/i.test(t)) return true;
+  return false;
+}
+
+/** Returns true if message contains Medicare ID (MBI), SSN, or 16-digit card. */
+export function detectPHILeak(text: string): boolean {
+  // Medicare Beneficiary Identifier (MBI) — official CMS format is
+  //   C A AN N A AN N A A N N    (C=1-9, A=letter, N=digit, AN=letter|digit)
+  // Example: 1EG4-TE5-MK72. We allow optional dashes/spaces between blocks.
+  if (/\b[1-9][A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z]\d{2}\b/i.test(text)) return true;
+  // SSN — 3-2-4 with dash or space.
+  if (/\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/.test(text)) return true;
+  // Bare 9-digit run that looks SSN-ish (and is NOT a phone).
+  const bare9 = text.match(/(?<!\d)\d{9}(?!\d)/);
+  if (bare9 && !/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(text)) return true;
+  // 16-digit credit/debit card number.
+  if (/\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(text)) return true;
+  return false;
+}
+
 /**
  * True when intent shifted to a clearly different topic.
  * bill ↔ drug are NOT a switch — a pharmacy bill is both a bill and a drug issue.
@@ -642,6 +679,39 @@ export function processMessage(
   // The user has responded — any previously-rendered chips no longer apply
   // unless we explicitly re-add them in this turn.
   newState.quickReplies = [];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WAVE 24 — ABSOLUTE TOP PRIORITY: SAFETY ESCALATION
+  // ─────────────────────────────────────────────────────────────────────────
+  // CRISIS — suicide / self-harm. Stops the bot, routes to 988 + 911.
+  if (newState.step !== 'asking_language' && detectCrisisLanguage(userMessage)) {
+    const isEs = newState.language === 'es';
+    const out = isEs
+      ? 'Lo que está sintiendo es importante y usted no está solo. Por favor llame ahora mismo a la **Línea 988 de Crisis y Suicidio** — llame o envíe un mensaje al **988**. Hay personas disponibles 24 horas que hablan español y le pueden ayudar gratis. Si está en peligro inmediato, marque **911**. Yo aquí no soy la persona adecuada para esto — usted merece hablar con alguien capacitado ahora.'
+      : "What you're feeling matters and you are not alone. Please contact the **988 Suicide and Crisis Lifeline** right now — call or text **988**. People are available 24 hours a day, in English and Spanish, free of charge. If you are in immediate danger, dial **911**. I'm not the right help for this — you deserve to talk to someone trained right now.";
+    newState.emotionalState = 'crisis';
+    newState.needsHuman = true;
+    newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+    return { response: out, newState, needsHuman: true };
+  }
+
+  // PHI LEAK — Medicare ID / SSN / card number. Warns, does NOT store.
+  if (newState.step !== 'asking_language' && detectPHILeak(userMessage)) {
+    const isEs = newState.language === 'es';
+    // Replace the just-pushed user message with a sanitized placeholder so
+    // sensitive data never lives in state.messages (and never reaches GHL).
+    newState.messages[newState.messages.length - 1].content = isEs
+      ? '[Mensaje contenía datos sensibles — ocultado por seguridad]'
+      : '[Message contained sensitive data — hidden for safety]';
+    const out = isEs
+      ? 'Por su seguridad acabo de ocultar ese mensaje. Por favor no envíe su número de Medicare, Seguro Social, número de tarjeta, ni datos bancarios aquí. Esa información solo debe darla a un asesor licenciado por teléfono o en persona. ¿Quiere que le conecte con un asesor licenciado para continuar de manera segura?'
+      : "For your safety I just hid that message. Please do not send your Medicare number, Social Security, card number, or banking info here. That information should only be shared with a licensed advisor by phone or in person. Would you like me to connect you with a licensed advisor so you can continue safely?";
+    newState.quickReplies = isEs
+      ? ['Sí, hablar con asesor', 'Continuar sin ese dato', 'Llamar 1-866-310-8702']
+      : ['Yes, talk to advisor', 'Continue without that info', 'Call 1-866-310-8702'];
+    newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+    return { response: out, newState, needsHuman: false };
+  }
 
   // V18: ALWAYS detect declared state, no matter which step we're on. This
   // covers callers who say "I live in Florida" before they enter a ZIP.
@@ -873,13 +943,16 @@ export function processMessage(
     newState.zipCodeIsValid = true;
     newState.state = detectedState;
     newState.isValidState = true;
-    // V20 — if we were collecting identity for advisor handoff, finalize it.
+    // V20 — finalize handoff when identity collection completes. V24 — add
+    // the full TPMO Final Rule 2024 disclaimer (SHIP + 1-800-MEDICARE +
+    // Medicare.gov + independent agency statement) for compliance with
+    // 42 CFR 422.2267(e)(41).
     if (newState.pendingAdvisorHandoff) {
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Gracias${withName(newState.name)}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
-        : `Thank you${withName(newState.name)}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
@@ -1148,8 +1221,8 @@ export function processMessage(
       }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe — alguien con experiencia real, sin presión y sin costo. Le contactarán pronto. Si necesita hablar antes, llame al 1-866-310-8702 y mencione que ya inició su consulta aquí. Gracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual advisor — someone with real experience, no pressure, and no cost to you. They will reach out soon. If you need to talk sooner, call 1-866-310-8702 and mention you already started your case here. Thank you for trusting us.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }
