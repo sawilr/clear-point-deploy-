@@ -91,7 +91,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       const payload = {
         source: 'customer_service_bot',
         page_url: typeof window !== 'undefined' ? window.location.href : '',
-        form_name: 'ClearPoint Support Guide (V18)',
+        form_name: 'ClearPoint Support Guide (V19)',
         first_name: s.name || '',
         last_name: '',
         full_name: s.name || '',
@@ -105,7 +105,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         consent_to_contact: false,
         consent_text: '',
         lead_notes: [
-          '[ClearPoint Support Guide — V18]',
+          '[ClearPoint Support Guide — V19]',
           `Submitted: ${new Date().toISOString()}`,
           `Conversation: ${s.conversationId}`,
           `Language: ${s.language === 'es' ? 'Spanish' : 'English'}`,
@@ -131,14 +131,20 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           `Probable fake lead: ${fake ? 'YES — review carefully' : 'no'}`,
           `Inconsistencies detected: ${inconsistencies.length === 0 ? 'none' : inconsistencies.join('; ')}`,
           '',
+          'CONVERSATION RECOVERY (Wave 19)',
+          `Recovery mode triggered: ${s.recoveryMode ? 'YES' : 'no'}`,
+          `Frustration count: ${s.frustrationCount ?? 0}`,
+          `Failed ZIP attempts: ${s.failedZipAttempts ?? 0}`,
+          `Failed name attempts: ${s.failedNameAttempts ?? 0}`,
+          '',
           'TRANSCRIPT',
           transcript,
         ].join('\n'),
-        bot_transcript_summary: `V18 · ${s.language} · ${s.intent} · ${s.emotionalState} · confidence=${dataScore}${fake ? ' · FAKE_LEAD_FLAG' : ''}`,
+        bot_transcript_summary: `V19 · ${s.language} · ${s.intent} · ${s.emotionalState} · confidence=${dataScore}${fake ? ' · FAKE_LEAD_FLAG' : ''}${s.recoveryMode ? ' · RECOVERY_MODE' : ''}`,
         tags: [
           'customer_service_bot',
           'clearpoint_support',
-          'v18',
+          'v19',
           s.language === 'es' ? 'spanish' : 'english',
           s.intent || 'general',
           s.emotionalState !== 'calm' ? `emotion_${s.emotionalState}` : '',
@@ -146,6 +152,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           s.dualEligible ? 'dual_eligible' : '',
           fake ? 'probable_fake_lead' : 'data_clean',
           dataScore < 50 ? 'low_confidence' : dataScore < 80 ? 'medium_confidence' : 'high_confidence',
+          s.recoveryMode ? 'recovery_mode' : '',
+          (s.frustrationCount ?? 0) > 0 ? 'frustration_detected' : '',
         ].filter(Boolean).slice(0, 20),
         created_at: new Date().toISOString(),
         derived_state: s.state || '',
@@ -237,6 +245,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const inputDisabled = state.step === 'asking_language' || isTyping;
   const lang = state.language;
   const isSpanish = lang === 'es';
+  // Wave 19 — recovery chips (Factura / Carta / Cobertura / Medicamentos /
+  // Doctor-Proveedor / Hablar con asesor) when the engine sends them.
+  const quickReplies = state.quickReplies || [];
+  const showRecoveryChips = quickReplies.length > 0 && !isTyping;
 
   return (
     <div className="flex flex-col bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 overflow-hidden max-w-3xl mx-auto">
@@ -324,6 +336,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
               >
                 🇪🇸 Español
               </button>
+            </div>
+          )}
+
+          {/* Wave 19 — Recovery chips (Factura / Carta / Cobertura / etc.) */}
+          {showRecoveryChips && (
+            <div className="flex flex-wrap justify-start gap-2 pt-1">
+              {quickReplies.map((label) => (
+                <button
+                  key={label}
+                  onClick={() => handleSendMessage(label)}
+                  className="px-4 py-2 bg-white border border-gold-300 text-earth-800 rounded-full text-[13.5px] font-semibold hover:bg-gold-100 hover:border-gold-400 transition shadow-xs"
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           )}
 

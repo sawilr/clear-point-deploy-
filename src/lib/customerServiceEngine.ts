@@ -49,6 +49,21 @@ export interface ConversationState {
   inconsistencies?: string[];
   /** 0-100. Starts at 100 and decreases each time data validation fails. */
   dataConfidenceScore?: number;
+  // ─── Wave 19: conversation recovery ───
+  /** Times the caller failed to enter a valid ZIP. After 2 we stop asking. */
+  failedZipAttempts?: number;
+  /** Times the caller failed to enter a usable name. */
+  failedNameAttempts?: number;
+  /** Times the caller used abusive/frustrated/profane language. */
+  frustrationCount?: number;
+  /** True once we drop the rigid form and offer chip-driven help. */
+  recoveryMode?: boolean;
+  /** Last bot prompt — used to detect repeated prompt loops. */
+  lastBotPrompt?: string;
+  /** Times the bot has shown the same prompt back-to-back. */
+  repeatedSamePromptCount?: number;
+  /** Quick-reply chip labels the UI should render right now. */
+  quickReplies?: string[];
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -148,6 +163,78 @@ function flagInconsistency(state: ConversationState, reason: string, penalty: nu
   state.dataConfidenceScore = Math.max(0, (state.dataConfidenceScore ?? 100) - penalty);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 19 — CONVERSATION RECOVERY LAYER
+//
+// Detects when the caller is frustrated, abusive, cursing, or just stuck —
+// at which point the bot stops acting like a rigid form (no more "please
+// enter a 5-digit ZIP" on a loop) and offers chip-driven help instead.
+// Priority order (highest first):
+//   1. medical emergency / safety  →  911
+//   2. grieving / death            →  Social Security number
+//   3. anger / abuse / frustration →  RECOVERY MODE + chips
+//   4. "talk to advisor"           →  escalate
+//   5. actual Medicare topic       →  triage even without ZIP
+//   6. ZIP / name / contact        →  only after the above
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true if the message contains profanity, insult, or clear frustration
+ * markers in EN or ES. We are deliberately generous — false positives just
+ * trigger a kinder fallback, false negatives leave the user stuck in a loop.
+ */
+export function detectAbuseOrFrustration(text: string): {
+  detected: boolean;
+  severity: 'mild' | 'severe';
+} {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Severe — profanity / direct insults.
+  const severe =
+    /\b(maldita madre|tu madre|mama? ?guevo|mama? ?huevo|mamagueva|mmgvaso|mmgveo|mmgvazo|hijo de puta|hdp|hp|idiota|pendejo|estupido|estupida|qu[eé] mierda|mierda|joder|cono|carajo|verga|culero|cabron|cabrona|fuck|fucking|shit|damn|asshole|dumbass|bullshit|retarded|fuck off|fuck you|piss off)\b/i;
+  if (severe.test(lower)) return { detected: true, severity: 'severe' };
+  // Mild — frustration markers without profanity.
+  const mild =
+    /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
+  if (mild.test(lower)) return { detected: true, severity: 'mild' };
+  return { detected: false, severity: 'mild' };
+}
+
+/** Returns the recovery menu + chip labels for the current language. */
+function getRecoveryResponse(state: ConversationState): { response: string; chips: string[] } {
+  const isSpanish = state.language === 'es';
+  if (isSpanish) {
+    const opener = state.name
+      ? `Entiendo que está molesto, ${state.name}. Vamos a hacerlo más fácil.`
+      : 'Entiendo que está molesto. Vamos a hacerlo más fácil.';
+    return {
+      response: `${opener} No le voy a pedir el ZIP ahora. Dígame qué necesita revisar: una factura, una carta, cobertura, medicamentos, doctor/proveedor, inscripción o prefiere hablar con un asesor.`,
+      chips: ['Factura', 'Carta', 'Cobertura', 'Medicamentos', 'Doctor/Proveedor', 'Hablar con asesor'],
+    };
+  }
+  const opener = state.name
+    ? `I understand you're frustrated, ${state.name}. Let's make this easier.`
+    : "I understand you're frustrated. Let's make this easier.";
+  return {
+    response: `${opener} I won't ask for ZIP right now. What do you need help with: a bill, a letter, coverage, medications, doctor/provider, enrollment, or would you rather speak with an advisor?`,
+    chips: ['Bill', 'Letter', 'Coverage', 'Medications', 'Doctor/Provider', 'Talk to advisor'],
+  };
+}
+
+/** Switch the conversation into recovery mode with chips. Mutates `state`. */
+function enterRecoveryMode(
+  state: ConversationState,
+  reason: 'frustration' | 'zip_loop' | 'name_loop' | 'prompt_loop',
+): { response: string; newState: ConversationState; needsHuman: boolean } {
+  state.recoveryMode = true;
+  state.step = 'conversation';
+  const rec = getRecoveryResponse(state);
+  state.quickReplies = rec.chips;
+  state.lastBotPrompt = rec.response;
+  state.inconsistencies = [...(state.inconsistencies || []), `recovery_${reason}`];
+  state.messages.push({ role: 'bot', content: rec.response, timestamp: Date.now() });
+  return { response: rec.response, newState: state, needsHuman: false };
+}
+
 function makeId(): string {
   if (typeof crypto !== 'undefined' && typeof (crypto as any).randomUUID === 'function') {
     return (crypto as any).randomUUID();
@@ -172,6 +259,13 @@ export function createInitialState(): ConversationState {
     probableFakeLead: false,
     inconsistencies: [],
     dataConfidenceScore: 100,
+    // Wave 19
+    failedZipAttempts: 0,
+    failedNameAttempts: 0,
+    frustrationCount: 0,
+    repeatedSamePromptCount: 0,
+    recoveryMode: false,
+    quickReplies: [],
   };
 }
 
@@ -205,6 +299,9 @@ function normalizeText(text: string): string {
 
 function detectProblemType(text: string): string {
   const normalized = normalizeText(text);
+  // Wave 19: explicit "talk to advisor" trumps every topic so the user can
+  // bail out at any moment.
+  if (/\b(hablar con (un |una )?(asesor|asesora|agente|persona|humano)|necesito (un |una )?(asesor|asesora|agente)|qu[ie]ero (un |una )?(asesor|asesora|agente)|talk to (a |an )?(advisor|agent|representative|person|human|live person)|speak (to|with) (a |an )?(advisor|agent|representative|person|human)|get me (a |an )?(advisor|agent|representative|human)|live agent|real person)\b/i.test(normalized)) return 'advisor';
   // Order matters — most specific / highest priority first. Appeals/grievances
   // and enrollment changes win over generic drug/letter mentions.
   if (/\b(apelaci[oó]n|apelar|appeal|appeals|reconsideration|fair hearing|grievance|queja|denied|negado|rejected)\b/i.test(normalized)) return 'appeal';
@@ -271,6 +368,9 @@ export function processMessage(
   const newState = { ...state, messages: [...state.messages] };
   newState.messages.push({ role: 'user', content: userMessage, timestamp: Date.now() });
   newState.turnCount++;
+  // The user has responded — any previously-rendered chips no longer apply
+  // unless we explicitly re-add them in this turn.
+  newState.quickReplies = [];
 
   // V18: ALWAYS detect declared state, no matter which step we're on. This
   // covers callers who say "I live in Florida" before they enter a ZIP.
@@ -287,6 +387,22 @@ export function processMessage(
   }
 
   const isSpanish = newState.language === 'es';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // WAVE 19 — TOP PRIORITY: frustration / abuse / curse-word OVERRIDE
+  //
+  // If the user is angry, insulting, or stuck, we abandon the rigid form
+  // (no more "please enter a 5-digit ZIP" loop) and offer chip-driven help.
+  // Skipped at asking_language step — the user hasn't picked a language yet.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language') {
+    const ab = detectAbuseOrFrustration(userMessage);
+    if (ab.detected) {
+      newState.frustrationCount = (newState.frustrationCount || 0) + 1;
+      newState.emotionalState = ab.severity === 'severe' ? 'angry' : 'frustrated';
+      return enterRecoveryMode(newState, 'frustration');
+    }
+  }
 
   // ───── STEP 1: ASKING LANGUAGE ─────
   if (newState.step === 'asking_language') {
@@ -358,12 +474,29 @@ export function processMessage(
   if (newState.step === 'asking_zip') {
     const zip = userMessage.trim().replace(/\D/g, '');
     if (zip.length !== 5) {
-      const out = isSpanish
-        ? 'Por favor, ingrese un código postal de 5 dígitos.'
-        : 'Please enter a 5-digit ZIP code.';
-      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-      return { response: out, newState, needsHuman: false };
+      // Wave 19 Rule 8 — never trap the user on ZIP. If they already gave us
+      // an actionable topic, jump straight to triage and let ZIP wait.
+      const probableIntent = detectProblemType(userMessage);
+      if (probableIntent && probableIntent !== 'general' && probableIntent !== 'casual') {
+        newState.step = 'asking_problem';
+        // Fall through to the conversation block below. Don't return.
+      } else {
+        newState.failedZipAttempts = (newState.failedZipAttempts || 0) + 1;
+        // Wave 19 Rule 1 — after 2 failed ZIP attempts, stop asking and recover.
+        if ((newState.failedZipAttempts || 0) >= 2) {
+          return enterRecoveryMode(newState, 'zip_loop');
+        }
+        // First miss → rephrase, offer an alternative path.
+        const out = isSpanish
+          ? `Necesito un código postal de 5 dígitos para saber si servimos su área (por ejemplo 10001, 33101, 07001). Si prefiere, dígame directamente qué necesita revisar y seguimos.`
+          : `I need a 5-digit ZIP code to know if we serve your area (for example 10001, 33101, 07001). If you prefer, just tell me what you need to look at and we'll continue.`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
     }
+    // Only process as a real ZIP if we actually got 5 digits. Otherwise
+    // we already advanced step to 'asking_problem' and we fall through.
+    if (zip.length === 5) {
     const detectedState = getStateFromZip(zip);
     // V18: cross-check ZIP against any state the user already declared
     // earlier (e.g. "I live in Florida" but typed a NY ZIP).
@@ -392,11 +525,30 @@ export function processMessage(
       : `Thanks ${newState.name}. Tell me what's going on with Medicare. Describe it in your own words.`;
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
+    } // close `if (zip.length === 5)`
   }
 
   // ───── STEP 4+: PROBLEM / FREE CONVERSATION ─────
   if (newState.step === 'asking_problem' || newState.step === 'conversation') {
     newState.step = 'conversation';
+    // Wave 19 — deferred ZIP capture. If the user previously skipped ZIP
+    // (because they were declaring intent first) and now sends a bare
+    // 5-digit number, capture it as a late ZIP and run the same cross-check.
+    const bareZip = userMessage.trim().replace(/\D/g, '');
+    if (!newState.zipCode && bareZip.length === 5 && userMessage.trim().replace(/\s/g, '').length <= 7) {
+      const detectedState = getStateFromZip(bareZip);
+      newState.zipCode = bareZip;
+      newState.zipCodeIsValid = !!detectedState;
+      if (detectedState) {
+        newState.state = detectedState;
+        newState.isValidState = true;
+        if (newState.stateDeclaredByUser && newState.stateDeclaredByUser !== detectedState) {
+          flagInconsistency(newState, `zip_state_mismatch: zip ${bareZip} → ${detectedState}, user said ${newState.stateDeclaredByUser}`, 50);
+        }
+      } else {
+        flagInconsistency(newState, `zip_not_in_service_area: ${bareZip}`, 25);
+      }
+    }
     const problemType = detectProblemType(userMessage);
     const emotion = detectEmotion(userMessage);
     newState.currentProblem = userMessage;
@@ -561,6 +713,15 @@ export function processMessage(
         : `About appeals. You have 60 days from the denial to appeal. Would you like a licensed advisor to help organize the appeal?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
+    }
+    // Wave 19 — explicit "talk to advisor" / "hablar con asesor" handoff.
+    if (problemType === 'advisor') {
+      newState.needsHuman = true;
+      const out = isSpanish
+        ? `Por supuesto${newState.name ? ', ' + newState.name : ''}. Estoy organizando su caso para que un asesor licenciado bilingüe se comunique con usted. Si es urgente, llame ahora al 1-866-310-8702.`
+        : `Of course${newState.name ? ', ' + newState.name : ''}. I'm organizing your case so a licensed bilingual advisor can contact you. If urgent, call 1-866-310-8702 now.`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
     }
     if (problemType === 'casual') {
       const out = isSpanish
