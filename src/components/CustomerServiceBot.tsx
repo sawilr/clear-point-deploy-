@@ -63,7 +63,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (messages.length === 0) {
       setMessages([{
         id: 'welcome',
-        text: "Welcome. I'm the ClearPoint Support Guide, and I'm here to help. Together we can organize any Medicare question — bills, letters, coverage, medications, doctors, enrollment, or cost help — at your pace.\n\nBienvenido. Soy la Guía de Soporte de ClearPoint y estoy aquí para ayudarle. Juntos podemos organizar cualquier pregunta sobre Medicare — facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo — sin prisa.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
+        text: "Hola. ¿Prefiere English o Español?",
         sender: 'bot',
         timestamp: new Date(),
       }]);
@@ -85,7 +85,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (submitState !== 'idle') return;
     setSubmitState('submitting');
     try {
-      const transcript = msgs.map((m) => `${m.sender === 'bot' ? 'BOT' : 'USER'}: ${m.text}`).join('\n');
+      // V25 — PHI scrub safety: transcript built from state.messages (which
+      // detectPHILeak scrubs) NOT from msgs (UI list). Fallback to msgs if
+      // state.messages absent.
+      const sourceMsgs = (s.messages && s.messages.length > 0)
+        ? s.messages.map((m) => ({ sender: m.role === 'bot' ? 'bot' : 'user', text: m.content }))
+        : msgs.map((m) => ({ sender: m.sender, text: m.text }));
+      const transcript = sourceMsgs.map((m) => `${m.sender === 'bot' ? 'BOT' : 'USER'}: ${m.text}`).join('\n');
       const dataScore = s.dataConfidenceScore ?? 100;
       const fake = !!s.probableFakeLead;
       const inconsistencies = s.inconsistencies || [];
@@ -257,30 +263,33 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   return (
     <div className="flex flex-col bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 overflow-hidden max-w-3xl mx-auto">
       {/* Header */}
-      <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-2.5">
+      <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0 gap-2">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="w-9 h-9 rounded-full bg-sage-300 flex items-center justify-center text-earth-900 flex-shrink-0">
             <Headphones className="w-5 h-5" />
           </div>
-          <div className="leading-tight">
-            <div className="text-[15px] font-semibold">
+          <div className="leading-tight min-w-0 flex-1">
+            <div className="text-[15px] font-semibold truncate">
               {isSpanish ? 'Guía de Soporte ClearPoint' : 'ClearPoint Support Guide'}
             </div>
-            <div className="text-[11px] text-cream-200 font-normal">
+            <div className="text-[11px] text-cream-200 font-normal truncate">
               {state.name && state.zipCode
                 ? `${state.name} · ${state.zipCode}${state.state ? ' · ' + state.state : ''}`
-                : (isSpanish ? 'Bilingüe · Sin costo' : 'Bilingual · No cost')}
+                : (isSpanish ? 'Bilingüe · Servicio sin costo' : 'Bilingual · Free service')}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={resetConversation}
-            className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors"
+            className="px-2.5 py-1.5 hover:bg-cream-50/10 rounded-lg transition-colors inline-flex items-center gap-1.5 text-[12px] min-h-[36px]"
             aria-label={isSpanish ? 'Empezar de nuevo' : 'Start over'}
             title={isSpanish ? 'Empezar de nuevo' : 'Start over'}
           >
             <RotateCcw className="w-4 h-4" />
+            <span className="hidden sm:inline">
+              {isSpanish ? 'Empezar' : 'Start over'}
+            </span>
           </button>
           {state.step === 'conversation' && submitState === 'idle' && (
             <button
@@ -299,14 +308,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       <div
         ref={bodyRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overscroll-contain min-h-0 max-h-[64vh] md:max-h-[680px]"
+        className="flex-1 overflow-y-auto overscroll-contain min-h-[280px] max-h-[70dvh] md:max-h-[680px]"
       >
-        {/* Persistent privacy / identity band */}
-        <div className="bg-gold-100 border-b border-gold-200 px-4 py-2 text-[11.5px] leading-[1.45] text-earth-700">
+        {/* Persistent privacy / identity band — senior readable */}
+        <div className="bg-gold-100 border-b border-gold-200 px-4 py-2.5 text-[14px] leading-[1.5] text-earth-700">
           <p>
             {isSpanish
-              ? 'ClearPoint Senior Advisors es una agencia privada e independiente. No estamos conectados con Medicare ni con el gobierno federal. Por favor no envíe número de Medicare, Seguro Social, información bancaria ni récords médicos privados por aquí.'
-              : 'ClearPoint Senior Advisors is a private independent agency. We are not connected with Medicare or the federal government. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here.'}
+              ? 'ClearPoint Senior Advisors es una agencia independiente. No estamos conectados con Medicare ni con el gobierno federal. No envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. Podemos ayudarle en inglés o español.'
+              : 'ClearPoint Senior Advisors is an independent agency. We are not connected with Medicare or the federal government. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here. Language assistance available in English or Spanish.'}
           </p>
         </div>
 

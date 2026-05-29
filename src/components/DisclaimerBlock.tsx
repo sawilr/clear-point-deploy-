@@ -44,13 +44,13 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
         <p className="mb-1.5">
           {t(
             'ClearPoint Senior Advisors uses the information you provide only to respond to your request and connect you with licensed insurance support. We apply reasonable administrative and technical safeguards to protect the information you submit. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical records through this website or chat.',
-            'ClearPoint Senior Advisors utiliza la información que proporcionas únicamente para responder a tu solicitud y conectarte con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que envías. Por favor, no envíes números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
+            'ClearPoint Senior Advisors utiliza la información que usted proporciona únicamente para responder a su solicitud y conectarle con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que usted envía. Por favor, no envíe números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
           )}
         </p>
         <p className="text-[11px] text-amber-700">
           {t(
             'For questions about how your information is handled, contact us at 1-866-310-8702.',
-            'Para preguntas sobre cómo se maneja tu información, contáctanos al 1-866-310-8702.'
+            'Para preguntas sobre cómo se maneja su información, contáctenos al 1-866-310-8702.'
           )}
         </p>
       </div>

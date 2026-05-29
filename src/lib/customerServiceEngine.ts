@@ -12,9 +12,10 @@ export type Language = 'en' | 'es' | null;
 
 export type ConversationStep =
   | 'asking_language'
-  | 'asking_topic'          // V20: step 2 — show 7 topic chips, gather intent
+  | 'asking_zip_natural'    // V25: step 2 — ZIP first, NATURAL ask, refusable
+  | 'asking_topic'          // V25: step 3 — open question, no chips by default
   | 'asking_name'           // legacy / identity at handoff
-  | 'asking_zip'            // legacy / identity at handoff
+  | 'asking_zip'            // legacy / identity at handoff (advisor path)
   | 'asking_problem'        // legacy
   | 'conversation'
   | 'collecting_identity';  // V20: terminal pre-handoff (name → phone)
@@ -95,6 +96,13 @@ export interface ConversationState {
   /** Set when the user picked "Talk to advisor" — engine collects name + ZIP
    *  and then finalizes (needsHuman=true) instead of bouncing to triage. */
   pendingAdvisorHandoff?: boolean;
+  // ─── Wave 25: audit-driven rebuild ───
+  /** Set true if the user declined to share ZIP at the natural ZIP step. */
+  zipRefused?: boolean;
+  /** A/B/C routing level for current response (telemetry + UI hint). */
+  routingLevel?: 'A' | 'B' | 'C' | 'safety';
+  /** Specific service category once detected (more granular than `intent`). */
+  serviceCategory?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -606,6 +614,28 @@ function detectProblemType(text: string): string {
   // Wave 19: explicit "talk to advisor" trumps every topic so the user can
   // bail out at any moment.
   if (/\b(hablar con (un |una )?(asesor|asesora|agente|persona|humano)|necesito (un |una )?(asesor|asesora|agente)|qu[ie]ero (un |una )?(asesor|asesora|agente)|talk to (a |an )?(advisor|agent|representative|person|human|live person)|speak (to|with) (a |an )?(advisor|agent|representative|person|human)|get me (a |an )?(advisor|agent|representative|human)|live agent|real person)\b/i.test(normalized)) return 'advisor';
+  // V25 — best plan question (no-recommendation compliance guard).
+  if (/\b(best plan|mejor plan|what plan should|qu[eé] plan (me|debo) (escoger|elegir|recomienda|recomendar[ií]a)|which plan (is best|do you recommend)|recommend a plan|recomi[eé]nde(me)? un plan|cu[aá]l plan es mejor|qu[eé] plan es el mejor)\b/i.test(normalized)) return 'best_plan_question';
+  // V25 — new categories. Order: more specific first.
+  if (/\b(perd[ií] mi tarjeta|lost my (plan |member |id )?card|reemplazo de tarjeta|replacement card|no me lleg[oó] (mi )?tarjeta|tarjeta no (lleg|rec)|member id card|plan card|new card)\b/i.test(normalized)) return 'id_card';
+  if (/\b(otc|over[- ]the[- ]counter|flex card|healthy allowance|grocery card|tarjeta de beneficios|tarjeta flex)\b/i.test(normalized)) return 'otc';
+  if (/\b(transport(ation)?|ride to (the )?doctor|rides? to (the )?(doctor|appointment)|transporte|llevar(me)? al doctor|llevar(me)? a la cita)\b/i.test(normalized)) return 'transportation';
+  if (/\b(dental|dentista|dentist|teeth|dientes|dentadura|dentaduras|cleaning|limpieza dental|root canal|canal radicular|implants?|implantes? dentales)\b/i.test(normalized)) return 'dental';
+  if (/\b(vision|ojos?|eye exam|eye doctor|optometr|oftalmolog|glasses|gafas|lentes|contactos?|contact lenses)\b/i.test(normalized)) return 'vision';
+  if (/\b(hearing|odo|o[ií]do|hearing aid|audifono|aud[ií]fono|audiology|audiolog[ií]a)\b/i.test(normalized)) return 'hearing';
+  if (/\b(turning 65|cumpliendo 65|cumplo 65|new to medicare|first time medicare|nuevo (en|a) medicare|primer[ao] vez (en )?medicare|retiring|me jubilo|jubilar(me)?)\b/i.test(normalized)) return 'new_to_medicare';
+  if (/\b(extra help|lis|low[- ]income subsid|ayuda extra|subsidio (de )?bajo ingreso|low income help with drug)\b/i.test(normalized)) return 'extra_help';
+  if (/\b(msp|medicare savings program|qmb|slmb|qi|programa de ahorros|ahorro de medicare)\b/i.test(normalized)) return 'msp';
+  if (/\b(medigap|medicare supplement|supplement plan|plan suplementario|plan g|plan n|plan f)\b/i.test(normalized)) return 'medigap';
+  if (/\b(part a|parte a|part b|parte b|part c|parte c|part d|parte d|partes? de medicare|medicare parts|que es medicare)\b/i.test(normalized)) return 'medicare_basics';
+  if (/\b(aep|annual enrollment period|periodo (anual )?de inscripci[oó]n|iep|initial enrollment|sep|special enrollment|special election|ventana(s)? de inscripci[oó]n|when can i enroll|cuando me inscribo)\b/i.test(normalized)) return 'enrollment_windows';
+  if (/\b(irmaa|income[- ]related (monthly )?adjustment|income adjustment to part b|ajuste por ingreso|premium subi[oó]|premium increase|increase in premium|mi prima subi[oó])\b/i.test(normalized)) return 'irmaa_premium';
+  // Cost basics — only fires on EDUCATIONAL questions ("what is deductible")
+  // so it doesn't hijack real cost statements like "I paid $18 copay" (bill).
+  if (/\b(what (is|does|are)|what'?s|qu[eé] (es|son|significa)|expl[ií]queme|explain|c[oó]mo funciona|how does)\b.{0,30}\b(deducible|deductible|copay|copago|coinsurance|coseguro|out of pocket|moop|maximum out of pocket|m[aá]ximo de bolsillo|gasto m[aá]ximo)\b/i.test(normalized)) return 'cost_basics';
+  if (/\b(complaint|queja|grievance|reclamo formal|complain about (the )?(plan|carrier)|me queja del plan|customer service problem|servicio al cliente)\b/i.test(normalized)) return 'complaint';
+  if (/\b(billing dispute|disputed bill|disputa(r)? (una )?factura|charged twice|doble cobro|wrong amount on bill|bill is wrong)\b/i.test(normalized)) return 'billing_dispute';
+  if (/\b(urgent medication|need (my )?medicine today|out of medicine|pharmacy refus|no me dieron (mi )?(medicina|medicamento)|no tengo (mi )?medicina|sin (mi )?medicina|urgent refill)\b/i.test(normalized)) return 'urgent_medication';
   // Order matters — most specific / highest priority first. Appeals/grievances
   // and enrollment changes win over generic drug/letter mentions.
   if (/\b(apelaci[oó]n|apelar|appeal|appeals|reconsideration|fair hearing|grievance|queja|denied|negado|rejected)\b/i.test(normalized)) return 'appeal';
@@ -735,8 +765,10 @@ export function processMessage(
   // If the user is angry, insulting, or stuck, we abandon the rigid form
   // (no more "please enter a 5-digit ZIP" loop) and offer chip-driven help.
   // Skipped at asking_language step — the user hasn't picked a language yet.
+  // V25 — also skipped at asking_zip_natural step so soft "no"/"no quiero"
+  // are treated as ZIP refusal (not frustration).
   // ─────────────────────────────────────────────────────────────────────────
-  if (newState.step !== 'asking_language') {
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural') {
     const ab = detectAbuseOrFrustration(userMessage);
     if (ab.detected) {
       newState.frustrationCount = (newState.frustrationCount || 0) + 1;
@@ -761,13 +793,22 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    // CLARIFICATION — "what does IRMAA mean?"
+    // CLARIFICATION — "what does IRMAA mean?". V25 — only fire if the
+    // question doesn't match a specific Medicare category (otherwise the
+    // category handler answers it directly).
     if (detectClarificationRequest(userMessage)) {
-      const out = isSpanish
-        ? 'Claro, con mucho gusto se lo explico de manera sencilla. ¿Me puede decir exactamente cuál palabra o frase quiere que aclare? Si es algo del documento que tiene en mano, escríbamelo tal cual está y se lo traduzco.'
-        : "Of course, I'd be glad to explain it in simple terms. Can you tell me exactly which word or phrase you'd like me to clarify? If it's something from the document in front of you, type it as it appears and I'll translate it for you.";
-      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-      return { response: out, newState, needsHuman: false };
+      const probaForClarification = detectProblemType(userMessage);
+      const isStrongCategory = probaForClarification
+        && probaForClarification !== 'general'
+        && probaForClarification !== 'casual';
+      if (!isStrongCategory) {
+        const out = isSpanish
+          ? 'Claro, con mucho gusto se lo explico de manera sencilla. ¿Me puede decir exactamente cuál palabra o frase quiere que aclare? Si es algo del documento que tiene en mano, escríbamelo tal cual está y se lo traduzco.'
+          : "Of course, I'd be glad to explain it in simple terms. Can you tell me exactly which word or phrase you'd like me to clarify? If it's something from the document in front of you, type it as it appears and I'll translate it for you.";
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // Else fall through — the specific category handler will answer.
     }
     // CORRECTION — "actually it was $1,000 not $10,000"
     if (detectCorrection(userMessage)) {
@@ -806,17 +847,17 @@ export function processMessage(
     const msg = userMessage.toLowerCase();
     if (msg.includes('english') || msg === 'en') {
       newState.language = 'en';
-      newState.step = 'asking_topic';
-      const out = "Wonderful. No rush — tell me what you'd like to look at today, and we'll go through it together.";
-      newState.quickReplies = [...TOPIC_CHIPS_EN];
+      newState.step = 'asking_zip_natural';
+      // V25 — ZIP early but natural, NO chips.
+      const out = "Of course. To best help you and stay in your area, could you write your ZIP code?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
     if (msg.includes('español') || msg.includes('espanol') || msg === 'es') {
       newState.language = 'es';
-      newState.step = 'asking_topic';
-      const out = 'Con mucho gusto. Sin prisa — dígame qué le gustaría revisar hoy, y lo vemos juntos.';
-      newState.quickReplies = [...TOPIC_CHIPS_ES];
+      newState.step = 'asking_zip_natural';
+      // V25 — ZIP early but natural, NO chips.
+      const out = 'Claro. Para ubicar bien el área y orientarle mejor, ¿me puede escribir su ZIP code?';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -825,9 +866,91 @@ export function processMessage(
     return { response: out, newState, needsHuman: false };
   }
 
-  // ───── STEP 2 (V20): ASKING TOPIC ─────
-  // User clicks a chip OR types the issue in their own words. Either way,
-  // we route into the conversation block without asking for name or ZIP.
+  // ───── STEP 2 (V25): ASKING ZIP NATURALLY ─────
+  // Bot asks for ZIP early but as a natural conversation, not as a form.
+  // The user can give it, refuse it, or jump straight to their issue.
+  if (newState.step === 'asking_zip_natural') {
+    const trimmed = userMessage.trim();
+    const zipDigits = trimmed.replace(/\D/g, '');
+    // Path A: user gave a clean 5-digit ZIP.
+    if (zipDigits.length === 5 && trimmed.length <= 10) {
+      const detectedState = getStateFromZip(zipDigits);
+      newState.zipCode = zipDigits;
+      newState.zipCodeIsValid = !!detectedState;
+      if (detectedState) {
+        newState.state = detectedState;
+        newState.isValidState = true;
+      } else {
+        newState.isValidState = false;
+        flagInconsistency(newState, `zip_not_in_service_area: ${zipDigits}`, 25);
+      }
+      newState.step = 'asking_topic';
+      const out = isSpanish
+        ? 'Gracias. ¿En qué le puedo ayudar hoy?'
+        : 'Thank you. How can I help you today?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // Path B: user refused ZIP — "no", "no quiero", "skip", "prefiero no".
+    if (/^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(trimmed)
+        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say))\b/i.test(trimmed)) {
+      newState.zipRefused = true;
+      newState.step = 'asking_topic';
+      const out = isSpanish
+        ? 'No hay problema. ¿En qué le puedo ayudar?'
+        : 'No problem. How can I help you?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // Path C: user jumped straight to topic OR is emoting / typing a sentence.
+    const probableIntent = detectProblemType(trimmed);
+    const emotion = detectEmotion(trimmed);
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+    const hasPhone = /\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(trimmed);
+    // Also detect abuse here (we skipped the global abuse check at this step).
+    // V25 — fire on severe OR mild frustration. Soft refusals already handled
+    // by Path B above, so they don't reach here.
+    const abuseHere = detectAbuseOrFrustration(trimmed);
+    if (abuseHere.detected) {
+      // Distinguish soft refusal from real frustration. Soft phrases like
+      // a bare "no" already matched Path B, so anything here is real anger.
+      const looksSoft = /^(no+|nope|nah|no quiero|ya no|d[eé]jalo|d[eé]jeme|leave me alone)\.?$/i.test(trimmed.trim());
+      if (!looksSoft) {
+        newState.frustrationCount = (newState.frustrationCount || 0) + 1;
+        newState.emotionalState = abuseHere.severity === 'severe' ? 'angry' : 'frustrated';
+        return enterRecoveryMode(newState, 'frustration');
+      }
+    }
+    const isStrongIntent = probableIntent && probableIntent !== 'general' && probableIntent !== 'casual';
+    const isEmoting = emotion === 'grieving' || emotion === 'urgent' || emotion === 'frustrated';
+    const isFullSentence = wordCount >= 4 || hasPhone;
+    if (isStrongIntent || isEmoting || isFullSentence) {
+      newState.zipRefused = true;
+      newState.step = 'conversation';
+      // fall through to conversation block — it will handle the intent/emotion.
+    } else {
+      // Path D: unclear input — politely re-ask once.
+      const out = isSpanish
+        ? 'Disculpe, no logré leer un código postal. Si prefiere no compartirlo, dígame "no" y seguimos. ¿Su ZIP code de 5 dígitos?'
+        : "Sorry, I couldn't read a ZIP code. If you'd rather not share it, just say \"no\" and we can continue. What's your 5-digit ZIP?";
+      newState.failedZipAttempts = (newState.failedZipAttempts || 0) + 1;
+      // After 2 failed attempts → continue without ZIP.
+      if ((newState.failedZipAttempts || 0) >= 2) {
+        newState.zipRefused = true;
+        newState.step = 'asking_topic';
+        const skip = isSpanish
+          ? 'No hay problema, seguimos sin ZIP por ahora. ¿En qué le puedo ayudar?'
+          : "No problem, let's continue without ZIP for now. How can I help you?";
+        newState.messages.push({ role: 'bot', content: skip, timestamp: Date.now() });
+        return { response: skip, newState, needsHuman: false };
+      }
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
+  // ───── STEP 3 (V25): ASKING TOPIC ─────
+  // Open question. NO auto-chips. User types freely.
   if (newState.step === 'asking_topic') {
     newState.step = 'conversation';
     // Fall through to the conversation block below.
@@ -1121,10 +1244,11 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // V22 — Provider source + amount known. H.E.A.R.T. service layer:
-      //   Hear (reflect) → Empathize → Acknowledge → Respond (plain language) → Trust handoff.
-      // USTED form. Jargon translated. Calm, validating tone for senior callers.
+      // V25 — Provider source + amount known. SHORT office tone (2 sentences
+      // per bubble, split with \n\n). USTED form. Routing level B.
       if (src === 'provider' && amount) {
+        newState.routingLevel = 'B';
+        newState.serviceCategory = 'bill_provider';
         const amountFormatted = Number(amount).toLocaleString('en-US');
         const history = fullUserHistory(newState, userMessage);
         const isHospital = /\b(hospital|hospitals|ospital|hopital|hospita|hostpital|hospitl|hospitall|hospitales|emergency room|sala de emergencias)\b/i.test(history)
@@ -1132,8 +1256,8 @@ export function processMessage(
         const sourceEs = isHospital ? 'de hospital' : 'del médico u hospital';
         const sourceEn = isHospital ? 'from a hospital' : 'from a doctor or hospital';
         const out = isSpanish
-          ? `Entiendo. Una factura de $${amountFormatted} ${sourceEs} es una preocupación seria — esa cantidad es muy alta para procesarla solo. Antes de asumir que usted debe esa cantidad, vamos a confirmar qué dice el documento exactamente. A veces lo que aparece es solo el cargo total al plan, no lo que usted paga. ¿Puede ver si dice "amount due" (cantidad a pagar), "balance due" (saldo pendiente), o "patient responsibility" (responsabilidad del paciente)? Si prefiere, un asesor licenciado puede revisarlo con usted sin costo.`
-          : `I understand. A $${amountFormatted} bill ${sourceEn} is a serious worry — that amount is a lot to process alone. Before assuming you owe that amount, let's confirm what the document actually says. Sometimes what shows up is just the total charge sent to the plan, not what you actually owe. Can you see if it says "amount due", "balance due", or "patient responsibility"? If you'd prefer, a licensed advisor can review it with you at no cost.`;
+          ? `Entiendo. Una factura de $${amountFormatted} ${sourceEs} hay que revisarla con calma antes de asumir que usted debe pagar eso.\n\n¿El papel dice "amount due", "balance due" o "patient responsibility"? No envíe Medicare ID ni datos sensibles.`
+          : `Got it. A $${amountFormatted} bill ${sourceEn} needs a careful look before assuming you owe it.\n\nDoes the paper say "amount due", "balance due", or "patient responsibility"? Please don't send Medicare ID or sensitive data.`;
         newState.quickReplies = isSpanish
           ? ['Dice amount due', 'Dice balance due', 'Dice patient responsibility', 'Solo muestra cargos', 'No estoy seguro', 'Hablar con asesor']
           : ['Says amount due', 'Says balance due', 'Says patient responsibility', 'Just shows charges', "I'm not sure", 'Talk to advisor'];
@@ -1198,6 +1322,179 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 25 — A/B/C ROUTING + NEW MEDICARE CATEGORIES
+    // Short, office-tone responses. Level A (bot resolves), Level B (educate +
+    // optional advisor), Level C (advisor recommended). Compliance built in.
+    // ──────────────────────────────────────────────────────────────────────
+
+    // No-recommendation guard — compliance critical.
+    if (problemType === 'best_plan_question') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'best_plan_question';
+      const out = isSpanish
+        ? 'No puedo decirle que un plan es "el mejor". Eso depende de sus doctores, medicinas, condado, farmacia y necesidades.\n\nUn asesor licenciado puede revisar las opciones disponibles y explicárselas para que usted decida.'
+        : "I can't tell you a plan is 'the best.' That depends on your doctors, medications, county, pharmacy, and needs.\n\nA licensed advisor can review the options available and explain them so you can decide.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'id_card') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'id_card';
+      const out = isSpanish
+        ? 'Ok. Generalmente la tarjeta del plan se reemplaza llamando a Member Services del plan o entrando al portal del carrier.\n\nNo me envíe su Medicare ID aquí. Si quiere, le ayudo a organizar qué información tener lista antes de llamar.'
+        : "Ok. The plan card is usually replaced by calling the plan's Member Services or logging into the carrier portal.\n\nPlease don't send your Medicare ID here. If you'd like, I can help you organize what to have ready before calling.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'otc') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'otc';
+      const out = isSpanish
+        ? 'Claro. Muchas tarjetas OTC tienen reglas por tienda, producto y fecha de recarga.\n\n¿La tarjeta fue rechazada en la tienda, o el balance aparece en cero?'
+        : 'Sure. Many OTC cards have rules by store, product, and reload date.\n\nWas the card declined at the store, or is the balance showing zero?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'transportation') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'transportation';
+      const out = isSpanish
+        ? 'Anotado. El beneficio de transporte varía por plan — algunos cubren viajes médicos limitados.\n\n¿Necesita organizar un viaje a una cita, o entender qué cubre su plan?'
+        : "Got it. Transportation benefits vary by plan — some cover a limited number of medical trips.\n\nDo you need to set up a ride to an appointment, or understand what your plan covers?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'dental') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'dental';
+      const out = isSpanish
+        ? 'Medicare Original normalmente no cubre dental rutinario. Algunos planes Medicare Advantage incluyen dental, pero depende del plan y del área.\n\nPara confirmar cobertura específica habría que revisar el plan. ¿Quiere que un asesor licenciado le ayude a revisarlo?'
+        : "Original Medicare usually does not cover routine dental. Some Medicare Advantage plans include dental, but it depends on the plan and area.\n\nTo confirm specific coverage we'd need to review the plan. Would you like a licensed advisor to help?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'vision') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'vision';
+      const out = isSpanish
+        ? 'Medicare Original cubre algunas pruebas de la vista limitadas, pero no anteojos rutinarios. Muchos planes Advantage incluyen vision.\n\n¿Es sobre un examen, anteojos, o un beneficio que vio en su plan?'
+        : 'Original Medicare covers some limited eye tests but not routine glasses. Many Advantage plans include vision.\n\nIs this about an exam, glasses, or a benefit you saw in your plan?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'hearing') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'hearing';
+      const out = isSpanish
+        ? 'Medicare Original generalmente no cubre audífonos ni exámenes rutinarios. Algunos planes Advantage los incluyen.\n\n¿Es sobre un examen de audición, audífonos, o entender qué cubre su plan?'
+        : "Original Medicare generally does not cover hearing aids or routine exams. Some Advantage plans include them.\n\nIs this about a hearing exam, hearing aids, or understanding what your plan covers?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'new_to_medicare') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'new_to_medicare';
+      const out = isSpanish
+        ? 'Bienvenido a Medicare. La ventana inicial es 3 meses antes del mes que cumple 65, el mes del cumpleaños, y 3 meses después.\n\nSi me cuenta su situación (cumpleaños, si trabaja o se jubila), un asesor puede orientarle sobre Parte A, B, y opciones de plan.'
+        : "Welcome to Medicare. The initial window is 3 months before your 65th birthday month, the birthday month, and 3 months after.\n\nIf you share your situation (birthday, working or retiring), a licensed advisor can walk through Part A, B, and plan options.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'extra_help' || problemType === 'msp') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = problemType;
+      const isExtraHelp = problemType === 'extra_help';
+      const out = isSpanish
+        ? (isExtraHelp
+          ? 'Extra Help (LIS) es un programa federal que puede ayudar con costos de medicamentos de Medicare Parte D para personas con ingresos y recursos limitados.\n\nEsto no confirma su elegibilidad. Puede aplicar por Social Security (ssa.gov/extrahelp) o un asesor licenciado puede revisar su caso.'
+          : 'Los Medicare Savings Programs (MSP) son programas estatales que pueden ayudar a pagar Parte B y otros costos para personas con ingresos limitados. Los niveles son QMB, SLMB, y QI.\n\nEsto no confirma elegibilidad — el estado o un asesor pueden revisarlo.')
+        : (isExtraHelp
+          ? "Extra Help (LIS) is a federal program that can help with Medicare Part D drug costs for people with limited income and resources.\n\nThis doesn't confirm your eligibility. You can apply through Social Security (ssa.gov/extrahelp) or a licensed advisor can review your case."
+          : "Medicare Savings Programs (MSP) are state programs that can help pay Part B and other costs for people with limited income. The levels are QMB, SLMB, and QI.\n\nThis doesn't confirm eligibility — your state or a licensed advisor can review it.");
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'medigap') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'medigap';
+      const out = isSpanish
+        ? 'Medigap (Medicare Supplement) son planes que ayudan a cubrir lo que Medicare Original no paga (deducibles, coseguro). Funcionan junto a Medicare Original, no con Advantage.\n\nLos planes tienen letras (G, N, etc.). Un asesor licenciado puede comparar opciones para que usted decida.'
+        : "Medigap (Medicare Supplement) plans help cover what Original Medicare doesn't pay (deductibles, coinsurance). They work alongside Original Medicare, not with Advantage.\n\nPlans are lettered (G, N, etc.). A licensed advisor can compare options so you can decide.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'medicare_basics') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'medicare_basics';
+      const out = isSpanish
+        ? 'Medicare tiene 4 partes: A (hospital), B (médicos y servicios ambulatorios), C (Medicare Advantage — combina A + B + a veces D y extras), y D (medicamentos recetados).\n\n¿Quiere que le explique alguna parte en más detalle?'
+        : 'Medicare has 4 parts: A (hospital), B (doctors and outpatient services), C (Medicare Advantage — combines A + B + sometimes D and extras), and D (prescription drugs).\n\nWant me to explain any part in more detail?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'enrollment_windows') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'enrollment_windows';
+      const out = isSpanish
+        ? 'Hay tres ventanas principales: IEP (3 meses antes/durante/después de cumplir 65), AEP (15 oct - 7 dic, cambios anuales), y SEP (eventos especiales como mudanza, pérdida de cobertura, doble elegibilidad).\n\n¿Cuál aplica a su caso?'
+        : "Three main windows: IEP (3 months before/during/after turning 65), AEP (Oct 15 - Dec 7, annual changes), and SEP (special events like moving, losing coverage, dual eligibility).\n\nWhich one applies to you?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'irmaa_premium') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'irmaa_premium';
+      const out = isSpanish
+        ? 'IRMAA es un cargo extra de Parte B y D para personas con ingresos altos, basado en la declaración de impuestos. La carta viene de Social Security.\n\n¿Recibió una carta de IRMAA, o el premium subió por otra razón? Un asesor puede ayudarle a revisar la apelación si aplica.'
+        : "IRMAA is an extra Part B and D charge for people with higher incomes, based on your tax return. The notice comes from Social Security.\n\nDid you get an IRMAA letter, or did your premium go up for another reason? A licensed advisor can help review an appeal if it applies.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'cost_basics') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'cost_basics';
+      const out = isSpanish
+        ? 'Rápido: deducible es lo que paga antes que el plan empiece. Copay es lo fijo por visita o medicamento. Coseguro es un porcentaje del costo. MOOP es el máximo de bolsillo del año.\n\n¿Cuál término le está causando duda?'
+        : "Quick: deductible is what you pay before the plan kicks in. Copay is the fixed amount per visit or drug. Coinsurance is a percentage of the cost. MOOP is the yearly out-of-pocket maximum.\n\nWhich term is causing the question?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'complaint' || problemType === 'billing_dispute') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = problemType;
+      const out = isSpanish
+        ? 'Lamento que esté pasando por esto. Una queja formal contra un plan puede ir a Member Services del carrier, luego al Medicare Beneficiary Ombudsman si no se resuelve.\n\nUn asesor licenciado puede ayudarle a organizar el caso y los documentos.'
+        : "I'm sorry you're going through this. A formal complaint against a plan can go to the carrier's Member Services, then the Medicare Beneficiary Ombudsman if unresolved.\n\nA licensed advisor can help you organize the case and documents.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (problemType === 'urgent_medication') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'urgent_medication';
+      newState.needsHuman = true;
+      const out = isSpanish
+        ? 'Eso es urgente. Primero: si necesita su medicina hoy, llame al carrier de su plan ahora mismo (el número está en la tarjeta del plan) — pueden autorizar un suministro temporal en la farmacia.\n\nVoy a marcar su caso para que un asesor licenciado le contacte cuanto antes.'
+        : "That's urgent. First: if you need your medicine today, call your plan's carrier right now (the number is on your plan card) — they can authorize a temporary supply at the pharmacy.\n\nI'm flagging your case so a licensed advisor reaches out as soon as possible.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
+    }
+
     // V20 — "Talk to advisor" / "Hablar con asesor". Identity is asked
     // ONLY now (at handoff). If we already have the name, jump to ZIP.
     // If we already have both, finalize the handoff.

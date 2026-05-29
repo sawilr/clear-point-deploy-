@@ -18,37 +18,30 @@ function check(label, cond, detail = '') {
   else fails.push(`${label}${detail ? ' — ' + detail : ''}`);
 }
 
-console.log('\n=== STEP 1: LANGUAGE PICK SHOWS TOPIC CHIPS (no name/ZIP prompt) ===');
+console.log('\n=== STEP 1 (V25): LANGUAGE PICK → NATURAL ZIP ASK, no chips, no name ===');
 let s = createInitialState();
 let r = processMessage('english', s);
-check('EN: step → asking_topic', r.newState.step === 'asking_topic');
-check('EN: bot does NOT ask for name', !/first name|nombre/i.test(r.response));
-check('EN: bot does NOT ask for ZIP', !/zip|c[oó]digo postal/i.test(r.response));
-check('EN: bot offers a warm topic invitation',
-  /what do you need help with|tell me what you|like to look at|how can we help/i.test(r.response));
-check('EN: 7 topic chips returned', (r.newState.quickReplies || []).length === 7);
-check('EN: chips include "Bill"', (r.newState.quickReplies || []).includes('Bill'));
-check('EN: chips include "Talk to advisor"', (r.newState.quickReplies || []).includes('Talk to advisor'));
+check('EN V25: step → asking_zip_natural', r.newState.step === 'asking_zip_natural');
+check('EN V25: bot does NOT ask for name', !/first name|nombre/i.test(r.response));
+check('EN V25: bot asks ZIP naturally', /zip code/i.test(r.response));
+check('EN V25: no auto-chips', (r.newState.quickReplies || []).length === 0);
 
 s = createInitialState();
 r = processMessage('español', s);
-check('ES: step → asking_topic', r.newState.step === 'asking_topic');
-check('ES: bot does NOT ask for name', !/nombre/i.test(r.response));
-check('ES: bot offers a warm topic invitation',
-  /qu[eé] necesita revisar|qu[eé] le gustar[ií]a revisar|en qu[eé] le podemos servir/i.test(r.response));
-check('ES: chips include "Factura"', (r.newState.quickReplies || []).includes('Factura'));
-check('ES: chips include "Hablar con asesor"', (r.newState.quickReplies || []).includes('Hablar con asesor'));
+check('ES V25: step → asking_zip_natural', r.newState.step === 'asking_zip_natural');
+check('ES V25: bot does NOT ask for name', !/nombre/i.test(r.response));
+check('ES V25: bot asks ZIP naturally', /c[oó]digo postal|zip code/i.test(r.response));
+check('ES V25: no auto-chips', (r.newState.quickReplies || []).length === 0);
 
-console.log('\n=== SAWIL TEST 1: English + TOTO → should NOT force ZIP ===');
+console.log('\n=== SAWIL TEST 1 (V25 update): English + TOTO at ZIP step → polite re-ask ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
 const t1 = processMessage('TOTO', s);
-// User typed something that's not a chip and not a topic. Should NOT trap on ZIP.
-// Engine falls through to conversation block, detectProblemType('TOTO') = 'general'
-// → default response asking for more detail. That's acceptable as long as no ZIP loop.
-check('Test 1: bot does NOT force ZIP', !/zip|5-digit/i.test(t1.response),
-  `response="${t1.response.slice(0, 150)}"`);
-check('Test 1: bot does NOT force name', !/first name/i.test(t1.response));
+// V25 changed flow: after language, bot asks ZIP naturally. "TOTO" is not a
+// ZIP, not a refusal, not an intent — bot politely re-asks ZIP ONCE.
+// Acceptable: bot does NOT force name.
+check('Test 1 V25: bot does NOT force name', !/first name/i.test(t1.response));
+check('Test 1 V25: bot offers no-ZIP option', /no|skip|prefer|prefiero|tell me/i.test(t1.response));
 
 console.log('\n=== SAWIL TEST 2: English + 12345 + FUCK YOU → recovery, no ZIP loop ===');
 s = createInitialState();
@@ -59,15 +52,13 @@ check('Test 2: recoveryMode = true', t2.newState.recoveryMode === true);
 check('Test 2: bot does NOT loop on ZIP', !/5-digit zip/i.test(t2.response));
 check('Test 2: chips offered', (t2.newState.quickReplies || []).length >= 6);
 
-console.log('\n=== SAWIL TEST 3: Spanish + TOTO → Spanish response, no ZIP ===');
+console.log('\n=== SAWIL TEST 3 (V25 update): Spanish + TOTO at ZIP step → polite re-ask ===');
 s = createInitialState();
 s = processMessage('español', s).newState;
 const t3 = processMessage('TOTO', s);
-check('Test 3: bot does NOT force ZIP', !/c[oó]digo postal/i.test(t3.response));
-check('Test 3: bot does NOT force name', !/nombre/i.test(t3.response));
-// "TOTO" is not a recognized intent or topic. Engine will respond with default.
-// Should still be in Spanish.
-check('Test 3: response in Spanish (no English leaked)',
+// V25 changed flow: bot asks ZIP first; "TOTO" triggers polite re-ask.
+check('Test 3 V25: bot does NOT force name', !/nombre/i.test(t3.response));
+check('Test 3 V25: response in Spanish (no English leaked)',
   !/please|thank you for telling/i.test(t3.response),
   `response="${t3.response.slice(0, 150)}"`);
 

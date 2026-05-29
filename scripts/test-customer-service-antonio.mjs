@@ -22,7 +22,7 @@ let s = createInitialState();
 let r = processMessage('español', s);
 s = r.newState;
 check('Step 1: language=es', s.language === 'es');
-check('Step 1 V20: step → asking_topic (not asking_name)', s.step === 'asking_topic');
+check('Step 1 V25: step → asking_zip_natural (not asking_name)', s.step === 'asking_zip_natural');
 
 // V20 — name/ZIP no longer auto-collected. Skip directly to topic.
 // (Antonio context memory is still the critical regression; flow now starts

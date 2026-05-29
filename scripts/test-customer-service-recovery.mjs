@@ -172,7 +172,7 @@ check('after chip click: chips cleared',
 console.log('\n=== CLEAN FLOW V20 (NO REGRESSION) ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
-check('clean: step=asking_topic', s.step === 'asking_topic');
+check('clean V25: step=asking_zip_natural', s.step === 'asking_zip_natural');
 check('clean: no recovery', s.recoveryMode !== true);
 const r12 = processMessage('I have a bill', s);
 check('clean: intent=bill', r12.newState.intent === 'bill');
