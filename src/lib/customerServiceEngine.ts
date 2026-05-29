@@ -103,6 +103,11 @@ export interface ConversationState {
   routingLevel?: 'A' | 'B' | 'C' | 'safety';
   /** Specific service category once detected (more granular than `intent`). */
   serviceCategory?: string;
+  /** Sub-issue within a category (e.g., provider_left_network within
+   *  doctor_provider_network). */
+  subIssue?: string;
+  /** Last default-fallback response — used for loop prevention. */
+  lastFallbackResponse?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -616,6 +621,12 @@ function detectProblemType(text: string): string {
   if (/\b(hablar con (un |una )?(asesor|asesora|agente|persona|humano)|necesito (un |una )?(asesor|asesora|agente)|qu[ie]ero (un |una )?(asesor|asesora|agente)|talk to (a |an )?(advisor|agent|representative|person|human|live person)|speak (to|with) (a |an )?(advisor|agent|representative|person|human)|get me (a |an )?(advisor|agent|representative|human)|live agent|real person)\b/i.test(normalized)) return 'advisor';
   // V25 — best plan question (no-recommendation compliance guard).
   if (/\b(best plan|mejor plan|what plan should|qu[eé] plan (me|debo) (escoger|elegir|recomienda|recomendar[ií]a)|which plan (is best|do you recommend)|recommend a plan|recomi[eé]nde(me)? un plan|cu[aá]l plan es mejor|qu[eé] plan es el mejor)\b/i.test(normalized)) return 'best_plan_question';
+  // V26 — doctor / provider / network issues. Higher priority than coverage.
+  // Catches plurals ("doctors"), "no longer accepts", "left plan/network", etc.
+  if (/\b(my (doctors?|providers?|hospitals?|pcp|primary (care)?( doctor)?|specialist))\b.{0,40}\b(no longer|stopped|left|dropped|doesn'?t accept|don'?t accept|won'?t take|not (in|with) (the |my )?(network|plan)|out of (the |my )?(network|plan)|fuera de la red)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(no longer (accept|accepts|accepting|in)|stopped (taking|accepting)|out[- ]of[- ]network|provider not in network|left (my |the )?(plan|network|insurance)|dropped (from|my) (plan|network|insurance)|ya no acepta|ya no trabaja|ya no est[aá] (en )?(la red|mi red)|sali[oó] de (la red|mi plan)|dej[oó] (de )?(aceptar|trabajar))\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(problems? (with|con)|issues? (with|con)|trouble (with|con)|problema (con)?|tengo (un )?problema con)\s+(my |mi |the |los? )?\b(doctors?|providers?|proveedores?|hospitals?|hospital|network|red|insurance|seguro|plan)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(is (my |the )?(doctor|provider|hospital|specialist) (in network|covered|in my plan|accepting)|est[aá] (mi |el )?(doctor|proveedor|hospital|especialista) (en (la )?red|cubierto|en mi plan))\b/i.test(normalized)) return 'doctor_provider_network';
   // V25 — new categories. Order: more specific first.
   if (/\b(perd[ií] mi tarjeta|lost my (plan |member |id )?card|reemplazo de tarjeta|replacement card|no me lleg[oó] (mi )?tarjeta|tarjeta no (lleg|rec)|member id card|plan card|new card)\b/i.test(normalized)) return 'id_card';
   if (/\b(otc|over[- ]the[- ]counter|flex card|healthy allowance|grocery card|tarjeta de beneficios|tarjeta flex)\b/i.test(normalized)) return 'otc';
@@ -1130,7 +1141,18 @@ export function processMessage(
       newState.amountMentioned = undefined;
     }
     newState.intent = effectiveIntent;
-    const problemType = effectiveIntent;
+    let problemType = effectiveIntent;
+    // V26 — Active-category override. If user is already in
+    // doctor_provider_network flow, force-route subsequent messages through
+    // that handler even when detectProblemType returns 'coverage' (because
+    // of "doctor" keyword) or 'general'. This makes continuation work:
+    // "she is my primary doctor" stays in the doctor flow instead of
+    // bouncing into the generic coverage handler.
+    if (newState.serviceCategory === 'doctor_provider_network'
+        && (problemType === 'coverage' || problemType === 'general')) {
+      problemType = 'doctor_provider_network';
+      newState.intent = 'doctor_provider_network';
+    }
     newState.emotionalState = emotion;
     // The topic-specific handler responses below all open with an "Entiendo"
     // / "I understand" empathy frame, which naturally acknowledges the
@@ -1327,6 +1349,56 @@ export function processMessage(
     // Short, office-tone responses. Level A (bot resolves), Level B (educate +
     // optional advisor), Level C (advisor recommended). Compliance built in.
     // ──────────────────────────────────────────────────────────────────────
+
+    // V26 — Doctor / provider / network handler.
+    // First message → ask if leaving network or verifying coverage.
+    // Continuation message (already in this category) → answer with sub-issue.
+    if (problemType === 'doctor_provider_network') {
+      newState.serviceCategory = 'doctor_provider_network';
+      newState.routingLevel = 'B';
+      const msgLow = userMessage.toLowerCase();
+      // Sub-issue detection
+      const isLeftNetwork = /\b(no longer|stopped|left|dropped|doesn'?t accept|don'?t accept|won'?t take|out of (the |my )?(network|plan)|ya no acepta|ya no trabaja|sali[oó] de|dej[oó] (de )?(aceptar|trabajar))\b/i.test(msgLow);
+      const isVerifyCoverage = /\b(is .*(in network|covered|accepted)|est[aá] .*(en (la )?red|cubierto|aceptado)|do you know if|sabe si|verify|verificar|confirmar)\b/i.test(msgLow);
+      // Provider-type detection for follow-up question
+      const isPrimary = /\b(primary care|primary doctor|pcp|primario|m[eé]dico primario|family doctor|m[eé]dico de familia)\b/i.test(msgLow);
+      const isSpecialist = /\b(specialist|especialista|cardiolog|dermatolog|oncolog|cardi[oó]log|oftalmolog|gastroenterolog|endocrinolog|neurolog)\b/i.test(msgLow);
+      const isHospital = /\b(hospital|hospitales|er|emergency room|sala de emergencias|cl[ií]nica)\b/i.test(msgLow);
+      // Provider-type continuation answer
+      if (newState.subIssue === 'provider_left_network' && (isPrimary || isSpecialist || isHospital)) {
+        const ptype = isPrimary ? (isSpanish ? 'doctor primario' : 'primary doctor')
+                    : isSpecialist ? (isSpanish ? 'especialista' : 'specialist')
+                    : (isSpanish ? 'hospital' : 'hospital');
+        const out = isSpanish
+          ? `Anotado — es sobre su ${ptype}. Eso es importante revisarlo con calma antes de cambiar de proveedor o de plan.\n\nUn asesor licenciado puede verificar la red del plan y orientarle sobre las opciones (cambiar de plan, buscar otro ${ptype} en red, o ver si hay continuidad de cuidado). ¿Quiere que coordine eso?`
+          : `Got it — it's about your ${ptype}. That's important to review carefully before changing providers or plans.\n\nA licensed advisor can verify the plan's network and walk through options (switching plans, finding another in-network ${ptype}, or checking continuity of care). Want me to set that up?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // Continuation with sub-issue detection (e.g., "they no longer work with my insurance")
+      if (isLeftNetwork) {
+        newState.subIssue = 'provider_left_network';
+        const out = isSpanish
+          ? `Eso generalmente significa que el proveedor ya no está en la red del plan. No puedo verificarlo desde aquí sin revisar el plan y el área, pero un asesor licenciado puede ayudar a revisarlo antes de que tome una decisión.\n\n¿Es su doctor primario, un especialista, o un hospital?`
+          : `That usually means the provider may no longer be in your plan's network. I cannot verify that from here without checking the plan and area, but a licensed advisor can help review it before you make any decision.\n\nIs this your primary doctor, a specialist, or a hospital?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      if (isVerifyCoverage) {
+        newState.subIssue = 'provider_verify_network';
+        const out = isSpanish
+          ? `Para confirmar si un doctor o proveedor está en la red, hay que revisar el plan específico y el área. Yo no puedo verificarlo desde aquí.\n\nUn asesor licenciado puede revisar la red del plan. ¿Es su doctor primario, un especialista, o un hospital?`
+          : `To confirm whether a doctor or provider is in network, we need to check the specific plan and area. I cannot verify that from here.\n\nA licensed advisor can review the plan's network. Is this your primary doctor, a specialist, or a hospital?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // First mention — no sub-issue clear yet
+      const out = isSpanish
+        ? `Ok, le ayudo con eso. ¿El problema es que su doctor ya no acepta el plan, o quiere confirmar si un doctor está en la red?`
+        : `Ok, I can help you organize that. Is the issue that your doctor no longer accepts your plan, or are you trying to confirm if a doctor is in network?`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
 
     // No-recommendation guard — compliance critical.
     if (problemType === 'best_plan_question') {
@@ -1549,12 +1621,87 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
 
-    // Default
-    const out = isSpanish
+    // V26 — CONTINUATION ROUTING.
+    // If we already have a serviceCategory and the user's new message is
+    // vague but matches keywords for the active category, route through that
+    // category's continuation handler instead of the generic fallback.
+    if (newState.serviceCategory) {
+      const msgLow = userMessage.toLowerCase();
+      // Doctor / provider / network continuation
+      if (newState.serviceCategory === 'doctor_provider_network') {
+        const hasNetworkSignal = /\b(no longer|stopped|left|dropped|insurance|seguro|plan|network|red|doesn'?t|don'?t|won'?t|ya no|sali|dej[oó]|work with|trabaja con|accept|acepta|covered|cubierto|drop me|me sacaron)\b/i.test(msgLow);
+        const isPrimary = /\b(primary|pcp|primario|family doctor|m[eé]dico de familia)\b/i.test(msgLow);
+        const isSpecialist = /\b(specialist|especialista|cardi|derma|onco|oftalmo|gastro|endo|neuro)\b/i.test(msgLow);
+        const isHospital = /\b(hospital|er|emergency|cl[ií]nica)\b/i.test(msgLow);
+        if (isPrimary || isSpecialist || isHospital) {
+          const ptype = isPrimary ? (isSpanish ? 'doctor primario' : 'primary doctor')
+                      : isSpecialist ? (isSpanish ? 'especialista' : 'specialist')
+                      : (isSpanish ? 'hospital' : 'hospital');
+          const outc = isSpanish
+            ? `Anotado — es sobre su ${ptype}. Un asesor licenciado puede verificar la red del plan y orientarle sobre las opciones antes de cualquier cambio. ¿Quiere que coordine eso?`
+            : `Got it — it's about your ${ptype}. A licensed advisor can verify the plan's network and walk through your options before any change. Want me to set that up?`;
+          newState.messages.push({ role: 'bot', content: outc, timestamp: Date.now() });
+          return { response: outc, newState, needsHuman: false };
+        }
+        if (hasNetworkSignal) {
+          newState.subIssue = newState.subIssue || 'provider_left_network';
+          const outc = isSpanish
+            ? `Eso generalmente significa que el proveedor ya no está en la red del plan. No puedo verificarlo desde aquí sin revisar el plan y el área, pero un asesor licenciado puede ayudar a revisarlo antes de que tome una decisión.\n\n¿Es su doctor primario, un especialista, o un hospital?`
+            : `That usually means the provider may no longer be in your plan's network. I cannot verify that from here without checking the plan and area, but a licensed advisor can help review it before you make any decision.\n\nIs this your primary doctor, a specialist, or a hospital?`;
+          newState.messages.push({ role: 'bot', content: outc, timestamp: Date.now() });
+          return { response: outc, newState, needsHuman: false };
+        }
+      }
+      // Drug / pharmacy continuation
+      if (newState.serviceCategory === 'drug' || newState.intent === 'drug') {
+        if (/\b(expensive|caro|cost|costo|not covered|no cubierto|pharmacy|farmacia|denied|negaron|negado|refill|copay|copago)\b/i.test(msgLow)) {
+          const outc = isSpanish
+            ? `Anotado. Eso suele depender del formulario del plan, del nivel del medicamento, o si requiere autorización previa. Un asesor licenciado puede revisarlo con la farmacia y el plan.`
+            : `Got it. That usually depends on the plan's formulary, the drug tier, or whether prior authorization is needed. A licensed advisor can review it with the pharmacy and plan.`;
+          newState.messages.push({ role: 'bot', content: outc, timestamp: Date.now() });
+          return { response: outc, newState, needsHuman: false };
+        }
+      }
+      // OTC continuation
+      if (newState.serviceCategory === 'otc') {
+        if (/\b(card|tarjeta|declined|rechaz|balance|cero|zero|reload|recarga)\b/i.test(msgLow)) {
+          const outc = isSpanish
+            ? `Anotado. Eso suele resolverse llamando al carrier (número en la tarjeta del plan) — ellos confirman el balance, productos elegibles, y la fecha de recarga.`
+            : `Got it. That usually resolves by calling the carrier (number on the plan card) — they can confirm the balance, eligible products, and reload date.`;
+          newState.messages.push({ role: 'bot', content: outc, timestamp: Date.now() });
+          return { response: outc, newState, needsHuman: false };
+        }
+      }
+      // Bill continuation
+      if (newState.serviceCategory === 'bill_provider' || newState.intent === 'bill') {
+        if (/\b(amount|cantidad|bill|factura|cobro|charge|cargo|owe|debo|paid|pagu[eé])\b/i.test(msgLow)) {
+          const outc = isSpanish
+            ? `Anotado. Si la factura tiene una cantidad específica que dice "amount due" o "patient responsibility", un asesor licenciado puede revisar la factura y el EOB del plan antes que pague.`
+            : `Got it. If the bill shows a specific "amount due" or "patient responsibility" line, a licensed advisor can review the bill and the plan's EOB before you pay.`;
+          newState.messages.push({ role: 'bot', content: outc, timestamp: Date.now() });
+          return { response: outc, newState, needsHuman: false };
+        }
+      }
+    }
+
+    // V26 — LOOP PREVENTION on default fallback.
+    // If we already sent the same generic response last turn, pivot to chips.
+    const defaultOut = isSpanish
       ? `Gracias por contarme${withName(newState.name)}. ¿Puede darme un poco más de detalle sobre su situación?`
       : `Thanks for telling me${withName(newState.name)}. Can you give me a bit more detail about your situation?`;
-    newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-    return { response: out, newState, needsHuman: false };
+    const wouldRepeat = newState.lastFallbackResponse === defaultOut;
+    if (wouldRepeat) {
+      newState.quickReplies = isSpanish ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      const out = isSpanish
+        ? `Para no perder tiempo: ¿es sobre factura, doctor, medicamentos, tarjeta, cobertura, inscripción, o prefiere hablar con un asesor?`
+        : `So I don't waste your time: is this about a bill, a doctor, medications, a card, coverage, enrollment, or would you rather talk to an advisor?`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      newState.lastFallbackResponse = out;
+      return { response: out, newState, needsHuman: false };
+    }
+    newState.lastFallbackResponse = defaultOut;
+    newState.messages.push({ role: 'bot', content: defaultOut, timestamp: Date.now() });
+    return { response: defaultOut, newState, needsHuman: false };
   }
 
   // Fallback (should not reach)

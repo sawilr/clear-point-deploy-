@@ -29,7 +29,7 @@ interface CustomerServiceBotProps {
 }
 
 export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServiceBotProps = {}) {
-  const { setLang } = useLanguage();
+  const { lang: pageLang, setLang } = useLanguage();
   const [messages, setMessages] = useState<Message[]>([]);
   const [state, setState] = useState<ConversationState>(createInitialState);
   const [inputValue, setInputValue] = useState('');
@@ -63,7 +63,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (messages.length === 0) {
       setMessages([{
         id: 'welcome',
-        text: "Hola. ¿Prefiere English o Español?",
+        text: pageLang === 'es'
+          ? '¡Hola! ¿Prefiere español o inglés?'
+          : 'Hi. Do you prefer English or Spanish?',
         sender: 'bot',
         timestamp: new Date(),
       }]);
