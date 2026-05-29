@@ -510,6 +510,29 @@ export type VagueTopic =
   | 'card' | 'coverage' | 'dental' | 'vision'
   | 'otc' | 'transportation';
 
+/**
+ * V30 — detects topic-LESS vague reports: "tengo problemas", "I have problems",
+ * "necesito ayuda", "ayuda". Returns true so the bot can ask a general
+ * clarification (NOT broad chips, just one human question).
+ */
+export function detectGeneralVague(text: string): boolean {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (t.length === 0 || t.length > 60) return false;
+  // Spanish topic-less vague
+  if (/^(tengo (un )?problemas?|tengo (una )?duda|necesito ayuda|ayuda|no entiendo|ayudeme|ayud[eé]me|tengo (un )?inconveniente|tengo (una )?pregunta)\.?$/i.test(t)) return true;
+  // English topic-less vague
+  if (/^(i have (a )?problems?|i have (a )?question|i need help|help|i don'?t understand|i'?m confused|i need assistance)\.?$/i.test(t)) return true;
+  return false;
+}
+
+/** Returns the general clarification question. */
+export function getGeneralClarification(isSpanish: boolean): string {
+  return isSpanish
+    ? 'Entiendo. ¿El problema es con su doctor, medicina, factura, carta, plan o algo diferente?'
+    : 'I understand. Is the problem with a doctor, medicine, bill, letter, plan, or something else?';
+}
+
 /** Returns the topic noun + isVague flag for "I have a problem with X" patterns. */
 export function detectVagueProblemReport(text: string): { isVague: boolean; topic: VagueTopic | null } {
   // V29 — run shorthand normalization first so "meds"/"doc"/"rx"/"tocver"
@@ -568,8 +591,8 @@ export function detectVagueProblemReport(text: string): { isVague: boolean; topi
 export function getTopicClarification(topic: VagueTopic, isSpanish: boolean): string {
   if (isSpanish) {
     switch (topic) {
-      case 'doctor':         return 'Entiendo. ¿Qué pasó con su doctor — una cita, la red del plan, una autorización, o algo que le dijeron?';
-      case 'specialist':     return 'Entiendo. ¿Qué pasó con su especialista — la red, autorización, un referido, o algo que le dijeron?';
+      case 'doctor':         return 'Entiendo. ¿Qué pasó con su doctor?';
+      case 'specialist':     return 'Entiendo. ¿Qué pasó con su especialista?';
       case 'hospital':       return 'Entiendo. ¿El problema es una factura, una cobertura, una autorización, o una cita/procedimiento?';
       case 'bill':           return 'Entiendo. ¿El documento dice que usted debe pagar una cantidad, o parece ser una explicación de beneficios del plan?';
       case 'letter':         return 'Entiendo. ¿La carta es de Medicare, Medicaid, Social Security o de su plan?';
@@ -585,8 +608,8 @@ export function getTopicClarification(topic: VagueTopic, isSpanish: boolean): st
     }
   }
   switch (topic) {
-    case 'doctor':         return "I understand. What happened with your doctor — an appointment, the plan network, an authorization, or something they told you?";
-    case 'specialist':     return "I understand. What happened with your specialist — the network, an authorization, a referral, or something they told you?";
+    case 'doctor':         return "I understand. What happened with your doctor?";
+    case 'specialist':     return "I understand. What happened with your specialist?";
     case 'hospital':       return "I understand. Is it about a bill, coverage, an authorization, or an appointment/procedure?";
     case 'bill':           return "I understand. Does the document say you owe an amount, or does it look like an Explanation of Benefits?";
     case 'letter':         return "I understand. Is the letter from Medicare, Medicaid, Social Security, or from your plan?";
@@ -631,18 +654,25 @@ export function detectNegatedPlanChange(text: string): boolean {
   return false;
 }
 
-/** True if message reports being told to change plan (not user's own intent). */
+/** True if message reports being told to change plan (not user's own intent).
+ *  V30 — also detects when a PROVIDER (doctor/specialist/pharmacy/hospital)
+ *  is the source. "Mi doctor dice q debo cambiar" → told_to_change. */
 export function detectToldToChange(text: string): boolean {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  // Spanish — "me dijeron que/q debería cambiar" / "me obligan a cambiar".
-  // V27 — accept "q" as shorthand for "que" (common in SMS-style Spanish).
+  // Use normalized text so "q" → "que", "dont" → "don't" etc.
+  const lower = normalizeText(text);
+  // Spanish — "me dijeron que/q debería cambiar" / "me obligan a cambiar"
   if (/\bme dijeron (que |q )?(deber[ií]a|tendr[ií]a|tengo que|debo|tienes que|tiene que)\b.{0,40}\b(cambiar|cambiarme|cambio|mudar)\b/i.test(lower)) return true;
   if (/\bme dijeron .{0,40}\bcambiar\b/i.test(lower)) return true;
   if (/\bme (dicen|han dicho) (que |q )?(deber[ií]a|tengo que|debo)\b.{0,40}\bcambiar\b/i.test(lower)) return true;
   if (/\bme obligar?(on|ían|on)?\b.{0,30}\bcambiar\b/i.test(lower)) return true;
+  // V30 — provider-said source: "mi doctor dice/dijo q debo cambiar",
+  //   "mi especialista me dijo que cambie", "the pharmacy said I should change".
+  if (/\b(mi |el |la |un |una )?\b(doctor|doctora|especialista|m[eé]dico|m[eé]dica|provider|farmacia|hospital|cl[ií]nica|pharmacy|specialist)\b.{0,20}\b(dice|dijo|dijeron|me dijo|told me|said|says|tells me)\b.{0,30}\b(cambiar|cambiarme|cambio|cambie|cambiara|cambien|mudar|change|switch|leave|drop)\b/i.test(lower)) return true;
+  if (/\bmi (doctor|doctora|especialista|m[eé]dico) (dice|dijo|me dijo)\b.{0,40}\b(cambiar|cambio|cambie)\b/i.test(lower)) return true;
   // English
   if (/\b(they|someone) (told me|said i should|said i need to|said i have to)\b.{0,30}\b(change|switch|leave|drop|cancel)\b/i.test(lower)) return true;
   if (/\bi was told (to )?(change|switch|leave|drop)\b/i.test(lower)) return true;
+  if (/\bmy (doctor|specialist|provider|pharmacy|hospital) (told me|said|says)\b.{0,30}\b(change|switch|leave|drop)\b/i.test(lower)) return true;
   return false;
 }
 
@@ -816,6 +846,12 @@ function normalizeText(text: string): string {
   // Second pass: word-boundary aware shorthand replacements.
   // Order matters — replace longer forms first.
   const shorthand: Array<[RegExp, string]> = [
+    // V30 — Spanish SMS shorthand: q/k → que, xq/pq → porque, cambir → cambiar
+    [/\bq\b/g, 'que'],
+    [/\bk\b/g, 'que'],
+    [/\bxq\b/g, 'porque'],
+    [/\bpq\b/g, 'porque'],
+    [/\bcambir\b/g, 'cambiar'],
     [/\bprimary care\b/g, 'primary care'],   // keep
     [/\bover the counter\b/g, 'otc'],
     [/\bover-the-counter\b/g, 'otc'],
@@ -1392,6 +1428,23 @@ export function processMessage(
     }
     newState.intent = effectiveIntent;
     let problemType = effectiveIntent;
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 30 — TOPIC-LESS GENERAL VAGUE
+    //
+    // "tengo problemas" / "I have problems" without a topic noun → ask one
+    // natural general clarification (no chips, no Medicare education).
+    // Fires only if not already mid-clarification and not in handoff.
+    // ──────────────────────────────────────────────────────────────────────
+    if (!newState.pendingAdvisorHandoff
+        && !newState.serviceCategory
+        && detectGeneralVague(userMessage)) {
+      const out = getGeneralClarification(isSpanish);
+      newState.lastBotQuestion = out;
+      newState.subIssue = 'general_vague';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // WAVE 28 — CLARIFY-BEFORE-EXPLAINING LAYER
     //

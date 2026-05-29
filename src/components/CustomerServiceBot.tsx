@@ -283,7 +283,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const showLanguageChips = state.step === 'asking_language' && !isTyping;
   const inputDisabled = state.step === 'asking_language' || isTyping;
   const lang = state.language;
-  const isSpanish = lang === 'es';
+  // V30 — chrome elements follow page language until user picks bot language.
+  const effectiveLang = lang || pageLang;
+  const isSpanish = effectiveLang === 'es';
   // Wave 19 — recovery chips (Factura / Carta / Cobertura / Medicamentos /
   // Doctor-Proveedor / Hablar con asesor) when the engine sends them.
   const quickReplies = state.quickReplies || [];

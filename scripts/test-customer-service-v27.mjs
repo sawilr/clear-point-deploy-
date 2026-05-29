@@ -68,8 +68,9 @@ check('T1: serviceCategory=doctor_provider_network',
   `category=${s.serviceCategory} intent=${s.intent}`);
 check('T1: NOT generic coverage paragraph',
   !/cobertura es uno de los temas m[aá]s importantes/i.test(r1.response));
-check('T1: response asks specialist/authorization/told-to-change',
-  /especialista.*acepta.*autorizaci|especialista.*autorizaci|told you to change|cambiar de plan/i.test(r1.response),
+// V30 — clarification shortened to broad "what happened with your specialist".
+check('T1: response is short specialist clarification',
+  /qu[eé] pas[oó] con su especialista/i.test(r1.response),
   `response="${r1.response.slice(0, 250)}"`);
 check('T1: short response (<55 words)', r1.response.split(/\s+/).length < 55);
 
