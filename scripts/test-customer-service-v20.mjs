@@ -50,7 +50,9 @@ s = processMessage('12345', s).newState; // 5 digits but not a real intent; fall
 const t2 = processMessage('FUCK YOU', s);
 check('Test 2: recoveryMode = true', t2.newState.recoveryMode === true);
 check('Test 2: bot does NOT loop on ZIP', !/5-digit zip/i.test(t2.response));
-check('Test 2: chips offered', (t2.newState.quickReplies || []).length >= 6);
+// V32: chips reduced to advisor-first triage menu (Sawil spec).
+check('Test 2: chips offered', (t2.newState.quickReplies || []).length >= 3);
+check('Test 2: advisor chip present', (t2.newState.quickReplies || []).includes('Talk to advisor'));
 
 console.log('\n=== SAWIL TEST 3 (V25 update): Spanish + TOTO at ZIP step → polite re-ask ===');
 s = createInitialState();
@@ -68,9 +70,11 @@ s = processMessage('español', s).newState;
 const t4 = processMessage('TU MALDITA MADRE', s);
 check('Test 4: recoveryMode = true', t4.newState.recoveryMode === true);
 check('Test 4: bot does NOT ask ZIP', !/c[oó]digo postal/i.test(t4.response));
-check('Test 4: response in Spanish ("entiendo que está molesto")',
-  /entiendo que est[aá] molesto/i.test(t4.response));
-check('Test 4: chips in Spanish (Factura)', (t4.newState.quickReplies || []).includes('Factura'));
+// V32: Sawil recovery spec — "Entiendo. No voy a seguir repitiendo preguntas. Puedo pasarle con un asesor..."
+check('Test 4: response in Spanish (entiendo + asesor)',
+  /entiendo/i.test(t4.response) && /asesor/i.test(t4.response));
+check('Test 4: chips in Spanish (Hablar con asesor)',
+  (t4.newState.quickReplies || []).includes('Hablar con asesor'));
 
 console.log('\n=== SAWIL TEST 5: Spanish + "me llegaron billes" → bill triage, no ZIP first ===');
 s = createInitialState();

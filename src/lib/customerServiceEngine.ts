@@ -146,6 +146,29 @@ export interface ConversationState {
   medicationFailedClarifications?: number;
   /** Why the case escalated to advisor (telemetry + lead notes). */
   advisorHandoffReason?: string;
+  // ─── Wave 32: provider triage state machine + repetition guard ───
+  /** Typed provider sub-issue, set by the provider triage handler. */
+  providerIssueType?:
+    | 'primary_doctor_not_accepting'
+    | 'specialist_not_accepting'
+    | 'provider_verify_network'
+    | 'office_said_no'
+    | 'appointment_issue'
+    | 'referral_issue'
+    | 'hospital_network'
+    | 'provider_access_issue'
+    | 'unknown'
+    | 'wants_advisor';
+  /** Normalized form of the previous user message — used by the repetition
+   *  guard to detect when the user repeats themselves. */
+  normalizedLastUserMessage?: string;
+  /** How many consecutive turns the user has repeated the same message. */
+  repeatedUserMessageCount?: number;
+  /** Key of the last handler that fired — lets repetition guard short-circuit
+   *  when the same handler is about to fire again. */
+  lastBotIntent?: string;
+  /** Vague-answer count in provider flow — escalates to advisor at 2. */
+  providerFailedClarifications?: number;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -458,23 +481,24 @@ export function detectExplicitLanguageSwitch(text: string): 'en' | 'es' | null {
 /** V20 — recovery menu + chip labels using Sawil's exact spec wording. */
 function getRecoveryResponse(state: ConversationState): { response: string; chips: string[] } {
   const isSpanish = state.language === 'es';
+  // V32 — Sawil frustration spec: short ack, offer advisor OR one more question.
   if (isSpanish) {
     const sn = safeName(state.name);
     const opener = sn
-      ? `Entiendo que está molesto, ${sn}. Vamos a hacerlo más fácil.`
-      : 'Entiendo que está molesto. Vamos a hacerlo más fácil.';
+      ? `Entiendo, ${sn}. No voy a seguir repitiendo preguntas.`
+      : 'Entiendo. No voy a seguir repitiendo preguntas.';
     return {
-      response: `${opener} No le voy a pedir ZIP ni información personal ahora. ¿Qué necesita revisar?`,
-      chips: [...TOPIC_CHIPS_ES],
+      response: `${opener} Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso.`,
+      chips: ['Hablar con asesor', 'Una pregunta más', 'Empezar de nuevo'],
     };
   }
   const snEn = safeName(state.name);
   const opener = snEn
-    ? `I understand you're frustrated, ${snEn}. Let's make this easier.`
-    : "I understand you're frustrated. Let's make this easier.";
+    ? `I hear you, ${snEn}. I won't keep repeating questions.`
+    : "I hear you. I won't keep repeating questions.";
   return {
-    response: `${opener} I won't ask for ZIP or personal information right now. What do you need help with?`,
-    chips: [...TOPIC_CHIPS_EN],
+    response: `${opener} I can connect you with a ClearPoint licensed advisor, or ask one final question to organize the case.`,
+    chips: ['Talk to advisor', 'One more question', 'Start over'],
   };
 }
 
@@ -635,6 +659,84 @@ export function detectMedicationAnswer(text: string): {
   }
   // Short "I don't know"
   if (/^(no s[eé]|no estoy seguro|i don'?t know|idk|not sure|i'?m not sure|dunno)\.?$/i.test(t)) {
+    return { category: 'short_idk' };
+  }
+  return { category: 'unknown' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 32 — PROVIDER TRIAGE SHORT-ANSWER INTERPRETER
+//
+// Maps short / vague / Spanglish provider answers into typed categories so
+// the bot can triage doctor/provider issues like a trained intake rep.
+//
+// Categories:
+//   · primary_doctor_not_accepting
+//   · specialist_not_accepting
+//   · provider_verify_network  (user is trying to verify before going)
+//   · office_said_no  (user already heard "no" from office)
+//   · appointment_issue
+//   · referral_issue
+//   · hospital_network
+//   · wants_advisor
+//   · switch_language
+//   · short_no / short_idk / unknown
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ProviderAnswerCategory =
+  | 'primary_doctor_not_accepting' | 'specialist_not_accepting'
+  | 'provider_verify_network' | 'office_said_no'
+  | 'appointment_issue' | 'referral_issue' | 'hospital_network'
+  | 'wants_advisor' | 'switch_language'
+  | 'short_no' | 'short_idk' | 'unknown';
+
+export function detectProviderAnswer(text: string): { category: ProviderAnswerCategory } {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (!t) return { category: 'unknown' };
+  // Wants advisor
+  if (/\b(advisor|asesor|asesora|call me|llameme|ll[aá]meme|llamenme|llamarme|human|persona|representative|representante|agent|agente|live person|real person|talk to (a |an )?person)\b/i.test(normalized)) {
+    return { category: 'wants_advisor' };
+  }
+  // Language switch
+  if (/^(espa[ñn]ol|spanish|english|ingl[eé]s)\.?$/i.test(t)
+      || /\bno entiendo ingl[eé]s|h[aá]bla(me|r) en espa[ñn]ol|speak spanish|speak english|in spanish|switch to spanish|switch to english|my (mom|mama|mami) (speaks|habla)\b/i.test(normalized)) {
+    return { category: 'switch_language' };
+  }
+  // Primary doctor signals
+  if (/\b(primario|primaria|primary|primary care|primary doctor|m[eé]dico primario|doctor primario|family doctor|m[eé]dico de familia|pcp)\b/i.test(normalized)) {
+    return { category: 'primary_doctor_not_accepting' };
+  }
+  // Specialist signals
+  if (/\b(specialist|especialista|cardiolog|dermatolog|oncolog|cardi[oó]log|oftalmolog|gastroenterolog|endocrinolog|neurolog|reumatolog|nefrolog|urolog|psiquiatr|psychiatr|gineco|obstetr|podiatr)\b/i.test(normalized)) {
+    return { category: 'specialist_not_accepting' };
+  }
+  // Hospital
+  if (/\b(hospital|cl[ií]nica|emergency room|sala de emergencias|er\b)\b/i.test(normalized)) {
+    return { category: 'hospital_network' };
+  }
+  // Office already said no
+  if (/\b(office (told|said|let me know)|me dijo la oficina|me dijeron en la oficina|la oficina (me )?(dijo|dijeron)|the office (told|said)|llam[eé] a la oficina|i called the office)\b/i.test(normalized)) {
+    return { category: 'office_said_no' };
+  }
+  // Trying to verify before going
+  if (/\b(verify|verificar|checking|estoy verificando|antes de ir|before (i go|going|i visit)|trying to (check|verify|confirm)|quiero saber si|want to know if|cubierto|in network|en la red)\b/i.test(normalized)) {
+    return { category: 'provider_verify_network' };
+  }
+  // Appointment issue
+  if (/\b(appointment|cita|cita m[eé]dica|cancelaron|canceled|cancelled|rescheduled|reagendaron|no me dieron cita|couldn'?t get an appointment)\b/i.test(normalized)) {
+    return { category: 'appointment_issue' };
+  }
+  // Referral issue
+  if (/\b(referral|referido|autorizaci[oó]n del doctor|necesito referido|referral request)\b/i.test(normalized)) {
+    return { category: 'referral_issue' };
+  }
+  // Short "no"
+  if (/^(no|nope|nah|n[oó])\.?$/i.test(t)) {
+    return { category: 'short_no' };
+  }
+  // Short "I don't know"
+  if (/^(no s[eé]|no estoy seguro|no estoy segura|i don'?t know|idk|not sure|i'?m not sure|dunno)\.?$/i.test(t)) {
     return { category: 'short_idk' };
   }
   return { category: 'unknown' };
@@ -1061,6 +1163,28 @@ function detectProblemType(text: string): string {
   // V27 — "told to change" without negation also classifies as doctor concern.
   if (/\b(they |someone |my (doctor|specialist|provider))\s*(told me|said i should|said i need|said i have to)\s.{0,30}\b(change|switch|leave|drop|cancel)\b/i.test(normalized)) return 'doctor_provider_network';
   if (/\bme dijeron (que )?(deber[ií]a|tengo que|tendr[ií]a que|debo)\b.{0,30}\bcambiar\b/i.test(normalized)) return 'doctor_provider_network';
+  // WAVE 32 — PROVIDER ACCESS: "doctor does not accept me" / "no quiere aceptarme".
+  // CRITICAL: these MUST beat the generic coverage fallback below. The phrase
+  // "mi doctor no quiere aceptarme" is a provider-access issue, not coverage
+  // education. Sawil's exact failing case. Covers:
+  //   ES: no quiere aceptarme / no me acepta / no me quiere aceptar /
+  //       no acepta mi plan / no acepta mi seguro / no coge mi plan /
+  //       no toma mi seguro / no recibe mi seguro / no recibe mi plan /
+  //       no me quieren ver / no puedo ir / no atiende / no me atienden
+  //   EN: doesn't accept me / won't accept me / doesn't take my insurance /
+  //       won't take my plan / won't see me / refuses me
+  if (/\b(no (me )?(quiere|quieren)\s+(aceptar|recibir|ver|atender)(me)?|no me (acepta|aceptan|recibe|reciben|ven|atiende|atienden)|no (acepta|aceptan|recibe|reciben|coge|cogen|toma|toman)\s+(mi|el)\s+(plan|seguro|aseguranza|medicare))\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b((doesn'?t|does not|won'?t|will not|wouldn'?t|would not|refuses to|refused to)\s+(accept|take|see|treat)\s+(me|my (insurance|plan|medicare)))\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(office (told|said|let me know)|me dijo (en )?la oficina|me dijeron en la oficina)\b.{0,40}\b(not accept|no acepta|don'?t accept|won'?t take|no toman|no cogen)\b/i.test(normalized)) return 'doctor_provider_network';
+  // Provider-access keywords standalone with provider context.
+  if (/\b(referral|referido|autorizaci[oó]n del doctor|prior auth from (the )?doctor)\b/i.test(normalized)
+      && /\b(doctor|doctora|m[eé]dico|provider|proveedor|especialista|specialist|pcp|primary|hospital)\b/i.test(normalized)) {
+    return 'doctor_provider_network';
+  }
+  if (/\b(appointment|cita|cita m[eé]dica|cita con (el|mi) (doctor|especialista|m[eé]dico))\b/i.test(normalized)
+      && /\b(problem|problema|cant|can'?t|no puedo|cancel|cancelar|reagendar|reschedul)\b/i.test(normalized)) {
+    return 'doctor_provider_network';
+  }
   // V25 — new categories. Order: more specific first.
   if (/\b(perd[ií] mi tarjeta|lost my (plan |member |id )?card|reemplazo de tarjeta|replacement card|no me lleg[oó] (mi )?tarjeta|tarjeta no (lleg|rec)|member id card|plan card|new card)\b/i.test(normalized)) return 'id_card';
   if (/\b(otc|over[- ]the[- ]counter|flex card|healthy allowance|grocery card|tarjeta de beneficios|tarjeta flex)\b/i.test(normalized)) return 'otc';
@@ -1156,6 +1280,29 @@ export function processMessage(
   newState.quickReplies = [];
 
   // ─────────────────────────────────────────────────────────────────────────
+  // WAVE 32 — REPETITION TRACKING
+  //
+  // Compare the current user message to the previous normalized message. If
+  // they match (or are near-identical), increment repeatedUserMessageCount so
+  // downstream handlers can shorten / escalate instead of repeating.
+  // We track here; downstream handlers decide what to do with the count.
+  // ─────────────────────────────────────────────────────────────────────────
+  {
+    const curNorm = normalizeText(userMessage).trim();
+    const prevNorm = (newState.normalizedLastUserMessage || '').trim();
+    if (curNorm && prevNorm && curNorm === prevNorm) {
+      newState.repeatedUserMessageCount = (newState.repeatedUserMessageCount || 0) + 1;
+    } else if (curNorm && prevNorm
+               && curNorm.length > 6 && prevNorm.length > 6
+               && (curNorm.includes(prevNorm) || prevNorm.includes(curNorm))) {
+      newState.repeatedUserMessageCount = (newState.repeatedUserMessageCount || 0) + 1;
+    } else {
+      newState.repeatedUserMessageCount = 0;
+    }
+    newState.normalizedLastUserMessage = curNorm;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // WAVE 24 — ABSOLUTE TOP PRIORITY: SAFETY ESCALATION
   // ─────────────────────────────────────────────────────────────────────────
   // CRISIS — suicide / self-harm. Stops the bot, routes to 988 + 911.
@@ -1216,13 +1363,14 @@ export function processMessage(
   if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural') {
     const ab = detectAbuseOrFrustration(userMessage);
     if (ab.detected) {
-      // V31 — Honest "no" answers inside an active medication triage are
-      // NOT frustration. If the bot just asked a med_* question and the user
-      // says "no" / "nope", let the medication handler interpret it.
+      // V31/V32 — Honest "no" answers inside an active medication or
+      // provider triage are NOT frustration. Let the triage handler interpret.
       const isShortNoRefusal = /^(no+|nope|nah)\.?$/i.test(userMessage.trim());
       const inActiveMedTriage = newState.serviceCategory === 'drug'
         && (newState.askedQuestions || []).some((q) => q.startsWith('med_'));
-      if (isShortNoRefusal && inActiveMedTriage && ab.severity === 'mild') {
+      const inActiveProviderTriage = newState.serviceCategory === 'doctor_provider_network'
+        && (newState.askedQuestions || []).some((q) => q.startsWith('provider_'));
+      if (isShortNoRefusal && (inActiveMedTriage || inActiveProviderTriage) && ab.severity === 'mild') {
         // Skip frustration recovery — let the conversation block interpret it.
       } else {
         newState.frustrationCount = (newState.frustrationCount || 0) + 1;
@@ -2128,6 +2276,241 @@ export function processMessage(
     if (problemType === 'doctor_provider_network') {
       newState.serviceCategory = 'doctor_provider_network';
       newState.routingLevel = 'B';
+      newState.askedQuestions = newState.askedQuestions || [];
+
+      // ────────────────────────────────────────────────────────────────────
+      // WAVE 32 — PROVIDER ACCESS TRIAGE STATE MACHINE
+      //
+      // Fires for the Sawil case: "mi doctor no quiere aceptarme".
+      // Branches by detectProviderAnswer category. Tracks askedQuestions so
+      // repeats escalate to advisor instead of looping.
+      // ────────────────────────────────────────────────────────────────────
+      // V26 "left network" patterns (past-tense "ya no acepta", "no longer
+      // accepts") belong to V26's provider_left_network flow — skip Wave 32.
+      const looksLikeLeftNetwork =
+        /\b(no longer|stopped|left|dropped|out of (the |my )?(network|plan)|ya no acepta|ya no trabaja|ya no recibe|sali[oó] de|dej[oó] (de )?(aceptar|trabajar))\b/i.test(userMessage);
+      const isProviderAccessSignal = !looksLikeLeftNetwork
+        && (/\b(no (me )?(quiere|quieren)\s+(aceptar|recibir|ver|atender)(me)?|no me (acepta|aceptan|recibe|reciben|ven|atiende|atienden)|no (acepta|aceptan|recibe|reciben|coge|cogen|toma|toman)\s+(mi|el)\s+(plan|seguro|aseguranza|medicare))\b/i.test(userMessage)
+            || /\b((doesn'?t|does not|won'?t|will not|wouldn'?t|would not|refuses to|refused to)\s+(accept|take|see|treat)\s+(me|my (insurance|plan|medicare)))\b/i.test(userMessage));
+      const inProviderTriage = !!newState.providerIssueType
+        || (newState.askedQuestions || []).some((q) => q.startsWith('provider_'));
+
+      // Repetition guard: if user repeats the same provider message and we
+      // already asked primary-vs-specialist, escalate instead of repeating.
+      if ((newState.repeatedUserMessageCount || 0) >= 1
+          && (newState.askedQuestions.includes('provider_primary_or_specialist')
+              || newState.askedQuestions.includes('provider_office_said_no_or_checking'))) {
+        newState.advisorHandoffReason = 'provider_repeated_vague';
+        newState.needsHuman = true;
+        const out = isSpanish
+          ? 'Sí, le entiendo. Ya tengo que el problema es con un doctor que no quiere aceptarle. Para no repetir: un asesor licenciado de ClearPoint puede revisarlo con usted, llamar al consultorio y verificar la red del plan. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Quiere que un asesor le contacte?'
+          : "I hear you. I already have that the issue is with a doctor not accepting you. To avoid repeating: a ClearPoint licensed advisor can review it with you, call the office, and verify the plan network. Please don't send Medicare ID, SSN, banking information, or private medical records here. Would you like an advisor to follow up?";
+        newState.lastBotIntent = 'provider_advisor_offer';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      }
+
+      // First-turn provider-access (Sawil's exact case) — short, focused
+      // triage question. Only fires when neither V27 told-to-change nor V26
+      // provider_left_network sub-flows already claimed the conversation.
+      if (isProviderAccessSignal
+          && !newState.providerIssueType
+          && !newState.askedQuestions.includes('provider_primary_or_specialist')
+          && newState.subIssue !== 'told_to_change_plan'
+          && newState.subIssue !== 'provider_left_network'
+          && !newState.doesNotWantPlanChange) {
+        newState.providerIssueType = 'provider_access_issue';
+        newState.subIssue = 'provider_access_issue';
+        newState.askedQuestions.push('provider_primary_or_specialist');
+        const q = isSpanish
+          ? 'Entiendo. Eso suena como un problema con un doctor/proveedor, no una pregunta general de cobertura. Para orientarle bien: ¿es su doctor primario o un especialista?'
+          : "I understand. That sounds like a doctor/provider issue, not a general coverage question. To guide you properly: is this your primary doctor or a specialist?";
+        newState.quickReplies = isSpanish
+          ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
+          : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
+        newState.lastBotQuestion = q;
+        newState.lastBotIntent = 'provider_primary_or_specialist';
+        newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+        return { response: q, newState, needsHuman: false };
+      }
+
+      // Continuation: provider-triage already started → parse short answer.
+      if (inProviderTriage || newState.providerIssueType === 'provider_access_issue') {
+        const provAns = detectProviderAnswer(userMessage);
+
+        if (provAns.category === 'wants_advisor') {
+          newState.advisorHandoffReason = newState.advisorHandoffReason
+            || `provider_${newState.providerIssueType || 'unclear'}`;
+          newState.needsHuman = true;
+          const out = isSpanish
+            ? 'Claro. Un asesor licenciado de ClearPoint puede revisar el caso, contactar al consultorio y verificar la red del plan. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es el mejor momento para que le llamen?'
+            : "Of course. A ClearPoint licensed advisor can review the case, contact the office, and verify the plan network. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's the best time for them to call?";
+          newState.lastBotIntent = 'provider_advisor_handoff';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: true };
+        }
+
+        if (provAns.category === 'switch_language') {
+          const wantEs = /espa[ñn]ol|spanish|no entiendo ingl[eé]s|h[aá]bla.*espa[ñn]ol|mi (mom|mama|mami) (speaks|habla)/i.test(userMessage);
+          if (wantEs && newState.language === 'en') newState.language = 'es';
+          if (!wantEs && newState.language === 'es') newState.language = 'en';
+          const newIsEs = newState.language === 'es';
+          const out = newIsEs
+            ? 'Claro, seguimos en español. ¿Es su doctor primario o un especialista?'
+            : "Of course, let's continue in English. Is this your primary doctor or a specialist?";
+          newState.quickReplies = [];
+          newState.lastBotIntent = 'provider_lang_switch';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'primary_doctor_not_accepting') {
+          newState.providerIssueType = 'primary_doctor_not_accepting';
+          if (newState.askedQuestions.includes('provider_office_said_no_or_checking')) {
+            newState.advisorHandoffReason = 'provider_primary_repeated_vague';
+            newState.needsHuman = true;
+            const out = isSpanish
+              ? 'Anotado — doctor primario. Lo organizamos con un asesor licenciado para llamar al consultorio y verificar la red. ¿Le contactamos?'
+              : 'Got it — primary doctor. Let me get a licensed advisor to call the office and verify the network. Want them to follow up?';
+            newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+            return { response: out, newState, needsHuman: true };
+          }
+          newState.askedQuestions.push('provider_office_said_no_or_checking');
+          const q = isSpanish
+            ? 'Gracias. ¿La oficina del doctor le dijo que no acepta su plan, o está tratando de verificar antes de ir a la cita?'
+            : "Thanks. Did the doctor's office tell you they don't accept your plan, or are you trying to verify before the appointment?";
+          newState.lastBotQuestion = q;
+          newState.lastBotIntent = 'provider_office_said_no_or_checking';
+          newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+          return { response: q, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'specialist_not_accepting') {
+          newState.providerIssueType = 'specialist_not_accepting';
+          if (newState.askedQuestions.includes('provider_appointment_soon')) {
+            newState.advisorHandoffReason = 'provider_specialist_repeated_vague';
+            newState.needsHuman = true;
+            const out = isSpanish
+              ? 'Anotado — especialista. Lo organizamos con un asesor licenciado para verificar la red y orientar próximos pasos. ¿Le contactamos?'
+              : 'Got it — specialist. Let me get a licensed advisor to verify the network and guide next steps. Want them to follow up?';
+            newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+            return { response: out, newState, needsHuman: true };
+          }
+          newState.askedQuestions.push('provider_appointment_soon');
+          const q = isSpanish
+            ? 'Entiendo. ¿Ya tiene una cita programada con ese especialista, o todavía está tratando de coordinarla?'
+            : 'I understand. Do you already have an appointment scheduled with that specialist, or are you still trying to set one up?';
+          newState.lastBotQuestion = q;
+          newState.lastBotIntent = 'provider_appointment_soon';
+          newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+          return { response: q, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'hospital_network') {
+          newState.providerIssueType = 'hospital_network';
+          newState.advisorHandoffReason = 'provider_hospital_network';
+          const out = isSpanish
+            ? 'Anotado — un hospital. No puedo confirmar redes hospitalarias aquí. Un asesor licenciado puede verificar la red del plan y orientarle antes de la visita. ¿Le gustaría que un asesor le contacte?'
+            : "Got it — a hospital. I can't confirm hospital networks here. A licensed advisor can verify the plan network and guide you before the visit. Would you like an advisor to follow up?";
+          newState.lastBotIntent = 'provider_hospital_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'office_said_no') {
+          newState.providerIssueType = 'office_said_no';
+          newState.advisorHandoffReason = 'provider_office_said_no';
+          const out = isSpanish
+            ? 'Anotado — la oficina ya le dijo. No puedo confirmar la red desde aquí. Un asesor licenciado puede llamar al consultorio, verificar con el plan, y revisar si hay otra opción cerca. ¿Le contactamos?'
+            : "Got it — the office already told you. I can't confirm the network from here. A licensed advisor can call the office, verify with the plan, and review other options nearby. Want them to follow up?";
+          newState.lastBotIntent = 'provider_office_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'provider_verify_network') {
+          newState.providerIssueType = 'provider_verify_network';
+          newState.advisorHandoffReason = 'provider_verify_network';
+          const out = isSpanish
+            ? 'Entiendo — quiere verificar antes de ir. No puedo confirmar la red de un proveedor desde aquí. Un asesor licenciado puede revisar la red del plan y confirmárselo. ¿Le contactamos?'
+            : "I understand — you want to verify before going. I can't confirm a provider's network from here. A licensed advisor can review the plan network and confirm it. Want them to follow up?";
+          newState.lastBotIntent = 'provider_verify_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'appointment_issue') {
+          newState.providerIssueType = 'appointment_issue';
+          const q = isSpanish
+            ? 'Anotado. ¿La cita la canceló el consultorio, o usted está tratando de reagendarla?'
+            : "Got it. Did the office cancel the appointment, or are you trying to reschedule it?";
+          newState.lastBotQuestion = q;
+          newState.lastBotIntent = 'provider_appointment_detail';
+          newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+          return { response: q, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'referral_issue') {
+          newState.providerIssueType = 'referral_issue';
+          newState.advisorHandoffReason = 'provider_referral';
+          const out = isSpanish
+            ? 'Entiendo — un tema de referido. Un asesor licenciado puede revisar si el plan necesita referido, coordinarlo con el doctor primario y verificar la red. ¿Le contactamos?'
+            : "I understand — a referral issue. A licensed advisor can review whether the plan requires a referral, coordinate with the primary doctor, and verify the network. Want them to follow up?";
+          newState.lastBotIntent = 'provider_referral_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        if (provAns.category === 'short_idk') {
+          newState.providerFailedClarifications = (newState.providerFailedClarifications || 0) + 1;
+          newState.advisorHandoffReason = 'provider_user_unsure';
+          newState.needsHuman = true;
+          const out = isSpanish
+            ? 'No hay problema. Un asesor licenciado puede llamar al consultorio y verificarlo directamente con el plan. ¿Le gustaría que un asesor le contacte?'
+            : 'No problem. A licensed advisor can call the office and verify it directly with the plan. Would you like an advisor to follow up?';
+          newState.lastBotIntent = 'provider_idk_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: true };
+        }
+
+        if (provAns.category === 'short_no') {
+          // "no" — interpret based on last question we asked.
+          if (newState.askedQuestions.includes('provider_office_said_no_or_checking')) {
+            // We asked: office said no, or checking? "no" = not office, so checking.
+            newState.providerIssueType = 'provider_verify_network';
+            newState.advisorHandoffReason = 'provider_verify_network';
+            const out = isSpanish
+              ? 'Entendido — está verificando antes de ir. Un asesor licenciado puede confirmar la red del plan directamente. ¿Le contactamos?'
+              : "Got it — you're verifying before going. A licensed advisor can confirm the plan network directly. Want them to follow up?";
+            newState.lastBotIntent = 'provider_verify_advisor';
+            newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+            return { response: out, newState, needsHuman: false };
+          }
+          if (newState.askedQuestions.includes('provider_appointment_soon')) {
+            // We asked appointment scheduled? "no" = no appointment yet.
+            newState.advisorHandoffReason = 'provider_specialist_pre_appt';
+            const out = isSpanish
+              ? 'Entendido — todavía no tiene cita. Un asesor licenciado puede ayudarle a verificar la red y orientar para programar con un especialista cubierto. ¿Le contactamos?'
+              : 'Got it — no appointment yet. A licensed advisor can help verify the network and guide you to schedule with a covered specialist. Want them to follow up?';
+            newState.lastBotIntent = 'provider_pre_appt_advisor';
+            newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+            return { response: out, newState, needsHuman: false };
+          }
+          // Generic "no" with no prior provider question → count + escalate.
+          newState.providerFailedClarifications = (newState.providerFailedClarifications || 0) + 1;
+          if ((newState.providerFailedClarifications || 0) >= 2) {
+            newState.advisorHandoffReason = 'provider_repeated_vague';
+            newState.needsHuman = true;
+            const out = isSpanish
+              ? 'Entiendo. Lo organizamos con un asesor licenciado para no seguir adivinando. ¿Le contactamos?'
+              : "I understand. Let me organize this with a licensed advisor so we don't keep guessing. Want them to follow up?";
+            newState.lastBotIntent = 'provider_repeat_advisor';
+            newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+            return { response: out, newState, needsHuman: true };
+          }
+        }
+      }
+
       const msgLow = userMessage.toLowerCase();
       // Sub-issue detection
       const isLeftNetwork = /\b(no longer|stopped|left|dropped|doesn'?t accept|don'?t accept|won'?t take|out of (the |my )?(network|plan)|ya no acepta|ya no trabaja|sali[oó] de|dej[oó] (de )?(aceptar|trabajar))\b/i.test(msgLow);

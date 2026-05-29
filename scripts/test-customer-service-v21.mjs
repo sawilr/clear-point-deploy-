@@ -140,7 +140,8 @@ check('C: NO ZIP requested', !/c[oó]digo postal/i.test(rC.response));
 check('C: NO name requested', !/nombre/i.test(rC.response));
 check('C: NO "undefined"', !/undefined/.test(rC.response));
 check('C: Spanish response ("entiendo")', /entiendo/i.test(rC.response));
-check('C: chips offered', (rC.newState.quickReplies || []).length >= 6);
+// V32: recovery chips reduced to advisor-first triage menu (Sawil spec).
+check('C: chips offered', (rC.newState.quickReplies || []).length >= 3);
 
 console.log('\n=== SAWIL TEST D: English hospital bill typo ===');
 s = createInitialState();
