@@ -493,10 +493,41 @@ export function detectAbuseOrFrustration(text: string): {
   severity: 'mild' | 'severe';
 } {
   const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  // Severe — profanity / direct insults.
-  const severe =
-    /\b(maldita madre|tu madre|mama? ?guevo|mama? ?huevo|mamagueva|mmgvaso|mmgveo|mmgvazo|hijo de puta|hdp|hp|idiota|pendejo|estupido|estupida|qu[eé] mierda|mierda|joder|cono|carajo|verga|culero|cabron|cabrona|fuck|fucking|shit|damn|asshole|dumbass|bullshit|retarded|fuck off|fuck you|piss off)\b/i;
-  if (severe.test(lower)) return { detected: true, severity: 'severe' };
+  // ── WAVE 37 — MULTILINGUAL PROFANITY / INSULT DICTIONARY ──
+  // Covers Spanish (Mexican, Caribbean, South American), English, French,
+  // Italian, Portuguese. Word-boundary tested. Accent-stripped above so
+  // "coño" → "cono", "vaffanculo" → "vaffanculo", etc.
+  const severePatterns = [
+    // ─── Spanish — general ───
+    /\b(maldit[oa]s? madre|tu madre|tu mama|mama (de )?tu)\b/i,
+    /\b(mama?\s?(gue|hue)(v|b)?[oa]?s?|mamagu?e?(v|b)[ao]|mamagueb[oa]|mamahueb[oa]|mamabichos?|mamabicha|comemierda|comebichos?|comebolsa)\b/i,
+    /\b(hijo (de )?(la )?puta|hijo ?e ?puta|hijueputa|huep[uú]ta|hueputa|hijaperra|hijoperro|hp|hdp)\b/i,
+    /\b(idiota|estupid[oa]s?|imbecil|tarad[oa]|tonto del culo|menso|baboso|babosa)\b/i,
+    /\b(mierda|mierdas|que mierda|mier|joder|jodete|jodase|jodanse|jodido|jodida)\b/i,
+    /\b(cono|carajo|coj?ones|verg[aoz]|verga|cabr[oó]n|cabron|cabrona|cabrones|culero|culera)\b/i,
+    /\b(pendej[oa]s?|pendejad[ao]s?|hijoeputa|chingad[ao]s?|chinga (tu|a tu)|chingar|chingate|no mames|no manches|pinche)\b/i,
+    /\b(singa(r|ndo|te)?|singa( a)? tu|chinga( a)? tu|comebicho|comelona)\b/i,
+    /\b(marica|maricon|gonorrea|malparid[oa]|sapo|gevon|guev[oó]n|huevon)\b/i,
+    /\b(boludo|pelotud[oa]|forr[oa]|pajer[oa]|pajeo|sorete|garcado)\b/i,
+    /\b(diablo|diablos|al diablo|vete al? (diablo|carajo|coño|infierno|mierda))\b/i,
+    /\b(chupame|chupala|chupar|chupada|mama(la|me)|mamalo|gozala|metetelo)\b/i,
+    // ─── English ───
+    /\b(fuck|fucking|fucked|fucker|mother\s?fucker|motherfucker|mofo|fuck off|fuck you|fuck this|fk|fck)\b/i,
+    /\b(shit|shitty|bullshit|dipshit|asshat|piece of shit|holy shit)\b/i,
+    /\b(damn|damned|goddamn|god damn|piss off|pissed|pissing)\b/i,
+    /\b(asshole|jackass|dumbass|jerk|prick|twat|wank|douche|douchebag)\b/i,
+    /\b(bitch|bitches|son of (a )?bitch|sob|bastard|cunt)\b/i,
+    /\b(retard|retarded|idiot|moron|imbecile|stupid)\b/i,
+    // ─── French ───
+    /\b(putain|merde|connard|conne|salope|enculer?|encule|enculer toi|va te faire foutre|va te faire enculer|fous le camp|ta gueule|ta mere|nique ta mere)\b/i,
+    // ─── Italian ───
+    /\b(vaffanculo|stronz[oa]|cazz[oa]|merd[ae]|figli[oa] di puttana|cretino|cretina|coglione|coglioni|stupidaggine|pezzo di merda)\b/i,
+    // ─── Portuguese ───
+    /\b(porra|caralho|foda(-)?se|puta que pariu|vai(-)? ?te? foder|otari[oa]|mongol[oa]|filho da puta|fdp|cuzao|cuzao)\b/i,
+    // ─── Catch-all for obvious slur tokens ───
+    /\b(mmgvaso|mmgveo|mmgvazo|asco|asqueroso|asquerosa|escoria|basura|pinga)\b/i,
+  ];
+  if (severePatterns.some((re) => re.test(lower))) return { detected: true, severity: 'severe' };
   // Mild — frustration markers without profanity.
   const mild =
     /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
@@ -1962,9 +1993,28 @@ export function processMessage(
   // The user can give it, refuse it, or jump straight to their issue.
   if (newState.step === 'asking_zip_natural') {
     const trimmed = userMessage.trim();
-    const zipDigits = trimmed.replace(/\D/g, '');
-    // Path A: user gave a clean 5-digit ZIP.
-    if (zipDigits.length === 5 && trimmed.length <= 10) {
+    // WAVE 37 — accept any 5-digit ZIP no matter how it's typed.
+    //   · "12345"           → match
+    //   · "10550"           → match
+    //   · "ZIP 10550"       → match (extracts 10550)
+    //   · "es 10550 brooklyn" → match
+    //   · "07407-1234"      → match (5+4 ZIP, extracts 07407)
+    //   · "el 1 0 5 5 0"    → match (after digit-concat)
+    // Outside-service-area ZIPs are ACCEPTED and the conversation continues —
+    // a licensed advisor will route. We never block on geography.
+    const fiveDigitMatch = trimmed.match(/\b(\d{5})(?:-\d{4})?\b/);
+    const allDigitsConcat = trimmed.replace(/\D/g, '');
+    let zipDigits: string | null = null;
+    if (fiveDigitMatch) {
+      zipDigits = fiveDigitMatch[1];
+    } else if (allDigitsConcat.length === 5) {
+      zipDigits = allDigitsConcat;
+    } else if (allDigitsConcat.length >= 5 && allDigitsConcat.length <= 9
+               && /^[\d\s]+$/.test(trimmed)) {
+      // Spaced-out digits like "1 0 5 5 0" or "10 5 50".
+      zipDigits = allDigitsConcat.slice(0, 5);
+    }
+    if (zipDigits) {
       const detectedState = getStateFromZip(zipDigits);
       newState.zipCode = zipDigits;
       newState.zipCodeIsValid = !!detectedState;
