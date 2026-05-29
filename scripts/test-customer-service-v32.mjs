@@ -76,22 +76,31 @@ console.log('\n=== TEST 1: Spanish doctor exact Sawil bug ===');
     (s.askedQuestions || []).includes('provider_primary_or_specialist'));
 }
 
-console.log('\n=== TEST 2: Repeated Spanish doctor ===');
+console.log('\n=== TEST 2: Repeated Spanish doctor (V33 3-tier) ===');
 {
-  const { state: s, last: r } = drive([
+  // V33 spec: 2nd-time repeat = short ack ("Ya tengo esa parte..."),
+  // 3rd-time repeat = advisor + PHI warning.
+  const { state: s2, last: r2 } = drive([
     'mi doctor no quiere aceptarme',
     'mi doctor no quiere aceptarme',
   ]);
-  check('T2: does NOT repeat the same first-turn paragraph',
-    !/eso suena como un problema con un doctor.proveedor/i.test(r.response)
-      || /ya tengo|no repetir|para no repetir/i.test(r.response),
-    `resp="${r.response.slice(0, 250)}"`);
-  check('T2: needsHuman=true (advisor escalation)',
-    r.needsHuman === true || s.needsHuman === true);
-  check('T2: advisorHandoffReason set',
-    !!s.advisorHandoffReason);
-  check('T2: warns about PHI',
-    /n[uú]mero de medicare|medicare id|seguro social|ssn|bancaria|banking/i.test(r.response));
+  check('T2-tier2: does NOT repeat the same first-turn paragraph',
+    /ya tengo esa parte|sin repetir/i.test(r2.response),
+    `resp="${r2.response.slice(0, 250)}"`);
+  check('T2-tier2: does NOT yet escalate to advisor',
+    !(r2.needsHuman === true || s2.needsHuman === true));
+
+  const { state: s3, last: r3 } = drive([
+    'mi doctor no quiere aceptarme',
+    'mi doctor no quiere aceptarme',
+    'mi doctor no quiere aceptarme',
+  ]);
+  check('T2-tier3: needsHuman=true (advisor escalation)',
+    r3.needsHuman === true || s3.needsHuman === true);
+  check('T2-tier3: advisorHandoffReason set',
+    !!s3.advisorHandoffReason);
+  check('T2-tier3: warns about PHI',
+    /n[uú]mero de medicare|medicare id|seguro social|ssn|bancaria|banking/i.test(r3.response));
 }
 
 console.log('\n=== TEST 3: Spanish provider short answer "especialista" ===');
@@ -275,14 +284,21 @@ console.log('\n=== SAWIL PROOF TEST A — full transcript ===');
   check('Proof A T1: NOT generic coverage paragraph',
     !/cobertura es uno de los temas m[aá]s importantes/i.test(r.response));
 
+  // V33 3-tier: 2nd-time repeat = short ack, 3rd-time = advisor + PHI.
   r = processMessage('mi doctor no quiere aceptarme', s); s = r.newState;
-  console.log('  USER: mi doctor no quiere aceptarme (repeat)');
+  console.log('  USER: mi doctor no quiere aceptarme (repeat #1)');
   console.log('  BOT:  ' + r.response.slice(0, 300));
-  check('Proof A T2: needsHuman=true (advisor)',
-    r.needsHuman === true || s.needsHuman === true);
-  check('Proof A T2: does NOT repeat first paragraph',
+  check('Proof A T2 (tier 2): short ack ("Ya tengo esa parte")',
+    /ya tengo esa parte|sin repetir/i.test(r.response));
+  check('Proof A T2 (tier 2): does NOT repeat first paragraph',
     !/^entiendo\. eso suena como un problema con un doctor.proveedor/i.test(r.response));
-  check('Proof A T2: warns about PHI',
+
+  r = processMessage('mi doctor no quiere aceptarme', s); s = r.newState;
+  console.log('  USER: mi doctor no quiere aceptarme (repeat #2)');
+  console.log('  BOT:  ' + r.response.slice(0, 300));
+  check('Proof A T3 (tier 3): needsHuman=true (advisor)',
+    r.needsHuman === true || s.needsHuman === true);
+  check('Proof A T3 (tier 3): warns about PHI',
     /n[uú]mero de medicare|seguro social|bancaria|m[eé]dicos privados/i.test(r.response));
 }
 

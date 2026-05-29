@@ -169,6 +169,23 @@ export interface ConversationState {
   lastBotIntent?: string;
   /** Vague-answer count in provider flow — escalates to advisor at 2. */
   providerFailedClarifications?: number;
+  // ─── Wave 33: letter / benefits / billing triage state machines ───
+  letterIssueType?:
+    | 'plan_notice' | 'medicare_notice' | 'social_security_notice'
+    | 'medicaid_notice' | 'renewal' | 'redetermination' | 'cancellation'
+    | 'termination' | 'disenrollment' | 'premium_bill'
+    | 'late_enrollment_penalty' | 'lis_extra_help' | 'msp' | 'epic'
+    | 'unknown' | 'wants_advisor';
+  letterSender?: 'plan' | 'medicare' | 'medicaid' | 'social_security' | 'unknown';
+  benefitsIssueType?:
+    | 'dental' | 'vision' | 'hearing' | 'otc_card' | 'flex_card'
+    | 'food_card' | 'transportation' | 'home_care' | 'medical_bill'
+    | 'hospital_bill' | 'specialist_bill' | 'evidence_of_coverage'
+    | 'annual_notice_of_change' | 'unknown' | 'wants_advisor';
+  billingIssueType?:
+    | 'premium_bill' | 'copay' | 'coinsurance' | 'deductible'
+    | 'hospital_bill' | 'specialist_bill' | 'pharmacy_bill'
+    | 'ambulance_bill' | 'late_penalty' | 'unknown' | 'wants_advisor';
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -473,8 +490,16 @@ export function detectAbuseOrFrustration(text: string): {
  */
 export function detectExplicitLanguageSwitch(text: string): 'en' | 'es' | null {
   const t = text.toLowerCase().trim().replace(/[.,!?]+$/, '');
-  if (/^(english|in english|switch to english|speak english|h[aá]bla(me|r)? (en )?ingl[eé]s|english please|cambiar a ingl[eé]s|cambiar al ingl[eé]s)$/i.test(t)) return 'en';
-  if (/^(espa[ñn]ol|spanish|in spanish|switch to spanish|h[aá]bla(me|r)? (en )?espa[ñn]ol|speak spanish|spanish please|cambiar a espa[ñn]ol|cambiar al espa[ñn]ol)$/i.test(t)) return 'es';
+  if (/^(english|in english|switch to english|speak english|h[aá]bla(me|r)? (en )?ingl[eé]s|english please|cambiar a ingl[eé]s|cambiar al ingl[eé]s|i prefer english)$/i.test(t)) return 'en';
+  if (/^(espa[ñn]ol|spanish|in spanish|switch to spanish|h[aá]bla(me|r)? (en )?espa[ñn]ol|speak spanish|spanish please|cambiar a espa[ñn]ol|cambiar al espa[ñn]ol|quiero espa[ñn]ol|i prefer spanish)$/i.test(t)) return 'es';
+  // Wave 33 — family phrasing (caregiver intake): "mi mamá habla español",
+  // "my mom speaks Spanish", "mi esposa habla español", etc.
+  // Match anywhere in the message, not just exact.
+  if (/\bmi (mam[aá]|mami|pap[aá]|papi|esposa|esposo|abuela|abuelo|hija?|hijo) habla espa[ñn]ol\b/i.test(text)) return 'es';
+  if (/\bmy (mom|mama|mami|dad|papa|wife|husband|grandma|grandpa|daughter|son) speaks spanish\b/i.test(text)) return 'es';
+  if (/\bmi (mam[aá]|mami|pap[aá]|papi|esposa|esposo|abuela|abuelo|hija?|hijo) (only )?habla(?:[a-z]*) ingl[eé]s\b/i.test(text)) return 'en';
+  if (/\bmy (mom|mama|dad|papa|wife|husband|grandma|grandpa|daughter|son) (only )?speaks english\b/i.test(text)) return 'en';
+  if (/\bno entiendo ingl[eé]s\b/i.test(text)) return 'es';
   return null;
 }
 
@@ -743,6 +768,145 @@ export function detectProviderAnswer(text: string): { category: ProviderAnswerCa
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WAVE 33 — LETTER / BENEFITS / BILLING TRIAGE SHORT-ANSWER INTERPRETERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type LetterAnswerCategory =
+  | 'plan' | 'medicare' | 'medicaid' | 'social_security'
+  | 'renewal' | 'cancellation' | 'termination' | 'premium_bill'
+  | 'late_penalty' | 'extra_help' | 'msp' | 'coverage_change'
+  | 'wants_advisor' | 'switch_language' | 'short_idk' | 'unknown';
+
+export function detectLetterAnswer(text: string): { category: LetterAnswerCategory } {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (!t) return { category: 'unknown' };
+  if (/\b(advisor|asesor|asesora|call me|llameme|ll[aá]meme|human|persona|representative|agent|agente)\b/i.test(normalized)) return { category: 'wants_advisor' };
+  if (/^(espa[ñn]ol|spanish|english|ingl[eé]s)\.?$/i.test(t)
+      || /\bno entiendo ingl[eé]s|h[aá]bla(me|r) en espa[ñn]ol|mi (mom|mama|mami|esposa|papa|papi) (speaks|habla)\b/i.test(normalized)) return { category: 'switch_language' };
+  if (/^(no s[eé]|no estoy seguro|i don'?t know|idk|not sure|dunno)\.?$/i.test(t)) return { category: 'short_idk' };
+  // Sender
+  if (/\b(seguro social|social security|ssa)\b/i.test(normalized)) return { category: 'social_security' };
+  if (/\b(medicaid|medicad)\b/i.test(normalized)) return { category: 'medicaid' };
+  if (/\b(medicare)\b/i.test(normalized) && !/\bmi plan\b/i.test(normalized)) return { category: 'medicare' };
+  if (/\b(plan|mi plan|my plan|carrier|aseguradora|insurance company)\b/i.test(normalized)) return { category: 'plan' };
+  // Type
+  if (/\b(renovaci[oó]n|renewal|renew)\b/i.test(normalized)) return { category: 'renewal' };
+  if (/\b(cancelaci[oó]n|cancellation|cancel|cancelar)\b/i.test(normalized)) return { category: 'cancellation' };
+  if (/\b(terminaci[oó]n|termination|terminate|terminar|disenroll|desafiliaci[oó]n)\b/i.test(normalized)) return { category: 'termination' };
+  if (/\b(premium|prima|monthly bill|pago mensual|premium bill)\b/i.test(normalized)) return { category: 'premium_bill' };
+  if (/\b(penalty|penalidad|late enrollment)\b/i.test(normalized)) return { category: 'late_penalty' };
+  if (/\b(extra help|ayuda extra|lis|low income subsidy)\b/i.test(normalized)) return { category: 'extra_help' };
+  if (/\b(msp|medicare savings program|programa de ahorros)\b/i.test(normalized)) return { category: 'msp' };
+  if (/\b(coverage change|cambio de cobertura|anoc|eoc|annual notice|cambios anuales)\b/i.test(normalized)) return { category: 'coverage_change' };
+  return { category: 'unknown' };
+}
+
+export type BenefitsAnswerCategory =
+  | 'dental' | 'vision' | 'hearing' | 'otc_card' | 'flex_card'
+  | 'food_card' | 'transportation' | 'home_care' | 'bill'
+  | 'wants_advisor' | 'switch_language' | 'short_idk' | 'unknown';
+
+export function detectBenefitsAnswer(text: string): { category: BenefitsAnswerCategory } {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (!t) return { category: 'unknown' };
+  if (/\b(advisor|asesor|asesora|call me|llameme|ll[aá]meme|human|persona|representative|agent|agente)\b/i.test(normalized)) return { category: 'wants_advisor' };
+  if (/^(espa[ñn]ol|spanish|english|ingl[eé]s)\.?$/i.test(t)
+      || /\bno entiendo ingl[eé]s|h[aá]bla(me|r) en espa[ñn]ol|mi (mom|mama|mami|esposa|papa|papi) (speaks|habla)\b/i.test(normalized)) return { category: 'switch_language' };
+  if (/^(no s[eé]|no estoy seguro|i don'?t know|idk|not sure|dunno)\.?$/i.test(t)) return { category: 'short_idk' };
+  if (/\b(dental|dentist|dientes|dentadura|root canal|implants?|crown|filling)\b/i.test(normalized)) return { category: 'dental' };
+  if (/\b(vision|ojos?|eye|glasses|gafas|lentes|contactos?)\b/i.test(normalized)) return { category: 'vision' };
+  if (/\b(hearing|odo|o[ií]do|audifono|aud[ií]fono|audiology)\b/i.test(normalized)) return { category: 'hearing' };
+  if (/\b(otc|over the counter|over-the-counter|tarjeta otc)\b/i.test(normalized)) return { category: 'otc_card' };
+  if (/\b(flex card|tarjeta flex|healthy allowance)\b/i.test(normalized)) return { category: 'flex_card' };
+  if (/\b(food card|grocery card|tarjeta de comida|tarjeta de alimentos)\b/i.test(normalized)) return { category: 'food_card' };
+  if (/\b(transport(ation)?|transporte|ride to|llevar al|llevarme)\b/i.test(normalized)) return { category: 'transportation' };
+  if (/\b(home care|cuidado en casa|cuidado en el hogar|home health)\b/i.test(normalized)) return { category: 'home_care' };
+  if (/\b(bill|factura|cobro|invoice)\b/i.test(normalized)) return { category: 'bill' };
+  return { category: 'unknown' };
+}
+
+export type BillingAnswerCategory =
+  | 'plan' | 'pharmacy' | 'doctor' | 'hospital' | 'medicare_ssa'
+  | 'premium' | 'copay' | 'coinsurance' | 'deductible'
+  | 'wants_advisor' | 'switch_language' | 'short_idk' | 'unknown';
+
+export function detectBillingAnswer(text: string): { category: BillingAnswerCategory } {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (!t) return { category: 'unknown' };
+  if (/\b(advisor|asesor|asesora|call me|llameme|ll[aá]meme|human|persona|representative|agent|agente)\b/i.test(normalized)) return { category: 'wants_advisor' };
+  if (/^(espa[ñn]ol|spanish|english|ingl[eé]s)\.?$/i.test(t)
+      || /\bno entiendo ingl[eé]s|h[aá]bla(me|r) en espa[ñn]ol|mi (mom|mama|mami|esposa|papa|papi) (speaks|habla)\b/i.test(normalized)) return { category: 'switch_language' };
+  if (/^(no s[eé]|no estoy seguro|i don'?t know|idk|not sure|dunno)\.?$/i.test(t)) return { category: 'short_idk' };
+  if (/\b(pharmacy|farmacia|drug ?store)\b/i.test(normalized)) return { category: 'pharmacy' };
+  if (/\b(hospital|hospitales|cl[ií]nica)\b/i.test(normalized)) return { category: 'hospital' };
+  if (/\b(doctor|doctora|m[eé]dico|specialist|especialista|pcp|primary)\b/i.test(normalized)) return { category: 'doctor' };
+  if (/\b(seguro social|social security|ssa|medicare)\b/i.test(normalized)) return { category: 'medicare_ssa' };
+  if (/\b(premium|prima)\b/i.test(normalized)) return { category: 'premium' };
+  if (/\b(copay|copago)\b/i.test(normalized)) return { category: 'copay' };
+  if (/\b(coinsurance|coseguro)\b/i.test(normalized)) return { category: 'coinsurance' };
+  if (/\b(deductible|deducible)\b/i.test(normalized)) return { category: 'deductible' };
+  if (/\b(plan|mi plan|my plan|carrier|aseguradora)\b/i.test(normalized)) return { category: 'plan' };
+  return { category: 'unknown' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 33 — LEAD NOTES BUILDER
+//
+// Structured advisor handoff summary. Returned to CustomerServiceBot.tsx for
+// inclusion in the GHL lead payload's lead_notes field — does NOT modify the
+// GHL submission contract, only adds richer context inside the existing field.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function buildLeadNotes(state: ConversationState): string {
+  const lines: string[] = [];
+  const isEs = state.language === 'es';
+  lines.push(`Language: ${isEs ? 'Spanish' : 'English'}`);
+  if (state.zipCode) lines.push(`ZIP: ${state.zipCode}${state.state ? ' (' + state.state + ')' : ''}`);
+  const topic = state.serviceCategory || state.intent || 'unknown';
+  lines.push(`Topic: ${topic}`);
+  const subtype =
+    state.providerIssueType
+    || state.medicationIssueType
+    || state.letterIssueType
+    || state.benefitsIssueType
+    || state.billingIssueType
+    || state.subIssue
+    || '';
+  if (subtype) lines.push(`Subtopic: ${subtype}`);
+  // User's own words — last 3 non-trivial user messages
+  const userWords = (state.messages || [])
+    .filter((m) => m.role === 'user' && m.content && m.content.trim().length > 1)
+    .slice(-3)
+    .map((m) => `"${m.content.replace(/\s+/g, ' ').slice(0, 120)}"`);
+  if (userWords.length) lines.push(`User's own words: ${userWords.join(' | ')}`);
+  // Known / unverified facts
+  const known: string[] = [];
+  if (state.billSource) known.push(`bill source = ${state.billSource}`);
+  if (state.amountMentioned) known.push(`amount = ${state.amountMentioned}`);
+  if (state.doesNotWantPlanChange) known.push('user does NOT want to change plans');
+  if (state.wantsToKeepDoctor) known.push('user wants to keep their doctor');
+  if (state.wantsToKeepSpecialist) known.push('user wants to keep their specialist');
+  if (known.length) lines.push(`Known facts: ${known.join('; ')}.`);
+  lines.push('Not verified: provider network, plan benefits, drug coverage, eligibility, costs — none of these were confirmed by the bot.');
+  if ((state.askedQuestions || []).length) {
+    lines.push(`Questions asked: ${state.askedQuestions!.join(', ')}`);
+  }
+  if ((state.repeatedUserMessageCount || 0) >= 1) {
+    lines.push(`Repetition indicator: user repeated themselves ${state.repeatedUserMessageCount}x.`);
+  }
+  if (state.advisorHandoffReason) {
+    lines.push(`Recommended advisor action: ${state.advisorHandoffReason} — call user, identify plan, verify with carrier/provider/pharmacy as relevant.`);
+  } else {
+    lines.push('Recommended advisor action: Call user to clarify and verify the issue with the relevant carrier/provider.');
+  }
+  lines.push('Compliance note: Bot did not confirm coverage, network, costs, or eligibility, and did not request Medicare ID, SSN, banking information, diagnosis, or medical records.');
+  return lines.join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // WAVE 28 — CLARIFY-BEFORE-EXPLAINING LAYER
 //
 // Core principle: listen first, classify after.
@@ -835,6 +999,48 @@ export function detectVagueProblemReport(text: string): { isVague: boolean; topi
     if (q.test(lower)) return { isVague: false, topic };
   }
   return { isVague: true, topic };
+}
+
+// Wave 33 — human-readable labels for letter sender/type summaries.
+function spanishSenderLabel(s: string): string {
+  return s === 'medicare' ? 'Medicare'
+       : s === 'medicaid' ? 'Medicaid'
+       : s === 'social_security' ? 'Seguro Social'
+       : s === 'plan' ? 'su plan'
+       : 'la fuente';
+}
+function englishSenderLabel(s: string): string {
+  return s === 'medicare' ? 'Medicare'
+       : s === 'medicaid' ? 'Medicaid'
+       : s === 'social_security' ? 'Social Security'
+       : s === 'plan' ? 'your plan'
+       : 'the sender';
+}
+function spanishLetterTypeLabel(t: string): string {
+  switch (t) {
+    case 'renewal': return 'renovación';
+    case 'cancellation': return 'cancelación';
+    case 'termination': return 'terminación';
+    case 'premium_bill': return 'pago de prima';
+    case 'late_enrollment_penalty': return 'penalidad por inscripción tardía';
+    case 'lis_extra_help': return 'Extra Help / LIS';
+    case 'msp': return 'programa de ahorros de Medicare';
+    case 'plan_notice': return 'cambio de cobertura';
+    default: return 'la carta';
+  }
+}
+function englishLetterTypeLabel(t: string): string {
+  switch (t) {
+    case 'renewal': return 'renewal';
+    case 'cancellation': return 'cancellation';
+    case 'termination': return 'termination';
+    case 'premium_bill': return 'a premium bill';
+    case 'late_enrollment_penalty': return 'a late enrollment penalty';
+    case 'lis_extra_help': return 'Extra Help / LIS';
+    case 'msp': return 'Medicare Savings Program';
+    case 'plan_notice': return 'a coverage change';
+    default: return 'the letter';
+  }
 }
 
 /** Returns the short office-style clarification question for a vague topic. */
@@ -1441,13 +1647,34 @@ export function processMessage(
         && (newState.subIssue === 'vague_report'
             || !!newState.medicationIssueType
             || (newState.askedQuestions || []).some((q) => q.startsWith('med_')));
+      const inProviderFlow = newState.serviceCategory === 'doctor_provider_network'
+        && (!!newState.providerIssueType
+            || (newState.askedQuestions || []).some((q) => q.startsWith('provider_')));
+      const inLetterFlow = newState.serviceCategory === 'letter'
+        && (!!newState.letterSender
+            || !!newState.letterIssueType
+            || (newState.askedQuestions || []).some((q) => q.startsWith('letter_')));
       let out: string;
       if (inMedFlow) {
         out = sw === 'es'
           ? 'Claro, seguimos en español. ¿Le siguen pidiendo verificar lo del medicamento — el costo, la cobertura o lo que pasó en la farmacia?'
           : "Of course, let's continue in English. Should we keep checking the medication — the cost, the coverage, or what happened at the pharmacy?";
-        // Do NOT show broad chips when topic is already active.
         newState.quickReplies = [];
+      } else if (inProviderFlow) {
+        // V33 — keep provider topic across language switch.
+        out = sw === 'es'
+          ? 'Claro, seguimos en español. Seguimos con el problema del doctor. ¿Es su doctor primario o un especialista?'
+          : "Of course, continuing in English. We're still on the doctor issue. Is it your primary doctor or a specialist?";
+        newState.quickReplies = sw === 'es'
+          ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
+          : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
+      } else if (inLetterFlow) {
+        out = sw === 'es'
+          ? 'Claro, seguimos en español. Seguimos con la carta. ¿Vino de Medicare, Seguro Social, Medicaid, o de su plan?'
+          : "Of course, continuing in English. We're still on the letter. Did it come from Medicare, Social Security, Medicaid, or your plan?";
+        newState.quickReplies = sw === 'es'
+          ? ['Medicare', 'Seguro Social', 'Medicaid', 'Mi plan']
+          : ['Medicare', 'Social Security', 'Medicaid', 'My plan'];
       } else {
         out = sw === 'es'
           ? 'Perfecto, ahora hablo en español. ¿Qué necesita revisar?'
@@ -1782,7 +2009,11 @@ export function processMessage(
       const lastWasSameClarification = !!newState.lastBotQuestion
         && vague.topic
         && newState.lastBotQuestion === getTopicClarification(vague.topic, isSpanish);
-      if (vague.isVague && vague.topic && !lastWasSameClarification) {
+      // V33 — let the Wave 33 letter triage state machine handle letters
+      // (it parses sender + type properly). V28 vague clarification asked the
+      // right question but never set letterSender, breaking turn-2 routing.
+      const letV33Handle = vague.topic === 'letter';
+      if (vague.isVague && vague.topic && !lastWasSameClarification && !letV33Handle) {
         const clarification = getTopicClarification(vague.topic, isSpanish);
         // Map vague topic → serviceCategory for routing memory
         const topicToCategory: Record<VagueTopic, string> = {
@@ -2234,12 +2465,102 @@ export function processMessage(
       }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // WAVE 33 — LETTER TRIAGE STATE MACHINE
+    //
+    // Sawil V33 spec:
+    //   Step 1: ¿La carta vino de Medicare / Seguro Social / Medicaid / plan?
+    //   Step 2: ¿Es sobre renovación / cancelación / pago / penalidad /
+    //           cambio de cobertura?
+    // ────────────────────────────────────────────────────────────────────
     if (problemType === 'letter') {
-      const out = isSpanish
-        ? `Entiendo. Recibir una carta de Medicare puede generar dudas — vamos a entenderla juntos. ¿Es sobre renovación o cambios anuales del plan (ANOC/EOC), una notificación de Medicaid, sobre Extra Help, un aviso de IRMAA, o un cobro pendiente? Por su seguridad, no envíe su número de Medicare, Seguro Social, ni fotos completas con datos sensibles.`
-        : `I understand. Getting a letter from Medicare can be confusing — let's go through it together. Is it about plan renewal or annual changes (ANOC/EOC), a Medicaid notice, Extra Help, an IRMAA notice, or a collection notice? For your safety, please do not send your Medicare number, Social Security, or full photos with sensitive details.`;
-      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-      return { response: out, newState, needsHuman: false };
+      newState.serviceCategory = 'letter';
+      newState.askedQuestions = newState.askedQuestions || [];
+      const letAns = detectLetterAnswer(userMessage);
+
+      if (letAns.category === 'wants_advisor') {
+        newState.advisorHandoffReason = `letter_${newState.letterIssueType || 'unclear'}`;
+        newState.needsHuman = true;
+        const out = isSpanish
+          ? 'Claro. Un asesor licenciado de ClearPoint puede revisar la carta con usted. Por favor no envíe número de Medicare, Seguro Social, ni fotos con datos sensibles. ¿Le contactamos?'
+          : "Of course. A ClearPoint licensed advisor can review the letter with you. Please don't send your Medicare number, SSN, or photos with sensitive details. Want them to follow up?";
+        newState.lastBotIntent = 'letter_advisor';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      }
+
+      // Identify SENDER first if we don't know it yet.
+      if (!newState.letterSender || newState.letterSender === 'unknown') {
+        if (letAns.category === 'medicare') newState.letterSender = 'medicare';
+        else if (letAns.category === 'medicaid') newState.letterSender = 'medicaid';
+        else if (letAns.category === 'social_security') newState.letterSender = 'social_security';
+        else if (letAns.category === 'plan') newState.letterSender = 'plan';
+      }
+
+      // If we still don't have a sender, ask.
+      if (!newState.letterSender && !newState.askedQuestions.includes('letter_sender')) {
+        newState.askedQuestions.push('letter_sender');
+        const q = isSpanish
+          ? 'Entiendo. ¿La carta vino de Medicare, Seguro Social, Medicaid, o de su plan?'
+          : 'I understand. Did the letter come from Medicare, Social Security, Medicaid, or your plan?';
+        newState.lastBotQuestion = q;
+        newState.lastBotIntent = 'letter_sender';
+        newState.quickReplies = isSpanish
+          ? ['Medicare', 'Seguro Social', 'Medicaid', 'Mi plan', 'Hablar con asesor']
+          : ['Medicare', 'Social Security', 'Medicaid', 'My plan', 'Talk to advisor'];
+        newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+        return { response: q, newState, needsHuman: false };
+      }
+
+      // If we know sender, classify TYPE if present in this turn.
+      if (newState.letterSender) {
+        if (letAns.category === 'renewal') newState.letterIssueType = 'renewal';
+        else if (letAns.category === 'cancellation') newState.letterIssueType = 'cancellation';
+        else if (letAns.category === 'termination') newState.letterIssueType = 'termination';
+        else if (letAns.category === 'premium_bill') newState.letterIssueType = 'premium_bill';
+        else if (letAns.category === 'late_penalty') newState.letterIssueType = 'late_enrollment_penalty';
+        else if (letAns.category === 'extra_help') newState.letterIssueType = 'lis_extra_help';
+        else if (letAns.category === 'msp') newState.letterIssueType = 'msp';
+        else if (letAns.category === 'coverage_change') newState.letterIssueType = 'plan_notice';
+
+        // If we know both sender and type → advisor handoff with summary.
+        if (newState.letterIssueType) {
+          newState.advisorHandoffReason = `letter_${newState.letterSender}_${newState.letterIssueType}`;
+          const out = isSpanish
+            ? `Anotado — carta de ${spanishSenderLabel(newState.letterSender)} sobre ${spanishLetterTypeLabel(newState.letterIssueType)}. Un asesor licenciado puede revisarla con usted. Por favor no envíe número de Medicare, Seguro Social ni fotos con datos sensibles. ¿Le contactamos?`
+            : `Got it — a letter from ${englishSenderLabel(newState.letterSender)} about ${englishLetterTypeLabel(newState.letterIssueType)}. A licensed advisor can review it with you. Please don't send Medicare ID, SSN, or photos with sensitive details. Want them to follow up?`;
+          newState.lastBotIntent = 'letter_summary_advisor';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+
+        // We know sender but not type → ask type.
+        if (!newState.askedQuestions.includes('letter_type')) {
+          newState.askedQuestions.push('letter_type');
+          const q = isSpanish
+            ? '¿Parece ser sobre renovación, cancelación, pago/prima, penalidad, o cambio de cobertura?'
+            : 'Does it seem to be about renewal, cancellation, payment/premium, penalty, or a coverage change?';
+          newState.lastBotQuestion = q;
+          newState.lastBotIntent = 'letter_type';
+          newState.quickReplies = isSpanish
+            ? ['Renovación', 'Cancelación', 'Pago/Prima', 'Penalidad', 'Cambio de cobertura']
+            : ['Renewal', 'Cancellation', 'Payment/Premium', 'Penalty', 'Coverage change'];
+          newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+          return { response: q, newState, needsHuman: false };
+        }
+      }
+
+      // Fallback: short_idk or vague second answer → advisor.
+      if (letAns.category === 'short_idk' || letAns.category === 'unknown') {
+        newState.advisorHandoffReason = 'letter_user_unsure';
+        newState.needsHuman = true;
+        const out = isSpanish
+          ? 'No hay problema. Un asesor licenciado puede revisar la carta con usted y aclarar lo que dice. ¿Le contactamos?'
+          : 'No problem. A licensed advisor can review the letter with you and clarify what it says. Want them to follow up?';
+        newState.lastBotIntent = 'letter_idk_advisor';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      }
     }
     if (problemType === 'coverage') {
       const out = isSpanish
@@ -2295,19 +2616,40 @@ export function processMessage(
       const inProviderTriage = !!newState.providerIssueType
         || (newState.askedQuestions || []).some((q) => q.startsWith('provider_'));
 
-      // Repetition guard: if user repeats the same provider message and we
-      // already asked primary-vs-specialist, escalate instead of repeating.
-      if ((newState.repeatedUserMessageCount || 0) >= 1
-          && (newState.askedQuestions.includes('provider_primary_or_specialist')
-              || newState.askedQuestions.includes('provider_office_said_no_or_checking'))) {
-        newState.advisorHandoffReason = 'provider_repeated_vague';
+      // ────────────────────────────────────────────────────────────────────
+      // WAVE 33 — 3-TIER PROVIDER REPETITION (Sawil spec verbatim)
+      //   · 1st turn: first-time provider triage question (below)
+      //   · 2nd turn (1st repeat): "Ya tengo esa parte. Para seguir sin
+      //     repetir: ¿es doctor primario o especialista?"
+      //   · 3rd turn (2nd repeat): advisor offer + PHI warning
+      // ────────────────────────────────────────────────────────────────────
+      const repCount = newState.repeatedUserMessageCount || 0;
+      const alreadyAskedProvider = newState.askedQuestions.includes('provider_primary_or_specialist')
+        || newState.askedQuestions.includes('provider_office_said_no_or_checking')
+        || newState.askedQuestions.includes('provider_appointment_soon');
+
+      if (repCount >= 2 && alreadyAskedProvider) {
+        // 3rd tier — advisor handoff + PHI guardrail.
+        newState.advisorHandoffReason = 'provider_repeated_twice';
         newState.needsHuman = true;
         const out = isSpanish
-          ? 'Sí, le entiendo. Ya tengo que el problema es con un doctor que no quiere aceptarle. Para no repetir: un asesor licenciado de ClearPoint puede revisarlo con usted, llamar al consultorio y verificar la red del plan. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Quiere que un asesor le contacte?'
-          : "I hear you. I already have that the issue is with a doctor not accepting you. To avoid repeating: a ClearPoint licensed advisor can review it with you, call the office, and verify the plan network. Please don't send Medicare ID, SSN, banking information, or private medical records here. Would you like an advisor to follow up?";
+          ? 'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisarlo con usted, llamar al consultorio y verificar la red del plan. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Quiere que un asesor le contacte?'
+          : "Let's make this easier. A ClearPoint licensed advisor can review it with you, call the office, and verify the plan network. Please don't send Medicare ID, SSN, banking information, or private medical records here. Would you like an advisor to follow up?";
         newState.lastBotIntent = 'provider_advisor_offer';
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: true };
+      }
+      if (repCount >= 1 && alreadyAskedProvider) {
+        // 2nd tier — short ack, do NOT repeat the first paragraph.
+        const out = isSpanish
+          ? 'Ya tengo esa parte. Para seguir sin repetir: ¿es doctor primario o especialista?'
+          : 'I already have that part. To keep moving without repeating: is it your primary doctor or a specialist?';
+        newState.quickReplies = isSpanish
+          ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
+          : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
+        newState.lastBotIntent = 'provider_repeat_short_ack';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
       }
 
       // First-turn provider-access (Sawil's exact case) — short, focused

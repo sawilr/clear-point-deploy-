@@ -292,7 +292,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const showRecoveryChips = quickReplies.length > 0 && !isTyping;
 
   return (
-    <div className="flex flex-col bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 overflow-hidden max-w-3xl mx-auto">
+    // Wave 33 — bound the outer chat container's height so header, message
+    // list, footer chrome, and input ALL stay visible without forcing the
+    // page to scroll. Senior must never hunt for the input box.
+    //   · Desktop: at most 720px tall, or 78dvh, whichever is shorter.
+    //   · Mobile (dvh follows keyboard): same 78dvh cap keeps input above
+    //     the keyboard.
+    // The body inside uses flex-1 + min-h-0 + overflow-y-auto so only the
+    // message list scrolls internally.
+    <div
+      className="flex flex-col bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 overflow-hidden max-w-3xl mx-auto"
+      style={{ height: 'min(78dvh, 720px)' }}
+    >
       {/* Header */}
       <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0 gap-2">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
@@ -339,7 +350,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       <div
         ref={bodyRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto overscroll-contain min-h-[280px] max-h-[70dvh] md:max-h-[680px]"
+        // Wave 33 — flex-1 + min-h-0 lets this body fill the bounded outer
+        // container exactly, leaving room for header + footer + input.
+        // overscroll-contain stops the body's scroll from chaining to the
+        // page. min-h-0 is required on flex children for overflow to work.
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
       >
         {/* Persistent privacy / identity band — senior readable */}
         <div className="bg-gold-100 border-b border-gold-200 px-4 py-2.5 text-[14px] leading-[1.5] text-earth-700">
