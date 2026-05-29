@@ -1497,8 +1497,6 @@ function normalizeText(text: string): string {
     pharmacy: 'pharmacy',
     farmacy: 'pharmacy',
     pharmasy: 'pharmacy',
-    farmasia: 'farmacia',
-    farmacia: 'farmacia',
     problms: 'problems',
     probllems: 'problems',
     probems: 'problems',
