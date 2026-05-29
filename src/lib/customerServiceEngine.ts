@@ -108,6 +108,16 @@ export interface ConversationState {
   subIssue?: string;
   /** Last default-fallback response — used for loop prevention. */
   lastFallbackResponse?: string;
+  // ─── Wave 27: user preferences (Sawil rule 6) ───
+  /** User explicitly said they don't want to change plans. */
+  doesNotWantPlanChange?: boolean;
+  /** User explicitly said they want to keep their current doctor. */
+  wantsToKeepDoctor?: boolean;
+  /** User explicitly said they want to keep their specialist. */
+  wantsToKeepSpecialist?: boolean;
+  /** True after bot has acknowledged the user's "don't want to change" once.
+   *  Used to advance to verification follow-up on subsequent turns. */
+  planChangeAcknowledged?: boolean;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -479,6 +489,64 @@ export function detectClarificationRequest(text: string): boolean {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// WAVE 27 — NEGATED INTENT + "TOLD TO CHANGE" DETECTORS
+//
+// Critical for office-style human conversation:
+//   · "no quiero cambiar de plan" / "I don't want to change plans" must NOT
+//     be classified as enrollment intent — it's a doctor/network concern.
+//   · "me dijeron que debería cambiar" / "they told me to change" is the
+//     user REPORTING what someone said, not a request to enroll.
+//
+// These detectors run BEFORE the standard enrollment / coverage handlers
+// so the bot doesn't push AEP/IEP/SEP education at someone who already
+// said they don't want to change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** True if message contains a NEGATED plan/doctor/specialist change desire. */
+export function detectNegatedPlanChange(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Spanish — "no quiero cambiar de plan/doctor/especialista" + variants
+  if (/\bno (quiero|deseo|pienso|me interesa|necesito) (cambiar|cambiarme|mudar|perder|salir|dejar|dejarme|botar)\b/i.test(lower)) return true;
+  if (/\bno quiero (cambiar|perder|dejar)\b/i.test(lower)) return true;
+  if (/\bno (voy a|pienso) cambiar\b/i.test(lower)) return true;
+  if (/\btampoco quiero cambiar\b/i.test(lower)) return true;
+  // English — "I don't want to change/lose/switch"
+  if (/\bi (don'?t|do not|dont) want to (change|switch|leave|lose|drop|cancel)\b/i.test(lower)) return true;
+  if (/\b(don'?t|do not) want to (lose|change|switch|leave)\b.{0,30}(plan|insurance|coverage|doctor|specialist|provider)\b/i.test(lower)) return true;
+  if (/\bi (won'?t|wont|will not) (change|switch|leave|drop)\b/i.test(lower)) return true;
+  return false;
+}
+
+/** True if message reports being told to change plan (not user's own intent). */
+export function detectToldToChange(text: string): boolean {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Spanish — "me dijeron que/q debería cambiar" / "me obligan a cambiar".
+  // V27 — accept "q" as shorthand for "que" (common in SMS-style Spanish).
+  if (/\bme dijeron (que |q )?(deber[ií]a|tendr[ií]a|tengo que|debo|tienes que|tiene que)\b.{0,40}\b(cambiar|cambiarme|cambio|mudar)\b/i.test(lower)) return true;
+  if (/\bme dijeron .{0,40}\bcambiar\b/i.test(lower)) return true;
+  if (/\bme (dicen|han dicho) (que |q )?(deber[ií]a|tengo que|debo)\b.{0,40}\bcambiar\b/i.test(lower)) return true;
+  if (/\bme obligar?(on|ían|on)?\b.{0,30}\bcambiar\b/i.test(lower)) return true;
+  // English
+  if (/\b(they|someone) (told me|said i should|said i need to|said i have to)\b.{0,30}\b(change|switch|leave|drop|cancel)\b/i.test(lower)) return true;
+  if (/\bi was told (to )?(change|switch|leave|drop)\b/i.test(lower)) return true;
+  return false;
+}
+
+/** True if user explicitly WANTS to enroll / switch (positive intent).
+ *  V27 — bails out if text contains a negation marker before "want", so
+ *  "no quiero cambiar" is NOT classified as explicit-want. */
+export function detectExplicitWantToChange(text: string): boolean {
+  // If negation is present, this is the OPPOSITE of explicit want.
+  if (detectNegatedPlanChange(text)) return false;
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Require "want" pattern not preceded by negation in the SAME clause.
+  if (/(?<!\bno\s)\bquiero (cambiar(me)?|cambiar|inscribir(me)?|cancelar|enrollar(me)?|switch|change)\b/i.test(lower)) return true;
+  if (/(?<!\b(don'?t|do not|dont|won'?t|wont|will not)\s)\bi (want to|wanna|need to|would like to) (change|switch|enroll|cancel|sign up)\b/i.test(lower)) return true;
+  if (/(?<!\bno\s)\bme quiero inscribir\b/i.test(lower)) return true;
+  return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // WAVE 24 — CMS / TPMO COMPLIANCE + SAFETY ESCALATION
 //
 // Crisis (988): if the caller mentions suicide, self-harm, or "giving up
@@ -625,8 +693,16 @@ function detectProblemType(text: string): string {
   // Catches plurals ("doctors"), "no longer accepts", "left plan/network", etc.
   if (/\b(my (doctors?|providers?|hospitals?|pcp|primary (care)?( doctor)?|specialist))\b.{0,40}\b(no longer|stopped|left|dropped|doesn'?t accept|don'?t accept|won'?t take|not (in|with) (the |my )?(network|plan)|out of (the |my )?(network|plan)|fuera de la red)\b/i.test(normalized)) return 'doctor_provider_network';
   if (/\b(no longer (accept|accepts|accepting|in)|stopped (taking|accepting)|out[- ]of[- ]network|provider not in network|left (my |the )?(plan|network|insurance)|dropped (from|my) (plan|network|insurance)|ya no acepta|ya no trabaja|ya no est[aá] (en )?(la red|mi red)|sali[oó] de (la red|mi plan)|dej[oó] (de )?(aceptar|trabajar))\b/i.test(normalized)) return 'doctor_provider_network';
-  if (/\b(problems? (with|con)|issues? (with|con)|trouble (with|con)|problema (con)?|tengo (un )?problema con)\s+(my |mi |the |los? )?\b(doctors?|providers?|proveedores?|hospitals?|hospital|network|red|insurance|seguro|plan)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(problems? (with|con)|issues? (with|con)|trouble (with|con)|problema (con)?|problemas? (con)?|tengo (un )?problemas? con|i have (a )?problems? with|i'?m having (a )?(problem|issue) with)\s+(my |mi |the |los? |la |el )?\b(doctors?|doctora|providers?|proveedores?|hospitals?|hospital|network|red|insurance|seguro|plan|especialista|specialist|pcp|primary care|m[eé]dico)\b/i.test(normalized)) return 'doctor_provider_network';
   if (/\b(is (my |the )?(doctor|provider|hospital|specialist) (in network|covered|in my plan|accepting)|est[aá] (mi |el )?(doctor|proveedor|hospital|especialista) (en (la )?red|cubierto|en mi plan))\b/i.test(normalized)) return 'doctor_provider_network';
+  // V27 — "lose my doctor/specialist" → doctor_provider_network (concern).
+  if (/\b(don'?t|do not) want to lose\b.{0,30}\b(doctor|specialist|provider|pcp)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\bno quiero perder\b.{0,30}\b(doctor|especialista|proveedor|m[eé]dico)\b/i.test(normalized)) return 'doctor_provider_network';
+  // V27 — "X has a problem" / "X is having an issue" (provider-noun first).
+  if (/\b(my |mi |the |la |el )?\b(doctors?|doctora|specialists?|especialistas?|providers?|proveedores?|hospitals?|pcp|primary care|m[eé]dico)\b.{0,30}\b(has (a |an )?(problem|issue)|is having (a |an )?(problem|issue)|tiene (un |una )?(problema|problemas|inconveniente|inconvenientes)|est[aá] teniendo (un |una )?problema)\b/i.test(normalized)) return 'doctor_provider_network';
+  // V27 — "told to change" without negation also classifies as doctor concern.
+  if (/\b(they |someone |my (doctor|specialist|provider))\s*(told me|said i should|said i need|said i have to)\s.{0,30}\b(change|switch|leave|drop|cancel)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\bme dijeron (que )?(deber[ií]a|tengo que|tendr[ií]a que|debo)\b.{0,30}\bcambiar\b/i.test(normalized)) return 'doctor_provider_network';
   // V25 — new categories. Order: more specific first.
   if (/\b(perd[ií] mi tarjeta|lost my (plan |member |id )?card|reemplazo de tarjeta|replacement card|no me lleg[oó] (mi )?tarjeta|tarjeta no (lleg|rec)|member id card|plan card|new card)\b/i.test(normalized)) return 'id_card';
   if (/\b(otc|over[- ]the[- ]counter|flex card|healthy allowance|grocery card|tarjeta de beneficios|tarjeta flex)\b/i.test(normalized)) return 'otc';
@@ -1149,9 +1225,41 @@ export function processMessage(
     // "she is my primary doctor" stays in the doctor flow instead of
     // bouncing into the generic coverage handler.
     if (newState.serviceCategory === 'doctor_provider_network'
-        && (problemType === 'coverage' || problemType === 'general')) {
+        && (problemType === 'coverage' || problemType === 'general' || problemType === 'enrollment')) {
+      // V27 — when category is doctor_provider_network and user types
+      // something that classifies as enrollment ("cambiar de plan"), check
+      // for negation. If user explicitly wants to enroll, let enrollment win.
+      // Otherwise keep them in doctor flow.
+      const wantsExplicit = detectExplicitWantToChange(userMessage);
+      if (!wantsExplicit) {
+        problemType = 'doctor_provider_network';
+        newState.intent = 'doctor_provider_network';
+      }
+    }
+    // V27 — NEGATED INTENT + "TOLD TO CHANGE" override.
+    // Critical office logic: "no quiero cambiar de plan" must NEVER be
+    // classified as enrollment. "me dijeron que debería cambiar" is a
+    // CONCERN that someone pressured the user, not an enrollment request.
+    // Only an explicit "I want to change" routes to enrollment.
+    const negatedChange = detectNegatedPlanChange(userMessage);
+    const toldToChange = detectToldToChange(userMessage);
+    const explicitWant = detectExplicitWantToChange(userMessage);
+    if ((negatedChange || toldToChange) && !explicitWant) {
+      // Force-route through doctor_provider_network with concern sub-issue.
       problemType = 'doctor_provider_network';
       newState.intent = 'doctor_provider_network';
+      newState.serviceCategory = 'doctor_provider_network';
+      if (negatedChange) {
+        newState.doesNotWantPlanChange = true;
+        const lowerMsg = userMessage.toLowerCase();
+        if (/specialist|especialista/i.test(lowerMsg)) newState.wantsToKeepSpecialist = true;
+        if (/doctor|m[eé]dico/i.test(lowerMsg) && !/especialista|specialist/i.test(lowerMsg)) {
+          newState.wantsToKeepDoctor = true;
+        }
+      }
+      if (toldToChange) {
+        newState.subIssue = 'told_to_change_plan';
+      }
     }
     newState.emotionalState = emotion;
     // The topic-specific handler responses below all open with an "Entiendo"
@@ -1350,9 +1458,11 @@ export function processMessage(
     // optional advisor), Level C (advisor recommended). Compliance built in.
     // ──────────────────────────────────────────────────────────────────────
 
-    // V26 — Doctor / provider / network handler.
-    // First message → ask if leaving network or verifying coverage.
-    // Continuation message (already in this category) → answer with sub-issue.
+    // V26/V27 — Doctor / provider / network handler.
+    // First message → ask if leaving network, needs authorization, or pressured to change.
+    // Continuation message → answer with sub-issue.
+    // V27 → if user negated plan change or said someone told them, respond
+    // respecting their preference and asking WHO told them.
     if (problemType === 'doctor_provider_network') {
       newState.serviceCategory = 'doctor_provider_network';
       newState.routingLevel = 'B';
@@ -1364,14 +1474,42 @@ export function processMessage(
       const isPrimary = /\b(primary care|primary doctor|pcp|primario|m[eé]dico primario|family doctor|m[eé]dico de familia)\b/i.test(msgLow);
       const isSpecialist = /\b(specialist|especialista|cardiolog|dermatolog|oncolog|cardi[oó]log|oftalmolog|gastroenterolog|endocrinolog|neurolog)\b/i.test(msgLow);
       const isHospital = /\b(hospital|hospitales|er|emergency room|sala de emergencias|cl[ií]nica)\b/i.test(msgLow);
-      // Provider-type continuation answer
+      // V27 — Priority A: FIRST turn after user said "don't want to change"
+      // (planChangeAcknowledged=false). Acknowledge preference + ask WHO told.
+      if ((newState.subIssue === 'told_to_change_plan' || newState.doesNotWantPlanChange)
+          && !newState.planChangeAcknowledged) {
+        const keptItem = newState.wantsToKeepSpecialist ? (isSpanish ? 'especialista' : 'specialist')
+                       : newState.wantsToKeepDoctor ? (isSpanish ? 'doctor' : 'doctor')
+                       : (isSpanish ? 'plan' : 'plan');
+        const out = isSpanish
+          ? `Entiendo. Si usted no quiere cambiar de plan ni de ${keptItem}, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`
+          : `Understood. If you don't want to change your plan or your ${keptItem}, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`;
+        newState.planChangeAcknowledged = true;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // V27 — Priority B: SUBSEQUENT turn after acknowledgment, user identifies
+      // who told them (specialist/doctor/plan/letter) → next step: verification.
+      if (newState.subIssue === 'told_to_change_plan'
+          && newState.planChangeAcknowledged
+          && (/\b(specialist|especialista)\b/i.test(msgLow)
+              || /\b(doctor|doctora|m[eé]dico|pcp|primary)\b/i.test(msgLow)
+              || /\b(plan|insurance|carrier|seguro|aseguradora)\b/i.test(msgLow)
+              || /\b(letter|carta|aviso)\b/i.test(msgLow))) {
+        const out = isSpanish
+          ? `Anotado. Eso no significa que usted tenga que cambiar. Lo importante es entender por qué se lo dijeron — puede ser por red, por autorización previa, por referido, o porque el proveedor salió del plan.\n\nUn asesor licenciado puede verificarlo con el plan y orientarle antes de cualquier decisión. ¿Quiere que coordine eso?`
+          : `Got it. That doesn't mean you have to change. What matters is understanding WHY they said that — could be network, prior authorization, a referral, or the provider leaving the plan.\n\nA licensed advisor can verify it with the plan and guide you before any decision. Want me to set that up?`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // Provider-type continuation answer (for provider_left_network sub-issue)
       if (newState.subIssue === 'provider_left_network' && (isPrimary || isSpecialist || isHospital)) {
         const ptype = isPrimary ? (isSpanish ? 'doctor primario' : 'primary doctor')
                     : isSpecialist ? (isSpanish ? 'especialista' : 'specialist')
                     : (isSpanish ? 'hospital' : 'hospital');
         const out = isSpanish
-          ? `Anotado — es sobre su ${ptype}. Eso es importante revisarlo con calma antes de cambiar de proveedor o de plan.\n\nUn asesor licenciado puede verificar la red del plan y orientarle sobre las opciones (cambiar de plan, buscar otro ${ptype} en red, o ver si hay continuidad de cuidado). ¿Quiere que coordine eso?`
-          : `Got it — it's about your ${ptype}. That's important to review carefully before changing providers or plans.\n\nA licensed advisor can verify the plan's network and walk through options (switching plans, finding another in-network ${ptype}, or checking continuity of care). Want me to set that up?`;
+          ? `Anotado — es sobre su ${ptype}. Un asesor licenciado puede verificar la red del plan y orientarle sobre las opciones antes de cualquier cambio. ¿Quiere que coordine eso?`
+          : `Got it — it's about your ${ptype}. A licensed advisor can verify the plan's network and walk through your options before any change. Want me to set that up?`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
@@ -1392,10 +1530,10 @@ export function processMessage(
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
-      // First mention — no sub-issue clear yet
+      // V27 — First mention. Short office-tone. 3 options including "told to change".
       const out = isSpanish
-        ? `Ok, le ayudo con eso. ¿El problema es que su doctor ya no acepta el plan, o quiere confirmar si un doctor está en la red?`
-        : `Ok, I can help you organize that. Is the issue that your doctor no longer accepts your plan, or are you trying to confirm if a doctor is in network?`;
+        ? `Entiendo. Vamos a revisar eso con calma. ¿El problema es que el especialista ya no acepta su plan, necesita una autorización, o le dijeron que debe cambiar de plan?`
+        : `I understand. Let's look at this calmly. Is the issue that your specialist no longer accepts your plan, that you need an authorization, or that someone told you to change plans?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

@@ -40,12 +40,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const bodyRef = useRef<HTMLDivElement>(null);
   const userPinnedUpRef = useRef(false);
 
-  // Monotonic bottom-follow scroll
+  // Monotonic bottom-follow scroll. V27: smooth scrollTo + uses end ref.
   const scrollToBottom = useCallback(() => {
     const c = bodyRef.current;
     if (!c) return;
     if (userPinnedUpRef.current) return;
-    c.scrollTop = c.scrollHeight;
+    // Try smooth scroll via endRef first (better behavior); fallback to direct.
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else {
+      c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
+    }
   }, []);
   function handleScroll() {
     const c = bodyRef.current;
@@ -321,7 +326,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           </p>
         </div>
 
-        <div className="px-4 py-4 space-y-3.5">
+        <div className="px-4 py-4 pb-8 space-y-3.5">
           {messages.map((m) => (
             <div key={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
