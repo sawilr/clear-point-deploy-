@@ -122,6 +122,30 @@ export interface ConversationState {
   /** Last question the bot asked (verbatim) — prevents repeating the same
    *  generic question twice and gates clarification flow. */
   lastBotQuestion?: string;
+  // ─── Wave 31: medication triage state machine ───
+  /** Typed medication sub-issue, set by the medication triage handler. */
+  medicationIssueType?:
+    | 'cost_too_high'
+    | 'not_covered'
+    | 'pharmacy_rejected'
+    | 'prior_auth'
+    | 'step_therapy'
+    | 'quantity_limit'
+    | 'refill_too_soon'
+    | 'pharmacy_oos'
+    | 'not_on_formulary'
+    | 'new_after_plan_change'
+    | 'doctor_prescribed_not_covered'
+    | 'letter_received'
+    | 'unknown'
+    | 'wants_advisor';
+  /** Questions the bot has already asked in this conversation (intent keys).
+   *  Used to prevent repeating the same question twice. */
+  askedQuestions?: string[];
+  /** Vague-answer count in medication flow — escalates to advisor at 2. */
+  medicationFailedClarifications?: number;
+  /** Why the case escalated to advisor (telemetry + lead notes). */
+  advisorHandoffReason?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -490,6 +514,130 @@ export function detectClarificationRequest(text: string): boolean {
     }
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 31 — MEDICATION TRIAGE STATE MACHINE
+//
+// Customer-service-grade triage for medication issues. Maps short, vague,
+// misspelled, and Spanglish answers into 14 typed categories so the bot
+// never falls to generic "give me more detail" when the topic is meds.
+//
+// Categories (per Sawil V31 spec):
+//   A. cost_too_high
+//   B. not_covered
+//   C. pharmacy_rejected
+//   D. prior_auth
+//   E. step_therapy
+//   F. quantity_limit
+//   G. refill_too_soon
+//   H. pharmacy_oos (out of service / out of network)
+//   I. not_on_formulary
+//   J. new_after_plan_change
+//   K. doctor_prescribed_not_covered
+//   L. letter_received
+//   M. unknown
+//   N. wants_advisor
+//
+// Also returns:
+//   · 'ambiguous' — needs disambiguating question (e.g. pharmacy vs price)
+//   · 'short_no'  — "no", "nope", "nah" — interpret against last question
+//   · 'short_idk' — "I don't know", "no sé"
+//   · 'switch_language' — Spanish/English switch request
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type MedicationAnswerCategory =
+  | 'cost_too_high' | 'not_covered' | 'pharmacy_rejected' | 'prior_auth'
+  | 'step_therapy' | 'quantity_limit' | 'refill_too_soon' | 'pharmacy_oos'
+  | 'not_on_formulary' | 'new_after_plan_change' | 'doctor_prescribed_not_covered'
+  | 'letter_received' | 'wants_advisor' | 'switch_language'
+  | 'ambiguous' | 'short_no' | 'short_idk' | 'unknown';
+
+/** Short-answer interpreter for medication flow. Returns the category + a
+ *  disambiguation hint when ambiguous. */
+export function detectMedicationAnswer(text: string): {
+  category: MedicationAnswerCategory;
+  hint?: string;
+} {
+  const normalized = normalizeText(text);
+  const t = normalized.trim();
+  if (!t) return { category: 'unknown' };
+  // Wants advisor
+  if (/\b(advisor|asesor|asesora|call me|llameme|ll[aá]meme|llamenme|llamarme|human|persona|representative|representante|agent|agente|live person|real person|talk to (a |an )?person)\b/i.test(normalized)) {
+    return { category: 'wants_advisor' };
+  }
+  // Language switch
+  if (/^(espa[ñn]ol|spanish|english|ingl[eé]s)\.?$/i.test(t)
+      || /\bno entiendo ingl[eé]s|h[aá]bla(me|r) en espa[ñn]ol|speak spanish|speak english|in spanish|switch to spanish|switch to english\b/i.test(normalized)) {
+    return { category: 'switch_language' };
+  }
+  // Prior auth (most specific first)
+  if (/\b(prior auth|prior authorization|preauth|pa required|requires pa|need.{0,15}authorization|autorizaci[oó]n previa|necesita autorizaci[oó]n)\b/i.test(normalized)) {
+    return { category: 'prior_auth' };
+  }
+  // Step therapy
+  if (/\b(step therapy|terapia escalonada|step protocol)\b/i.test(normalized)) {
+    return { category: 'step_therapy' };
+  }
+  // Quantity limit
+  if (/\b(quantity limit|l[ií]mite de cantidad|too many|max quantity)\b/i.test(normalized)) {
+    return { category: 'quantity_limit' };
+  }
+  // Refill too soon
+  if (/\b(refill too soon|refill (denied|early)|muy pronto|too soon|early refill|reabastecer)\b/i.test(normalized)) {
+    return { category: 'refill_too_soon' };
+  }
+  // Not on formulary
+  if (/\b(not on formulary|fuera del formulario|no est[aá] en el formulario|formulary exclusion)\b/i.test(normalized)) {
+    return { category: 'not_on_formulary' };
+  }
+  // Pharmacy out of service / out of network
+  if (/\b(pharmacy.{0,15}(out of network|oon|not in network)|farmacia (fuera|no est[aá]) (en|de) la red)\b/i.test(normalized)) {
+    return { category: 'pharmacy_oos' };
+  }
+  // New after plan change
+  if (/\b(new plan|cambio de plan|nuevo plan|after (i|we) changed plan|despu[eé]s de cambiar)\b/i.test(normalized)) {
+    return { category: 'new_after_plan_change' };
+  }
+  // Doctor prescribed something not covered
+  if (/\b(doctor (prescribed|gave me|recetó)|m[eé]dico (recetó|me dio))\b.{0,40}\b(not covered|no cubierto|no la cubr)\b/i.test(normalized)) {
+    return { category: 'doctor_prescribed_not_covered' };
+  }
+  // Letter received
+  if (/\b(letter|notice|carta|aviso|plan letter|carta del plan)\b/i.test(normalized) && t.length < 40) {
+    return { category: 'letter_received' };
+  }
+  // Cost too high
+  if (/\b(too (expensive|much|high|costly)|expensive|caro|muy caro|costoso|high price|precio alto|cost (was|is) (too |so )?(high|much)|priced too high)\b/i.test(normalized)) {
+    return { category: 'cost_too_high' };
+  }
+  // Pharmacy rejected (short answer "pharmacy" / "the pharmacy" / "farmacia")
+  if (/^(the )?(pharmacy|farmacia|drugstore|drug store|la farmacia)\.?$/i.test(t)) {
+    return { category: 'pharmacy_rejected' };
+  }
+  // Note: no trailing \b — accented endings ("rechazó", "negó") fail the
+  // ASCII word-boundary check after `ó`. Anchor only the leading boundary.
+  if (/\b(pharmacy (rejected|denied|wouldn'?t|won'?t|said no|said it was)|farmacia (lo )?rechaz[oó]|farmacia (me )?neg[oó]|the pharmacy (rejected|said no|denied))/i.test(normalized)) {
+    return { category: 'pharmacy_rejected' };
+  }
+  // Not covered (explicit) — V29 also catches this earlier
+  if (/\b(not covered|won'?t cover|do not cover|don'?t cover|denied|deny|rejected|denegaron|negaron|no la? cubr|no cubren|no cubre|no quier(en|o) cubrir)\b/i.test(normalized)) {
+    return { category: 'not_covered' };
+  }
+  // Ambiguous "won't pay" / "don't want to pay" — could be not_covered OR
+  // pharmacy_rejected OR cost_too_high. Sawil's exact failing phrase.
+  if (/\b(won'?t pay|will not pay|don'?t (want to )?pay|do not (want to )?pay|wouldn'?t pay|no quier(en|o) pagar|no pagan|no me lo pagan|no pago|no.{0,15} pagar)\b/i.test(normalized)) {
+    return { category: 'ambiguous', hint: 'cover_or_price' };
+  }
+  // Short "no" / "nope" / "nah"
+  if (/^(no|nope|nah|n[oó])\.?$/i.test(t)) {
+    return { category: 'short_no' };
+  }
+  // Short "I don't know"
+  if (/^(no s[eé]|no estoy seguro|i don'?t know|idk|not sure|i'?m not sure|dunno)\.?$/i.test(t)) {
+    return { category: 'short_idk' };
+  }
+  return { category: 'unknown' };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1068,9 +1216,19 @@ export function processMessage(
   if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural') {
     const ab = detectAbuseOrFrustration(userMessage);
     if (ab.detected) {
-      newState.frustrationCount = (newState.frustrationCount || 0) + 1;
-      newState.emotionalState = ab.severity === 'severe' ? 'angry' : 'frustrated';
-      return enterRecoveryMode(newState, 'frustration');
+      // V31 — Honest "no" answers inside an active medication triage are
+      // NOT frustration. If the bot just asked a med_* question and the user
+      // says "no" / "nope", let the medication handler interpret it.
+      const isShortNoRefusal = /^(no+|nope|nah)\.?$/i.test(userMessage.trim());
+      const inActiveMedTriage = newState.serviceCategory === 'drug'
+        && (newState.askedQuestions || []).some((q) => q.startsWith('med_'));
+      if (isShortNoRefusal && inActiveMedTriage && ab.severity === 'mild') {
+        // Skip frustration recovery — let the conversation block interpret it.
+      } else {
+        newState.frustrationCount = (newState.frustrationCount || 0) + 1;
+        newState.emotionalState = ab.severity === 'severe' ? 'angry' : 'frustrated';
+        return enterRecoveryMode(newState, 'frustration');
+      }
     }
   }
 
@@ -1126,14 +1284,28 @@ export function processMessage(
   }
 
   // V20 — strict language switch (only on explicit request).
+  // V31 — when in medication flow, preserve topic context in the switch.
   if (newState.language && newState.step !== 'asking_language') {
     const sw = detectExplicitLanguageSwitch(userMessage);
     if (sw && sw !== newState.language) {
       newState.language = sw;
-      const out = sw === 'es'
-        ? 'Perfecto, ahora hablo en español. ¿Qué necesita revisar?'
-        : 'Got it, switching to English. What do you need help with?';
-      newState.quickReplies = sw === 'es' ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      const inMedFlow = newState.serviceCategory === 'drug'
+        && (newState.subIssue === 'vague_report'
+            || !!newState.medicationIssueType
+            || (newState.askedQuestions || []).some((q) => q.startsWith('med_')));
+      let out: string;
+      if (inMedFlow) {
+        out = sw === 'es'
+          ? 'Claro, seguimos en español. ¿Le siguen pidiendo verificar lo del medicamento — el costo, la cobertura o lo que pasó en la farmacia?'
+          : "Of course, let's continue in English. Should we keep checking the medication — the cost, the coverage, or what happened at the pharmacy?";
+        // Do NOT show broad chips when topic is already active.
+        newState.quickReplies = [];
+      } else {
+        out = sw === 'es'
+          ? 'Perfecto, ahora hablo en español. ¿Qué necesita revisar?'
+          : 'Got it, switching to English. What do you need help with?';
+        newState.quickReplies = sw === 'es' ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      }
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -1509,6 +1681,28 @@ export function processMessage(
         newState.intent = 'doctor_provider_network';
       }
     }
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 31 — DRUG ACTIVE-CATEGORY OVERRIDE (mirrors V26 doctor override).
+    //
+    // If the user is already in a medication conversation, short/vague
+    // follow-ups ("no", "the pharmacy", "too expensive") classify as
+    // 'general' or 'cost_basics' on their own. Pin problemType=drug so the
+    // Wave 31 medication triage handler can answer them.
+    //
+    // Exception: explicit topic switches like "letter from Medicare" or
+    // "I want to change my plan" are allowed to win.
+    // ──────────────────────────────────────────────────────────────────────
+    if (newState.serviceCategory === 'drug'
+        && (problemType === 'general' || problemType === 'coverage'
+            || problemType === 'casual' || problemType === 'cost_basics')) {
+      const hasStrongSwitchSignal =
+        /\b(letter|carta|bill|factura|doctor|provider|enroll|inscribir|change my plan)\b/i.test(userMessage)
+        && !/\b(medication|pharmacy|medicina|farmacia|prescription|rx|copay|extra help|prior auth)\b/i.test(userMessage);
+      if (!hasStrongSwitchSignal) {
+        problemType = 'drug';
+        newState.intent = 'drug';
+      }
+    }
     // V27 — NEGATED INTENT + "TOLD TO CHANGE" override.
     // Critical office logic: "no quiero cambiar de plan" must NEVER be
     // classified as enrollment. "me dijeron que debería cambiar" is a
@@ -1607,6 +1801,165 @@ export function processMessage(
     // ──────────────────────────────────────────────────────────────────────
     // Drug-specific first turn: if user said "my medication is expensive"
     // and never named a source, ask the drug-specific question.
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 31 — MEDICATION TRIAGE STATE MACHINE
+    //
+    // Fires when serviceCategory is 'drug' AND we're already in a medication
+    // conversation (V28 fired clarification OR medication state exists). Maps
+    // short / vague / Spanglish answers to 14 typed categories and tracks
+    // askedQuestions to avoid repeats. After 2 vague repeats → advisor offer.
+    // ──────────────────────────────────────────────────────────────────────
+    const inMedicationFlow = (newState.serviceCategory === 'drug')
+      && (newState.subIssue === 'vague_report'
+          || !!newState.medicationIssueType
+          || (newState.askedQuestions || []).some((q) => q.startsWith('med_')));
+    if (problemType === 'drug' && (inMedicationFlow || newState.medicationIssueType)) {
+      newState.askedQuestions = newState.askedQuestions || [];
+      const medAns = detectMedicationAnswer(userMessage);
+
+      // (N) Wants advisor → immediate handoff (sets pending advisor flag,
+      //     reuses the existing advisor handler below).
+      if (medAns.category === 'wants_advisor') {
+        problemType = 'advisor';
+        newState.advisorHandoffReason = newState.advisorHandoffReason
+          || `medication_${newState.medicationIssueType || 'unclear'}`;
+        // Fall through — advisor handler runs naturally below.
+      } else if (medAns.category === 'switch_language') {
+        // Language switch mid-flow — flip language but PRESERVE topic.
+        const wantEs = /espa[ñn]ol|spanish|no entiendo ingl[eé]s|h[aá]bla.*espa[ñn]ol/i.test(userMessage);
+        if (wantEs && newState.language === 'en') newState.language = 'es';
+        if (!wantEs && newState.language === 'es') newState.language = 'en';
+        // Re-issue the most recent medication question in the new language.
+        const newIsEs = newState.language === 'es';
+        const out = newIsEs
+          ? 'Claro, seguimos en español. ¿Le siguen pidiendo verificar lo del medicamento — el costo, la cobertura o lo que pasó en la farmacia?'
+          : "Of course, let's continue in English. Should we keep checking the medication — the cost, the coverage, or what happened at the pharmacy?";
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'short_no' && newState.askedQuestions.includes('med_pharmacy_reason')) {
+        // (C-resolution) "no" after we asked the pharmacy-reason question —
+        // offer advisor (Sawil's exact required behavior).
+        newState.advisorHandoffReason = 'medication_pharmacy_rejected_unclear';
+        newState.needsHuman = true;
+        const out = isSpanish
+          ? 'No hay problema. Un asesor licenciado de ClearPoint puede ayudar a revisar qué pasó en la farmacia. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Le gustaría que un asesor le contacte?'
+          : "No problem. A ClearPoint licensed advisor can help review what happened at the pharmacy. Please don't send Medicare ID, SSN, banking information, or private medical records here. Would you like an advisor to follow up?";
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      } else if (medAns.category === 'short_idk') {
+        // "I don't know" / "no sé" — simplify + offer advisor.
+        newState.medicationFailedClarifications = (newState.medicationFailedClarifications || 0) + 1;
+        newState.advisorHandoffReason = 'medication_user_unsure';
+        newState.needsHuman = true;
+        const out = isSpanish
+          ? 'No hay problema. Un asesor licenciado puede revisar los detalles directamente con la farmacia y el plan. ¿Le gustaría que un asesor le contacte?'
+          : 'No problem. A licensed advisor can review the details directly with the pharmacy and plan. Would you like an advisor to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      } else if (medAns.category === 'ambiguous' && medAns.hint === 'cover_or_price') {
+        // "they don't want to pay" — Sawil's exact failing phrase.
+        if (newState.askedQuestions.includes('med_pharmacy_vs_price')) {
+          // Already asked — escalate to advisor instead of repeating.
+          newState.medicationFailedClarifications = (newState.medicationFailedClarifications || 0) + 1;
+          newState.advisorHandoffReason = 'medication_repeated_vague';
+          newState.needsHuman = true;
+          const out = isSpanish
+            ? 'Entiendo. Mejor lo organizamos con un asesor licenciado de ClearPoint para que revise los detalles con la farmacia y el plan. ¿Le contactamos?'
+            : 'I understand. Let me get a ClearPoint licensed advisor to review the details with the pharmacy and plan. Want them to follow up?';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: true };
+        }
+        newState.askedQuestions.push('med_pharmacy_vs_price');
+        const q = isSpanish
+          ? 'Entiendo. ¿La farmacia lo rechazó, o sí lo procesó pero el precio salió muy alto?'
+          : 'Got it. Did the pharmacy reject it, or did it go through but the price was too high?';
+        newState.lastBotQuestion = q;
+        newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+        return { response: q, newState, needsHuman: false };
+      } else if (medAns.category === 'pharmacy_rejected') {
+        newState.medicationIssueType = 'pharmacy_rejected';
+        if (newState.askedQuestions.includes('med_pharmacy_reason')) {
+          // Already asked the reason — escalate.
+          newState.advisorHandoffReason = 'medication_pharmacy_rejected_repeated';
+          newState.needsHuman = true;
+          const out = isSpanish
+            ? 'Lo organizamos con un asesor licenciado. Pueden hablar con la farmacia y el plan para confirmar el motivo del rechazo. ¿Le gustaría que un asesor le contacte?'
+            : 'Let me organize this with a licensed advisor. They can talk to the pharmacy and plan to confirm the reason for the rejection. Want them to follow up?';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: true };
+        }
+        newState.askedQuestions.push('med_pharmacy_reason');
+        const q = isSpanish
+          ? 'Entendido. ¿La farmacia le dio una razón — autorización previa, no cubierto, muy pronto para reabastecer, o límite de cantidad?'
+          : 'Understood. Did the pharmacy give a reason — like prior authorization, not covered, refill too soon, or quantity limit?';
+        newState.lastBotQuestion = q;
+        newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+        return { response: q, newState, needsHuman: false };
+      } else if (medAns.category === 'cost_too_high') {
+        newState.medicationIssueType = 'cost_too_high';
+        newState.advisorHandoffReason = 'medication_cost_too_high';
+        const out = isSpanish
+          ? 'Anotado — costo alto. No puedo confirmar el copago aquí, pero un asesor licenciado puede revisar el formulario del plan, opciones en otra farmacia, si aplica Extra Help, o una alternativa cubierta. ¿Le gustaría que un asesor le contacte?'
+          : "Got it — cost too high. I can't confirm the copay here, but a licensed advisor can review the plan formulary, pharmacy options, whether Extra Help applies, or a covered alternative. Would you like an advisor to follow up?";
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'prior_auth') {
+        newState.medicationIssueType = 'prior_auth';
+        newState.advisorHandoffReason = 'medication_prior_auth';
+        const out = isSpanish
+          ? 'Entiendo — autorización previa. El plan necesita información del médico antes de cubrir el medicamento. Un asesor licenciado puede coordinar eso con el doctor y el plan. ¿Le gustaría que un asesor le contacte?'
+          : 'I understand — prior authorization. The plan needs information from the doctor before covering the medication. A licensed advisor can coordinate that with the doctor and the plan. Would you like an advisor to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'step_therapy') {
+        newState.medicationIssueType = 'step_therapy';
+        newState.advisorHandoffReason = 'medication_step_therapy';
+        const out = isSpanish
+          ? 'Anotado — terapia escalonada. El plan a veces pide probar otro medicamento primero. Un asesor licenciado puede revisar si aplica una excepción. ¿Le contactamos?'
+          : 'Got it — step therapy. The plan may require trying another medication first. A licensed advisor can review whether an exception applies. Want them to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'quantity_limit') {
+        newState.medicationIssueType = 'quantity_limit';
+        newState.advisorHandoffReason = 'medication_quantity_limit';
+        const out = isSpanish
+          ? 'Anotado — límite de cantidad. Un asesor licenciado puede revisar si se puede solicitar una excepción al límite. ¿Le contactamos?'
+          : 'Got it — quantity limit. A licensed advisor can review whether a limit-exception can be requested. Want them to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'refill_too_soon') {
+        newState.medicationIssueType = 'refill_too_soon';
+        newState.advisorHandoffReason = 'medication_refill_too_soon';
+        const out = isSpanish
+          ? 'Anotado — reabastecimiento muy pronto. Esto suele resolverse con la farmacia o pidiendo una excepción al plan. Un asesor licenciado puede ayudarle a coordinarlo. ¿Le contactamos?'
+          : 'Got it — refill too soon. This usually resolves with the pharmacy or by requesting a plan exception. A licensed advisor can help coordinate. Want them to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      } else if (medAns.category === 'letter_received') {
+        newState.medicationIssueType = 'letter_received';
+        const q = isSpanish
+          ? 'Entiendo. ¿La carta es del plan, de Medicare, de Medicaid, de Social Security o de la farmacia?'
+          : 'I understand. Is the letter from the plan, Medicare, Medicaid, Social Security, or the pharmacy?';
+        newState.lastBotQuestion = q;
+        newState.messages.push({ role: 'bot', content: q, timestamp: Date.now() });
+        return { response: q, newState, needsHuman: false };
+      } else if (medAns.category === 'short_no') {
+        // Generic "no" without pharmacy_reason context — increment failed
+        // clarifications. After 2, offer advisor.
+        newState.medicationFailedClarifications = (newState.medicationFailedClarifications || 0) + 1;
+        if ((newState.medicationFailedClarifications || 0) >= 2) {
+          newState.advisorHandoffReason = 'medication_repeated_vague';
+          newState.needsHuman = true;
+          const out = isSpanish
+            ? 'Entiendo. No quiero seguir preguntando lo mismo. Un asesor licenciado de ClearPoint puede revisar el caso con la farmacia y el plan. ¿Le contactamos?'
+            : "I understand. I don't want to keep asking the same thing. A ClearPoint licensed advisor can review with the pharmacy and plan. Want them to follow up?";
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: true };
+        }
+        // Else: fall through to V29 logic which may catch it differently.
+      }
+    }
+
     // V29 — drug "not covered" continuation. Fires when active category is
     // drug and user message indicates coverage denial.
     if (problemType === 'drug') {
