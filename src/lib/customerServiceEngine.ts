@@ -1510,7 +1510,7 @@ function normalizeText(text: string): string {
     asepta: 'acepta',
     seguruo: 'seguro',
     medicna: 'medicina',
-    medicna: 'medicina',
+    medecna: 'medicina',
   };
   let normalized = text.toLowerCase();
   for (const [wrong, correct] of Object.entries(corrections)) {
