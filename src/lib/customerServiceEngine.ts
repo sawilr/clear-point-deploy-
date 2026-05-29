@@ -512,10 +512,13 @@ export type VagueTopic =
 
 /** Returns the topic noun + isVague flag for "I have a problem with X" patterns. */
 export function detectVagueProblemReport(text: string): { isVague: boolean; topic: VagueTopic | null } {
-  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // V29 — run shorthand normalization first so "meds"/"doc"/"rx"/"tocver"
+  // get expanded BEFORE pattern matching.
+  const normalized = normalizeText(text);
+  const lower = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
   // Step 1: detect a broad-problem opener ("tengo problemas con", "I have a
   // problem with", "necesito ayuda con", etc.)
-  const broadPattern = /\b(tengo (un )?problemas? con|tengo (una )?duda con|necesito ayuda con|no entiendo|tengo (un )?inconveniente con|mi .{0,15} tiene (un )?problema|mi .{0,15} no funciona|mi .{0,15} no esta funcionando|me lleg[oó]|recib[ií]|i (have|got|am having) (a |an )?problems? with|i need help with|i don'?t understand|i'?m having trouble with|my .{0,15} (has|is having) (a |an )?(problem|issue)|my .{0,15} (isn'?t|is not) working|i got (a |an |my )?)\b/i;
+  const broadPattern = /\b(tengo (un )?problemas? con|tengo (una )?duda con|necesito ayuda con|no entiendo|tengo (un )?inconveniente con|mi .{0,15} tiene (un )?problema|mi .{0,15} no funciona|mi .{0,15} no esta funcionando|me lleg[oó]|recib[ií]|i (have|got|am having) (a |an )?problems? with|i need help with|i don'?t understand|i'?m having trouble with|my .{0,15} (has|is having) (a |an )?(problem|problems|issue|issues)|my .{0,15} (isn'?t|is not) working|i got (a |an |my )?|^problems? with (my |the )?|^problemas? con (mi |el |la )?)\b/i;
   if (!broadPattern.test(lower)) return { isVague: false, topic: null };
   // Step 2: identify the topic noun.
   const topicChecks: Array<[VagueTopic, RegExp]> = [
@@ -766,7 +769,10 @@ export function createInitialState(): ConversationState {
 }
 
 // Auto-correction of common misspellings + Spanglish normalization.
+// V29 — expanded shorthand: meds/med/rx/doc/dr/pcp/spec/appt/ins/pharm,
+// common typos: tocver/covr/coever/coverd, Spanglish.
 function normalizeText(text: string): string {
+  // First pass: legacy single-token substitutions.
   const corrections: Record<string, string> = {
     mellgaron: 'me llegaron',
     mellegaron: 'me llegaron',
@@ -777,18 +783,75 @@ function normalizeText(text: string): string {
     facturua: 'factura',
     medicamentoos: 'medicamentos',
     cobertrua: 'cobertura',
+    cubertura: 'cobertura',
     doctro: 'doctor',
+    dotor: 'doctor',
+    doctol: 'doctor',
     farmacai: 'farmacia',
+    farmasia: 'farmacia',
     cartta: 'carta',
+    leta: 'carta',
     renovcaion: 'renovación',
     medicadi: 'medicaid',
     medicarie: 'medicare',
     medecare: 'medicare',
     medisina: 'medicina',
+    medecina: 'medicina',
+    medicamiento: 'medicamento',
+    especialsta: 'especialista',
+    espesialista: 'especialista',
+    aseguranza: 'seguro',
+    insurence: 'insurance',
+    insuranse: 'insurance',
+    plam: 'plan',
+    pharmcy: 'pharmacy',
+    pharmacy: 'pharmacy',
+    farmacy: 'pharmacy',
+    farmacia: 'farmacia',
   };
   let normalized = text.toLowerCase();
   for (const [wrong, correct] of Object.entries(corrections)) {
     normalized = normalized.replace(new RegExp(wrong, 'gi'), correct);
+  }
+  // Second pass: word-boundary aware shorthand replacements.
+  // Order matters — replace longer forms first.
+  const shorthand: Array<[RegExp, string]> = [
+    [/\bprimary care\b/g, 'primary care'],   // keep
+    [/\bover the counter\b/g, 'otc'],
+    [/\bover-the-counter\b/g, 'otc'],
+    [/\bmeds\b/g, 'medication'],
+    [/\bmed\b/g, 'medication'],
+    [/\brx\b/g, 'prescription'],
+    [/\bdoc\b/g, 'doctor'],
+    [/\bdr\.?\b/g, 'doctor'],
+    [/\bpcp\b/g, 'primary doctor'],
+    [/\bspec\b/g, 'specialist'],
+    [/\bappt\b/g, 'appointment'],
+    [/\bappts\b/g, 'appointments'],
+    [/\bins\b/g, 'insurance'],
+    [/\bpharm\b/g, 'pharmacy'],
+    // English typo cluster: "to cover" / "cover" misspellings.
+    [/\bwan tocver\b/g, 'want to cover'],
+    [/\btocver\b/g, 'to cover'],
+    [/\bcovr\b/g, 'cover'],
+    [/\bcoever\b/g, 'cover'],
+    [/\bcoverd\b/g, 'covered'],
+    [/\bcober\b/g, 'cubrir'],         // Spanish "cober" typo for "cubrir"
+    [/\bcubrir\b/g, 'cubrir'],
+    [/\baceptl?an\b/g, 'aceptan'],
+    [/\baceptl?a\b/g, 'acepta'],
+    [/\bacept\b/g, 'accept'],
+    [/\bbil\b/g, 'bill'],
+    [/\bleter\b/g, 'letter'],
+    [/\bdont\b/g, "don't"],
+    [/\bdoesnt\b/g, "doesn't"],
+    [/\bwont\b/g, "won't"],
+    [/\bisnt\b/g, "isn't"],
+    [/\bcant\b/g, "can't"],
+    [/\bwan\b/g, 'want'],
+  ];
+  for (const [re, replacement] of shorthand) {
+    normalized = normalized.replace(re, replacement);
   }
   return normalized;
 }
@@ -1491,7 +1554,35 @@ export function processMessage(
     // ──────────────────────────────────────────────────────────────────────
     // Drug-specific first turn: if user said "my medication is expensive"
     // and never named a source, ask the drug-specific question.
-    if (problemType === 'drug' && !newState.billSource && !newState.amountMentioned) {
+    // V29 — drug "not covered" continuation. Fires when active category is
+    // drug and user message indicates coverage denial.
+    if (problemType === 'drug') {
+      const msgLowDrug = normalizeText(userMessage);
+      const notCovered = (/\b(don'?t.{0,20}cover|do not.{0,20}cover|not covered|denied|deny|wouldn'?t.{0,20}cover|won'?t.{0,20}cover|won t.{0,20}cover|negaron|denegaron)\b/i.test(msgLowDrug)
+        || /\bno.{0,25}cubr/i.test(msgLowDrug)
+        || /\bno (la |las |me |se )?cubre/i.test(msgLowDrug));
+      const priorAuth = /\b(prior auth|prior authorization|autorizaci[oó]n previa|preauth|pa required|requires pa|necesita autorizaci[oó]n)\b/i.test(msgLowDrug);
+      if (notCovered || priorAuth) {
+        newState.serviceCategory = 'drug';
+        newState.routingLevel = 'B';
+        newState.subIssue = priorAuth ? 'drug_prior_auth' : 'drug_not_covered';
+        const out = isSpanish
+          ? (priorAuth
+            ? 'Eso puede ser un tema de autorización previa. A veces el plan necesita información del médico antes de cubrir la medicina.\n\n¿La farmacia mencionó autorización previa, o recibió una carta del plan?'
+            : 'Entiendo. Eso puede ser que la medicina no esté cubierta o que necesite revisión. ¿Se lo dijo la farmacia, o recibió una carta del plan?')
+          : (priorAuth
+            ? "That may be a prior authorization issue. The plan usually needs more information from the prescriber before covering it.\n\nDid the pharmacy mention prior authorization, or did you get a letter from the plan?"
+            : "Got it. That sounds like the medication may not be covered or may need review. Did the pharmacy say it was not covered, or did you receive a letter from the plan?");
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+    }
+
+    // V29 — skip drug-first-turn handler if V28 clarification already fired
+    // (subIssue=vague_report). Let V29 default fallback ask a category-specific
+    // follow-up to avoid repeating the same question.
+    if (problemType === 'drug' && !newState.billSource && !newState.amountMentioned
+        && newState.subIssue !== 'vague_report') {
       const out = isSpanish
         ? `Sobre medicamentos${withName(newState.name)}. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
         : `About medications${withName(newState.name)}. Is the issue the cost, not covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
@@ -1573,12 +1664,20 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // No source captured yet — ask the source question ONCE
-      const out = isSpanish
+      // No source captured yet — ask the source question ONCE.
+      // V29 — but only if we haven't already asked it (loop prevention) AND
+      // the user isn't just sending vague continuations after V28 clarification.
+      const sourceQuestion = isSpanish
         ? `Entiendo${withName(newState.name)}. ¿Esta factura es del médico u hospital, de la farmacia, o del plan de Medicare? Por favor no envíe Medicare ID, Seguro Social, ni datos bancarios aquí.`
         : `Got it${withName(newState.name)}. Is this bill from a doctor or hospital, a pharmacy, or your Medicare plan? Please do not send Medicare ID, Social Security, or banking info here.`;
-      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
-      return { response: out, newState, needsHuman: false };
+      if (newState.lastBotQuestion === sourceQuestion || newState.subIssue === 'vague_report') {
+        // Already asked or in clarification flow — fall through to V29
+        // default fallback which gives a category-specific follow-up.
+      } else {
+        newState.lastBotQuestion = sourceQuestion;
+        newState.messages.push({ role: 'bot', content: sourceQuestion, timestamp: Date.now() });
+        return { response: sourceQuestion, newState, needsHuman: false };
+      }
     }
 
     if (problemType === 'letter') {
@@ -1980,12 +2079,14 @@ export function processMessage(
     }
 
     // V26 — LOOP PREVENTION on default fallback.
-    // If we already sent the same generic response last turn, pivot to chips.
+    // V29 — restrict broad chip menu: only fire when NO serviceCategory is
+    // active AND we're truly about to repeat. If category is set, ask a
+    // category-specific question instead.
     const defaultOut = isSpanish
       ? `Gracias por contarme${withName(newState.name)}. ¿Puede darme un poco más de detalle sobre su situación?`
       : `Thanks for telling me${withName(newState.name)}. Can you give me a bit more detail about your situation?`;
     const wouldRepeat = newState.lastFallbackResponse === defaultOut;
-    if (wouldRepeat) {
+    if (wouldRepeat && !newState.serviceCategory) {
       newState.quickReplies = isSpanish ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
       const out = isSpanish
         ? `Para no perder tiempo: ¿es sobre factura, doctor, medicamentos, tarjeta, cobertura, inscripción, o prefiere hablar con un asesor?`
@@ -1993,6 +2094,39 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       newState.lastFallbackResponse = out;
       return { response: out, newState, needsHuman: false };
+    }
+    // V29 — if a serviceCategory is active and we'd otherwise fallback,
+    // ask one category-specific question.
+    if (wouldRepeat && newState.serviceCategory) {
+      const cat = newState.serviceCategory;
+      const categoryFollowup = (() => {
+        if (cat === 'drug' || cat === 'medication') {
+          return isSpanish
+            ? '¿La farmacia le dijo que no la cubrieron, o recibió una carta del plan?'
+            : "Did the pharmacy say it's not covered, or did you receive a letter from the plan?";
+        }
+        if (cat === 'doctor_provider_network') {
+          return isSpanish
+            ? '¿El doctor le dijo algo específico — que ya no acepta el plan, que necesita autorización, o algo más?'
+            : "Did the doctor say something specific — they no longer accept the plan, you need an authorization, or something else?";
+        }
+        if (cat === 'bill' || cat === 'bill_provider') {
+          return isSpanish
+            ? '¿El documento dice "amount due", "balance due", o "patient responsibility"?'
+            : 'Does the document say "amount due", "balance due", or "patient responsibility"?';
+        }
+        if (cat === 'letter') {
+          return isSpanish
+            ? '¿La carta es de Medicare, Medicaid, Social Security, o de su plan?'
+            : 'Is the letter from Medicare, Medicaid, Social Security, or your plan?';
+        }
+        return isSpanish
+          ? '¿Puede contarme lo que pasó específicamente?'
+          : 'Can you tell me what happened specifically?';
+      })();
+      newState.messages.push({ role: 'bot', content: categoryFollowup, timestamp: Date.now() });
+      newState.lastFallbackResponse = categoryFollowup;
+      return { response: categoryFollowup, newState, needsHuman: false };
     }
     newState.lastFallbackResponse = defaultOut;
     newState.messages.push({ role: 'bot', content: defaultOut, timestamp: Date.now() });
