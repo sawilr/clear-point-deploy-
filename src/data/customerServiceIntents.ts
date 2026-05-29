@@ -550,3 +550,263 @@ function mapIntentIdToV13(id: IntentId): string {
 
 export const customerServiceIntents: IntentPattern[] = INTENTS.map(intentToV13Patterns);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 36 — PHRASE BANK (variant rotation for human-feeling responses)
+//
+// Every key has 3+ semantically-equivalent variants in EN and ES. The engine's
+// selectPhrase() picks an UNUSED variant per conversation so the bot never
+// sends the same sentence twice. Every variant for a given key preserves the
+// keyword fingerprints existing tests rely on (e.g. provider variants ALL
+// contain "primario" and "especialista" in Spanish, "primary" and "specialist"
+// in English).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type PhraseKey =
+  | 'provider_first_ask'
+  | 'provider_repeat_short_ack'
+  | 'provider_primary_followup'
+  | 'provider_specialist_followup'
+  | 'medication_first_ask'
+  | 'medication_pharmacy_reason_ask'
+  | 'letter_sender_ask'
+  | 'letter_type_ask'
+  | 'billing_source_ask'
+  | 'benefits_category_ask'
+  | 'recovery_case_a_tier1'
+  | 'recovery_case_a_tier2'
+  | 'recovery_case_a_tier3'
+  | 'recovery_case_b_tier1'
+  | 'recovery_case_b_tier2'
+  | 'recovery_yes_or_start'
+  | 'advisor_handoff_start_collect_name_phone'
+  | 'soft_reset'
+  | 'ack_opener_neutral'
+  | 'ack_opener_empathy';
+
+export const PHRASE_BANK: Record<PhraseKey, { es: string[]; en: string[] }> = {
+  provider_first_ask: {
+    es: [
+      'Entiendo. Eso suena como un problema con un doctor/proveedor, no una pregunta general de cobertura. Para orientarle bien: ¿es su doctor primario o un especialista?',
+      'Anotado. Suena a un tema con su doctor/proveedor. Para guiarle correctamente — ¿hablamos de su doctor primario, o de un especialista?',
+      'Ya veo. Eso es un asunto con su doctor/proveedor. Para no asumir nada — ¿se trata del doctor primario, o de un especialista?',
+    ],
+    en: [
+      "I understand. That sounds like a doctor/provider issue, not a general coverage question. To guide you properly: is this your primary doctor or a specialist?",
+      "Got it. That sounds like a doctor/provider matter. To help you properly — is it your primary doctor, or a specialist?",
+      "Understood. Looks like a doctor/provider issue. So I don't assume — is this about your primary doctor, or a specialist?",
+    ],
+  },
+  provider_repeat_short_ack: {
+    es: [
+      'Ya tengo esa parte. Para seguir sin repetir: ¿es doctor primario o especialista?',
+      'Anotado, lo tengo. Para no repetir lo mismo: ¿hablamos de su doctor primario o de un especialista?',
+      'Entendido. Para no dar vueltas: ¿es el doctor primario, o un especialista?',
+    ],
+    en: [
+      'I already have that part. To keep moving without repeating: is it your primary doctor or a specialist?',
+      "Noted. To avoid repeating myself: are we talking about your primary doctor or a specialist?",
+      "Got that. So we don't loop: is this your primary doctor, or a specialist?",
+    ],
+  },
+  provider_primary_followup: {
+    es: [
+      "Gracias. ¿La oficina del doctor le dijo que no acepta su plan, o está tratando de verificar antes de ir a la cita?",
+      "Anotado — su doctor primario. ¿Le dijeron desde la oficina que no aceptan su plan, o usted está verificando antes de ir?",
+      "Perfecto, su doctor primario. ¿La oficina del doctor ya le confirmó que no aceptan su plan, o quiere verificarlo antes de la próxima cita?",
+    ],
+    en: [
+      "Thanks. Did the doctor's office tell you they don't accept your plan, or are you trying to verify before the appointment?",
+      "Noted — your primary doctor. Did the office tell you they don't take your plan, or are you trying to check before going in?",
+      "Got it, your primary doctor. Has the office confirmed they don't accept your plan, or do you want to verify before your next appointment?",
+    ],
+  },
+  provider_specialist_followup: {
+    es: [
+      "Entiendo. ¿Ya tiene una cita programada con ese especialista, o todavía está tratando de coordinarla?",
+      "Anotado, un especialista. ¿Ya tiene la cita reservada, o aún está intentando coordinarla?",
+      "Perfecto. ¿La cita con el especialista ya está agendada, o todavía la está organizando?",
+    ],
+    en: [
+      "I understand. Do you already have an appointment scheduled with that specialist, or are you still trying to set one up?",
+      "Noted, a specialist. Is the appointment already on the calendar, or are you still trying to coordinate it?",
+      "Got it. Has the specialist visit been scheduled yet, or are you still trying to set it up?",
+    ],
+  },
+  medication_first_ask: {
+    es: [
+      'Entiendo. ¿El problema es el costo, que no la cubrieron, o que la farmacia no pudo procesarla?',
+      'Anotado, un tema de medicina. ¿Fue el precio, una negativa de cobertura del plan, o que la farmacia no la pudo procesar?',
+      'Ya veo. Para ayudarle a organizar esto — ¿el problema es costo, cobertura del plan, o algo que pasó en la farmacia?',
+    ],
+    en: [
+      "I understand. Is the issue that it's too expensive, not covered, or the pharmacy couldn't process it?",
+      "Got it, a medication topic. Was it the price, a coverage denial from the plan, or the pharmacy couldn't process it?",
+      "Understood. To help organize this — is the issue cost, plan coverage, or something that happened at the pharmacy?",
+    ],
+  },
+  medication_pharmacy_reason_ask: {
+    es: [
+      'Entendido. ¿La farmacia le dio una razón — autorización previa, no cubierto, muy pronto para reabastecer, o límite de cantidad?',
+      'Anotado. ¿La farmacia mencionó la razón? ¿Autorización previa, no cubierto, refill muy pronto, o límite de cantidad?',
+      'Perfecto, en la farmacia. ¿Le explicaron por qué — autorización previa, no cubierto, refill muy pronto o cantidad limitada?',
+    ],
+    en: [
+      'Understood. Did the pharmacy give a reason — like prior authorization, not covered, refill too soon, or quantity limit?',
+      "Noted. Did the pharmacy share a reason? Prior authorization, not covered, refill too soon, or quantity limit?",
+      "Got it, at the pharmacy. Did they explain why — prior auth, not covered, refill too soon, or quantity limit?",
+    ],
+  },
+  letter_sender_ask: {
+    es: [
+      'Entiendo. ¿La carta vino de Medicare, Seguro Social, Medicaid, o de su plan?',
+      'Anotado. ¿Sabe de quién es la carta — Medicare, Seguro Social, Medicaid, o su plan?',
+      'Ya veo. ¿La carta es de Medicare, Seguro Social, Medicaid o de su plan?',
+    ],
+    en: [
+      'I understand. Did the letter come from Medicare, Social Security, Medicaid, or your plan?',
+      "Noted. Do you know who sent the letter — Medicare, Social Security, Medicaid, or your plan?",
+      "Got it. Is the letter from Medicare, Social Security, Medicaid, or your plan?",
+    ],
+  },
+  letter_type_ask: {
+    es: [
+      '¿Parece ser sobre renovación, cancelación, pago/prima, penalidad, o cambio de cobertura?',
+      '¿Sobre qué parece tratar — renovación, cancelación, pago/prima, penalidad o cambio de cobertura?',
+      '¿Qué tema parece tener: renovación, cancelación, pago/prima, penalidad o cambio de cobertura?',
+    ],
+    en: [
+      'Does it seem to be about renewal, cancellation, payment/premium, penalty, or a coverage change?',
+      "What does it look like it's about — renewal, cancellation, payment/premium, penalty, or a coverage change?",
+      "Does the letter seem to cover renewal, cancellation, payment/premium, penalty, or a coverage change?",
+    ],
+  },
+  billing_source_ask: {
+    es: [
+      'Entiendo. ¿El cobro viene de su plan, farmacia, doctor, hospital o Medicare/Seguro Social?',
+      'Anotado. ¿De dónde viene el cobro — del plan, farmacia, doctor, hospital o de Medicare/Seguro Social?',
+      'Ya veo. ¿El cobro es de su plan, de la farmacia, del doctor, del hospital o de Medicare/Seguro Social?',
+    ],
+    en: [
+      'I understand. Is the bill from your plan, pharmacy, doctor, hospital, or Medicare/Social Security?',
+      "Noted. Where is the bill coming from — your plan, pharmacy, doctor, hospital, or Medicare/Social Security?",
+      "Got it. Is the bill from the plan, pharmacy, doctor, hospital, or Medicare/Social Security?",
+    ],
+  },
+  benefits_category_ask: {
+    es: [
+      'Entiendo. ¿El problema es con dental, tarjeta OTC/flex, transporte, una factura u otro beneficio?',
+      'Anotado. ¿De qué beneficio hablamos — dental, OTC/flex, transporte, factura, u otro?',
+      'Ya veo. ¿Es sobre dental, tarjeta OTC/flex, transporte, una factura, o un beneficio distinto?',
+    ],
+    en: [
+      'I understand. Is the issue with dental, an OTC/flex card, transportation, a bill, or another benefit?',
+      "Noted. Which benefit are we talking about — dental, OTC/flex, transportation, a bill, or another one?",
+      "Got it. Is this about dental, the OTC/flex card, transportation, a bill, or a different benefit?",
+    ],
+  },
+  recovery_case_a_tier1: {
+    es: [
+      'Entiendo que está molesto. Para poder ayudarle, necesito saber el tema: ¿es sobre medicamentos, doctor, una carta, factura o beneficios?',
+      'Lo escucho. Para apoyarle mejor, dígame el tema: ¿medicamentos, doctor, carta, factura, o beneficios?',
+      'Entendido. Para guiarle bien, ¿cuál es el tema — medicamentos, doctor, carta, factura o beneficios?',
+    ],
+    en: [
+      "I understand you're upset. To help, I need the topic: is it about medications, a doctor, a letter, a bill, or benefits?",
+      "I hear you. To support you better, what's the topic — medications, doctor, letter, bill, or benefits?",
+      "Understood. To guide you, what's the topic — medications, doctor, letter, bill, or benefits?",
+    ],
+  },
+  recovery_case_a_tier2: {
+    es: [
+      'No quiero adivinar. Escríbame una palabra: medicamentos, doctor, carta, factura o asesor.',
+      'Mejor no asumo. ¿Puede mandarme una sola palabra — medicamentos, doctor, carta, factura o asesor?',
+      'Para no equivocarme, dígame una palabra: medicamentos, doctor, carta, factura o asesor.',
+    ],
+    en: [
+      "I don't want to guess. Just send one word: medications, doctor, letter, bill, or advisor.",
+      "Rather not assume. Could you send one word — medications, doctor, letter, bill, or advisor?",
+      "So I don't get it wrong, send me one word: medications, doctor, letter, bill, or advisor.",
+    ],
+  },
+  recovery_case_a_tier3: {
+    es: [
+      'Para evitar confusión, puedo pasarle con un asesor licenciado de ClearPoint. ¿Le contactamos?',
+      'Lo mejor en este punto es que un asesor licenciado le ayude directamente. ¿Quiere que le contacten?',
+      'Para no seguir adivinando, lo más útil es coordinar con un asesor licenciado. ¿Le coordinamos esa llamada?',
+    ],
+    en: [
+      "To avoid confusion, I can connect you with a ClearPoint licensed advisor. Want them to follow up?",
+      "Best step here is for a licensed advisor to help directly. Want them to reach out?",
+      "Rather than keep guessing, the most helpful next step is connecting you with a licensed advisor. Set that up?",
+    ],
+  },
+  recovery_case_b_tier1: {
+    es: [
+      'Entiendo. No voy a seguir repitiendo preguntas. Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso.',
+      'Anotado. Mejor no insistir con lo mismo — un asesor licenciado puede tomar el caso ahora, o le hago una sola pregunta más, lo que prefiera.',
+      'Le escucho. No voy a darle vueltas — un asesor licenciado puede continuar el caso, o si prefiere, le hago una sola pregunta más.',
+    ],
+    en: [
+      "I hear you. I won't keep repeating questions. I can connect you with a ClearPoint licensed advisor, or ask one final question to organize the case.",
+      "Noted. Rather than press the same thing — a licensed advisor can take this now, or I can ask one final question, your choice.",
+      "I'm listening. I won't loop on this — a licensed advisor can pick up the case, or I can ask one last question, whichever you prefer.",
+    ],
+  },
+  recovery_case_b_tier2: {
+    es: [
+      'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisar esto con usted. ¿Quiere que le contacten?',
+      "Lo simplificamos: un asesor licenciado de ClearPoint le puede atender directamente. ¿Coordino la llamada?",
+      "Para hacerlo más simple, un asesor licenciado de ClearPoint le puede ayudar con esto. ¿Le contactamos?",
+    ],
+    en: [
+      "Let's make this easier. A ClearPoint licensed advisor can review this with you. Want them to follow up?",
+      "Simplifying it: a ClearPoint licensed advisor can help directly. Should I set up the call?",
+      "To keep this simple, a ClearPoint licensed advisor can help. Want them to contact you?",
+    ],
+  },
+  recovery_yes_or_start: {
+    es: [
+      'Si desea que le contacten, escriba sí. Si prefiere empezar de nuevo, escriba empezar.',
+      'Si quiere la llamada de un asesor, conteste sí. Si prefiere reiniciar, escriba empezar.',
+      'Para coordinar la llamada conteste sí. Para volver al inicio escriba empezar.',
+    ],
+    en: [
+      'If you want a follow-up, type yes. If you prefer to start over, type start.',
+      'For the advisor call, reply yes. To begin again, type start.',
+      'To set up the call, reply yes. To start over from the beginning, type start.',
+    ],
+  },
+  advisor_handoff_start_collect_name_phone: {
+    es: [
+      'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?',
+      'Listo. Un asesor licenciado de ClearPoint le va a llamar. Por favor no comparta número de Medicare, Seguro Social, información bancaria, ni récords médicos aquí. Para coordinar — ¿su nombre y un teléfono?',
+      'Anotado. Un asesor licenciado de ClearPoint le va a contactar. Por su seguridad, no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados en este chat. ¿Su nombre y un teléfono para coordinar?',
+    ],
+    en: [
+      "Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?",
+      "All set. A ClearPoint licensed advisor will call you. Please don't share Medicare ID, SSN, banking info, or private medical records here. To coordinate — name and a phone number?",
+      "Noted. A ClearPoint licensed advisor will reach out. For your safety, don't send Medicare ID, SSN, banking info, or private medical records in this chat. Your name and a phone number to coordinate?",
+    ],
+  },
+  soft_reset: {
+    es: [
+      'Listo, empezamos de nuevo. ¿En qué le puedo ayudar?',
+      'Hecho, comenzamos de cero. ¿Con qué le puedo ayudar?',
+      'Reiniciado. ¿En qué le puedo ayudar?',
+    ],
+    en: [
+      'Done, starting over. How can I help?',
+      "Reset. What can I help with?",
+      "Fresh start. How can I help you?",
+    ],
+  },
+  ack_opener_neutral: {
+    es: ['Entiendo.', 'Anotado.', 'Ya veo.', 'Perfecto.', 'Entendido.'],
+    en: ['I understand.', 'Got it.', 'Understood.', 'Noted.', 'Thanks.'],
+  },
+  ack_opener_empathy: {
+    es: ['Lo escucho.', 'Le entiendo.', 'Sé que es frustrante.', 'Entiendo cómo se siente.'],
+    en: ['I hear you.', "I understand.", "I know it's frustrating.", "I get how you feel."],
+  },
+};
+

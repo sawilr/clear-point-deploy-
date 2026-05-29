@@ -8,6 +8,8 @@
 // collected at the END only when the user requests advisor follow-up.
 // ============================================================================
 
+import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
+
 export type Language = 'en' | 'es' | null;
 
 export type ConversationStep =
@@ -203,6 +205,12 @@ export interface ConversationState {
   /** True once the bot has actually handed the user off to an advisor flow
    *  (e.g. the user typed "sí" after the stage-3 advisor offer). */
   advisorHandoffStarted?: boolean;
+  // ─── Wave 36: human conversation layer ───
+  /** Per-phrase-key index of variants the bot has already used this session.
+   *  selectPhrase() picks an UNUSED variant; once all used, resets and rotates. */
+  usedPhraseIndexes?: Record<string, number[]>;
+  /** Plain-language conversation summary in user's own words (last 5 facts). */
+  conversationSummary?: string[];
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -583,17 +591,18 @@ function getRecoveryResponse(state: ConversationState): {
   const nextStage = (state.recoveryStage || 0) + 1;
   const hasTopic = !!state.serviceCategory || !!state.hasRealIssue;
 
+  const chipsTopicsEs = ['Medicamentos', 'Doctor', 'Carta', 'Factura', 'Asesor'];
+  const chipsTopicsEn = ['Medications', 'Doctor', 'Letter', 'Bill', 'Advisor'];
+  const chipsYesStartEs = ['Sí, contactar asesor', 'Empezar de nuevo'];
+  const chipsYesStartEn = ['Yes, contact advisor', 'Start over'];
+  const chipsYesStartShortEs = ['Sí', 'Empezar'];
+  const chipsYesStartShortEn = ['Yes', 'Start'];
+
   // ── Case B — real topic exists: 3-tier ──
   if (hasTopic) {
     if (nextStage === 1) {
-      const sn = safeName(state.name);
-      const opener = isSpanish
-        ? (sn ? `Entiendo, ${sn}. No voy a seguir repitiendo preguntas.` : 'Entiendo. No voy a seguir repitiendo preguntas.')
-        : (sn ? `I hear you, ${sn}. I won't keep repeating questions.` : "I hear you. I won't keep repeating questions.");
       return {
-        response: isSpanish
-          ? `${opener} Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso.`
-          : `${opener} I can connect you with a ClearPoint licensed advisor, or ask one final question to organize the case.`,
+        response: selectPhrase('recovery_case_b_tier1', state),
         chips: isSpanish
           ? ['Hablar con asesor', 'Una pregunta más', 'Empezar de nuevo']
           : ['Talk to advisor', 'One more question', 'Start over'],
@@ -602,22 +611,14 @@ function getRecoveryResponse(state: ConversationState): {
     }
     if (nextStage === 2) {
       return {
-        response: isSpanish
-          ? 'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisar esto con usted. ¿Quiere que le contacten?'
-          : "Let's make this easier. A ClearPoint licensed advisor can review this with you. Want them to follow up?",
-        chips: isSpanish
-          ? ['Sí, contactar asesor', 'Empezar de nuevo']
-          : ['Yes, contact advisor', 'Start over'],
+        response: selectPhrase('recovery_case_b_tier2', state),
+        chips: isSpanish ? chipsYesStartEs : chipsYesStartEn,
         nextStage,
       };
     }
-    // Stage 3+ with known topic → yes/start-over confirm (don't loop on the
-    // advisor offer either).
     return {
-      response: isSpanish
-        ? 'Si desea que le contacten, escriba sí. Si prefiere empezar de nuevo, escriba empezar.'
-        : "If you want a follow-up, type yes. If you prefer to start over, type start.",
-      chips: isSpanish ? ['Sí', 'Empezar'] : ['Yes', 'Start'],
+      response: selectPhrase('recovery_yes_or_start', state),
+      chips: isSpanish ? chipsYesStartShortEs : chipsYesStartShortEn,
       nextStage,
     };
   }
@@ -625,44 +626,28 @@ function getRecoveryResponse(state: ConversationState): {
   // ── Case A — NO real topic yet: 4-tier ──
   if (nextStage === 1) {
     return {
-      response: isSpanish
-        ? 'Entiendo que está molesto. Para poder ayudarle, necesito saber el tema: ¿es sobre medicamentos, doctor, una carta, factura o beneficios?'
-        : "I understand you're upset. To help, I need the topic: is it about medications, a doctor, a letter, a bill, or benefits?",
-      chips: isSpanish
-        ? ['Medicamentos', 'Doctor', 'Carta', 'Factura', 'Asesor']
-        : ['Medications', 'Doctor', 'Letter', 'Bill', 'Advisor'],
+      response: selectPhrase('recovery_case_a_tier1', state),
+      chips: isSpanish ? chipsTopicsEs : chipsTopicsEn,
       nextStage,
     };
   }
   if (nextStage === 2) {
     return {
-      response: isSpanish
-        ? 'No quiero adivinar. Escríbame una palabra: medicamentos, doctor, carta, factura o asesor.'
-        : "I don't want to guess. Just send one word: medications, doctor, letter, bill, or advisor.",
-      chips: isSpanish
-        ? ['Medicamentos', 'Doctor', 'Carta', 'Factura', 'Asesor']
-        : ['Medications', 'Doctor', 'Letter', 'Bill', 'Advisor'],
+      response: selectPhrase('recovery_case_a_tier2', state),
+      chips: isSpanish ? chipsTopicsEs : chipsTopicsEn,
       nextStage,
     };
   }
   if (nextStage === 3) {
     return {
-      response: isSpanish
-        ? 'Para evitar confusión, puedo pasarle con un asesor licenciado de ClearPoint. ¿Le contactamos?'
-        : "To avoid confusion, I can connect you with a ClearPoint licensed advisor. Want them to follow up?",
-      chips: isSpanish
-        ? ['Sí, contactar asesor', 'Empezar de nuevo']
-        : ['Yes, contact advisor', 'Start over'],
+      response: selectPhrase('recovery_case_a_tier3', state),
+      chips: isSpanish ? chipsYesStartEs : chipsYesStartEn,
       nextStage,
     };
   }
-  // Stage 4+ → yes/start-over confirm so the offer doesn't loop on more
-  // profanity / nonsense. Sawil V35 spec verbatim.
   return {
-    response: isSpanish
-      ? 'Si desea que le contacten, escriba sí. Si prefiere empezar de nuevo, escriba empezar.'
-      : "If you want a follow-up, type yes. If you prefer to start over, type start.",
-    chips: isSpanish ? ['Sí', 'Empezar'] : ['Yes', 'Start'],
+    response: selectPhrase('recovery_yes_or_start', state),
+    chips: isSpanish ? chipsYesStartShortEs : chipsYesStartShortEn,
     nextStage,
   };
 }
@@ -1346,6 +1331,46 @@ function isTopicSwitch(oldIntent: string | undefined, newRaw: string): boolean {
 }
 
 /** Switch the conversation into recovery mode with chips. Mutates `state`. */
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 36 — HUMAN CONVERSATION LAYER
+//
+// selectPhrase(key, state) returns one of the variants from PHRASE_BANK for
+// the requested key + language, picking an UNUSED variant whenever possible
+// so the bot never sends the same sentence twice in a session. When all
+// variants are exhausted the rotation resets and starts over (still rotating
+// — just from a fresh budget). Mutates state.usedPhraseIndexes in place.
+// ─────────────────────────────────────────────────────────────────────────────
+export function selectPhrase(key: PhraseKey, state: ConversationState): string {
+  const isEs = state.language === 'es';
+  const bank = PHRASE_BANK[key];
+  const list = isEs ? bank.es : bank.en;
+  if (!list || list.length === 0) return '';
+  state.usedPhraseIndexes = state.usedPhraseIndexes || {};
+  const used = state.usedPhraseIndexes[key] || [];
+  // Pick the first index NOT in used.
+  let pickIdx = list.findIndex((_, i) => !used.includes(i));
+  if (pickIdx === -1) {
+    // All used — reset budget but skip the most recent one to avoid an
+    // immediate back-to-back duplicate.
+    const lastIdx = used.length ? used[used.length - 1] : -1;
+    state.usedPhraseIndexes[key] = lastIdx >= 0 ? [lastIdx] : [];
+    pickIdx = list.findIndex((_, i) => i !== lastIdx);
+    if (pickIdx === -1) pickIdx = 0;
+  }
+  state.usedPhraseIndexes[key] = [...(state.usedPhraseIndexes[key] || used), pickIdx];
+  return list[pickIdx];
+}
+
+/** Append a one-line fact to the conversation summary (max 6 lines). */
+function noteFact(state: ConversationState, fact: string): void {
+  state.conversationSummary = state.conversationSummary || [];
+  // Dedupe by case-insensitive match.
+  const lower = fact.toLowerCase();
+  if (state.conversationSummary.some((f) => f.toLowerCase() === lower)) return;
+  state.conversationSummary.push(fact);
+  if (state.conversationSummary.length > 6) state.conversationSummary.shift();
+}
+
 function enterRecoveryMode(
   state: ConversationState,
   reason: 'frustration' | 'zip_loop' | 'name_loop' | 'prompt_loop' | 'nonsense',
@@ -2872,9 +2897,7 @@ export function processMessage(
       }
       if (repCount >= 1 && alreadyAskedProvider) {
         // 2nd tier — short ack, do NOT repeat the first paragraph.
-        const out = isSpanish
-          ? 'Ya tengo esa parte. Para seguir sin repetir: ¿es doctor primario o especialista?'
-          : 'I already have that part. To keep moving without repeating: is it your primary doctor or a specialist?';
+        const out = selectPhrase('provider_repeat_short_ack', newState);
         newState.quickReplies = isSpanish
           ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
           : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
@@ -2895,9 +2918,8 @@ export function processMessage(
         newState.providerIssueType = 'provider_access_issue';
         newState.subIssue = 'provider_access_issue';
         newState.askedQuestions.push('provider_primary_or_specialist');
-        const q = isSpanish
-          ? 'Entiendo. Eso suena como un problema con un doctor/proveedor, no una pregunta general de cobertura. Para orientarle bien: ¿es su doctor primario o un especialista?'
-          : "I understand. That sounds like a doctor/provider issue, not a general coverage question. To guide you properly: is this your primary doctor or a specialist?";
+        noteFact(newState, isSpanish ? 'Problema con doctor/proveedor.' : 'Doctor/provider access issue.');
+        const q = selectPhrase('provider_first_ask', newState);
         newState.quickReplies = isSpanish
           ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
           : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
