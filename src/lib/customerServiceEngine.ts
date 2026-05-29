@@ -200,6 +200,9 @@ export interface ConversationState {
   profanityNoIssueCount?: number;
   /** Tracks unclassified / nonsense messages specifically. */
   nonsenseCount?: number;
+  /** True once the bot has actually handed the user off to an advisor flow
+   *  (e.g. the user typed "sí" after the stage-3 advisor offer). */
+  advisorHandoffStarted?: boolean;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -580,7 +583,7 @@ function getRecoveryResponse(state: ConversationState): {
   const nextStage = (state.recoveryStage || 0) + 1;
   const hasTopic = !!state.serviceCategory || !!state.hasRealIssue;
 
-  // ── Case B — real topic exists: 2-tier "I have that part" → advisor ──
+  // ── Case B — real topic exists: 3-tier ──
   if (hasTopic) {
     if (nextStage === 1) {
       const sn = safeName(state.name);
@@ -597,19 +600,29 @@ function getRecoveryResponse(state: ConversationState): {
         nextStage,
       };
     }
-    // Stage 2+ with known topic → advisor handoff offer.
+    if (nextStage === 2) {
+      return {
+        response: isSpanish
+          ? 'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisar esto con usted. ¿Quiere que le contacten?'
+          : "Let's make this easier. A ClearPoint licensed advisor can review this with you. Want them to follow up?",
+        chips: isSpanish
+          ? ['Sí, contactar asesor', 'Empezar de nuevo']
+          : ['Yes, contact advisor', 'Start over'],
+        nextStage,
+      };
+    }
+    // Stage 3+ with known topic → yes/start-over confirm (don't loop on the
+    // advisor offer either).
     return {
       response: isSpanish
-        ? 'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisar esto con usted. ¿Quiere que le contacten?'
-        : "Let's make this easier. A ClearPoint licensed advisor can review this with you. Want them to follow up?",
-      chips: isSpanish
-        ? ['Sí, contactar asesor', 'Empezar de nuevo']
-        : ['Yes, contact advisor', 'Start over'],
+        ? 'Si desea que le contacten, escriba sí. Si prefiere empezar de nuevo, escriba empezar.'
+        : "If you want a follow-up, type yes. If you prefer to start over, type start.",
+      chips: isSpanish ? ['Sí', 'Empezar'] : ['Yes', 'Start'],
       nextStage,
     };
   }
 
-  // ── Case A — NO real topic yet: 3-tier "I need the topic" ──
+  // ── Case A — NO real topic yet: 4-tier ──
   if (nextStage === 1) {
     return {
       response: isSpanish
@@ -632,14 +645,24 @@ function getRecoveryResponse(state: ConversationState): {
       nextStage,
     };
   }
-  // Stage 3+ with no topic → advisor.
+  if (nextStage === 3) {
+    return {
+      response: isSpanish
+        ? 'Para evitar confusión, puedo pasarle con un asesor licenciado de ClearPoint. ¿Le contactamos?'
+        : "To avoid confusion, I can connect you with a ClearPoint licensed advisor. Want them to follow up?",
+      chips: isSpanish
+        ? ['Sí, contactar asesor', 'Empezar de nuevo']
+        : ['Yes, contact advisor', 'Start over'],
+      nextStage,
+    };
+  }
+  // Stage 4+ → yes/start-over confirm so the offer doesn't loop on more
+  // profanity / nonsense. Sawil V35 spec verbatim.
   return {
     response: isSpanish
-      ? 'Para evitar confusión, puedo pasarle con un asesor licenciado de ClearPoint. ¿Le contactamos?'
-      : "To avoid confusion, I can connect you with a ClearPoint licensed advisor. Want them to follow up?",
-    chips: isSpanish
-      ? ['Sí, contactar asesor', 'Empezar de nuevo']
-      : ['Yes, contact advisor', 'Start over'],
+      ? 'Si desea que le contacten, escriba sí. Si prefiere empezar de nuevo, escriba empezar.'
+      : "If you want a follow-up, type yes. If you prefer to start over, type start.",
+    chips: isSpanish ? ['Sí', 'Empezar'] : ['Yes', 'Start'],
     nextStage,
   };
 }
@@ -1722,6 +1745,50 @@ export function processMessage(
     // falling through to the generic "coverage" paragraph. Stage advances
     // each turn so the bot never sends the same message twice.
     // ──────────────────────────────────────────────────────────────────────
+    // Wave 35 — At recovery stage ≥ 3 we've offered an advisor. Catch the
+    // confirmation answer ("sí", "yes", "empezar", "start") BEFORE we re-enter
+    // recovery so the bot moves into advisor handoff or resets cleanly.
+    if ((newState.recoveryStage || 0) >= 3 && !newState.serviceCategory) {
+      // Strip accents + trim + lowercase. \b is ASCII-only so 'sí' wouldn't
+      // word-boundary correctly without this.
+      const t = userMessage
+        .trim().toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if (/^(si|yes|claro|ok|okay|por favor|please|contactar|advisor|asesor)\b/i.test(t)
+          || /^(si,?\s+contactar|yes,?\s+contact)/i.test(t)) {
+        newState.advisorHandoffReason = newState.advisorHandoffReason || 'unclear_topic_user_consented';
+        newState.needsHuman = true;
+        newState.advisorHandoffStarted = true;
+        const out = isSpanish
+          ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?'
+          : "Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?";
+        newState.lastBotIntent = 'recovery_advisor_handoff_start';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      }
+      if (/^(empezar|start|start over|reiniciar|reset|nuevo)\b/i.test(t)) {
+        // Soft reset: clear recovery + counters + topic. Keep language / ZIP.
+        newState.recoveryStage = 0;
+        newState.hasRealIssue = false;
+        newState.serviceCategory = undefined;
+        newState.intent = '';
+        newState.subIssue = undefined;
+        newState.providerIssueType = undefined;
+        newState.medicationIssueType = undefined;
+        newState.letterIssueType = undefined;
+        newState.letterSender = undefined;
+        newState.askedQuestions = [];
+        newState.repeatedUserMessageCount = 0;
+        newState.advisorHandoffReason = undefined;
+        const out = isSpanish
+          ? 'Listo, empezamos de nuevo. ¿En qué le puedo ayudar?'
+          : 'Done, starting over. How can I help?';
+        newState.lastBotIntent = 'soft_reset';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+    }
+
     if (!newState.serviceCategory && !newState.hasRealIssue && detectNonsense(userMessage)) {
       newState.nonsenseCount = (newState.nonsenseCount || 0) + 1;
       return enterRecoveryMode(newState, 'nonsense');
