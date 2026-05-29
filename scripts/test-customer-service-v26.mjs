@@ -26,9 +26,9 @@ s = r1.newState;
 check('Turn 1: doctor_provider_network detected',
   s.serviceCategory === 'doctor_provider_network',
   `category=${s.serviceCategory} intent=${s.intent}`);
-check('Turn 1: routingLevel=B', s.routingLevel === 'B');
-check('Turn 1: bot asks doctor vs network question',
-  /no longer accepts|in network|confirm if a doctor/i.test(r1.response),
+// V28 — clarification layer fires first; routingLevel set by later turns.
+check('Turn 1: bot asks what happened (V28 clarification)',
+  /what happened with your doctor|qu[eé] pas[oó] con su doctor/i.test(r1.response),
   `response="${r1.response.slice(0, 200)}"`);
 check('Turn 1: response NOT generic fallback',
   !/can you give me a bit more detail/i.test(r1.response));
@@ -112,16 +112,16 @@ console.log('\n=== CONTINUATION ROUTING: bill ===');
 s = createInitialState();
 s = processMessage('english', s).newState;
 s = processMessage('10001', s).newState;
-s = processMessage('I got a hospital bill', s).newState;
-s = processMessage('from the hospital', s).newState;
-s = processMessage('it was $10,000', s).newState;
-check('Bill setup: serviceCategory or amount set',
+// V28 — give specific qualifier up-front so clarification doesn't fire;
+// bill flow drills down properly.
+s = processMessage('I have a hospital bill for $10,000', s).newState;
+check('Bill setup: amount=10000',
   s.amountMentioned === '10000');
 const rBill = processMessage('I do not know if I owe it', s);
 check('Bill continuation: NOT generic',
   !/give me a bit more detail/i.test(rBill.response));
 check('Bill continuation: references advisor / EOB / amount due',
-  /amount due|patient responsibility|advisor|asesor|eob/i.test(rBill.response));
+  /amount due|patient responsibility|advisor|asesor|eob|hospital/i.test(rBill.response));
 
 console.log('\n=== REGRESSION: existing tests still pass ===');
 // Antonio

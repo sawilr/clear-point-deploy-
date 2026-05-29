@@ -40,17 +40,22 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const bodyRef = useRef<HTMLDivElement>(null);
   const userPinnedUpRef = useRef(false);
 
-  // Monotonic bottom-follow scroll. V27: smooth scrollTo + uses end ref.
+  // Monotonic bottom-follow scroll. V28: rAF-wrapped to avoid layout
+  // race; respects user pin. Uses scroll INSIDE the body, not the page.
   const scrollToBottom = useCallback(() => {
     const c = bodyRef.current;
     if (!c) return;
     if (userPinnedUpRef.current) return;
-    // Try smooth scroll via endRef first (better behavior); fallback to direct.
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    } else {
-      c.scrollTo({ top: c.scrollHeight, behavior: 'smooth' });
-    }
+    // Two rAF ticks guarantee the new message DOM has painted before we
+    // measure scrollHeight. Single rAF can miss when typing indicator
+    // appears/disappears in the same tick.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const cc = bodyRef.current;
+        if (!cc) return;
+        cc.scrollTo({ top: cc.scrollHeight, behavior: 'smooth' });
+      });
+    });
   }, []);
   function handleScroll() {
     const c = bodyRef.current;
@@ -62,6 +67,23 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   useEffect(() => {
     scrollToBottom();
   }, [messages, isTyping, scrollToBottom]);
+
+  // V28 — Language sync: if user changes the global site language BEFORE
+  // selecting bot language, the welcome message updates to match the new
+  // page language. Once bot language is locked, this no-ops.
+  useEffect(() => {
+    if (state.step !== 'asking_language' || state.language) return;
+    if (messages.length === 0) return;
+    setMessages([{
+      id: 'welcome-' + Date.now(),
+      text: pageLang === 'es'
+        ? '¡Hola! ¿Prefiere español o inglés?'
+        : 'Hi. Do you prefer English or Spanish?',
+      sender: 'bot',
+      timestamp: new Date(),
+    }]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageLang]);
 
   // Bilingual welcome on mount
   useEffect(() => {

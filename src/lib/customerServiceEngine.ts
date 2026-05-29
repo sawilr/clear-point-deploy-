@@ -118,6 +118,10 @@ export interface ConversationState {
   /** True after bot has acknowledged the user's "don't want to change" once.
    *  Used to advance to verification follow-up on subsequent turns. */
   planChangeAcknowledged?: boolean;
+  // ─── Wave 28: clarify-before-explaining ───
+  /** Last question the bot asked (verbatim) — prevents repeating the same
+   *  generic question twice and gates clarification flow. */
+  lastBotQuestion?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -486,6 +490,113 @@ export function detectClarificationRequest(text: string): boolean {
     }
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 28 — CLARIFY-BEFORE-EXPLAINING LAYER
+//
+// Core principle: listen first, classify after.
+// If user reports a vague problem ("tengo problemas con mi doctor"), the
+// bot must ASK what happened — not launch a full Medicare flow.
+//
+// detectVagueProblemReport returns the topic noun + isVague flag.
+// getTopicClarification returns the short office-style question for that
+// topic, in EN or ES.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type VagueTopic =
+  | 'doctor' | 'specialist' | 'hospital' | 'plan'
+  | 'medication' | 'pharmacy' | 'bill' | 'letter'
+  | 'card' | 'coverage' | 'dental' | 'vision'
+  | 'otc' | 'transportation';
+
+/** Returns the topic noun + isVague flag for "I have a problem with X" patterns. */
+export function detectVagueProblemReport(text: string): { isVague: boolean; topic: VagueTopic | null } {
+  const lower = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Step 1: detect a broad-problem opener ("tengo problemas con", "I have a
+  // problem with", "necesito ayuda con", etc.)
+  const broadPattern = /\b(tengo (un )?problemas? con|tengo (una )?duda con|necesito ayuda con|no entiendo|tengo (un )?inconveniente con|mi .{0,15} tiene (un )?problema|mi .{0,15} no funciona|mi .{0,15} no esta funcionando|me lleg[oó]|recib[ií]|i (have|got|am having) (a |an )?problems? with|i need help with|i don'?t understand|i'?m having trouble with|my .{0,15} (has|is having) (a |an )?(problem|issue)|my .{0,15} (isn'?t|is not) working|i got (a |an |my )?)\b/i;
+  if (!broadPattern.test(lower)) return { isVague: false, topic: null };
+  // Step 2: identify the topic noun.
+  const topicChecks: Array<[VagueTopic, RegExp]> = [
+    ['specialist', /\b(specialists?|especialistas?)\b/i],
+    ['doctor', /\b(doctors?|doctora|m[eé]dico|pcp|primary)\b/i],
+    ['hospital', /\b(hospitals?|cl[ií]nica|er|emergency room)\b/i],
+    ['medication', /\b(medication|medicine|drug|prescription|medicina|medicamentos?|pastillas?|receta)\b/i],
+    ['pharmacy', /\b(pharmacy|farmacia|drugstore|drugstores)\b/i],
+    ['bill', /\b(bill|invoice|charge|cobro|factura|facturas)\b/i],
+    ['letter', /\b(letter|notice|carta|aviso)\b/i],
+    ['otc', /\b(otc|over[- ]the[- ]counter|flex card|tarjeta otc|tarjeta flex)\b/i],
+    ['card', /\b(card|tarjeta|tarjetas)\b/i],
+    ['plan', /\b(plan|planes|carrier|aseguradora|insurance|seguro)\b/i],
+    ['dental', /\b(dental|dentist|dientes|dentadura)\b/i],
+    ['vision', /\b(vision|eyes?|ojos?|glasses|lentes|anteojos)\b/i],
+    ['transportation', /\b(transportation|transporte|ride|rides|viaje|viajes)\b/i],
+    ['coverage', /\b(coverage|cobertura)\b/i],
+  ];
+  let topic: VagueTopic | null = null;
+  for (const [t, re] of topicChecks) {
+    if (re.test(lower)) { topic = t; break; }
+  }
+  if (!topic) return { isVague: false, topic: null };
+  // Step 3: if SPECIFIC qualifier present, it's NOT vague — full handler runs.
+  const specific = [
+    /no longer|stopped|left|dropped|doesn'?t accept|don'?t accept|won'?t take|out of (the |my )?(network|plan)/i,
+    /ya no acepta|ya no trabaja|sali[oó] de|dej[oó] de|no me dieron|me negaron/i,
+    /denied|rejected|negado|denegado|no me aprobaron/i,
+    /expensive|too high|caro|muy caro|costoso/i,
+    /amount due|balance due|patient responsibility|cantidad adeudada/i,
+    /from medicare|from medicaid|from social security|de medicare|de medicaid|de social security|de seguro social/i,
+    /lost|perdi|perdimos|reemplazo|replacement/i,
+    /\$\d|\b\d{1,5}\s*(dollar|dollars|dolares|d[oó]lares|usd|k\b|mil\b|thousand|thousands)\b/i,
+    /\b\d+\s*k\b/i,  // 10k pattern
+    /\b\d+\s*mil\b/i,  // 10 mil pattern
+    /referral|referido|prior auth|autorizaci[oó]n previa/i,
+    /declined|rechaz|reject|inelegible/i,
+    /no funciona porque|no funciono|porque tiene|porque viene/i,
+  ];
+  for (const q of specific) {
+    if (q.test(lower)) return { isVague: false, topic };
+  }
+  return { isVague: true, topic };
+}
+
+/** Returns the short office-style clarification question for a vague topic. */
+export function getTopicClarification(topic: VagueTopic, isSpanish: boolean): string {
+  if (isSpanish) {
+    switch (topic) {
+      case 'doctor':         return 'Entiendo. ¿Qué pasó con su doctor — una cita, la red del plan, una autorización, o algo que le dijeron?';
+      case 'specialist':     return 'Entiendo. ¿Qué pasó con su especialista — la red, autorización, un referido, o algo que le dijeron?';
+      case 'hospital':       return 'Entiendo. ¿El problema es una factura, una cobertura, una autorización, o una cita/procedimiento?';
+      case 'bill':           return 'Entiendo. ¿El documento dice que usted debe pagar una cantidad, o parece ser una explicación de beneficios del plan?';
+      case 'letter':         return 'Entiendo. ¿La carta es de Medicare, Medicaid, Social Security o de su plan?';
+      case 'medication':     return 'Entiendo. ¿El problema es el costo, que no la cubrieron, o que la farmacia no pudo procesarla?';
+      case 'pharmacy':       return 'Entiendo. ¿La farmacia le dijo que el medicamento no está cubierto, que está muy caro, o que necesita autorización?';
+      case 'plan':           return 'Entiendo. ¿El problema es con cobertura, costo, doctores, medicamentos, o una carta que recibió?';
+      case 'card':           return 'Entiendo. ¿Es sobre una tarjeta perdida, una que no le llegó, o una que no funciona?';
+      case 'coverage':       return 'Entiendo. ¿La duda es sobre un doctor, hospital, medicamento, beneficio dental/vision, o algo más?';
+      case 'dental':         return 'Entiendo. ¿Quiere saber si tiene beneficio dental, o tiene un problema con una factura o cita dental?';
+      case 'vision':         return 'Entiendo. ¿Es sobre un examen, anteojos, o un beneficio que vio en su plan?';
+      case 'otc':            return 'Entiendo. ¿La tarjeta fue rechazada, el balance aparece en cero, o no sabe cómo usarla?';
+      case 'transportation': return 'Entiendo. ¿Necesita saber si tiene transporte, o tuvo un problema programando un viaje?';
+    }
+  }
+  switch (topic) {
+    case 'doctor':         return "I understand. What happened with your doctor — an appointment, the plan network, an authorization, or something they told you?";
+    case 'specialist':     return "I understand. What happened with your specialist — the network, an authorization, a referral, or something they told you?";
+    case 'hospital':       return "I understand. Is it about a bill, coverage, an authorization, or an appointment/procedure?";
+    case 'bill':           return "I understand. Does the document say you owe an amount, or does it look like an Explanation of Benefits?";
+    case 'letter':         return "I understand. Is the letter from Medicare, Medicaid, Social Security, or from your plan?";
+    case 'medication':     return "I understand. Is the issue that it's too expensive, not covered, or the pharmacy couldn't process it?";
+    case 'pharmacy':       return "I understand. Did the pharmacy say the medication isn't covered, it's too expensive, or it needs prior authorization?";
+    case 'plan':           return "I understand. Is the issue about coverage, cost, doctors, medications, or a letter you received?";
+    case 'card':           return "I understand. Is it about a lost card, one that didn't arrive, or one that's not working?";
+    case 'coverage':       return "I understand. Is the question about a doctor, hospital, medication, dental/vision benefit, or something else?";
+    case 'dental':         return "I understand. Do you want to know if you have a dental benefit, or do you have a problem with a dental bill or appointment?";
+    case 'vision':         return "I understand. Is this about an exam, glasses, or a benefit you saw in your plan?";
+    case 'otc':            return "I understand. Was the card declined, is the balance showing zero, or are you unsure how to use it?";
+    case 'transportation': return "I understand. Do you need to know if you have transportation, or did you have a problem scheduling a ride?";
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1218,6 +1329,52 @@ export function processMessage(
     }
     newState.intent = effectiveIntent;
     let problemType = effectiveIntent;
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 28 — CLARIFY-BEFORE-EXPLAINING LAYER
+    //
+    // If the user reported a vague problem ("tengo problemas con mi doctor"),
+    // ASK what happened — don't launch a full Medicare flow. Skips when:
+    //  · message has a specific qualifier ("no longer accepts" / "denied" /
+    //    "$X" / "from Medicare"),
+    //  · OR the bot's previous message was already a clarification (we don't
+    //    want to ask twice in a row),
+    //  · OR user is in advisor handoff flow.
+    // ──────────────────────────────────────────────────────────────────────
+    if (!newState.pendingAdvisorHandoff) {
+      const vague = detectVagueProblemReport(userMessage);
+      // Track whether last bot question was already this clarification
+      const lastWasSameClarification = !!newState.lastBotQuestion
+        && vague.topic
+        && newState.lastBotQuestion === getTopicClarification(vague.topic, isSpanish);
+      if (vague.isVague && vague.topic && !lastWasSameClarification) {
+        const clarification = getTopicClarification(vague.topic, isSpanish);
+        // Map vague topic → serviceCategory for routing memory
+        const topicToCategory: Record<VagueTopic, string> = {
+          doctor: 'doctor_provider_network',
+          specialist: 'doctor_provider_network',
+          hospital: 'doctor_provider_network',
+          plan: 'plan_general',
+          medication: 'drug',
+          pharmacy: 'drug',
+          bill: 'bill',
+          letter: 'letter',
+          card: 'id_card',
+          coverage: 'coverage',
+          dental: 'dental',
+          vision: 'vision',
+          otc: 'otc',
+          transportation: 'transportation',
+        };
+        newState.serviceCategory = topicToCategory[vague.topic];
+        newState.subIssue = 'vague_report';
+        newState.lastBotQuestion = clarification;
+        newState.intent = newState.serviceCategory;
+        newState.routingLevel = 'B'; // Educate-then-route
+        newState.messages.push({ role: 'bot', content: clarification, timestamp: Date.now() });
+        return { response: clarification, newState, needsHuman: false };
+      }
+    }
+
     // V26 — Active-category override. If user is already in
     // doctor_provider_network flow, force-route subsequent messages through
     // that handler even when detectProblemType returns 'coverage' (because
