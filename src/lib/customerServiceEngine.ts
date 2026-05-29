@@ -1496,7 +1496,21 @@ function normalizeText(text: string): string {
     pharmcy: 'pharmacy',
     pharmacy: 'pharmacy',
     farmacy: 'pharmacy',
+    pharmasy: 'pharmacy',
+    farmasia: 'farmacia',
     farmacia: 'farmacia',
+    problms: 'problems',
+    probllems: 'problems',
+    probems: 'problems',
+    porblems: 'problems',
+    problemas: 'problemas',
+    problmas: 'problemas',
+    pproblema: 'problema',
+    aspeta: 'acepta',
+    asepta: 'acepta',
+    seguruo: 'seguro',
+    medicna: 'medicina',
+    medicna: 'medicina',
   };
   let normalized = text.toLowerCase();
   for (const [wrong, correct] of Object.entries(corrections)) {
@@ -1584,6 +1598,9 @@ function detectProblemType(text: string): string {
   //       won't take my plan / won't see me / refuses me
   if (/\b(no (me )?(quiere|quieren)\s+(aceptar|recibir|ver|atender)(me)?|no me (acepta|aceptan|recibe|reciben|ven|atiende|atienden)|no (acepta|aceptan|recibe|reciben|coge|cogen|toma|toman)\s+(mi|el)\s+(plan|seguro|aseguranza|medicare))\b/i.test(normalized)) return 'doctor_provider_network';
   if (/\b((doesn'?t|does not|won'?t|will not|wouldn'?t|would not|refuses to|refused to)\s+(accept|take|see|treat)\s+(me|my (insurance|plan|medicare)))\b/i.test(normalized)) return 'doctor_provider_network';
+  // WAVE 38 — Spanglish: "my doctor no me wants to ver" / "my doctor no me acepta"
+  if (/\b(my )?(doctor|doctora|m[eé]dico|specialist|especialista)\b.{0,25}\b(no me|no quiere|no acepta|no toma)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\bno me\b.{0,15}\b(wants?|want)\s+to\s+(ver|see|aceptar|accept)\b/i.test(normalized)) return 'doctor_provider_network';
   if (/\b(office (told|said|let me know)|me dijo (en )?la oficina|me dijeron en la oficina)\b.{0,40}\b(not accept|no acepta|don'?t accept|won'?t take|no toman|no cogen)\b/i.test(normalized)) return 'doctor_provider_network';
   // Provider-access keywords standalone with provider context.
   if (/\b(referral|referido|autorizaci[oó]n del doctor|prior auth from (the )?doctor)\b/i.test(normalized)
