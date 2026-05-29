@@ -234,11 +234,15 @@ console.log('\n=== TEST 12: Advisor request stops triage ===');
       || /asesor|advisor/i.test(r.response));
 }
 
-console.log('\n=== TEST 13: Frustration "no me entiendes" ===');
+console.log('\n=== TEST 13: Frustration "no me entiendes" (no topic → Case A) ===');
 {
+  // V34: no topic yet → Case A recovery asks for topic (not "no voy a repetir").
   const { state: s, last: r } = drive(['no me entiendes']);
-  check('T13: short response, offers advisor or one more question',
-    /asesor|advisor|una pregunta|one more|empezar de nuevo|start over/i.test(r.response));
+  check('T13: response asks for topic',
+    /tema|medicamento|doctor|carta|factura|topic/i.test(r.response));
+  check('T13: chips include Medicamentos OR Medications',
+    (s.quickReplies || []).includes('Medicamentos')
+      || (s.quickReplies || []).includes('Medications'));
   check('T13: NOT long generic paragraph',
     r.response.split(/\s+/).length < 80);
 }

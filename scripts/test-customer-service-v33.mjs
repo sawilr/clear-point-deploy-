@@ -246,11 +246,15 @@ console.log('\n=== TEST K: Language switch ("mi mamá habla español") — prese
     !/qu[eé] idioma|c[oó]digo postal/i.test(r.response));
 }
 
-console.log('\n=== TEST L: Frustration ===');
+console.log('\n=== TEST L: Frustration (no topic → Case A) ===');
 {
+  // V34: with no topic established, frustration → Case A recovery asks the
+  // user for the topic, with chips, not "no voy a repetir".
   const { state: s, last: r } = drive(['no me entiendes'], 'español', '10550');
-  check('L: response offers advisor or one more question',
-    /asesor|advisor|una pregunta|empezar de nuevo/i.test(r.response));
+  check('L: response asks for topic',
+    /tema|medicamento|doctor|carta|factura/i.test(r.response));
+  check('L: chips include Medicamentos',
+    (s.quickReplies || []).includes('Medicamentos'));
   check('L: short response (<60 words)',
     r.response.split(/\s+/).length < 60);
 }

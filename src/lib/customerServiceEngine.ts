@@ -186,6 +186,20 @@ export interface ConversationState {
     | 'premium_bill' | 'copay' | 'coinsurance' | 'deductible'
     | 'hospital_bill' | 'specialist_bill' | 'pharmacy_bill'
     | 'ambulance_bill' | 'late_penalty' | 'unknown' | 'wants_advisor';
+  // ─── Wave 34: conversation intelligence layer ───
+  /** True iff the user has produced a recognizable Medicare topic anywhere
+   *  in this session. Profanity / nonsense alone does NOT set this. */
+  hasRealIssue?: boolean;
+  /** Confidence the user actually has a Medicare service issue. */
+  issueConfidence?: 'none' | 'low' | 'medium' | 'high';
+  /** 3-tier recovery counter — increments each turn we're in recovery so the
+   *  bot picks a *different* response every time and stops looping. */
+  recoveryStage?: number;
+  /** Tracks profanity-with-no-issue specifically (different from frustration
+   *  with a known issue). */
+  profanityNoIssueCount?: number;
+  /** Tracks unclassified / nonsense messages specifically. */
+  nonsenseCount?: number;
 }
 
 // ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
@@ -483,6 +497,59 @@ export function detectAbuseOrFrustration(text: string): {
   return { detected: false, severity: 'mild' };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 34 — NONSENSE / UNCLASSIFIABLE-INPUT DETECTOR
+//
+// Returns true when the input is unlikely to carry a Medicare service topic
+// or any sensible question. Used by the conversation block to route to the
+// 3-tier "I need a topic" recovery instead of dumping a generic paragraph.
+//
+// Rules (cheap, fast, conservative):
+//   1. Very short with no recognizable Medicare keyword AND no common
+//      English/Spanish acknowledgment word.
+//   2. Pure punctuation / symbol soup.
+//   3. Random-letter clusters (e.g. "mkvso", "asdf", "qwerty", "zzz").
+//   4. Single demonstrative pronouns with no topic ("eso", "aquello").
+// Never triggers when the input is profanity (handled by the abuse detector)
+// or when it's a real one-word answer the bot is expecting.
+// ─────────────────────────────────────────────────────────────────────────────
+export function detectNonsense(text: string): boolean {
+  const raw = (text || '').trim();
+  if (!raw) return true;
+  if (raw.length > 25) return false;
+  const lower = normalizeText(raw).trim();
+  // Pure punctuation / symbol soup.
+  if (/^[\W_]+$/u.test(raw)) return true;
+  // Has any Medicare topic keyword → NOT nonsense.
+  const topicKw = /\b(doctor|doctora|m[eé]dico|pcp|primary|specialist|especialista|provider|proveedor|hospital|cl[ií]nica|medic|drug|farmacia|pharmacy|prescription|receta|pill|pastilla|carta|letter|notice|aviso|bill|factura|cobro|premium|prima|copay|deducti|cover|cobertura|otc|flex|dental|vision|hearing|transport|advisor|asesor|human|persona|representative|representante|medicare|medicaid|social security|seguro social|aep|iep|sep|enrollment|inscripci|appeal|apelaci|grieva|queja|change|cambiar|switch|need|necesito|help|ayuda|problem|problema|issue|inconveniente|n[uú]mero|number|english|espa[ñn]ol|spanish|ingl[eé]s)\b/i;
+  if (topicKw.test(lower)) return false;
+  // Single common acknowledgment words → NOT nonsense.
+  if (/^(yes|no|ok|okay|s[ií]|claro|gracias|thanks|thank you|hola|hello|hi|hey|bye|adios|adi[oó]s)\.?$/i.test(lower)) {
+    return false;
+  }
+  // Profanity is handled by detectAbuseOrFrustration; do NOT also tag as
+  // nonsense here.
+  if (/\b(mierda|co[ñn]o|carajo|maldit|p[uú]ta|diablo|joder|pendejo|estupido|est[uú]pido|fuck|shit|damn|asshole|bitch|jerk)\b/i.test(lower)) {
+    return false;
+  }
+  // Single demonstrative pronouns / filler.
+  if (/^(eso|aquello|esto|that|this|huh|hmm+|mmm+|uhh?|umm?)\.?$/i.test(lower)) return true;
+  // Known keyboard-mash patterns.
+  if (/^(asdf+|qwerty+|qwer+|asdfghjkl|zxcv+|jkl+|aoeu+|wasd+)\.?$/i.test(lower)) return true;
+  // Short string + no vowels at all → consonant soup ("mkvso", "zzz").
+  if (lower.length <= 10 && !/[aeiouáéíóú]/i.test(lower)) return true;
+  // Short string + low vowel ratio (< 25 % vowels) → likely gibberish like
+  // "asdf" (1/4), "qwerty" (1/6), "bvcxz" (0/5). Real Spanish/English short
+  // words have ≥ 25 % vowels.
+  if (lower.length <= 12) {
+    const letters = lower.replace(/[^a-záéíóúñ]/gi, '');
+    if (letters.length < 3) return true;
+    const vowels = (letters.match(/[aeiouáéíóú]/gi) || []).length;
+    if ((vowels / letters.length) < 0.25) return true;
+  }
+  return false;
+}
+
 /**
  * V20 — strict language switch detector. Only fires on an EXACT, intentional
  * request. "factura" alone does NOT switch a Spanish-locked session to
@@ -504,26 +571,76 @@ export function detectExplicitLanguageSwitch(text: string): 'en' | 'es' | null {
 }
 
 /** V20 — recovery menu + chip labels using Sawil's exact spec wording. */
-function getRecoveryResponse(state: ConversationState): { response: string; chips: string[] } {
+function getRecoveryResponse(state: ConversationState): {
+  response: string;
+  chips: string[];
+  nextStage: number;
+} {
   const isSpanish = state.language === 'es';
-  // V32 — Sawil frustration spec: short ack, offer advisor OR one more question.
-  if (isSpanish) {
-    const sn = safeName(state.name);
-    const opener = sn
-      ? `Entiendo, ${sn}. No voy a seguir repitiendo preguntas.`
-      : 'Entiendo. No voy a seguir repitiendo preguntas.';
+  const nextStage = (state.recoveryStage || 0) + 1;
+  const hasTopic = !!state.serviceCategory || !!state.hasRealIssue;
+
+  // ── Case B — real topic exists: 2-tier "I have that part" → advisor ──
+  if (hasTopic) {
+    if (nextStage === 1) {
+      const sn = safeName(state.name);
+      const opener = isSpanish
+        ? (sn ? `Entiendo, ${sn}. No voy a seguir repitiendo preguntas.` : 'Entiendo. No voy a seguir repitiendo preguntas.')
+        : (sn ? `I hear you, ${sn}. I won't keep repeating questions.` : "I hear you. I won't keep repeating questions.");
+      return {
+        response: isSpanish
+          ? `${opener} Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso.`
+          : `${opener} I can connect you with a ClearPoint licensed advisor, or ask one final question to organize the case.`,
+        chips: isSpanish
+          ? ['Hablar con asesor', 'Una pregunta más', 'Empezar de nuevo']
+          : ['Talk to advisor', 'One more question', 'Start over'],
+        nextStage,
+      };
+    }
+    // Stage 2+ with known topic → advisor handoff offer.
     return {
-      response: `${opener} Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso.`,
-      chips: ['Hablar con asesor', 'Una pregunta más', 'Empezar de nuevo'],
+      response: isSpanish
+        ? 'Vamos a hacerlo más fácil. Un asesor licenciado de ClearPoint puede revisar esto con usted. ¿Quiere que le contacten?'
+        : "Let's make this easier. A ClearPoint licensed advisor can review this with you. Want them to follow up?",
+      chips: isSpanish
+        ? ['Sí, contactar asesor', 'Empezar de nuevo']
+        : ['Yes, contact advisor', 'Start over'],
+      nextStage,
     };
   }
-  const snEn = safeName(state.name);
-  const opener = snEn
-    ? `I hear you, ${snEn}. I won't keep repeating questions.`
-    : "I hear you. I won't keep repeating questions.";
+
+  // ── Case A — NO real topic yet: 3-tier "I need the topic" ──
+  if (nextStage === 1) {
+    return {
+      response: isSpanish
+        ? 'Entiendo que está molesto. Para poder ayudarle, necesito saber el tema: ¿es sobre medicamentos, doctor, una carta, factura o beneficios?'
+        : "I understand you're upset. To help, I need the topic: is it about medications, a doctor, a letter, a bill, or benefits?",
+      chips: isSpanish
+        ? ['Medicamentos', 'Doctor', 'Carta', 'Factura', 'Asesor']
+        : ['Medications', 'Doctor', 'Letter', 'Bill', 'Advisor'],
+      nextStage,
+    };
+  }
+  if (nextStage === 2) {
+    return {
+      response: isSpanish
+        ? 'No quiero adivinar. Escríbame una palabra: medicamentos, doctor, carta, factura o asesor.'
+        : "I don't want to guess. Just send one word: medications, doctor, letter, bill, or advisor.",
+      chips: isSpanish
+        ? ['Medicamentos', 'Doctor', 'Carta', 'Factura', 'Asesor']
+        : ['Medications', 'Doctor', 'Letter', 'Bill', 'Advisor'],
+      nextStage,
+    };
+  }
+  // Stage 3+ with no topic → advisor.
   return {
-    response: `${opener} I can connect you with a ClearPoint licensed advisor, or ask one final question to organize the case.`,
-    chips: ['Talk to advisor', 'One more question', 'Start over'],
+    response: isSpanish
+      ? 'Para evitar confusión, puedo pasarle con un asesor licenciado de ClearPoint. ¿Le contactamos?'
+      : "To avoid confusion, I can connect you with a ClearPoint licensed advisor. Want them to follow up?",
+    chips: isSpanish
+      ? ['Sí, contactar asesor', 'Empezar de nuevo']
+      : ['Yes, contact advisor', 'Start over'],
+    nextStage,
   };
 }
 
@@ -1208,15 +1325,22 @@ function isTopicSwitch(oldIntent: string | undefined, newRaw: string): boolean {
 /** Switch the conversation into recovery mode with chips. Mutates `state`. */
 function enterRecoveryMode(
   state: ConversationState,
-  reason: 'frustration' | 'zip_loop' | 'name_loop' | 'prompt_loop',
+  reason: 'frustration' | 'zip_loop' | 'name_loop' | 'prompt_loop' | 'nonsense',
 ): { response: string; newState: ConversationState; needsHuman: boolean } {
   state.recoveryMode = true;
   state.step = 'conversation';
   const rec = getRecoveryResponse(state);
+  state.recoveryStage = rec.nextStage;
   state.quickReplies = rec.chips;
   state.lastBotPrompt = rec.response;
+  state.lastBotIntent = 'recovery_stage_' + rec.nextStage;
   state.inconsistencies = [...(state.inconsistencies || []), `recovery_${reason}`];
   state.messages.push({ role: 'bot', content: rec.response, timestamp: Date.now() });
+  // Stage 3 with no topic → set advisor handoff reason for telemetry; UI only
+  // submits when user clicks the advisor chip, so don't force needsHuman=true.
+  if (rec.nextStage >= 3 && !state.serviceCategory) {
+    state.advisorHandoffReason = state.advisorHandoffReason || 'no_topic_repeated_unclear';
+  }
   return { response: rec.response, newState: state, needsHuman: false };
 }
 
@@ -1581,7 +1705,38 @@ export function processMessage(
       } else {
         newState.frustrationCount = (newState.frustrationCount || 0) + 1;
         newState.emotionalState = ab.severity === 'severe' ? 'angry' : 'frustrated';
+        // Wave 34 — track profanity specifically when no topic exists.
+        if (!newState.serviceCategory && !newState.hasRealIssue) {
+          newState.profanityNoIssueCount = (newState.profanityNoIssueCount || 0) + 1;
+        }
         return enterRecoveryMode(newState, 'frustration');
+      }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // WAVE 34 — NONSENSE / UNCLASSIFIABLE INPUT WITH NO TOPIC
+    //
+    // If the user types gibberish ("mkvso", "asdf"), filler ("hmm"), or any
+    // input with no recognizable Medicare topic AND we have no
+    // serviceCategory established yet, route to 3-tier recovery instead of
+    // falling through to the generic "coverage" paragraph. Stage advances
+    // each turn so the bot never sends the same message twice.
+    // ──────────────────────────────────────────────────────────────────────
+    if (!newState.serviceCategory && !newState.hasRealIssue && detectNonsense(userMessage)) {
+      newState.nonsenseCount = (newState.nonsenseCount || 0) + 1;
+      return enterRecoveryMode(newState, 'nonsense');
+    }
+
+    // Wave 34 — once in recovery (stage >= 1) and the current message still
+    // does NOT contain a real Medicare topic, stay in recovery and advance
+    // the stage instead of dumping a generic fallback. Avoids the loop
+    // "Thanks for telling me. Can you give me a bit more detail…" that
+    // confused the user mid-recovery.
+    if ((newState.recoveryStage || 0) >= 1 && !newState.serviceCategory && !newState.hasRealIssue) {
+      const probe = detectProblemType(userMessage);
+      const hasTopic = probe && probe !== 'general' && probe !== 'casual';
+      if (!hasTopic) {
+        return enterRecoveryMode(newState, 'nonsense');
       }
     }
   }
@@ -1975,6 +2130,15 @@ export function processMessage(
     }
     newState.intent = effectiveIntent;
     let problemType = effectiveIntent;
+    // Wave 34 — mark hasRealIssue when problemType is a recognized topic.
+    // This unlocks Case B recovery and prevents profanity/nonsense from
+    // being treated as a known case.
+    if (problemType && problemType !== 'general' && problemType !== 'casual') {
+      newState.hasRealIssue = true;
+      // Real input → recovery stage no longer applies; clear it so a future
+      // frustration after a real topic restarts at Case B stage 1.
+      newState.recoveryStage = 0;
+    }
     // ──────────────────────────────────────────────────────────────────────
     // WAVE 30 — TOPIC-LESS GENERAL VAGUE
     //
