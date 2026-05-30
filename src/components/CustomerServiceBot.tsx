@@ -39,6 +39,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const inputRef = useRef<HTMLInputElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const userPinnedUpRef = useRef(false);
+  // WAVE 39 — synchronous re-entrancy lock. React state (isTyping) doesn't
+  // flush between two near-simultaneous click events; a ref does. Blocks
+  // double-submit on rapid taps / Enter mashing.
+  const isSendingRef = useRef(false);
 
   // Monotonic bottom-follow scroll. V28: rAF-wrapped to avoid layout
   // race; respects user pin. Uses scroll INSIDE the body, not the page.
@@ -206,6 +210,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
 
   async function handleSendMessage(text: string) {
     if (!text.trim() || isTyping) return;
+    // WAVE 39 — synchronous re-entrancy guard. React state hasn't flushed
+    // between two near-simultaneous clicks; the ref has.
+    if (isSendingRef.current) return;
+    isSendingRef.current = true;
+
     const userMessage: Message = {
       id: Date.now().toString(),
       text: text.trim(),
@@ -216,47 +225,53 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     setInputValue('');
     setIsTyping(true);
 
-    const typingDelay = Math.min(300 + text.length * 10, 800);
-    await new Promise((resolve) => setTimeout(resolve, typingDelay));
-
-    let response = '';
-    let newState = state;
-    let needsHuman = false;
     try {
-      const result = processMessage(text, state);
-      response = result.response;
-      newState = result.newState;
-      needsHuman = result.needsHuman;
-    } catch {
-      response = state.language === 'es'
-        ? 'Algo salió mal, pero sigo aquí. Por favor intente de nuevo.'
-        : "Something went wrong, but I'm still here. Please try again.";
-    }
-    // Wave 21 — final safety guard. Never let "undefined" / "null" / "NaN"
-    // reach the user, even if a template slipped through.
-    response = sanitizeResponse(response, (newState.language || state.language) === 'es');
+      const typingDelay = Math.min(300 + text.length * 10, 800);
+      await new Promise((resolve) => setTimeout(resolve, typingDelay));
 
-    // Sync page-level language when chip selection occurs
-    if (newState.language && newState.language !== state.language) {
-      setLang(newState.language);
-    }
+      let response = '';
+      let newState = state;
+      let needsHuman = false;
+      try {
+        const result = processMessage(text, state);
+        response = result.response;
+        newState = result.newState;
+        needsHuman = result.needsHuman;
+      } catch {
+        response = state.language === 'es'
+          ? 'Algo salió mal, pero sigo aquí. Por favor intente de nuevo.'
+          : "Something went wrong, but I'm still here. Please try again.";
+      }
+      // Wave 21 — final safety guard. Never let "undefined" / "null" / "NaN"
+      // reach the user, even if a template slipped through.
+      response = sanitizeResponse(response, (newState.language || state.language) === 'es');
 
-    setState(newState);
-    const botMessage: Message = {
-      id: (Date.now() + 1).toString(),
-      text: response,
-      sender: 'bot',
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, botMessage]);
-    setIsTyping(false);
+      // Sync page-level language when chip selection occurs
+      if (newState.language && newState.language !== state.language) {
+        setLang(newState.language);
+      }
 
-    if (typeof window !== 'undefined' && !window.matchMedia?.('(pointer: coarse)')?.matches) {
-      requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-    }
+      setState(newState);
+      const botMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        text: response,
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, botMessage]);
 
-    if (needsHuman) {
-      setTimeout(() => escalateHandler(newState, [...messages, userMessage, botMessage]), 800);
+      if (typeof window !== 'undefined' && !window.matchMedia?.('(pointer: coarse)')?.matches) {
+        requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+      }
+
+      if (needsHuman) {
+        setTimeout(() => escalateHandler(newState, [...messages, userMessage, botMessage]), 800);
+      }
+    } finally {
+      // Always clear, even if anything above throws synchronously after the
+      // outer try started. Guarantees the input never stays frozen.
+      setIsTyping(false);
+      isSendingRef.current = false;
     }
   }
 

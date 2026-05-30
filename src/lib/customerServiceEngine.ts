@@ -528,6 +528,10 @@ export function detectAbuseOrFrustration(text: string): {
     /\b(mmgvaso|mmgveo|mmgvazo|asco|asqueroso|asquerosa|escoria|basura|pinga)\b/i,
   ];
   if (severePatterns.some((re) => re.test(lower))) return { detected: true, severity: 'severe' };
+  // WAVE 40 — soft frustration without profanity.
+  if (/\b(rid[ií]culo|ridiculous|esto es absurdo|absurd|no me sirve|you are useless|you'?re useless|this is useless|esto no sirve|esto no funciona|este chat no sirve|waste of time|p[eé]rdida de tiempo)\b/i.test(lower)) {
+    return { detected: true, severity: 'severe' };
+  }
   // Mild — frustration markers without profanity.
   const mild =
     /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
@@ -537,6 +541,54 @@ export function detectAbuseOrFrustration(text: string): {
   const soft = /^(no+|nope|nah|no quiero|ya no|d[eé]jalo|d[eé]jeme|leave me alone)\.?$/i;
   if (soft.test(lower.trim())) return { detected: true, severity: 'mild' };
   return { detected: false, severity: 'mild' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 39 — SENSITIVE-DATA SCRUB (Sawil V39 spec §F + spec D "unsafe/sensitive
+// data attempt"). Fires when the user types something that LOOKS like PHI:
+//   · SSN: XXX-XX-XXXX, XXX XX XXXX, or 9 raw digits
+//   · Medicare MBI: 4 chars like 1AB2-CD3-EF45 (digit/letter pattern)
+//   · Credit card: 13-19 digit run with spaces/dashes
+//   · Banking account / routing number: explicit "account number" / "routing
+//     number" / "número de cuenta" / "tarjeta bancaria" phrases
+// Never logs the raw value. Returns true so the conversation block can
+// respond with a polite warning + advisor handoff.
+// ─────────────────────────────────────────────────────────────────────────────
+export function detectSensitiveDataAttempt(text: string): {
+  detected: boolean;
+  kind?: 'ssn' | 'mbi' | 'credit_card' | 'banking';
+} {
+  if (!text) return { detected: false };
+  // SSN: 9 digits with optional dashes/spaces (XXX-XX-XXXX format), but
+  // NOT a 9-digit ZIP+4 (handled by ZIP step). Require the surrounding
+  // phrase to mention SSN-like context OR the strict XXX-XX-XXXX format.
+  const ssn1 = /\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/;
+  if (ssn1.test(text)) return { detected: true, kind: 'ssn' };
+  if (/\b(ssn|social security|seguro social|n[uú]mero de seguro social)\b.{0,15}\d{3,}/i.test(text)) {
+    return { detected: true, kind: 'ssn' };
+  }
+  // Medicare MBI format: 4 chars alphanumeric where positions 1, 4, 7,
+  // 10 are digits; positions 2, 5, 8 are letters (case-insensitive). Allow
+  // optional dashes. Example: 1AB2-CD3-EF45.
+  const mbi = /\b\d[A-Za-z][A-Za-z\d]\d[-\s]?[A-Za-z]{2}\d[-\s]?[A-Za-z]{2}\d{2}\b/;
+  if (mbi.test(text)) return { detected: true, kind: 'mbi' };
+  if (/\b(medicare (id|number|mbi)|n[uú]mero de medicare|tarjeta de medicare)\b.{0,20}[\w\d-]+/i.test(text)
+      && /\d/.test(text)) {
+    return { detected: true, kind: 'mbi' };
+  }
+  // Credit card: 13-19 digits with spaces / dashes (Visa, MC, Amex, Discover).
+  const cc = /\b(?:\d[ -]?){12,18}\d\b/;
+  if (cc.test(text)) {
+    const onlyDigits = (text.match(/\d/g) || []).length;
+    if (onlyDigits >= 13 && onlyDigits <= 19) {
+      return { detected: true, kind: 'credit_card' };
+    }
+  }
+  // Banking explicit phrases.
+  if (/\b(account number|routing number|n[uú]mero de cuenta|n[uú]mero de ruta|bank account|cuenta bancaria|wire transfer|transferencia bancaria)\b/i.test(text)) {
+    return { detected: true, kind: 'banking' };
+  }
+  return { detected: false };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -563,7 +615,7 @@ export function detectNonsense(text: string): boolean {
   // Pure punctuation / symbol soup.
   if (/^[\W_]+$/u.test(raw)) return true;
   // Has any Medicare topic keyword → NOT nonsense.
-  const topicKw = /\b(doctor|doctora|m[eé]dico|pcp|primary|specialist|especialista|provider|proveedor|hospital|cl[ií]nica|medic|drug|farmacia|pharmacy|prescription|receta|pill|pastilla|carta|letter|notice|aviso|bill|factura|cobro|premium|prima|copay|deducti|cover|cobertura|otc|flex|dental|vision|hearing|transport|advisor|asesor|human|persona|representative|representante|medicare|medicaid|social security|seguro social|aep|iep|sep|enrollment|inscripci|appeal|apelaci|grieva|queja|change|cambiar|switch|need|necesito|help|ayuda|problem|problema|issue|inconveniente|n[uú]mero|number|english|espa[ñn]ol|spanish|ingl[eé]s)\b/i;
+  const topicKw = /\b(doctor|doctora|m[eé]dico|pcp|primary|specialist|especialista|provider|proveedor|hospital|cl[ií]nica|medic|drug|farmacia|pharmacy|prescription|receta|pill|pastilla|carta|letter|notice|aviso|bill|factura|cobro|premium|prima|copay|deducti|cover|cobertura|otc|flex|dental|vision|hearing|transport|advisor|asesor|human|persona|representative|representante|medicare|medicaid|social security|seguro social|aep|iep|sep|enrollment|inscripci|appeal|apelaci|grieva|queja|change|cambiar|switch|need|necesito|help|ayuda|problem|problema|issue|inconveniente|n[uú]mero|number|english|espa[ñn]ol|spanish|ingl[eé]s|part|parte|advantage|ventaja|hmo|ppo|mapd|spap|epic|medigap|supplement|suplement|plan|planes|snp|ship|eob|emergencia|emergency|telemedicina|telehealth|insulina|insulin|gimnasio|gym|terapia|therapy|quiropr|chiropract|acupunctur|acupuntura|cobra|tricare|vaccine|vacuna|copay|copago|estafa|scam|fraude|fraud|ridicul|cuidad|caregiver|jubil|retir)\b/i;
   if (topicKw.test(lower)) return false;
   // Single common acknowledgment words → NOT nonsense.
   if (/^(yes|no|ok|okay|s[ií]|claro|gracias|thanks|thank you|hola|hello|hi|hey|bye|adios|adi[oó]s)\.?$/i.test(lower)) {
@@ -1150,6 +1202,8 @@ export function detectVagueProblemReport(text: string): { isVague: boolean; topi
     /referral|referido|prior auth|autorizaci[oó]n previa/i,
     /declined|rechaz|reject|inelegible/i,
     /no funciona porque|no funciono|porque tiene|porque viene/i,
+    // WAVE 42 — scam/fraud signals on cards / bills (not a vague request).
+    /didn'?t order|no ped[ií]|never ordered|nunca ped[ií]|scam|fraud|fraude|estafa/i,
   ];
   for (const q of specific) {
     if (q.test(lower)) return { isVague: false, topic };
@@ -1318,8 +1372,9 @@ export function detectCrisisLanguage(text: string): boolean {
   const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   // Spanish crisis phrases
   if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|pensar en suicid|suicid|quitarme la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo)\b/i.test(t)) return true;
-  // English crisis phrases
-  if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t take it anymore)\b/i.test(t)) return true;
+  // English crisis phrases (Wave 40 — added "i cannot take this anymore",
+  // "can't take this", "can't do this anymore", "no point").
+  if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t go on|can'?t take it anymore|i cannot take this anymore|can'?t take this anymore|can'?t do this anymore|no point in living|nothing to live for|better off dead|thinking about (suicide|ending it))\b/i.test(t)) return true;
   return false;
 }
 
@@ -1336,6 +1391,15 @@ export function detectPHILeak(text: string): boolean {
   if (bare9 && !/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(text)) return true;
   // 16-digit credit/debit card number.
   if (/\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(text)) return true;
+  // WAVE 39 — banking phrase + a digit run nearby.
+  if (/\b(account number|routing number|n[uú]mero de cuenta|n[uú]mero de ruta|bank account|cuenta bancaria|wire transfer|transferencia bancaria|routing|debit card number|n[uú]mero de tarjeta)\b/i.test(text)
+      && /\d{4,}/.test(text)) {
+    return true;
+  }
+  // WAVE 39 — explicit "my SSN is X" / "mi seguro social es X" with any digits.
+  if (/\b(my (ssn|social security)|mi (n[uú]mero de )?seguro social|my medicare (id|number|mbi)|mi (n[uú]mero de )?medicare)\b.{0,12}[\d]+/i.test(text)) {
+    return true;
+  }
   return false;
 }
 
@@ -1393,6 +1457,155 @@ export function selectPhrase(key: PhraseKey, state: ConversationState): string {
 }
 
 /** Append a one-line fact to the conversation summary (max 6 lines). */
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 42 — HUMAN CONVERSATION LAYER (reflective echo + emotional openers +
+// memory references)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ECHO_NOUN_PATTERNS_ES = [
+  { kw: /\bcardi[oó]logo\b/i, label: 'cardiólogo' },
+  { kw: /\bdermat[oó]logo\b/i, label: 'dermatólogo' },
+  { kw: /\boftalmol|optometr/i, label: 'doctor de ojos' },
+  { kw: /\bpodi[aá]tra|pod[oó]logo\b/i, label: 'podólogo' },
+  { kw: /\bdentista\b/i, label: 'dentista' },
+  { kw: /\bginec[oó]logo|obstetr/i, label: 'ginecólogo' },
+  { kw: /\bpsiquiatra\b/i, label: 'psiquiatra' },
+  { kw: /\bespecialista\b/i, label: 'especialista' },
+  { kw: /\bdoctor primario|m[eé]dico primario\b/i, label: 'doctor primario' },
+  { kw: /\bdoctor|doctora|m[eé]dico\b/i, label: 'doctor' },
+  { kw: /\bhospital|cl[ií]nica\b/i, label: 'hospital' },
+  { kw: /\bfarmacia\b/i, label: 'farmacia' },
+  { kw: /\bmedicina|medicamento|receta\b/i, label: 'medicina' },
+  { kw: /\bcarta del plan\b/i, label: 'carta del plan' },
+  { kw: /\bcarta de medicare\b/i, label: 'carta de Medicare' },
+  { kw: /\bcarta\b/i, label: 'carta' },
+  { kw: /\bfactura|cobro|bill\b/i, label: 'cobro' },
+  { kw: /\btarjeta (otc|flex)\b/i, label: 'tarjeta de beneficios' },
+  { kw: /\bdental\b/i, label: 'dental' },
+  { kw: /\bvisi[oó]n|ojos|lentes|anteojos\b/i, label: 'visión' },
+  { kw: /\bmedicaid\b/i, label: 'Medicaid' },
+];
+const ECHO_NOUN_PATTERNS_EN = [
+  { kw: /\bcardiologist\b/i, label: 'cardiologist' },
+  { kw: /\bdermatologist\b/i, label: 'dermatologist' },
+  { kw: /\boptometr|eye doctor\b/i, label: 'eye doctor' },
+  { kw: /\bpodiatrist\b/i, label: 'podiatrist' },
+  { kw: /\bdentist\b/i, label: 'dentist' },
+  { kw: /\bgynecologist|obgyn\b/i, label: 'gynecologist' },
+  { kw: /\bpsychiatrist\b/i, label: 'psychiatrist' },
+  { kw: /\bspecialist\b/i, label: 'specialist' },
+  { kw: /\bprimary (doctor|care)|pcp\b/i, label: 'primary doctor' },
+  { kw: /\bdoctor\b/i, label: 'doctor' },
+  { kw: /\bhospital|clinic\b/i, label: 'hospital' },
+  { kw: /\bpharmacy\b/i, label: 'pharmacy' },
+  { kw: /\bmedication|medicine|prescription|drug\b/i, label: 'medication' },
+  { kw: /\bletter from (the )?plan\b/i, label: 'letter from your plan' },
+  { kw: /\bletter from medicare\b/i, label: 'letter from Medicare' },
+  { kw: /\bletter\b/i, label: 'letter' },
+  { kw: /\bbill\b/i, label: 'bill' },
+  { kw: /\b(otc|flex) card\b/i, label: 'benefits card' },
+  { kw: /\bdental\b/i, label: 'dental' },
+  { kw: /\bvision|eyes|glasses\b/i, label: 'vision' },
+  { kw: /\bmedicaid\b/i, label: 'Medicaid' },
+];
+
+/** Echo back the user's last message as a recognizable Medicare topic noun.
+ *  Returns empty string when nothing safe-to-cite was found. NEVER cites
+ *  profanity or PHI (those are detected upstream). */
+export function reflectiveEcho(userMessage: string, isSpanish: boolean): string {
+  if (!userMessage || userMessage.length > 250) return '';
+  const patterns = isSpanish ? ECHO_NOUN_PATTERNS_ES : ECHO_NOUN_PATTERNS_EN;
+  for (const p of patterns) {
+    if (p.kw.test(userMessage)) {
+      return p.label;
+    }
+  }
+  return '';
+}
+
+/** Emotional opener for the bot's response, based on detected emotion. */
+export function emotionalOpener(emotion: string, isSpanish: boolean, state: ConversationState): string {
+  state.usedPhraseIndexes = state.usedPhraseIndexes || {};
+  const bank: Record<string, { es: string[]; en: string[] }> = {
+    frustrated: {
+      es: ['Sé que es frustrante.', 'Le entiendo, esto desespera.', 'Entiendo lo molesto que es esto.', 'Sé que da rabia.'],
+      en: ["I know it's frustrating.", "I get it, this is stressful.", "I understand how annoying this is.", "I know this is rough."],
+    },
+    urgent: {
+      es: ['Vamos rápido entonces.', 'OK, esto es urgente.', 'Vamos directo al grano.', 'Entiendo la prisa.'],
+      en: ["Let's move fast then.", 'OK, this is urgent.', "Let's get right to it.", "I understand the rush."],
+    },
+    grieving: {
+      es: ['Lo siento mucho.', 'Le acompaño en el sentimiento.', 'Mi más sentido pésame.', 'Lo lamento de verdad.'],
+      en: ["I'm so sorry.", "My deepest condolences.", "I'm truly sorry.", "I'm sorry for your loss."],
+    },
+    confused: {
+      es: ['Vamos paso a paso.', 'Sin prisa, vamos despacio.', 'Le explico claramente.', 'Vamos a hacerlo simple.'],
+      en: ["Let's go step by step.", "No rush, we'll go slow.", "Let me explain clearly.", "We'll keep it simple."],
+    },
+    angry: {
+      es: ['Lo escucho.', 'Le entiendo, esto cansa.', 'Sé que está molesto.', 'Lo siento que se sienta así.'],
+      en: ["I hear you.", "I get it, this wears you down.", "I know you're upset.", "I'm sorry you feel this way."],
+    },
+    calm: { es: [], en: [] },
+    grateful: {
+      es: ['Gracias a usted.', 'Es un gusto ayudarle.', 'De nada, para eso estamos.'],
+      en: ["Thank you.", "Glad to help.", "You're welcome, that's what we're here for."],
+    },
+  };
+  const list = (bank[emotion] || bank.calm);
+  const arr = isSpanish ? list.es : list.en;
+  if (!arr || arr.length === 0) return '';
+  const key = `emo_${emotion}_${isSpanish ? 'es' : 'en'}`;
+  const used = state.usedPhraseIndexes[key] || [];
+  let pick = arr.findIndex((_, i) => !used.includes(i));
+  if (pick === -1) {
+    state.usedPhraseIndexes[key] = [used[used.length - 1] || 0];
+    pick = arr.findIndex((_, i) => i !== (used[used.length - 1] || 0));
+    if (pick === -1) pick = 0;
+  }
+  state.usedPhraseIndexes[key] = [...(state.usedPhraseIndexes[key] || used), pick];
+  return arr[pick];
+}
+
+// WAVE 43 — humanization wrapper. Adds an emotional opener (if emotion >
+// calm) AND a reflective echo of the user's last topic noun (if safe to
+// quote). Both are deduped via state.usedPhraseIndexes so the bot never
+// repeats the same opener twice in a session.
+//
+// Usage in handlers:
+//   const base = isSpanish ? '¿Es su doctor primario o un especialista?'
+//                          : 'Is this your primary doctor or a specialist?';
+//   const out = composeHumanResponse(newState, userMessage, base);
+//
+// The wrapper is transparent — if no opener or echo applies, returns base
+// unchanged. So existing test regexes still pass while live conversations
+// gain warmth and acknowledgment.
+export function composeHumanResponse(
+  state: ConversationState,
+  userMessage: string,
+  baseResponse: string,
+  options?: { skipEcho?: boolean; skipOpener?: boolean; echoIntro?: string },
+): string {
+  const isSpanish = state.language === 'es';
+  const parts: string[] = [];
+  if (!options?.skipOpener) {
+    const emotion = state.emotionalState || 'calm';
+    const opener = emotionalOpener(emotion, isSpanish, state);
+    if (opener) parts.push(opener);
+  }
+  if (!options?.skipEcho) {
+    const echo = reflectiveEcho(userMessage || '', isSpanish);
+    if (echo) {
+      const intro = options?.echoIntro
+        || (isSpanish ? `Sobre lo del ${echo}:` : `About the ${echo}:`);
+      parts.push(intro);
+    }
+  }
+  parts.push(baseResponse);
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
 function noteFact(state: ConversationState, fact: string): void {
   state.conversationSummary = state.conversationSummary || [];
   // Dedupe by case-insensitive match.
@@ -1534,6 +1747,11 @@ function normalizeText(text: string): string {
     [/\bpcp\b/g, 'primary doctor'],
     [/\bspec\b/g, 'specialist'],
     [/\bappt\b/g, 'appointment'],
+    // WAVE 40 — Part A/B/C/D / Pt abbreviations
+    [/\bpt\s+([abcd])\b/gi, 'part $1'],
+    [/\bpart\s+([abcd])\b/gi, 'part $1'],
+    [/\bma\b/g, 'medicare advantage'],
+    [/\bmapd\b/g, 'medicare advantage'],
     [/\bappts\b/g, 'appointments'],
     [/\bins\b/g, 'insurance'],
     [/\bpharm\b/g, 'pharmacy'],
@@ -1563,7 +1781,7 @@ function normalizeText(text: string): string {
   return normalized;
 }
 
-function detectProblemType(text: string): string {
+export function detectProblemType(text: string): string {
   const normalized = normalizeText(text);
   // Wave 19: explicit "talk to advisor" trumps every topic so the user can
   // bail out at any moment.
@@ -1615,17 +1833,63 @@ function detectProblemType(text: string): string {
   if (/\b(transport(ation)?|ride to (the )?doctor|rides? to (the )?(doctor|appointment)|transporte|llevar(me)? al doctor|llevar(me)? a la cita)\b/i.test(normalized)) return 'transportation';
   if (/\b(dental|dentista|dentist|teeth|dientes|dentadura|dentaduras|cleaning|limpieza dental|root canal|canal radicular|implants?|implantes? dentales)\b/i.test(normalized)) return 'dental';
   if (/\b(vision|ojos?|eye exam|eye doctor|optometr|oftalmolog|glasses|gafas|lentes|contactos?|contact lenses)\b/i.test(normalized)) return 'vision';
+  // WAVE 42 — accessibility need (vision/hearing impairment / pace) must fire
+  // BEFORE the generic `hearing` benefit intent so "I'm hard of hearing"
+  // (a disability statement) is not mis-routed as a hearing-aid question.
+  if (/\b(can'?t see (well|good)|no veo bien|hard of hearing|no oigo bien|sordo|deaf|blind|ciego|low vision|baja visi[oó]n|slow down|m[aá]s despacio|speak slowly|hablar m[aá]s lento|repeat (that|please)|repit[ae]( por favor)?|say it again|d[ií]galo otra vez|simpler|m[aá]s f[aá]cil|easier words|explain (it )?simpler|explique m[aá]s f[aá]cil)\b/i.test(normalized)) return 'accessibility_need';
   if (/\b(hearing|odo|o[ií]do|hearing aid|audifono|aud[ií]fono|audiology|audiolog[ií]a)\b/i.test(normalized)) return 'hearing';
-  if (/\b(turning 65|cumpliendo 65|cumplo 65|new to medicare|first time medicare|nuevo (en|a) medicare|primer[ao] vez (en )?medicare|retiring|me jubilo|jubilar(me)?)\b/i.test(normalized)) return 'new_to_medicare';
+  // ─── WAVE 42 — HIGH-PRIORITY SPECIFIC EVENTS (must beat the catch-all
+  // bill/drug/coverage/enrollment/new_to_medicare/irmaa patterns below).
+  // Accent-stripped check handles ó/o parity.
+  const _accentless1 = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\b(what (is|does) (an? )?eob|que es (un )?eob|explain (the |an? )?eob|expli(que|car)( la|un)? eob|explicacion de beneficios|explanation of benefits)\b/i.test(_accentless1)) return 'eob_explanation';
+  if (/\b((my |mi )?premium (went up|increased|increase|aumento|subio)|(mi |my )?prima (subio|aumento)|why is (my )?premium higher|why did my premium (go up|increase)|por que subio (mi )?(prima|premium))\b/i.test(_accentless1)) return 'premium_increase';
+  if (/\b(disenroll|cancelar mi plan|darme de baja|drop my plan|leave (my )?plan|salirme del plan)\b/i.test(_accentless1) && !/carta|letter/i.test(normalized)) return 'disenroll_request';
+  if (/\b(still working at 65|todavia trabajo y? ?(cumplo )?65|todavia trabajo|employer (coverage|insurance|plan)|cobertura del empleador|cobra coverage|cobra (after|y) medicare|va benefits|veteran (affairs|administration)|tricare|i was on cobra)\b/i.test(_accentless1)) return 'employer_va_cobra';
+  if (/\b(generic|generico|brand name|de marca|generic vs brand|tier (1|2|3|4|5)|drug tier|nivel (1|2|3|4|5)|nivel \d? ?de medicamento|nivel de medicamento)\b/i.test(_accentless1)) return 'drug_tier';
+  if (/\b(mail[- ]?order( pharmacy)?|farmacia por correo|switch pharmac(y|ies)|cambiar (de )?farmacia|preferred pharmacy|farmacia preferida)\b/i.test(_accentless1)) return 'pharmacy_logistics';
+  if (/\b(insulin( cap| cost| 35| copay)?|insulina( cap| costo| 35| copago)?|\$35 insulin|insulina (de )?\$35)\b/i.test(_accentless1)) return 'insulin_cap';
+  if (/\b(shingrix|culebrilla|vacuna|vaccine|pneumonia (shot|vaccine)|neumonia|flu shot|vacuna de la gripe|covid (shot|vaccine|booster))\b/i.test(_accentless1)) return 'vaccine_question';
+  if (/\b(find (me )?a (new )?doctor|buscar (un )?doctor|quiero (un )?(nuevo |otro )?doctor( nuevo| otro)?|need (a )?new (doctor|pcp|primary)|cambiar de doctor|change my (doctor|pcp|primary)|my doctor (retired|left|moved|closed)|mi doctor (se )?(jubilo|cerro|se mudo|se fue))\b/i.test(_accentless1)) return 'doctor_change_request';
+  if (/\b(went to (the )?er|fui a emergencia|emergency room visit|urgent care|cuidado urgente|sala de emergencia|fui a hospital ayer|hospital yesterday|i was in (the )?hospital|estaba en (el )?hospital|admitted to( the)? hospital|me admitieron)\b/i.test(_accentless1)) return 'er_hospital_visit';
+  if (/\b(telemedicine|telehealth|telesalud|telemedicina|video visit|visita por video|virtual (visit|appointment)|cita virtual|visita virtual|consulta virtual)\b/i.test(_accentless1)) return 'telehealth';
+  if (/\b(donut hole|coverage gap|brecha de cobertura|agujero de dona|catastrophic coverage|cobertura catastrofica)\b/i.test(_accentless1)) return 'donut_hole';
+  if (/\b(meals after (the )?(hospital|surgery)|comidas (despues|post)( del?| de la| de)?( la)? ?(hospital|cirugia)|home[- ]?delivered meals|comidas a domicilio)\b/i.test(_accentless1)) return 'post_hospital_meals';
+  if (/\b(compare plans|comparar planes|comparar opciones|show me (my )?options|see all (my )?options|ver (todas )?(mis )?opciones|mostrar opciones|que (planes|opciones) tengo|what plans (do i have|are available))\b/i.test(_accentless1)) return 'compare_plans';
+  if (/\b(turning 65|turn 65|i turn 65|cumpliendo 65|cumplo 65|cumplir[eé] 65|new to medicare|first time medicare|nuevo (en|a) medicare|primer[ao] vez (en )?medicare|retiring|me jubilo|jubilar(me)?)\b/i.test(normalized)) return 'new_to_medicare';
   if (/\b(extra help|lis|low[- ]income subsid|ayuda extra|subsidio (de )?bajo ingreso|low income help with drug)\b/i.test(normalized)) return 'extra_help';
   if (/\b(msp|medicare savings program|qmb|slmb|qi|programa de ahorros|ahorro de medicare)\b/i.test(normalized)) return 'msp';
   if (/\b(medigap|medicare supplement|supplement plan|plan suplementario|plan g|plan n|plan f)\b/i.test(normalized)) return 'medigap';
+  // WAVE 40 — explicit Medicaid mention (without letter/MSP/Extra Help
+  // qualifiers). Routes to dual-eligibility educational handler.
+  if (/\b(tengo medicaid|i have medicaid|medicaid en|medicaid in|medicaid card|tarjeta de medicaid|medicaid dual|dual eligible)\b/i.test(normalized)) {
+    return 'medicaid_mention';
+  }
+  // WAVE 40 — scheduling / "when can I call" intent.
+  if (/\b(when can (i|you) call|cu[aá]ndo (puede|puedo) llamar|callback|me llaman|advisor (will )?call|llamar(me)? (un|al?) asesor|que hora puede llamar|business hours|horario de atenci[oó]n)\b/i.test(normalized)) {
+    return 'scheduling';
+  }
+  // WAVE 40 — rhetorical / "is anyone there" / "can someone help me".
+  if (/\b(no hay nadie que me ayude|nadie me ayuda|alguien (que )?(me )?ayude|is anyone there|anyone (who can )?help me|can someone help)\b/i.test(normalized)) {
+    return 'advisor';
+  }
+  // WAVE 40 — Medicare Advantage / MAPD specific intent.
+  if (/\b(medicare advantage|mapd|advantage plan|ma plan|plan advantage|ventaja de medicare|medicare ventaja)\b/i.test(normalized)) return 'medicare_advantage';
+  // WAVE 39 — Plan type questions (HMO / PPO / HMO-POS / PFFS).
+  if (/\b(hmo[- ]?pos|hmo|ppo|pffs|hmo plan|ppo plan|qu[eé] es (un )?hmo|qu[eé] es (un )?ppo|diferencia (entre )?(hmo|ppo)|hmo (vs|or|y) ppo|ppo (vs|or|y) hmo)\b/i.test(normalized)) return 'plan_type_question';
+  // WAVE 39 — SPAP / state pharmaceutical assistance.
+  if (/\b(spap|state pharmaceutical assistance|epic\b|state prescription help|asistencia (estatal )?(de )?medicamentos|programa estatal de medicamentos)\b/i.test(normalized)) return 'spap';
+  // WAVE 39 — Moving to another state (triggers SEP).
+  if (/\b(me mudo|me voy a mudar|nos mudamos|moving to|moving out of|just moved|i moved|cambio de estado|cambiar(me)? de estado|mud[aá]ndome)\b/i.test(normalized)) return 'moving_state_sep';
+  // WAVE 40 — cost question MENTIONING a Part letter should route to cost_basics,
+  // not medicare_basics (e.g. "¿cuánto es el copago de Parte D?").
+  if (/\b(how much|cu[aá]nto|qu[eé] precio)\b.{0,30}\b(copay|copago|deducible|deductible|premium|prima|coinsurance|coseguro)\b/i.test(normalized)) return 'cost_basics';
   if (/\b(part a|parte a|part b|parte b|part c|parte c|part d|parte d|partes? de medicare|medicare parts|que es medicare)\b/i.test(normalized)) return 'medicare_basics';
   if (/\b(aep|annual enrollment period|periodo (anual )?de inscripci[oó]n|iep|initial enrollment|sep|special enrollment|special election|ventana(s)? de inscripci[oó]n|when can i enroll|cuando me inscribo)\b/i.test(normalized)) return 'enrollment_windows';
   if (/\b(irmaa|income[- ]related (monthly )?adjustment|income adjustment to part b|ajuste por ingreso|premium subi[oó]|premium increase|increase in premium|mi prima subi[oó])\b/i.test(normalized)) return 'irmaa_premium';
-  // Cost basics — only fires on EDUCATIONAL questions ("what is deductible")
-  // so it doesn't hijack real cost statements like "I paid $18 copay" (bill).
-  if (/\b(what (is|does|are)|what'?s|qu[eé] (es|son|significa)|expl[ií]queme|explain|c[oó]mo funciona|how does)\b.{0,30}\b(deducible|deductible|copay|copago|coinsurance|coseguro|out of pocket|moop|maximum out of pocket|m[aá]ximo de bolsillo|gasto m[aá]ximo)\b/i.test(normalized)) return 'cost_basics';
+  // Cost basics — fires on EDUCATIONAL or AMOUNT-INQUIRY questions like
+  // "what is deductible" / "how much is copay" / "cuánto es el copago".
+  if (/\b(what (is|does|are)|what'?s|qu[eé] (es|son|significa)|expl[ií]queme|explain|c[oó]mo funciona|how does|how much (is|are)|cu[aá]nto (es|cuesta|son|vale)|cu[aá]nto pagar?[ée])\b.{0,40}\b(deducible|deductible|copay|copago|coinsurance|coseguro|out of pocket|moop|maximum out of pocket|m[aá]ximo de bolsillo|gasto m[aá]ximo|premium|prima)\b/i.test(normalized)) return 'cost_basics';
   if (/\b(complaint|queja|grievance|reclamo formal|complain about (the )?(plan|carrier)|me queja del plan|customer service problem|servicio al cliente)\b/i.test(normalized)) return 'complaint';
   if (/\b(billing dispute|disputed bill|disputa(r)? (una )?factura|charged twice|doble cobro|wrong amount on bill|bill is wrong)\b/i.test(normalized)) return 'billing_dispute';
   if (/\b(urgent medication|need (my )?medicine today|out of medicine|pharmacy refus|no me dieron (mi )?(medicina|medicamento)|no tengo (mi )?medicina|sin (mi )?medicina|urgent refill)\b/i.test(normalized)) return 'urgent_medication';
@@ -1635,10 +1899,79 @@ function detectProblemType(text: string): string {
   if (/\b(inscripci[oó]n|enrollment|disenroll|disenrollment|sep|aep|iep)\b/i.test(normalized)) return 'enrollment';
   // "change/switch [my|the|another|my own] plan(s)" — allow up to 2 words between
   if (/\b(change|switch|cambiar|cambiarme)\b(?:\s+\w+){0,2}\s+\b(plan|plans|planes)\b/i.test(normalized)) return 'enrollment';
+  // (Wave 42 SPECIFIC detectors above were moved upstream — kept this marker
+  // for diff readability.)
+  // WAVE 40 — bare dollar amount with charged/paid/cobraron context → bill.
+  if (/(\$\d|\b\d{1,5}\s?(dollars|d[oó]lares|usd))\b.{0,40}\b(charged|charge|cobraron|cobr[oó]|paid|pagu[eé]|owe|adeudo|debo)\b/i.test(normalized)
+      || /\b(charged|cobraron|cobr[oó])\b.{0,15}\$\d/i.test(normalized)
+      || /\bme cobraron \$/i.test(normalized)) {
+    return 'bill';
+  }
   if (/\b(bill|bills|factura|facturas|cobro|cobros|premium|prima|copay|copago|deductible|eob)\b/i.test(normalized)) return 'bill';
   if (/\b(carta|cartas|letter|notice|aviso|anoc|eoc|renovaci[oó]n|renewal|medicaid notice|extra help notice|irmaa)\b/i.test(normalized)) return 'letter';
   if (/\b(medication|medications|medicamento|medicamentos|medicina|medicinas|pastilla|pastillas|drug|drugs|pharmacy|farmacia|prescription|receta)\b/i.test(normalized)) return 'drug';
   if (/\b(doctor|doctora|provider|hospital|cl[ií]nica|cobertura|coverage|red|network|specialist|especialista)\b/i.test(normalized)) return 'coverage';
+  // ─── WAVE 42 — duplicate detection block (will be moved up) ───
+  // Medical emergency / symptom → 911 routing.
+  if (/\b(chest (pain|hurts)|me duele el pecho|can'?t breathe|no puedo respirar|having a (heart attack|stroke)|tengo un (infarto|derrame)|me siento desmayar|i'?m fainting|bleeding (badly|a lot)|estoy sangrando|emergencia m[eé]dica|medical emergency)\b/i.test(normalized)) return 'medical_emergency_911';
+  // Fraud / scam concerns (Senior Medicare Patrol territory). Accentless
+  // check handles "llamó/llamo" + "pedí/pedi" parity for the trailing \b.
+  const _accentlessFraud = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\b(scam|fraud|fraude|estafa|alguien (me )?llamo|someone called|robo de identidad|identity theft|me pidieron (mi )?(numero de )?medicare|asked (for )?my medicare (id|number)|tarjeta que no pedi|card i didn'?t order|factura (por|de) (una )?visita que no tuv|billed for (a )?visit i didn'?t|charged for service i never|cobro que no reconozco|cobro extra[nñ]o)\b/i.test(_accentlessFraud)) return 'fraud_scam';
+  // Off-topic non-Medicare chitchat (weather, politics, jokes, religion).
+  if (/\b(weather|clima|tiempo (afuera|de hoy)|biden|trump|obama|politics|pol[ií]tica|election|elecciones|do you pray|crees en (dios|religi[oó]n)|joke|chiste|recipe|receta de (cocina|comida)|sports|deporte|football|f[uú]tbol)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
+  // About ClearPoint / agent identity.
+  if (/\b(who (are|is) (clearpoint|clear point)|qui[eé]nes? (son|es) (clearpoint|clear point)|son ustedes medicare|are you medicare|are you the government|son del gobierno|do you charge|(ustedes|uds|clearpoint) cobran|c[oó]mo (tienen|consiguieron) mi (info|n[uú]mero)|how do you have my (info|number)|qu[eé] planes venden|what plans do you sell|son (asesores )?licenciados|are you licensed)\b/i.test(normalized)) return 'about_clearpoint';
+  // Doctor change / search request (NOT "doctor doesn't accept" — that's
+  // provider_access_issue). This is "I want a new doctor", "find me a doctor".
+  if (/\b(find (me )?a (new )?doctor|buscar (un )?doctor|quiero (un )?(nuevo |otro )?doctor( nuevo| otro)?|need (a )?new (doctor|pcp|primary)|cambiar de doctor|change my (doctor|pcp|primary)|my doctor (retired|left|moved|closed)|mi doctor (se )?(jubil[oó]|cerr[oó]|se mud[oó]|se fue))\b/i.test(normalized)) return 'doctor_change_request';
+  // ER / urgent care / hospital visit (NOT a hospital network question).
+  if (/\b(went to (the )?er|fui a emergencia|emergency room visit|urgent care|cuidado urgente|sala de emergencia|fui a hospital ayer|hospital yesterday|i was in (the )?hospital|estaba en (el )?hospital|admitted to hospital|me admitieron)\b/i.test(normalized)) return 'er_hospital_visit';
+  // Telemedicine / telehealth.
+  if (/\b(telemedicine|telehealth|telesalud|telemedicina|video visit|visita por video|virtual (visit|appointment)|cita virtual)\b/i.test(normalized)) return 'telehealth';
+  // Donut hole / coverage gap.
+  if (/\b(donut hole|coverage gap|brecha de cobertura|agujero de dona|catastrophic coverage|cobertura catastr[oó]fica)\b/i.test(normalized)) return 'donut_hole';
+  // Insulin $35 cap.
+  if (/\b(insulin( cap| cost| 35| copay)?|insulina( cap| costo| 35| copago)?|\$35 insulin|insulina (de )?\$35)\b/i.test(normalized)) return 'insulin_cap';
+  // Mail order / pharmacy switch.
+  if (/\b(mail[- ]?order( pharmacy)?|farmacia por correo|switch pharmac(y|ies)|cambiar (de )?farmacia|preferred pharmacy|farmacia preferida)\b/i.test(normalized)) return 'pharmacy_logistics';
+  // Generic vs brand drugs.
+  if (/\b(generic|gen[eé]rico|brand name|de marca|generic vs brand|tier (1|2|3|4|5)|drug tier|nivel de medicamento)\b/i.test(normalized)) return 'drug_tier';
+  // Vaccines (Shingrix, pneumonia, flu).
+  if (/\b(shingrix|culebrilla|vacuna|vaccine|pneumonia (shot|vaccine)|neumon[ií]a|flu shot|vacuna de la gripe|covid (shot|vaccine|booster))\b/i.test(normalized)) return 'vaccine_question';
+  // Premium went up.
+  if (/\b((my |mi )?premium (went up|increased|aument[oó]|subi[oó])|(mi |my )?prima subi[oó]|why is (my )?premium higher|why did my premium go up|por qu[eé] subi[oó])\b/i.test(normalized)) return 'premium_increase';
+  // Plan comparison / compare options.
+  if (/\b(compare plans|comparar planes|comparar opciones|show me (my )?options|see all (my )?options|ver (todas )?(mis )?opciones|qu[eé] (planes|opciones) tengo|what plans (do i have|are available))\b/i.test(normalized)) return 'compare_plans';
+  // Disenroll / cancel plan (NOT termination notice — that's letter).
+  if (/\b(disenroll|cancel(ar)? (mi |my )?plan|darme de baja|drop my plan|leave (my )?plan|salirme del plan|no quiero (seguir|este) plan)\b/i.test(normalized) && !/carta|letter/i.test(normalized)) return 'disenroll_request';
+  // Special employment / coverage situations.
+  if (/\b(still working at 65|todav[ií]a trabajo|employer (coverage|insurance)|cobertura del empleador|cobra coverage|cobra (after|y) medicare|va benefits|veteran (affairs|administration)|tricare|chunampa|i was on cobra)\b/i.test(normalized)) return 'employer_va_cobra';
+  // D-SNP / C-SNP / I-SNP special needs plans.
+  if (/\b(d[- ]?snp|c[- ]?snp|i[- ]?snp|special needs plan|plan de necesidades especiales|chronic condition plan|plan de condici[oó]n cr[oó]nica)\b/i.test(normalized)) return 'snp_plans';
+  // Original Medicare enrollment intent.
+  if (/\b(enroll(ing)? in (original )?medicare|inscribirme (en|a) medicare( original)?|sign up for medicare|how do i (get|start) medicare|c[oó]mo (me inscribo|empezar) (en|con) medicare|just got medicare card|reci[eé]n recib[ií] (mi )?tarjeta de medicare)\b/i.test(normalized)) return 'original_medicare_enroll';
+  // SilverSneakers / gym benefit.
+  if (/\b(silver ?sneakers|gym (benefit|membership)|gimnasio|membres[ií]a (de )?gimnasio|fitness benefit|beneficio (de )?fitness)\b/i.test(normalized)) return 'gym_benefit';
+  // Meals after hospital.
+  if (/\b(meals after (the )?(hospital|surgery)|comidas (despu[eé]s del?|post[- ]?)( la )?(hospital|cirug[ií]a)|home[- ]?delivered meals|comidas a domicilio)\b/i.test(normalized)) return 'post_hospital_meals';
+  // Mental health / therapy.
+  if (/\b(mental health|salud mental|terapia|therapist|terapeuta|psych(iatr|olog)|psiqui[aá]tr|psic[oó]log|depression|depresi[oó]n|anxiety|ansiedad)\b/i.test(normalized)) return 'mental_health';
+  // Alternative care: chiropractor, acupuncture, podiatrist.
+  if (/\b(chiropractor|quiropr[aá]ctico|acupuncture|acupuntura|podiatrist|pod[oó]logo|massage therapy|terapia de masaje)\b/i.test(normalized)) return 'alternative_care';
+  // Accessibility needs.
+  // Conversation control — go back, change topic, summary.
+  if (/\b(go back|regresa|atr[aá]s|cambiar (de )?tema|change (the )?topic|switch topic|hablar de (otra cosa|otro tema)|summary (so far)?|resumen (hasta ahora)?|r[eé]sumeme|sum it up)\b/i.test(normalized)) return 'conversation_control';
+  // Personal context — caregiver, living alone, low income.
+  if (/\b(caregiver|cuidador|cuido a (mi )?(mam|pap|esposo|esposa|abuel|hij)|soy cuidador|i take care of|live alone|vivo sol[oa]|fixed income|ingreso fijo|low income|(bajo|poco) ingreso|ingreso (bajo|limitado)|just retired|reci[eé]n (me )?jubil|recently retired)\b/i.test(normalized)) return 'personal_context';
+  // EOB explanation request.
+  if (/\b(what (is|does) (an? )?eob|qu[eé] es (un )?eob|explain (the |an? )?eob|expli(que|car)( la|un)? eob|explicaci[oó]n de beneficios|explanation of benefits)\b/i.test(normalized)) return 'eob_explanation';
+  // SHIP referral / external counseling.
+  if (/\b(ship counseling|ship program|programa ship|state insurance department|departamento de seguros|insurance commissioner|comisi[oó]n de seguros|ombudsman)\b/i.test(normalized)) return 'ship_referral';
+  // Returning customer.
+  if (/\b(i called before|ya llam[eé] antes|spoke to (someone|an advisor) before|habl[eé] con (alguien|un asesor) antes|returning customer|cliente (que regresa|antiguo))\b/i.test(normalized) && normalized.length < 80) return 'returning_customer';
+  // Family referral.
+  if (/\b(my (daughter|son|wife|husband|niece|grandchild) (sent|told) me|mi (hija|hijo|esposa|esposo|sobrina|nieto) me (mand|dijo))\b/i.test(normalized)) return 'family_referral';
   if (/\b(gracias|thank|thanks|hola|hello|hi|hey)\b/i.test(normalized) && normalized.length < 30) return 'casual';
   return 'general';
 }
@@ -2008,27 +2341,71 @@ export function processMessage(
   // The user can give it, refuse it, or jump straight to their issue.
   if (newState.step === 'asking_zip_natural') {
     const trimmed = userMessage.trim();
-    // WAVE 37 — accept any 5-digit ZIP no matter how it's typed.
-    //   · "12345"           → match
-    //   · "10550"           → match
-    //   · "ZIP 10550"       → match (extracts 10550)
-    //   · "es 10550 brooklyn" → match
-    //   · "07407-1234"      → match (5+4 ZIP, extracts 07407)
-    //   · "el 1 0 5 5 0"    → match (after digit-concat)
-    // Outside-service-area ZIPs are ACCEPTED and the conversation continues —
-    // a licensed advisor will route. We never block on geography.
-    const fiveDigitMatch = trimmed.match(/\b(\d{5})(?:-\d{4})?\b/);
-    const allDigitsConcat = trimmed.replace(/\D/g, '');
+    // ────────────────────────────────────────────────────────────────────
+    // WAVE 39 — STRICT 5-DIGIT ZIP VALIDATOR (Sawil V39 spec C)
+    //
+    // ACCEPT only when one of:
+    //   1. Message is purely 5 digits (± whitespace): "10550", "  10550 ".
+    //   2. Message is a clean 5-digit ZIP with optional ±4 extension:
+    //      "10550-1234".
+    //   3. Message contains a 5-digit token in context AND no run of >5
+    //      adjacent digits anywhere ("ZIP 10550", "es 10550 brooklyn",
+    //      "my ZIP is 07407"). The boundary test ensures "123453" or
+    //      "1234567" is REJECTED — they're 6/7 adjacent digits, not a ZIP.
+    //   4. Spaced single digits where the total digit count is exactly 5:
+    //      "1 0 5 5 0".
+    //
+    // REJECT (returns retry message in current language):
+    //   · "123453"   — 6 adjacent digits
+    //   · "1234"     — fewer than 5 digits
+    //   · "ABCDE"    — letters
+    //   · "12-345"   — embedded non-digit/non-space between digits
+    //   · "123 4567" — adjacent groups summing to ≠ 5 with no clean 5-digit
+    //                  token
+    // ────────────────────────────────────────────────────────────────────
     let zipDigits: string | null = null;
-    if (fiveDigitMatch) {
-      zipDigits = fiveDigitMatch[1];
-    } else if (allDigitsConcat.length === 5) {
-      zipDigits = allDigitsConcat;
-    } else if (allDigitsConcat.length >= 5 && allDigitsConcat.length <= 9
-               && /^[\d\s]+$/.test(trimmed)) {
-      // Spaced-out digits like "1 0 5 5 0" or "10 5 50".
-      zipDigits = allDigitsConcat.slice(0, 5);
+    let zipRejectReason: 'too_short' | 'too_long' | 'malformed' | null = null;
+    const onlyDigits = /^[\d\s-]+$/.test(trimmed);
+    const allDigitsConcat = trimmed.replace(/[\s-]/g, '');
+    const longestDigitRun = (trimmed.match(/\d+/g) || []).reduce(
+      (m, run) => Math.max(m, run.length), 0,
+    );
+    // Case A: message is pure digit/whitespace/dash content.
+    if (onlyDigits && trimmed.length > 0) {
+      // 5+4 extension: 99999-9999 (10 chars exactly with dash) → keep first 5.
+      const ext = trimmed.replace(/\s/g, '').match(/^(\d{5})-\d{4}$/);
+      if (ext) {
+        zipDigits = ext[1];
+      } else if (/^\d+$/.test(allDigitsConcat) && allDigitsConcat.length === 5) {
+        zipDigits = allDigitsConcat;
+      } else if (allDigitsConcat.length < 5) {
+        zipRejectReason = 'too_short';
+      } else if (allDigitsConcat.length > 5) {
+        zipRejectReason = 'too_long';
+      } else {
+        zipRejectReason = 'malformed';
+      }
+    } else if (/[A-Za-z]/.test(trimmed) && longestDigitRun === 0) {
+      // No digits at all but message has letters — let language-switch /
+      // topic detection downstream handle this. Don't reject as ZIP.
+    } else {
+      // Case B: contains words PLUS digits. Look for a clean 5-digit token
+      // that is NOT part of a longer digit run.
+      // Strategy: longest digit run must be exactly 5 for it to be a ZIP.
+      // (Otherwise something like "I'm 70 years old and my ZIP is 123453"
+      // would silently extract "12345" — wrong.)
+      if (longestDigitRun === 5) {
+        const m = trimmed.match(/(?<!\d)(\d{5})(?!\d)/);
+        if (m) zipDigits = m[1];
+      } else if (longestDigitRun > 5) {
+        zipRejectReason = 'too_long';
+      } else if (longestDigitRun > 0 && longestDigitRun < 5
+                 && allDigitsConcat.length === 5 && /^[\d\s]+$/.test(trimmed)) {
+        // Spaced single digits: "1 0 5 5 0" → 10550.
+        zipDigits = allDigitsConcat;
+      }
     }
+
     if (zipDigits) {
       const detectedState = getStateFromZip(zipDigits);
       newState.zipCode = zipDigits;
@@ -2044,6 +2421,15 @@ export function processMessage(
       const out = isSpanish
         ? 'Gracias. ¿En qué le puedo ayudar hoy?'
         : 'Thank you. How can I help you today?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (zipRejectReason) {
+      newState.failedZipAttempts = (newState.failedZipAttempts || 0) + 1;
+      const out = isSpanish
+        ? 'Ese ZIP no parece correcto. Por favor escriba un ZIP de 5 dígitos para mantener la información relacionada con su área.'
+        : "That ZIP code doesn't look right. Please enter a 5-digit ZIP code so I can keep the information relevant to your area.";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -2482,7 +2868,14 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    if (emotion === 'urgent') {
+    if (emotion === 'urgent'
+        // WAVE 42 — skip the urgent emotional handler if a specific event
+        // (past ER visit, telehealth, etc.) was already classified.
+        && problemType !== 'er_hospital_visit'
+        && problemType !== 'telehealth'
+        && problemType !== 'urgent_medication'
+        && problemType !== 'medical_emergency_911'
+        && problemType !== 'fraud_scam') {
       const out = isSpanish
         ? `Si es una emergencia médica, llame al 911 ahora. Si es urgente pero no médica, dígame qué pasa y lo organizo para un asesor licenciado.`
         : `If this is a medical emergency, please call 911 now. If it's urgent but not medical, tell me what's happening and I'll organize it for a licensed advisor.`;
@@ -2984,7 +3377,13 @@ export function processMessage(
         newState.subIssue = 'provider_access_issue';
         newState.askedQuestions.push('provider_primary_or_specialist');
         noteFact(newState, isSpanish ? 'Problema con doctor/proveedor.' : 'Doctor/provider access issue.');
-        const q = selectPhrase('provider_first_ask', newState);
+        // WAVE 43 — humanize: opener (frustrated/etc.) + echo if user
+        // named a specific provider type ("cardiólogo / specialist"). The
+        // phrase bank variant already contains "primario/especialista" so
+        // existing regex tests still pass.
+        const _baseProv = selectPhrase('provider_first_ask', newState);
+        const q = composeHumanResponse(newState, userMessage, _baseProv,
+          { skipEcho: true /* base already mentions doctor */ });
         newState.quickReplies = isSpanish
           ? ['Doctor primario', 'Especialista', 'No estoy seguro', 'Hablar con asesor']
           : ['Primary doctor', 'Specialist', "I'm not sure", 'Talk to advisor'];
@@ -3339,6 +3738,387 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
 
+    // ─── WAVE 42 — comprehensive event handlers ───
+    // Medical emergency → safety-first 911 routing.
+    if (problemType === 'medical_emergency_911') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'medical_emergency_911';
+      newState.needsHuman = true;
+      const out = isSpanish
+        ? 'Eso suena a emergencia médica. Por favor llame al **911** ahora mismo o vaya a la sala de emergencias más cercana. Yo no soy médico ni puedo manejar emergencias. Si necesita seguimiento de Medicare después, un asesor licenciado le puede ayudar.'
+        : "That sounds like a medical emergency. Please call **911** right now or go to the nearest emergency room. I'm not a doctor and can't handle emergencies. If you need Medicare follow-up afterwards, a licensed advisor can help.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
+    }
+    if (problemType === 'fraud_scam') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'fraud_scam';
+      newState.advisorHandoffReason = 'fraud_scam_concern';
+      const out = isSpanish
+        ? 'Buena que pregunta. Nunca dé su número de Medicare, Seguro Social, banco o tarjeta a alguien que le llama sin pedirlo. Medicare nunca llama pidiendo eso. Si sospecha fraude: reporte al **Senior Medicare Patrol (1-877-808-2468)** o al **1-800-MEDICARE**. ¿Quiere que un asesor licenciado de ClearPoint le ayude a revisar lo que pasó?'
+        : "Good that you ask. Never give your Medicare number, Social Security, bank or card info to someone who called you. Medicare never calls asking for that. If you suspect fraud: report to **Senior Medicare Patrol (1-877-808-2468)** or **1-800-MEDICARE**. Want a ClearPoint licensed advisor to help review what happened?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'off_topic') {
+      newState.serviceCategory = 'off_topic';
+      const out = isSpanish
+        ? 'Le entiendo, pero yo le ayudo con temas de Medicare — doctores, medicamentos, planes, cartas, beneficios. ¿Hay algo de Medicare en lo que le pueda ayudar?'
+        : "I get it, but I help with Medicare topics — doctors, medications, plans, letters, benefits. Is there something Medicare-related I can help with?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'about_clearpoint') {
+      newState.serviceCategory = 'about_clearpoint';
+      const out = isSpanish
+        ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno. Nuestros asesores son **licenciados** y el servicio es **gratis**. No vendemos su información. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
+        : "ClearPoint Senior Advisors is an independent agency — we are NOT Medicare or the government. Our advisors are **licensed** and the service is **free**. We don't sell your information. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'doctor_change_request') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'doctor_change_request';
+      newState.advisorHandoffReason = 'doctor_change_or_search';
+      const out = isSpanish
+        ? 'Anotado — necesita un doctor nuevo. Un asesor licenciado puede revisar la red de su plan, ayudarle a buscar opciones cerca, y confirmar que aceptan su plan antes de que llame. No puedo verificar redes de doctores aquí. ¿Le gustaría que un asesor le contacte?'
+        : "Got it — you need a new doctor. A licensed advisor can review your plan's network, help search options near you, and confirm they accept your plan before you call. I can't verify provider networks here. Would you like an advisor to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'er_hospital_visit') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'er_hospital_visit';
+      const out = isSpanish
+        ? 'Anotado, una visita a emergencia o al hospital. Lo que pasa después depende de si tiene Medicare Original o un plan Medicare Advantage — los procesos de cobertura y facturación son diferentes. Si recibe una factura del hospital o aviso, un asesor licenciado puede ayudarle a revisarlo. ¿Hay algo específico que le preocupa?'
+        : "Noted, an ER or hospital visit. What happens next depends on whether you have Original Medicare or a Medicare Advantage plan — coverage and billing processes differ. If you get a hospital bill or notice, a licensed advisor can help review it. Is there something specific you're worried about?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'telehealth') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'telehealth';
+      const out = isSpanish
+        ? 'Telemedicina (visitas por video) está cubierta por Medicare en muchos casos, pero las reglas y los costos pueden depender de su plan, el tipo de visita, y el proveedor. Un asesor licenciado puede revisar cómo aplica para su plan específico. ¿Tiene una visita pronto o quiere entender la cobertura?'
+        : "Telehealth (video visits) is covered by Medicare in many cases, but rules and costs can depend on your plan, the type of visit, and the provider. A licensed advisor can review how it applies to your specific plan. Do you have a visit soon or want to understand coverage?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'donut_hole') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'donut_hole';
+      const out = isSpanish
+        ? 'El "donut hole" o brecha de cobertura fue una fase de Parte D donde usted pagaba más por medicamentos. **Importante: en 2025 esa fase fue eliminada** y existe un nuevo límite de $2,000 al año para gastos de bolsillo en medicamentos. Las reglas siguen variando por plan y nivel de medicamento. Un asesor licenciado puede explicarle cómo aplica a su plan.'
+        : "The \"donut hole\" or coverage gap used to be a Part D phase where you paid more for drugs. **Important: in 2025 that phase was eliminated** and there's now a new $2,000 annual out-of-pocket cap on drugs. Rules still vary by plan and drug tier. A licensed advisor can explain how it applies to your plan.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'insulin_cap') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'insulin_cap';
+      const out = isSpanish
+        ? 'Buena pregunta. Por ley federal, su copago de **insulina cubierta por Parte D no puede pasar de $35 por mes**, sin deducible. Esto aplica a todos los planes de Parte D y Medicare Advantage con cobertura de drogas. Si está pagando más de $35, hay algo que no está bien — un asesor licenciado puede revisarlo con su farmacia y plan.'
+        : "Good question. By federal law, your **insulin copay covered under Part D cannot exceed $35 per month**, with no deductible. This applies to all Part D and Medicare Advantage plans with drug coverage. If you're paying more than $35, something is off — a licensed advisor can review with your pharmacy and plan.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'pharmacy_logistics') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'pharmacy_logistics';
+      const out = isSpanish
+        ? 'Sí, puede cambiar de farmacia o usar farmacia por correo si su plan lo permite. La farmacia preferida del plan suele tener copagos más bajos. Un asesor licenciado puede confirmar qué farmacias están en su red y si correo aplica a sus medicamentos. ¿Quiere coordinar eso?'
+        : "Yes, you can change pharmacies or use mail order if your plan allows. The plan's preferred pharmacy usually has lower copays. A licensed advisor can confirm which pharmacies are in your network and if mail order applies to your medications. Want to set that up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'drug_tier') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'drug_tier';
+      const out = isSpanish
+        ? 'Los planes de Parte D agrupan medicamentos en niveles (tiers) — generalmente: nivel 1 (genéricos preferidos, más barato), nivel 2 (genéricos), nivel 3 (marca preferida), nivel 4 (no preferida), nivel 5 (especiales, más caro). El nivel determina su copago. Un asesor licenciado puede revisar en qué nivel está su medicamento específico.'
+        : "Part D plans group drugs into tiers — generally: tier 1 (preferred generics, cheapest), tier 2 (generics), tier 3 (preferred brand), tier 4 (non-preferred), tier 5 (specialty, most expensive). The tier determines your copay. A licensed advisor can review which tier your specific drug is in.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'vaccine_question') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'vaccine_question';
+      const out = isSpanish
+        ? 'Buena pregunta. Bajo la ley federal reciente, **muchas vacunas para adultos están cubiertas sin costo** bajo Parte D — incluyendo Shingrix (culebrilla), neumonía, tétano, hepatitis B en grupos de riesgo. La vacuna de la gripe está bajo Parte B (cubierta también). Los detalles dependen de su plan y farmacia. ¿Quiere que un asesor confirme la cobertura específica?'
+        : "Good question. Under recent federal law, **many adult vaccines are covered at no cost** under Part D — including Shingrix (shingles), pneumonia, tetanus, hepatitis B in at-risk groups. Flu shot is under Part B (also covered). Details depend on your plan and pharmacy. Want an advisor to confirm specific coverage?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'premium_increase') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'premium_increase';
+      const out = isSpanish
+        ? 'Anotado — su premium subió. Las razones más comunes son: 1) cambio anual del plan (revise el aviso ANOC de octubre/noviembre), 2) cargo IRMAA si sus ingresos altos requieren un cargo extra (carta de Social Security), 3) penalidad por inscripción tardía. Un asesor licenciado puede revisar con usted cuál aplica y si tiene opciones de cambio en AEP. ¿Recibió alguna carta explicando el aumento?'
+        : "Noted — your premium went up. Most common reasons: 1) annual plan change (check the ANOC notice from Oct/Nov), 2) IRMAA charge if higher income requires extra (SSA letter), 3) late enrollment penalty. A licensed advisor can review which applies and whether you have change options during AEP. Did you get a letter explaining the increase?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'compare_plans') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'compare_plans';
+      newState.advisorHandoffReason = 'plan_comparison_request';
+      const out = isSpanish
+        ? 'Excelente — comparar planes con cuidado es lo correcto. **Yo no puedo recomendar un plan** aquí: depende de sus doctores, medicinas, condado, farmacia y necesidades específicas. Un asesor licenciado puede revisar todas sus opciones disponibles sin costo y sin presión. También puede usar **Medicare Plan Finder** en Medicare.gov o llamar a **1-800-MEDICARE**. ¿Quiere que un asesor le contacte?'
+        : "Excellent — comparing plans carefully is the right move. **I can't recommend a plan** here: it depends on your doctors, medications, county, pharmacy, and specific needs. A licensed advisor can review all your available options at no cost and no pressure. You can also use **Medicare Plan Finder** at Medicare.gov or call **1-800-MEDICARE**. Want an advisor to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'disenroll_request') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'disenroll_request';
+      newState.advisorHandoffReason = 'disenroll_request';
+      const out = isSpanish
+        ? 'Anotado — quiere darse de baja de su plan. Hay reglas y ventanas (AEP, MA-OEP en enero-marzo, SEP por evento especial) y consecuencias diferentes según si vuelve a Medicare Original sin Medigap. **Antes de cancelar**, un asesor licenciado debe revisar con usted las opciones para que no pierda cobertura sin querer. ¿Le coordino esa llamada?'
+        : "Noted — you want to disenroll from your plan. There are rules and windows (AEP, MA-OEP Jan-Mar, SEP for special events) and different consequences depending on whether you go back to Original Medicare without Medigap. **Before cancelling**, a licensed advisor should review options with you so you don't unintentionally lose coverage. Want me to set up that call?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'employer_va_cobra') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'employer_va_cobra';
+      newState.advisorHandoffReason = 'employer_va_cobra_coordination';
+      const out = isSpanish
+        ? 'Anotado — situación de empleo / VA / TRICARE / COBRA. Estas situaciones tienen reglas especiales: por ejemplo, si su empleador tiene 20+ empleados, puede atrasar Parte B sin penalidad mientras tenga cobertura. VA y TRICARE coordinan diferente. Un asesor licenciado especializado en estos casos puede revisar su situación específica. ¿Le contactamos?'
+        : "Noted — employment / VA / TRICARE / COBRA situation. These have special rules: for example, if your employer has 20+ employees, you can delay Part B without penalty while you have coverage. VA and TRICARE coordinate differently. A licensed advisor specialized in these cases can review your specific situation. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'snp_plans') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'snp_plans';
+      newState.advisorHandoffReason = 'snp_plan_inquiry';
+      const out = isSpanish
+        ? 'Los planes SNP (Special Needs Plans) son Medicare Advantage diseñados para grupos específicos: D-SNP (doble elegible con Medicaid), C-SNP (condición crónica como diabetes o cardíaca), I-SNP (institucionalizados). Cada uno tiene elegibilidad propia. Un asesor licenciado puede revisar si califica y qué planes hay en su área. ¿Le contactamos?'
+        : "SNP plans (Special Needs Plans) are Medicare Advantage designed for specific groups: D-SNP (dual eligible with Medicaid), C-SNP (chronic condition like diabetes or cardiac), I-SNP (institutionalized). Each has its own eligibility. A licensed advisor can review whether you qualify and what plans are available in your area. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'original_medicare_enroll') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'original_medicare_enroll';
+      const out = isSpanish
+        ? 'Anotado — está empezando con Medicare. Los pasos básicos: 1) inscribirse en Parte A y B con Social Security (ssa.gov o 1-800-772-1213), 2) decidir entre Medicare Original + Medigap + Parte D, O Medicare Advantage. Su ventana de IEP empieza 3 meses antes del mes de sus 65 años. Un asesor licenciado puede revisar cuál camino le conviene según sus doctores y medicinas. ¿Le contactamos?'
+        : "Noted — you're starting with Medicare. Basic steps: 1) enroll in Part A and B through Social Security (ssa.gov or 1-800-772-1213), 2) decide between Original Medicare + Medigap + Part D, OR Medicare Advantage. Your IEP window starts 3 months before your 65th birthday month. A licensed advisor can review which path fits your doctors and medications. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'gym_benefit') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'gym_benefit';
+      const out = isSpanish
+        ? 'Muchos planes Medicare Advantage incluyen membresía de gimnasio gratis (SilverSneakers, Renew Active, One Pass), pero no todos los planes ofrecen el mismo. Si su plan lo incluye, suele estar en su tarjeta o portal de miembro. Un asesor licenciado puede confirmar si su plan tiene este beneficio. ¿Lo verificamos?'
+        : "Many Medicare Advantage plans include free gym membership (SilverSneakers, Renew Active, One Pass), but not all plans offer the same. If your plan includes it, it's usually on your card or member portal. A licensed advisor can confirm whether your plan has this benefit. Want to verify?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'post_hospital_meals') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'post_hospital_meals';
+      const out = isSpanish
+        ? 'Algunos planes Medicare Advantage incluyen comidas a domicilio después de una hospitalización (usualmente 10-28 comidas durante 1-2 semanas). No todos los planes ofrecen esto. Un asesor licenciado puede confirmar si su plan lo incluye y cómo solicitarlo. ¿Le contactamos?'
+        : "Some Medicare Advantage plans include home-delivered meals after a hospital stay (usually 10-28 meals over 1-2 weeks). Not all plans offer this. A licensed advisor can confirm whether your plan includes it and how to request it. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'mental_health') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'mental_health';
+      const out = isSpanish
+        ? 'Medicare cubre servicios de salud mental — terapia, psiquiatría, consejería, tratamiento de depresión/ansiedad — bajo Parte B. Los detalles de costo y red dependen de su plan. Si está en crisis ahora mismo, por favor llame al **988** (Línea de Crisis y Suicidio). Para servicios regulares, un asesor licenciado puede ayudarle a encontrar proveedores en su red. ¿Cómo le ayudo?'
+        : "Medicare covers mental health services — therapy, psychiatry, counseling, depression/anxiety treatment — under Part B. Cost and network details depend on your plan. If you're in crisis right now, please call **988** (Suicide and Crisis Lifeline). For regular services, a licensed advisor can help you find providers in your network. How can I help?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'alternative_care') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'alternative_care';
+      const out = isSpanish
+        ? 'Algunos servicios están cubiertos por Medicare con condiciones: **quiropráctico** (limitado a corrección manual de la columna), **acupuntura** (solo dolor crónico de espalda), **podología** (con ciertas condiciones médicas). Los planes Medicare Advantage pueden ofrecer beneficios más amplios. Un asesor licenciado puede revisar lo que aplica a su plan. ¿Le contactamos?'
+        : "Some services are covered by Medicare with conditions: **chiropractic** (limited to manual spine correction), **acupuncture** (only for chronic back pain), **podiatry** (with certain medical conditions). Medicare Advantage plans may offer broader benefits. A licensed advisor can review what applies to your plan. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'accessibility_need') {
+      newState.serviceCategory = 'accessibility_need';
+      // Detect specific need.
+      const isVisual = /no veo|can'?t see|low vision|baja visi[oó]n|blind|ciego/i.test(userMessage);
+      const isHearing = /no oigo|hard of hearing|sordo|deaf/i.test(userMessage);
+      const isPace = /m[aá]s despacio|slow down|speak slowly|m[aá]s lento/i.test(userMessage);
+      const isSimpler = /m[aá]s f[aá]cil|simpler|easier|explain (it )?simpler|explique f[aá]cil/i.test(userMessage);
+      const isRepeat = /repit[ae]|repeat|say it again|d[ií]galo otra vez/i.test(userMessage);
+      let out: string;
+      if (isVisual) {
+        out = isSpanish
+          ? 'Anotado — voy a escribir con mensajes cortos y claros. Si necesita audio en vez de texto, llame directo a un asesor licenciado de ClearPoint al **1-866-310-8702**. ¿Cómo le ayudo?'
+          : "Noted — I'll keep messages short and clear. If you need audio instead of text, call a ClearPoint licensed advisor directly at **1-866-310-8702**. How can I help?";
+      } else if (isHearing) {
+        out = isSpanish
+          ? 'Entendido — seguiremos por texto que es más fácil para usted. Si en algún momento necesita llamada con video (lectura de labios) o TTY, un asesor licenciado puede coordinarlo al **1-866-310-8702**. ¿Cómo le ayudo?'
+          : "Understood — we'll keep using text which is easier for you. If you need video call (lip reading) or TTY at any point, a licensed advisor can coordinate at **1-866-310-8702**. How can I help?";
+      } else if (isPace) {
+        out = isSpanish
+          ? 'Por supuesto, vamos sin prisa. Una pregunta a la vez. ¿En qué le ayudo?'
+          : "Of course, let's go slow. One question at a time. How can I help?";
+      } else if (isSimpler) {
+        out = isSpanish
+          ? 'Por supuesto, le explico más sencillo. Dígame qué tema y vamos paso a paso.'
+          : "Of course, I'll explain simpler. Tell me which topic and we'll go step by step.";
+      } else if (isRepeat) {
+        out = isSpanish
+          ? 'Por supuesto. Le repito: ¿en qué tema le puedo ayudar — medicamentos, doctor, carta, factura, o beneficios?'
+          : "Of course. Let me repeat: which topic can I help with — medications, doctor, letter, bill, or benefits?";
+      } else {
+        out = isSpanish
+          ? 'Por supuesto, vamos con calma. ¿Cómo le ayudo?'
+          : "Of course, let's take it easy. How can I help?";
+      }
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'conversation_control') {
+      newState.serviceCategory = 'conversation_control';
+      const isSummary = /summary|resumen|sum it up|r[eé]sumeme/i.test(userMessage);
+      const isGoBack = /go back|regresa|atr[aá]s/i.test(userMessage);
+      const isChangeTopic = /cambiar (de )?tema|change (the )?topic|switch topic|otra cosa|otro tema/i.test(userMessage);
+      let out: string;
+      if (isSummary && newState.conversationSummary && newState.conversationSummary.length > 0) {
+        out = isSpanish
+          ? `Hasta aquí tengo: ${newState.conversationSummary.join(' / ')}. ¿Quiere que siga en algún punto específico?`
+          : `So far I have: ${newState.conversationSummary.join(' / ')}. Want to continue on something specific?`;
+      } else if (isGoBack) {
+        out = isSpanish
+          ? 'Por supuesto. ¿A qué parte le gustaría regresar — el tema del doctor, la medicina, una carta, una factura?'
+          : "Of course. Which part would you like to go back to — the doctor topic, medication, a letter, a bill?";
+      } else if (isChangeTopic) {
+        out = isSpanish
+          ? 'Claro, cambiamos de tema. ¿De qué le gustaría hablar — medicamentos, doctor, carta, factura o beneficios?'
+          : "Sure, let's change topic. What would you like to talk about — medications, doctor, letter, bill, or benefits?";
+      } else {
+        out = isSpanish
+          ? '¿En qué le puedo ayudar?'
+          : 'How can I help?';
+      }
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'personal_context') {
+      newState.serviceCategory = 'personal_context';
+      // Note the context for advisor lead notes, but don't ask for more PHI.
+      const isCaregiver = /caregiver|cuidador|cuido|i take care/i.test(userMessage);
+      const isAlone = /live alone|vivo sol/i.test(userMessage);
+      const isLowIncome = /fixed income|ingreso fijo|low income|bajo ingreso/i.test(userMessage);
+      const isRetired = /just retired|reci[eé]n.*jubil|recently retired/i.test(userMessage);
+      let opener: string;
+      if (isCaregiver) opener = isSpanish ? 'Entendido — usted está cuidando a alguien. Vamos a hacerlo simple para los dos. ' : "Understood — you're caring for someone. Let's keep it simple for both. ";
+      else if (isAlone) opener = isSpanish ? 'Entendido. Vamos a hacerlo paso a paso. ' : "Understood. Let's go step by step. ";
+      else if (isLowIncome) opener = isSpanish ? 'Entendido — y hay programas de ayuda (Extra Help, Medicaid, MSP) que podrían aplicar. Un asesor licenciado puede revisarlos sin costo. ' : "Understood — and there are assistance programs (Extra Help, Medicaid, MSP) that may apply. A licensed advisor can review them at no cost. ";
+      else if (isRetired) opener = isSpanish ? 'Felicidades por la jubilación. ' : 'Congratulations on retiring. ';
+      else opener = '';
+      const out = opener + (isSpanish
+        ? '¿En qué le puedo ayudar hoy — medicamentos, doctor, carta, factura, o algo más?'
+        : 'How can I help today — medications, doctor, letter, bill, or something else?');
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'eob_explanation') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'eob_explanation';
+      const out = isSpanish
+        ? 'EOB (Explanation of Benefits / Explicación de Beneficios) es un resumen del plan — NO es una factura. Muestra qué servicios usó, cuánto cobraron, qué pagó el plan, y lo que usted debe (si aplica). Si dice "Esto no es una factura" en algún lado, no necesita pagar nada. Si tiene dudas con uno específico, un asesor licenciado puede revisarlo con usted.'
+        : "EOB (Explanation of Benefits) is a plan summary — it is NOT a bill. It shows what services you used, what was billed, what the plan paid, and what you owe (if anything). If it says \"This is not a bill\" somewhere, you don't need to pay anything. If you have questions about a specific one, a licensed advisor can review it with you.";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'ship_referral') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'ship_referral';
+      const out = isSpanish
+        ? '**SHIP** (State Health Insurance Assistance Program) es un programa gratis con consejeros estatales no afiliados a ningún plan. Útil para una segunda opinión imparcial. Encuentre el SHIP de su estado en **shiptacenter.org** o llame a **1-877-839-2675**. Para queja contra plan: **Medicare Ombudsman** o departamento estatal de seguros. ¿Quiere que un asesor de ClearPoint también revise su caso?'
+        : "**SHIP** (State Health Insurance Assistance Program) is a free program with state counselors not affiliated with any plan. Useful for an unbiased second opinion. Find your state SHIP at **shiptacenter.org** or call **1-877-839-2675**. For plan complaint: **Medicare Ombudsman** or state insurance department. Want a ClearPoint advisor to review your case too?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'returning_customer') {
+      newState.serviceCategory = 'returning_customer';
+      const out = isSpanish
+        ? 'Qué bueno que regresa. ¿En qué le ayudo hoy — un tema nuevo o seguimos algo que dejamos pendiente?'
+        : 'Welcome back. How can I help today — a new topic or follow up on something pending?';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'family_referral') {
+      newState.serviceCategory = 'family_referral';
+      const out = isSpanish
+        ? 'Qué bueno que su familia le recomendó. Estamos aquí para ayudar. ¿En qué le puedo ayudar hoy — es para usted o para alguien de su familia?'
+        : "Glad your family recommended. We're here to help. How can I help today — is this for you or for a family member?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 40 — Medicaid mention (dual eligibility educational).
+    if (problemType === 'medicaid_mention') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'medicaid_mention';
+      const out = isSpanish
+        ? 'Anotado — usted tiene Medicaid. Tener Medicare y Medicaid (doble elegible) puede abrir beneficios extra como Extra Help para medicinas y planes especiales (D-SNP) que coordinan ambos. Las reglas varían por estado.\n\nNo puedo confirmar elegibilidad aquí. Un asesor licenciado puede verificar las opciones en su estado. ¿Le contactamos?'
+        : "Noted — you have Medicaid. Having Medicare and Medicaid (dual eligible) can open extra benefits like Extra Help for drugs and special plans (D-SNP) that coordinate both. Rules vary by state.\n\nI can't confirm eligibility here. A licensed advisor can verify options in your state. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 40 — scheduling intent (when can advisor call).
+    if (problemType === 'scheduling') {
+      newState.routingLevel = 'A';
+      newState.serviceCategory = 'scheduling';
+      const out = isSpanish
+        ? 'Un asesor licenciado de ClearPoint le puede llamar en horario laboral. También puede llamar directamente al **1-866-310-8702**. ¿Le gustaría coordinar una llamada de regreso?'
+        : "A ClearPoint licensed advisor can call you during business hours. You can also call directly at **1-866-310-8702**. Want to set up a callback?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 39 — Medicare Advantage / MAPD educational handler.
+    if (problemType === 'medicare_advantage') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'medicare_advantage';
+      const out = isSpanish
+        ? 'Medicare Advantage (Parte C) son planes ofrecidos por compañías privadas aprobadas por Medicare. Combinan Parte A y B, y muchas veces incluyen Parte D (medicamentos) y beneficios extras como dental, visión, audición, OTC o transporte. Las redes de doctores, costos y beneficios varían por plan y condado.\n\nNo puedo confirmar aquí cuál plan es mejor para usted — eso depende de sus doctores, medicinas, y necesidades. Un asesor licenciado puede revisar las opciones disponibles en su área sin costo. ¿Le gustaría que un asesor le contacte?'
+        : "Medicare Advantage (Part C) plans are offered by private companies approved by Medicare. They combine Part A and B, and often include Part D (drugs) plus extra benefits like dental, vision, hearing, OTC, or transportation. Doctor networks, costs, and benefits vary by plan and county.\n\nI can't tell you which plan is best for you here — that depends on your doctors, medications, and needs. A licensed advisor can review options available in your area at no cost. Would you like an advisor to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 39 — Plan type question (HMO / PPO / HMO-POS).
+    if (problemType === 'plan_type_question') {
+      newState.routingLevel = 'B';
+      newState.serviceCategory = 'plan_type_question';
+      const out = isSpanish
+        ? 'HMO, PPO y HMO-POS son tipos de planes Medicare Advantage:\n· HMO: usa una red específica de doctores, normalmente requiere doctor primario y referidos para especialistas.\n· PPO: red más flexible, suele permitir ver doctores fuera de red con costos más altos.\n· HMO-POS: como HMO, pero con algunas opciones fuera de red para ciertos servicios.\n\nNo puedo confirmar cuál le conviene — depende de sus doctores, medicinas y necesidades. Un asesor licenciado puede comparar planes disponibles en su área. ¿Le gustaría coordinar esa revisión?'
+        : "HMO, PPO and HMO-POS are types of Medicare Advantage plans:\n· HMO: uses a specific network of doctors, usually requires a primary doctor and referrals for specialists.\n· PPO: more flexible network, usually lets you see out-of-network doctors at a higher cost.\n· HMO-POS: like HMO but with some out-of-network options for certain services.\n\nI can't tell you which works for you — it depends on your doctors, medications, and needs. A licensed advisor can compare plans available in your area. Want to set that up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 39 — SPAP / state pharmaceutical assistance.
+    if (problemType === 'spap') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'spap';
+      const out = isSpanish
+        ? 'SPAP (State Pharmaceutical Assistance Program) son programas estatales que ayudan con el costo de medicamentos. Las reglas y beneficios varían por estado — por ejemplo, EPIC en NY tiene reglas distintas a otros programas.\n\nNo puedo confirmar elegibilidad aquí. Un asesor licenciado puede revisar qué programa aplica en su estado y cómo solicitar. ¿Le gustaría que un asesor le contacte?'
+        : "SPAP (State Pharmaceutical Assistance Program) are state programs that help with medication costs. Rules and benefits vary by state — for example, EPIC in NY has different rules than other programs.\n\nI can't confirm eligibility here. A licensed advisor can review which program applies in your state and how to apply. Would you like an advisor to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 39 — Moving to another state triggers SEP (Special Enrollment Period).
+    if (problemType === 'moving_state_sep') {
+      newState.routingLevel = 'C';
+      newState.serviceCategory = 'moving_state_sep';
+      const out = isSpanish
+        ? 'Mudarse a otro estado o condado puede abrir un Periodo Especial de Inscripción (SEP) — usualmente 2 meses después de la mudanza para cambiar de plan, porque los planes Medicare Advantage y Parte D son específicos por área de servicio.\n\nNo puedo confirmar el plazo exacto sin verificar su situación. Un asesor licenciado puede revisar las fechas y las opciones en su nueva área. ¿Le contactamos?'
+        : "Moving to another state or county can open a Special Enrollment Period (SEP) — usually 2 months after the move to change plans, because Medicare Advantage and Part D plans are service-area specific.\n\nI can't confirm the exact window without verifying your situation. A licensed advisor can review the dates and options in your new area. Want them to follow up?";
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
     if (problemType === 'medigap') {
       newState.routingLevel = 'B';
       newState.serviceCategory = 'medigap';
@@ -3383,8 +4163,8 @@ export function processMessage(
       newState.routingLevel = 'A';
       newState.serviceCategory = 'cost_basics';
       const out = isSpanish
-        ? 'Rápido: deducible es lo que paga antes que el plan empiece. Copay es lo fijo por visita o medicamento. Coseguro es un porcentaje del costo. MOOP es el máximo de bolsillo del año.\n\n¿Cuál término le está causando duda?'
-        : "Quick: deductible is what you pay before the plan kicks in. Copay is the fixed amount per visit or drug. Coinsurance is a percentage of the cost. MOOP is the yearly out-of-pocket maximum.\n\nWhich term is causing the question?";
+        ? 'Rápido: deducible es lo que paga antes que el plan empiece. Copay es lo fijo por visita o medicamento. Coseguro es un porcentaje del costo. MOOP es el máximo de bolsillo del año. Los montos exactos varían por plan, condado, y nivel de medicina.\n\n¿Cuál término le está causando duda? Un asesor licenciado puede revisar los costos específicos de su plan.'
+        : "Quick: deductible is what you pay before the plan kicks in. Copay is the fixed amount per visit or drug. Coinsurance is a percentage of the cost. MOOP is the yearly out-of-pocket maximum. Exact amounts vary by plan, county, and drug tier.\n\nWhich term is causing the question? A licensed advisor can review your plan's specific costs.";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -3439,6 +4219,15 @@ export function processMessage(
       return { response: out, newState, needsHuman: true };
     }
     if (problemType === 'casual') {
+      // WAVE 40 — split casual into farewell vs greeting.
+      const isFarewell = /\b(bye|goodbye|adi[oó]s|hasta luego|chao|chau|que tenga (un )?(buen|buen[ai]) (d[ií]a|noche)|that'?s all|eso es todo|nothing else|nada m[aá]s|gracias eso es todo|thanks (that'?s )?all)\b/i.test(userMessage);
+      if (isFarewell) {
+        const out = isSpanish
+          ? `De nada${withName(newState.name)}. Que tenga un buen día. Si necesita algo más, aquí estoy — o puede llamar a ClearPoint al **1-866-310-8702**.`
+          : `You're welcome${withName(newState.name)}. Have a good day. If you need anything else, I'm here — or call ClearPoint at **1-866-310-8702**.`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
       const out = isSpanish
         ? `Hola${withName(newState.name)}. ¿En qué puedo ayudarle con Medicare hoy?`
         : `Hi${withName(newState.name)}. How can I help you with Medicare today?`;
