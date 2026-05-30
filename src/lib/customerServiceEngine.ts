@@ -880,6 +880,11 @@ function getRecoveryResponse(state: ConversationState): {
 export function detectPauseRequest(text: string): boolean {
   const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
   if (t.length > 80) return false; // long messages aren't pauses
+  // WAVE 48 — exclude "won't/wouldn't/don't/can't let me see" (provider access),
+  // which previously hijacked the pause handler.
+  if (/\b(won'?t|wouldn'?t|don'?t|cannot|can'?t|will not|do not|did not|didn'?t|no me dejan|no me dejaron|no me permiten)\s+(let me|dejarme|dejar que (yo |me ))/i.test(t)) {
+    return false;
+  }
   return /\b(espere|esperar|esperate|esperame|dame un (segundo|momento|minuto|ratito|toque)|dejeme ver|dejame ver|un (segundo|momento|minuto|momentito|ratito)|momentito|ahorita|wait|wait a (sec|second|moment|minute)|hold on|hang on|one (sec|second|moment|minute)|give me a (sec|second|moment|minute)|let me (check|look|see|grab|find))\b/i.test(t);
 }
 
@@ -2032,9 +2037,18 @@ export function detectProblemType(text: string): string {
   // "is X covered" / "está cubierto X" / generic coverage verification.
   if (/\b((is|are) (my |the )?(procedure|surgery|treatment|mri|ct scan|test|labs?|x[- ]?ray) covered|est[aá] cubierto (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|resonancia|examen)|cubre el plan (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|examen)|mi (procedimiento|cirug[ií]a|tratamiento) est[aá] cubierto)\b/i.test(normalized)) return 'coverage';
   if (/\b(apelaci[oó]n|apelar|appeal|appeals|reconsideration|fair hearing|grievance|queja|denied|negado|rejected)\b/i.test(normalized)) return 'appeal';
-  if (/\b(inscripci[oó]n|enrollment|disenroll|disenrollment|sep|aep|iep)\b/i.test(normalized)) return 'enrollment';
+  if (/\b(inscripci[oó]n|inscribir|inscribirme|enrollment|enroll|enrolling|disenroll|disenrollment|sep|aep|iep)\b/i.test(normalized)) return 'enrollment';
   // "change/switch [my|the|another|my own] plan(s)" — allow up to 2 words between
   if (/\b(change|switch|cambiar|cambiarme)\b(?:\s+\w+){0,2}\s+\b(plan|plans|planes)\b/i.test(normalized)) return 'enrollment';
+  // WAVE 48 — "cheaper plan" / "plan mas barato" — shopping for enrollment.
+  if (/\b(cheaper|less expensive|more affordable|low(er)? cost|m[aá]s barato|mas economico|m[aá]s econ[oó]mico)\b.{0,15}\b(plan|planes|medicare)\b/i.test(normalized)
+      || /\b(plan|planes|medicare)\b.{0,15}\b(cheaper|less expensive|more affordable|m[aá]s barato|mas economico|m[aá]s econ[oó]mico)\b/i.test(normalized)) return 'enrollment';
+  // WAVE 48 — explicit "need authorization / prior auth" for a procedure or
+  // therapy. Routes to appeal-style handler (denial of approval).
+  if (/\b(need|necesito|need[a-z]*|requires?|require)\s+(an? |una? )?(auth(orization)?|autorizaci[oó]n|prior auth(orization)?)\b.{0,40}\b(therapy|terapia|procedure|procedimiento|cirug[ií]a|surgery|treatment|tratamiento|mri|resonancia|examen|test)\b/i.test(normalized)
+      || /\b(autorizaci[oó]n|prior auth(orization)?)\b.{0,15}\b(for|para)\b.{0,25}\b(therapy|terapia|procedure|procedimiento|cirug[ií]a|surgery|treatment|tratamiento)\b/i.test(normalized)) return 'appeal';
+  // WAVE 48 — "they won't let me see X" / "no me dejan ver" → provider access.
+  if (/\b(they (won'?t|will not|wouldn'?t|would not) let me see|no me dejan ver|no me permiten ver|no me dejan ir)\b/i.test(normalized)) return 'doctor_provider_network';
   // (Wave 42 SPECIFIC detectors above were moved upstream — kept this marker
   // for diff readability.)
   // WAVE 40 — bare dollar amount with charged/paid/cobraron context → bill.
