@@ -79,7 +79,11 @@ check('"$10000" → 10000', parseAmount('$10000') === 10000);
 check('"18 dolares" → 18', parseAmount('18 dolares') === 18);
 check('"18 dollars" → 18', parseAmount('18 dollars') === 18);
 check('"18 de copay" → 18', parseAmount('18 de copay') === 18);
-check('"5000" bare → 5000', parseAmount('5000') === 5000);
+// WAVE 44 — bare 4-7 digit numbers now require money context (factura/bill/
+// cobro/$/charge/etc.) so ZIP codes don't leak as bill amounts. Updated:
+check('"5000" bare → null (no money context)', parseAmount('5000') === null);
+check('"5000 dolares" → 5000', parseAmount('5000 dolares') === 5000);
+check('"me cobraron 5000" → 5000', parseAmount('me cobraron 5000') === 5000);
 
 console.log('\n=== SAWIL TEST A: Spanish hospital bill typo flow ===');
 // español → Factura → hopital → recibi una facyuta de 10k

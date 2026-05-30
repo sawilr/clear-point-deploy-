@@ -373,9 +373,19 @@ export function parseAmount(text: string): number | null {
   // "10 dolares" / "10 dollars" / "10 de copay"
   const wordMatch = cleaned.match(/(\d+(?:\.\d{1,2})?)\s*(d[oó]lares?|dollars?|de copay|de copago|copay|copago)/);
   if (wordMatch) return Math.round(parseFloat(wordMatch[1]));
-  // Bare number ≥ 4 digits — likely a dollar figure
-  const bareMatch = cleaned.match(/\b(\d{4,7})\b/);
-  if (bareMatch) return parseInt(bareMatch[1], 10);
+  // WAVE 44 — bare 4-7 digit number is ONLY treated as an amount if there is
+  // an explicit money/billing/charge keyword nearby. Without this guard, a
+  // ZIP code like "07407" leaks in as a $7,407 bill (the exact bug Sawil
+  // hit on the live preview). Required nearby keywords:
+  //   EN: bill, charge, charged, paid, owe, premium, copay, deductible, fee,
+  //       cost, total, balance, due
+  //   ES: factura, cobro, cobraron, cobró, pague, debo, prima, copago,
+  //       deducible, cuanto, costo, total, saldo, adeudo
+  const hasMoneyContext = /\b(bill|charge[ds]?|paid|owe|premium|copay|deductible|fee|cost|total|balance|due|amount|factura|cobro|cobraron|cobr[oó]|pagu[eé]|debo|prima|copago|deducible|cu[aá]nto|costo|saldo|adeudo)\b/i.test(cleaned);
+  if (hasMoneyContext) {
+    const bareMatch = cleaned.match(/\b(\d{4,7})\b/);
+    if (bareMatch) return parseInt(bareMatch[1], 10);
+  }
   return null;
 }
 
@@ -2824,9 +2834,21 @@ export function processMessage(
     // for something the caller already told us. Skipped on topic switch so
     // the old topic's data doesn't bleed into the new flow.
     if (!didTopicSwitch) {
-      const history = fullUserHistory(newState, userMessage);
-      const newSource = detectBillSource(history);
-      if (newSource && !newState.billSource) newState.billSource = newSource;
+      // WAVE 44 — strip the captured ZIP from history BEFORE amount/source
+      // detection so "07407" never reads as "$7,407".
+      let history = fullUserHistory(newState, userMessage);
+      if (newState.zipCode) {
+        history = history.replace(new RegExp(`\\b${newState.zipCode}\\b`, 'g'), ' ');
+      }
+      // billSource is only captured when there is also an explicit bill/
+      // charge keyword in history. Without this, "tengo problemas con mis
+      // medicinas y doctores" sets billSource='provider' purely from the
+      // word "doctores", which then triggers the invented-bill response.
+      const _historyHasBillKw = /\b(factura|cobro|cobraron|cobr[oó]|charge|charged|bill|owe|debo|copay|copago|premium|prima|deductible|deducible|amount due|balance due|\$\d)\b/i.test(history);
+      if (_historyHasBillKw) {
+        const newSource = detectBillSource(history);
+        if (newSource && !newState.billSource) newState.billSource = newSource;
+      }
       if (detectDualEligible(history)) newState.dualEligible = true;
       const amt = detectAmount(history);
       if (amt) newState.amountMentioned = amt;
@@ -3089,7 +3111,21 @@ export function processMessage(
       return { response: out, newState, needsHuman: false };
     }
 
-    if (problemType === 'bill' || problemType === 'drug') {
+    // WAVE 44 — bill+drug source-asking handler MUST verify the user actually
+    // mentioned a bill / charge / amount, not just that detectBillSource
+    // matched "doctor" or "pharmacy" anywhere in history. Without this, the
+    // phrase "TENGO PROBLEMAS CON MIS MEDICINAS Y DOCTORES" routes to
+    // "Parece que la factura viene del médico..." which invents a bill the
+    // user never mentioned (Sawil's live bug).
+    const _billKwInThisMsg = /\b(factura|facturas|cobro|cobros|cobr[oó]|cobraron|charge|charged|charges|bill|bills|owe|debo|adeudo|copay|copago|premium|prima|deductible|deducible|amount due|balance due|patient responsibility|\$\d)\b/i.test(userMessage);
+    const _userMentionedBill = problemType === 'bill'
+      || newState.amountMentioned
+      || _billKwInThisMsg
+      // history-based billSource is only a tie-breaker — alone it is not
+      // enough because detectBillSource matches "doctor" / "pharmacy" even
+      // outside of bill context.
+      || (newState.billSource && _billKwInThisMsg);
+    if ((problemType === 'bill' || problemType === 'drug') && _userMentionedBill) {
       const src = newState.billSource;
       const amount = newState.amountMentioned;
       const dual = newState.dualEligible;
