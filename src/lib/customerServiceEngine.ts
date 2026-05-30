@@ -205,6 +205,21 @@ export interface ConversationState {
   /** True once the bot has actually handed the user off to an advisor flow
    *  (e.g. the user typed "sí" after the stage-3 advisor offer). */
   advisorHandoffStarted?: boolean;
+  // ─── Wave 47: lead qualification (not a charity bot) ───
+  /** Has the user told us they are already a ClearPoint client?
+   *    true  → route to "your advisor will call back"
+   *    false → discovery + plan-options push
+   *    undefined → not asked yet */
+  isExistingClient?: boolean;
+  /** Has the bot already asked the existing-client gate this session? */
+  existingClientAsked?: boolean;
+  /** Has the bot already made the plan-change push this session?
+   *  Prevents pushing twice on adjacent turns. */
+  planChangePushMade?: boolean;
+  /** Fraud signals raised about declared name / phone / email at handoff. */
+  contactFraudFlags?: string[];
+  /** Rotation index for appeal fallback variants (0..2). */
+  appealFallbackVariant?: number;
   // ─── Wave 36: human conversation layer ───
   /** Per-phrase-key index of variants the bot has already used this session.
    *  selectPhrase() picks an UNUSED variant; once all used, resets and rotates. */
@@ -408,7 +423,41 @@ const SUSPICIOUS_NAMES = new Set([
   // Insults that callers sometimes type into the name field
   'idiota', 'pendejo', 'cabron', 'culero', 'mierda', 'puta',
   'idiot', 'stupid', 'dumb', 'asshole', 'fuck', 'shit',
+  // WAVE 47 — common fake / cartoon / celebrity throwaways used to test
+  // whether a chatbot accepts garbage names. The advisor never wastes a
+  // call on these. We flag, do not reject silently.
+  'mickey', 'minnie', 'donald', 'mickey mouse', 'minnie mouse', 'donald duck',
+  'john doe', 'jane doe', 'jhon doe', 'pepito perez', 'juan perez',
+  'fulano', 'sutano', 'mengano', 'fulanito', 'menganito',
+  'santa', 'santa claus', 'papa noel', 'elvis', 'elvis presley',
+  'batman', 'superman', 'spider man', 'spiderman', 'iron man',
+  'homer', 'homer simpson', 'bart', 'bart simpson',
+  'mario', 'luigi', 'mario bros',
+  'jose jose', 'juan juan', 'maria maria',
+  'anonymous', 'anonimo', 'an�nimo', 'someone', 'alguien', 'persona',
 ]);
+
+// WAVE 47 — fake email patterns. Same philosophy as phones: flag don't reject.
+const FAKE_EMAIL_PATTERNS: RegExp[] = [
+  /^(test|prueba|fake|sample|demo|admin|user|asdf|noreply|no-reply)\d*@/i,
+  /^[a-z]@[a-z]\.[a-z]+$/i,                 // a@b.co
+  /^(.)\1{3,}@/,                            // aaaa@...
+  /@(test|example|fake|sample|mailinator|tempmail|guerrillamail|10minutemail)\./i,
+  /@yopmail\.|@trashmail\.|@dispostable\./i,
+];
+
+export function validateEmail(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
+  const cleaned = raw.trim().toLowerCase();
+  if (!cleaned) return { isValid: false, cleaned: '', reason: 'empty' };
+  // Basic RFC-lite shape check.
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(cleaned)) {
+    return { isValid: false, cleaned, reason: 'bad_shape' };
+  }
+  for (const re of FAKE_EMAIL_PATTERNS) {
+    if (re.test(cleaned)) return { isValid: false, cleaned, reason: 'fake_pattern' };
+  }
+  return { isValid: true, cleaned };
+}
 
 export function validateName(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
   const lettersOnly = raw.trim().replace(/[^a-zA-ZáéíóúñÁÉÍÓÚÑ\s-']/g, '');
@@ -418,9 +467,24 @@ export function validateName(raw: string): { isValid: boolean; cleaned: string; 
   if (lettersOnly.length > 30) {
     return { isValid: false, cleaned: lettersOnly.slice(0, 30), reason: 'too_long' };
   }
-  const lower = lettersOnly.toLowerCase();
+  const lower = lettersOnly.toLowerCase().trim().replace(/\s+/g, ' ');
   if (SUSPICIOUS_NAMES.has(lower)) {
     return { isValid: false, cleaned: lettersOnly, reason: 'suspicious_name' };
+  }
+  // WAVE 47 — flag when EVERY space-separated word is in the suspicious set
+  // (e.g. "test test", "asdf qwerty", "fulano sutano").
+  const words = lower.split(/\s+/).filter(Boolean);
+  if (words.length >= 2 && words.every((w) => SUSPICIOUS_NAMES.has(w))) {
+    return { isValid: false, cleaned: lettersOnly, reason: 'suspicious_all_words' };
+  }
+  // WAVE 47 — flag when ANY word is a slur / insult ("fuck off" etc.). We
+  // keep this list short so we don't reject legitimate surnames.
+  const HARD_INSULTS = new Set([
+    'fuck', 'shit', 'asshole', 'bitch', 'cunt',
+    'pendejo', 'cabron', 'culero', 'puta', 'mierda', 'idiota',
+  ]);
+  if (words.some((w) => HARD_INSULTS.has(w))) {
+    return { isValid: false, cleaned: lettersOnly, reason: 'contains_insult' };
   }
   // Reject all-same-character ("AAA" etc.) and obvious keyboard rolls.
   if (/^([a-z])\1+$/i.test(lower)) {
@@ -445,7 +509,60 @@ export function validatePhone(raw: string): { isValid: boolean; cleaned: string;
   if (/^[01]/.test(normalized)) return { isValid: false, cleaned: normalized, reason: 'invalid_area_code' };
   // Exchange code (digits 4-6) must not start with 0 or 1 either.
   if (/^.{3}[01]/.test(normalized)) return { isValid: false, cleaned: normalized, reason: 'invalid_exchange' };
+  // WAVE 47 — Hollywood "555" patterns. Real 555 numbers do exist (e.g.
+  // 555-0311 test, 555-1212 directory), so we only catch the well-known
+  // fictional last-four patterns. The full 0100-0199 fictional range is
+  // covered by the explicit check below.
+  if (/^.{3}555(1234|9999|0000|1212|5555|4321|1111|2222|3333|4444|6666|7777|8888|0100|0199)$/.test(normalized)) {
+    return { isValid: false, cleaned: normalized, reason: 'fake_555_hollywood' };
+  }
+  // NANP reserves 555-0100 through 555-0199 for fictional use.
+  if (/^.{3}55501\d\d$/.test(normalized)) {
+    return { isValid: false, cleaned: normalized, reason: 'fake_555_fictional' };
+  }
+  // Area code 555 is not assigned by NANP.
+  if (/^555/.test(normalized)) {
+    return { isValid: false, cleaned: normalized, reason: 'fake_area_555' };
+  }
+  // Sequential digits 1234567890, 0123456789.
+  if (/^(0123456789|1234567890|9876543210)$/.test(normalized)) {
+    return { isValid: false, cleaned: normalized, reason: 'sequential_digits' };
+  }
+  // 7+ identical digits in a row anywhere.
+  if (/(\d)\1{6,}/.test(normalized)) {
+    return { isValid: false, cleaned: normalized, reason: 'repeated_digits' };
+  }
   return { isValid: true, cleaned: normalized };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WAVE 47 — Aggregate fake-contact detector. Used at handoff time to flag the
+// lead so the advisor sees the quality score before dialing. Never rejects.
+// ─────────────────────────────────────────────────────────────────────────────
+export function detectFakeContactSignals(opts: {
+  name?: string;
+  phone?: string;
+  email?: string;
+}): string[] {
+  const flags: string[] = [];
+  if (opts.name) {
+    const nv = validateName(opts.name);
+    if (!nv.isValid) flags.push(`name_${nv.reason}`);
+    // Two-name placeholder ("John Doe", "Jane Doe", etc.) is caught via the
+    // SUSPICIOUS_NAMES set when the full lowercase string matches; check the
+    // joined form here too.
+    const joined = opts.name.trim().toLowerCase();
+    if (SUSPICIOUS_NAMES.has(joined)) flags.push('name_suspicious_full');
+  }
+  if (opts.phone) {
+    const pv = validatePhone(opts.phone);
+    if (!pv.isValid) flags.push(`phone_${pv.reason}`);
+  }
+  if (opts.email) {
+    const ev = validateEmail(opts.email);
+    if (!ev.isValid) flags.push(`email_${ev.reason}`);
+  }
+  return flags;
 }
 
 /**
@@ -1910,7 +2027,7 @@ export function detectProblemType(text: string): string {
   // the denial verb to be paired with a procedural noun (NOT medication —
   // that belongs in drug/medication triage).
   const _accentlessAppeal = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
-  if (/\b((no (me )?(quieren|quiere|aprobaron|aprobo|cubrieron|cubrio)|won'?t (cover|approve)|will not (cover|approve)|denied|rejected|rechazaron)\b[^.?!]{0,40}\b(procedimiento|procedure|cirugia|surgery|tratamiento|treatment|mri|resonancia|ct scan|tac|operaci[oó]n|operation|biopsia|biopsy|radiacion|radiation|quimio|chemo|test|labs?|x[- ]?ray|examen))\b/i.test(_accentlessAppeal)) return 'appeal';
+  if (/\b((no (me )?(quieren|quiere|aprueban|aprueba|aprobaron|aprobo|cubrieron|cubrio|cubre|cubren|cubrir[aá]n)|won'?t (cover|approve)|will not (cover|approve)|denied|rejected|rechazaron)\b[^.?!]{0,40}\b(procedimiento|procedure|cirugia|surgery|tratamiento|treatment|mri|resonancia|ct scan|tac|operaci[oó]n|operation|biopsia|biopsy|radiacion|radiation|quimio|chemo|test|labs?|x[- ]?ray|examen))\b/i.test(_accentlessAppeal)) return 'appeal';
   if (/\b(tratamiento rechazado|procedimiento rechazado|cirug[ií]a rechazada|treatment was rejected|procedure was rejected|surgery was rejected|appeal a denial|appeal the denial|denied (my )?(procedure|surgery|treatment|claim))\b/i.test(normalized)) return 'appeal';
   // "is X covered" / "está cubierto X" / generic coverage verification.
   if (/\b((is|are) (my |the )?(procedure|surgery|treatment|mri|ct scan|test|labs?|x[- ]?ray) covered|est[aá] cubierto (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|resonancia|examen)|cubre el plan (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|examen)|mi (procedimiento|cirug[ií]a|tratamiento) est[aá] cubierto)\b/i.test(normalized)) return 'coverage';
@@ -1929,6 +2046,13 @@ export function detectProblemType(text: string): string {
   if (/\b(bill|bills|factura|facturas|cobro|cobros|premium|prima|copay|copago|deductible|eob)\b/i.test(normalized)) return 'bill';
   if (/\b(carta|cartas|letter|notice|aviso|anoc|eoc|renovaci[oó]n|renewal|medicaid notice|extra help notice|irmaa)\b/i.test(normalized)) return 'letter';
   if (/\b(medication|medications|medicamento|medicamentos|medicina|medicinas|pastilla|pastillas|drug|drugs|pharmacy|farmacia|prescription|receta)\b/i.test(normalized)) return 'drug';
+  // WAVE 47 — plan recommendation question. Bot must NEVER answer "which plan is
+  // best for me" directly (CMS TPMO compliance). Route to a dedicated handler
+  // that pivots to a licensed advisor without naming a specific plan.
+  if (/\b(qu[eé] plan (es )?(mejor|es el mejor|es bueno|me conviene|me recomienda)|cu[aá]l plan (me conviene|es mejor|es bueno|recomienda)|which plan (is )?(best|better|right|good|recommend)|recommend (me )?a plan|recomi[eé]ndame un plan|best medicare plan|mejor plan de medicare)\b/i.test(normalized)) return 'plan_recommendation';
+  // Coverage check on a specific doctor / hospital / drug — bot can NOT
+  // confirm in/out of network. Route to coverage handler (already deflects).
+  if (/\b(is my (doctor|hospital|clinic|drug) (covered|in network|in-network)|est[aá] (mi |el )?(doctor|hospital|cl[ií]nica|medicina|medicamento) (cubierto|en (la )?red|en (mi )?plan)|cubre (mi |el )?(doctor|hospital|cl[ií]nica|medicina|medicamento))\b/i.test(normalized)) return 'coverage';
   if (/\b(doctor|doctora|provider|hospital|cl[ií]nica|cobertura|coverage|red|network|specialist|especialista)\b/i.test(normalized)) return 'coverage';
   // ─── WAVE 42 — duplicate detection block (will be moved up) ───
   // Medical emergency / symptom → 911 routing.
@@ -2044,7 +2168,54 @@ function detectEmotion(text: string): string {
   return 'calm';
 }
 
+// WAVE 47 — public entrypoint wraps processMessageInner with a global
+// loop-guard so two adjacent bot turns can NEVER share the exact same response
+// text. Defense in depth: if a handler bug ever produces a duplicate, we pivot
+// with a short follow-up question instead of repeating ourselves.
 export function processMessage(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } {
+  const prevBot = [...(state.messages || [])].reverse().find((m) => m.role === 'bot');
+  const prevBotText = (prevBot?.content || '').trim();
+  const result = processMessageInner(userMessage, state);
+  const respText = (result.response || '').trim();
+  if (respText && prevBotText && _normalizeForCompare(respText) === _normalizeForCompare(prevBotText)) {
+    const isEs = result.newState.language === 'es';
+    const pivot = isEs
+      ? 'Disculpe — para no repetirme: ¿quiere que un asesor licenciado de ClearPoint le llame para revisar opciones de plan en su área, o prefiere primero información general sobre otro tema (cobertura, medicamentos, doctores, inscripción, factura)?'
+      : "Sorry — to avoid repeating myself: would you like a licensed ClearPoint advisor to call you and review plan options in your area, or would you rather get general information on another topic first (coverage, drugs, doctors, enrollment, bill)?";
+    // Replace the just-pushed duplicate bot message with the pivot.
+    if (result.newState.messages.length > 0) {
+      const lastIdx = result.newState.messages.length - 1;
+      if (result.newState.messages[lastIdx].role === 'bot') {
+        result.newState.messages[lastIdx] = {
+          role: 'bot',
+          content: pivot,
+          timestamp: Date.now(),
+        };
+      } else {
+        result.newState.messages.push({ role: 'bot', content: pivot, timestamp: Date.now() });
+      }
+    }
+    result.newState.quickReplies = isEs
+      ? ['Sí, llamar asesor', 'Información general', 'Otro tema']
+      : ['Yes, call advisor', 'General info', 'Another topic'];
+    result.newState.lastBotIntent = 'loop_guard_pivot';
+    return { response: pivot, newState: result.newState, needsHuman: result.needsHuman };
+  }
+  return result;
+}
+
+function _normalizeForCompare(s: string): string {
+  return s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[*_`]/g, '')
+    .trim();
+}
+
+function processMessageInner(
   userMessage: string,
   state: ConversationState,
 ): { response: string; newState: ConversationState; needsHuman: boolean } {
@@ -2079,6 +2250,54 @@ export function processMessage(
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────────
+  // WAVE 47 — EXISTING-CLIENT GATE RESPONSE HANDLER
+  //
+  // After the bot asks "¿es usted cliente actual de ClearPoint?" the user
+  // can answer in many ways. Catch those answers here BEFORE any topic
+  // routing so the lead-qualification path is honored.
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.existingClientAsked && newState.isExistingClient === undefined) {
+    const _t = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (/^(si|si soy cliente|si, soy cliente|yes|yes i am|yes i'?m a client|claro que si|por supuesto|soy cliente)\.?$/i.test(_t)
+        || /\b(soy cliente|i am a client|i'?m a client|tengo asesor|mi asesor)\b/i.test(_t)) {
+      newState.isExistingClient = true;
+      newState.advisorHandoffStarted = true;
+      newState.needsHuman = true;
+      const isEs = newState.language === 'es';
+      const out = isEs
+        ? `Perfecto. Voy a pasar su caso a su asesor asignado para que le contacte. Por favor, su nombre y el mejor teléfono — y por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.`
+        : `Perfect. I'll forward your case to your assigned advisor for follow-up. Please share your name and the best phone number — and for safety, don't send Medicare ID, SSN, or banking info here.`;
+      newState.lastBotIntent = 'lead_qual_existing_handoff';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
+    }
+    if (/^(no|nuevo|soy nuevo|no soy nuevo|no soy cliente|first time|no, soy nuevo|no, primera vez|primera vez|no im new|no i am new)\.?$/i.test(_t)
+        || /\b(no soy cliente|no soy nuevo|i'?m new|i am new|primera vez|nunca he llamado|new (here|customer))\b/i.test(_t)) {
+      newState.isExistingClient = false;
+      const isEs = newState.language === 'es';
+      const out = isEs
+        ? `Bienvenido. Aquí le doy información general — no resolvemos casos específicos del plan actual. Si su plan no le está cubriendo lo que necesita, un asesor licenciado puede revisar **opciones de plan** en su área sin costo. ¿Le gustaría ver opciones?`
+        : `Welcome. I share general information here — we don't solve specific issues with your current plan. If your plan isn't covering what you need, a licensed advisor can review **plan options** in your area at no cost. Want to see options?`;
+      newState.quickReplies = isEs
+        ? ['Sí, ver opciones', 'No, otra cosa']
+        : ['Yes, see options', 'No, something else'];
+      newState.lastBotIntent = 'lead_qual_new_pivot';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (/^(solo info|solo informaci[oó]n|just info|just information|info|information)\.?$/i.test(_t)) {
+      newState.isExistingClient = false;
+      const isEs = newState.language === 'es';
+      const out = isEs
+        ? `Por supuesto. ¿Cuál es el tema en general que quiere entender? (Medicare Original vs Advantage, costos, inscripción, beneficios, doctores, medicamentos...). Si después quiere revisar opciones de plan, un asesor licenciado puede ayudar sin costo.`
+        : `Of course. What's the general topic you'd like to understand? (Original Medicare vs Advantage, costs, enrollment, benefits, doctors, drugs...). If later you want to review plan options, a licensed advisor can help at no cost.`;
+      newState.lastBotIntent = 'lead_qual_info_only';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
   // WAVE 24 — ABSOLUTE TOP PRIORITY: SAFETY ESCALATION
   // ─────────────────────────────────────────────────────────────────────────
   // CRISIS — suicide / self-harm. Stops the bot, routes to 988 + 911.
@@ -3352,10 +3571,68 @@ export function processMessage(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    if (problemType === 'appeal') {
+    // WAVE 47 — plan recommendation question. CMS TPMO compliance: bot must
+    // NEVER recommend a specific plan or affirm that a given plan is best. We
+    // explain why, then offer a licensed-advisor consultation.
+    if (problemType === 'plan_recommendation') {
+      newState.serviceCategory = 'plan_recommendation';
       const out = isSpanish
-        ? `Entiendo. Recibir una denegación es frustrante, pero usted tiene derecho a apelar. La ventana suele ser de 60 días desde la fecha del aviso, y un asesor licenciado puede ayudarle a organizar los documentos y los plazos correctamente. ¿Le gustaría que un asesor le acompañe en este proceso?`
-        : `I understand. Getting a denial is frustrating, but you have the right to appeal. The window is usually 60 days from the notice date, and a licensed advisor can help you organize the documents and timelines correctly. Would you like an advisor to walk you through this?`;
+        ? `Entiendo. No puedo recomendarle aquí un plan específico porque depende de su doctor, sus medicinas, sus condados, y sus prioridades — y eso lo regula CMS. Lo correcto es que un **asesor licenciado** de ClearPoint revise sus opciones con usted, sin costo y sin presión. ¿Le coordino esa llamada?`
+        : `I understand. I can't recommend a specific plan here — it depends on your doctor, your drugs, your county, and your priorities, and that's regulated by CMS. The right step is for a **licensed advisor** at ClearPoint to review your options with you, at no cost and no pressure. Want me to set up that call?`;
+      newState.quickReplies = isSpanish
+        ? ['Sí, llamar asesor', 'No, otra cosa']
+        : ['Yes, call advisor', 'No, something else'];
+      newState.lastBotIntent = 'plan_recommendation_deflect';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    if (problemType === 'appeal') {
+      newState.serviceCategory = 'appeal';
+      // WAVE 47 — lead-qualification pivot. ClearPoint is not an appeal
+      // clinic. Brief acknowledgment + check whether they are an existing
+      // client; if yes, hand off to their assigned advisor; if no, pivot
+      // toward reviewing plan options that may cover the issue better.
+      if (!newState.existingClientAsked) {
+        newState.existingClientAsked = true;
+        const out = isSpanish
+          ? `Entiendo. Una apelación o denegación de cobertura es un tema serio que normalmente requiere un asesor licenciado. Antes de seguir, ¿es usted cliente actual de **ClearPoint Senior Advisors**, o nos contacta por primera vez?`
+          : `I understand. An appeal or coverage denial is a serious matter that usually needs a licensed advisor. Before we go on, are you a current **ClearPoint Senior Advisors** client, or is this your first time reaching out?`;
+        newState.quickReplies = isSpanish
+          ? ['Sí, soy cliente', 'No, soy nuevo', 'Solo información']
+          : ['Yes, I am a client', "No, I'm new", 'Just info'];
+        newState.lastBotIntent = 'lead_qual_existing_client_gate';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // Second time the appeal topic comes up — pivot to plan options if no
+      // existing-client answer yet.
+      if (!newState.planChangePushMade) {
+        newState.planChangePushMade = true;
+        const out = isSpanish
+          ? `Anotado. Aquí no resolvemos apelaciones — su plan o un asesor de su carrier maneja eso. Lo que sí podemos hacer: un asesor licenciado puede revisar **opciones de plan** que cubran mejor lo que necesita (por ejemplo, esta cirugía). Sin costo. ¿Le coordino esa llamada?`
+          : `Got it. We don't handle appeals here — your plan or a carrier advisor manages that. What we CAN do: a licensed advisor can review **plan options** that may cover what you need better (like this surgery). No cost. Want to set up that call?`;
+        newState.quickReplies = isSpanish
+          ? ['Sí, revisar opciones', 'No, otra cosa']
+          : ['Yes, review options', 'No, something else'];
+        newState.lastBotIntent = 'plan_change_push';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // Already pushed plan options once — rotate through a few variants so
+      // we never repeat the exact same sentence (loop-guard defense).
+      newState.appealFallbackVariant = ((newState.appealFallbackVariant || 0) + 1) % 3;
+      const v = newState.appealFallbackVariant;
+      const esVariants = [
+        `Como mencioné, no resolvemos apelaciones aquí. Si quiere revisar planes alternativos, un asesor le puede ayudar. Si prefiere seguir con su plan actual, eso lo coordinan con el carrier directamente.`,
+        `Entiendo que es frustrante. Lo único que hacemos en este chat es información general — la apelación misma va por su plan. Si quiere que un asesor le llame para mirar opciones, dígame "sí" y empezamos.`,
+        `Para no dar vueltas: en este chat no puedo cambiar la decisión del plan. Lo que sí podemos: un asesor licenciado revisa con usted si hay otro plan que cubra lo que necesita. ¿Quiere esa llamada?`,
+      ];
+      const enVariants = [
+        `As I mentioned, we don't handle appeals here. If you want to review alternative plans, an advisor can help. If you prefer to stay with your current plan, that's coordinated with the carrier directly.`,
+        `I get the frustration. This chat only does general info — the appeal itself goes through your plan. If you'd like an advisor to call and look at alternative plans, just say "yes" and we'll start.`,
+        `So we don't go in circles: I can't change the plan's decision from this chat. What I CAN do is have a licensed advisor review whether another plan covers what you need. Want that call?`,
+      ];
+      const out = isSpanish ? esVariants[v] : enVariants[v];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
