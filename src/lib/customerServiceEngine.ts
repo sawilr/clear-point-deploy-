@@ -1842,12 +1842,12 @@ export function detectProblemType(text: string): string {
   if (/\b(otc|over[- ]the[- ]counter|flex card|healthy allowance|grocery card|tarjeta de beneficios|tarjeta flex)\b/i.test(normalized)) return 'otc';
   if (/\b(transport(ation)?|ride to (the )?doctor|rides? to (the )?(doctor|appointment)|transporte|llevar(me)? al doctor|llevar(me)? a la cita)\b/i.test(normalized)) return 'transportation';
   if (/\b(dental|dentista|dentist|teeth|dientes|dentadura|dentaduras|cleaning|limpieza dental|root canal|canal radicular|implants?|implantes? dentales)\b/i.test(normalized)) return 'dental';
-  if (/\b(vision|ojos?|eye exam|eye doctor|optometr|oftalmolog|glasses|gafas|lentes|contactos?|contact lenses)\b/i.test(normalized)) return 'vision';
+  if (/\b(vision|ojos?|eye exam|eye doctor|optometr|oftalmolog|glasses|gafas|lentes|contactos?|contact lenses|examen de (la )?vista|examen visual|chequeo visual|prueba de (la )?vista)\b/i.test(normalized)) return 'vision';
   // WAVE 42 — accessibility need (vision/hearing impairment / pace) must fire
   // BEFORE the generic `hearing` benefit intent so "I'm hard of hearing"
   // (a disability statement) is not mis-routed as a hearing-aid question.
   if (/\b(can'?t see (well|good)|no veo bien|hard of hearing|no oigo bien|sordo|deaf|blind|ciego|low vision|baja visi[oó]n|slow down|m[aá]s despacio|speak slowly|hablar m[aá]s lento|repeat (that|please)|repit[ae]( por favor)?|say it again|d[ií]galo otra vez|simpler|m[aá]s f[aá]cil|easier words|explain (it )?simpler|explique m[aá]s f[aá]cil)\b/i.test(normalized)) return 'accessibility_need';
-  if (/\b(hearing|odo|o[ií]do|hearing aid|audifono|aud[ií]fono|audiology|audiolog[ií]a)\b/i.test(normalized)) return 'hearing';
+  if (/\b(hearing( aid)?|odo|o[ií]do|hearing aid|audifono|aud[ií]fono|audifonos|aud[ií]fonos|audiology|audiolog[ií]a|necesito audifonos|necesito aud[ií]fonos)\b/i.test(normalized)) return 'hearing';
   // ─── WAVE 42 — HIGH-PRIORITY SPECIFIC EVENTS (must beat the catch-all
   // bill/drug/coverage/enrollment/new_to_medicare/irmaa patterns below).
   // Accent-stripped check handles ó/o parity.
@@ -1865,8 +1865,8 @@ export function detectProblemType(text: string): string {
   if (/\b(telemedicine|telehealth|telesalud|telemedicina|video visit|visita por video|virtual (visit|appointment)|cita virtual|visita virtual|consulta virtual)\b/i.test(_accentless1)) return 'telehealth';
   if (/\b(donut hole|coverage gap|brecha de cobertura|agujero de dona|catastrophic coverage|cobertura catastrofica)\b/i.test(_accentless1)) return 'donut_hole';
   if (/\b(meals after (the )?(hospital|surgery)|comidas (despues|post)( del?| de la| de)?( la)? ?(hospital|cirugia)|home[- ]?delivered meals|comidas a domicilio)\b/i.test(_accentless1)) return 'post_hospital_meals';
-  if (/\b(compare plans|comparar planes|comparar opciones|show me (my )?options|see all (my )?options|ver (todas )?(mis )?opciones|mostrar opciones|que (planes|opciones) tengo|what plans (do i have|are available))\b/i.test(_accentless1)) return 'compare_plans';
-  if (/\b(turning 65|turn 65|i turn 65|cumpliendo 65|cumplo 65|cumplir[eé] 65|new to medicare|first time medicare|nuevo (en|a) medicare|primer[ao] vez (en )?medicare|retiring|me jubilo|jubilar(me)?)\b/i.test(normalized)) return 'new_to_medicare';
+  if (/\b(compare plans|comparar planes|comparar opciones|show me (my )?(plan )?options|see all (my )?(plan )?options|ver (todas )?(mis )?opciones|mostrar (mis )?(plan )?opciones|que (planes|opciones) tengo|what plans (do i have|are available))\b/i.test(_accentless1)) return 'compare_plans';
+  if (/\b(turning 65|turn 65|i turn 65|cumpliendo 65|cumplo 65|cumplir[eé] 65|voy a cumplir 65|new to medicare|first time medicare|nuevo (en|a) medicare|primer[ao] vez (en )?medicare|retiring|me jubilo|jubilar(me)?)\b/i.test(normalized)) return 'new_to_medicare';
   if (/\b(extra help|lis|low[- ]income subsid|ayuda extra|subsidio (de )?bajo ingreso|low income help with drug)\b/i.test(normalized)) return 'extra_help';
   if (/\b(msp|medicare savings program|qmb|slmb|qi|programa de ahorros|ahorro de medicare)\b/i.test(normalized)) return 'msp';
   if (/\b(medigap|medicare supplement|supplement plan|plan suplementario|plan g|plan n|plan f)\b/i.test(normalized)) return 'medigap';
@@ -1890,7 +1890,8 @@ export function detectProblemType(text: string): string {
   // WAVE 39 — SPAP / state pharmaceutical assistance.
   if (/\b(spap|state pharmaceutical assistance|epic\b|state prescription help|asistencia (estatal )?(de )?medicamentos|programa estatal de medicamentos)\b/i.test(normalized)) return 'spap';
   // WAVE 39 — Moving to another state (triggers SEP).
-  if (/\b(me mudo|me voy a mudar|nos mudamos|moving to|moving out of|just moved|i moved|cambio de estado|cambiar(me)? de estado|mud[aá]ndome)\b/i.test(normalized)) return 'moving_state_sep';
+  // WAVE 46 — accent-stripped for past-tense verb endings ("me mudé" / "me mude").
+  if (/\b(me mud[oe]|me voy a mudar|nos mudamos|moving to|moving out of|just moved|i moved|i just moved|cambio de estado|cambiar(me)? de estado|mudandome|me mude (a|para)|acabo de mudarme)\b/i.test(normalized.normalize('NFD').replace(/[̀-ͯ]/g, ''))) return 'moving_state_sep';
   // WAVE 40 — cost question MENTIONING a Part letter should route to cost_basics,
   // not medicare_basics (e.g. "¿cuánto es el copago de Parte D?").
   if (/\b(how much|cu[aá]nto|qu[eé] precio)\b.{0,30}\b(copay|copago|deducible|deductible|premium|prima|coinsurance|coseguro)\b/i.test(normalized)) return 'cost_basics';
@@ -1905,6 +1906,14 @@ export function detectProblemType(text: string): string {
   if (/\b(urgent medication|need (my )?medicine today|out of medicine|pharmacy refus|no me dieron (mi )?(medicina|medicamento)|no tengo (mi )?medicina|sin (mi )?medicina|urgent refill)\b/i.test(normalized)) return 'urgent_medication';
   // Order matters — most specific / highest priority first. Appeals/grievances
   // and enrollment changes win over generic drug/letter mentions.
+  // WAVE 46 — procedure/surgery/treatment denial → appeal handler. Requires
+  // the denial verb to be paired with a procedural noun (NOT medication —
+  // that belongs in drug/medication triage).
+  const _accentlessAppeal = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\b((no (me )?(quieren|quiere|aprobaron|aprobo|cubrieron|cubrio)|won'?t (cover|approve)|will not (cover|approve)|denied|rejected|rechazaron)\b[^.?!]{0,40}\b(procedimiento|procedure|cirugia|surgery|tratamiento|treatment|mri|resonancia|ct scan|tac|operaci[oó]n|operation|biopsia|biopsy|radiacion|radiation|quimio|chemo|test|labs?|x[- ]?ray|examen))\b/i.test(_accentlessAppeal)) return 'appeal';
+  if (/\b(tratamiento rechazado|procedimiento rechazado|cirug[ií]a rechazada|treatment was rejected|procedure was rejected|surgery was rejected|appeal a denial|appeal the denial|denied (my )?(procedure|surgery|treatment|claim))\b/i.test(normalized)) return 'appeal';
+  // "is X covered" / "está cubierto X" / generic coverage verification.
+  if (/\b((is|are) (my |the )?(procedure|surgery|treatment|mri|ct scan|test|labs?|x[- ]?ray) covered|est[aá] cubierto (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|resonancia|examen)|cubre el plan (mi |el |la )?(procedimiento|cirug[ií]a|tratamiento|examen)|mi (procedimiento|cirug[ií]a|tratamiento) est[aá] cubierto)\b/i.test(normalized)) return 'coverage';
   if (/\b(apelaci[oó]n|apelar|appeal|appeals|reconsideration|fair hearing|grievance|queja|denied|negado|rejected)\b/i.test(normalized)) return 'appeal';
   if (/\b(inscripci[oó]n|enrollment|disenroll|disenrollment|sep|aep|iep)\b/i.test(normalized)) return 'enrollment';
   // "change/switch [my|the|another|my own] plan(s)" — allow up to 2 words between
@@ -1973,7 +1982,7 @@ export function detectProblemType(text: string): string {
   // Conversation control — go back, change topic, summary.
   if (/\b(go back|regresa|atr[aá]s|cambiar (de )?tema|change (the )?topic|switch topic|hablar de (otra cosa|otro tema)|summary (so far)?|resumen (hasta ahora)?|r[eé]sumeme|sum it up)\b/i.test(normalized)) return 'conversation_control';
   // Personal context — caregiver, living alone, low income.
-  if (/\b(caregiver|cuidador|cuido a (mi )?(mam|pap|esposo|esposa|abuel|hij)|soy cuidador|i take care of|live alone|vivo sol[oa]|fixed income|ingreso fijo|low income|(bajo|poco) ingreso|ingreso (bajo|limitado)|just retired|reci[eé]n (me )?jubil|recently retired)\b/i.test(normalized)) return 'personal_context';
+  if (/\b(caregiver|cuidador|cuido a (mi )?(mam|pap|esposo|esposa|abuel|hij)|soy cuidador|i (take care|am taking care|'?m taking care) of|i care for|live alone|vivo sol[oa]|fixed income|ingreso fijo|low income|(bajo|poco) ingreso|ingreso (bajo|limitado)|just retired|reci[eé]n (me )?jubil|recently retired|acabo de jubilarme|estoy retirad[oa]|i'?m retired)\b/i.test(normalized)) return 'personal_context';
   // EOB explanation request.
   if (/\b(what (is|does) (an? )?eob|qu[eé] es (un )?eob|explain (the |an? )?eob|expli(que|car)( la|un)? eob|explicaci[oó]n de beneficios|explanation of benefits)\b/i.test(normalized)) return 'eob_explanation';
   // SHIP referral / external counseling.
