@@ -661,7 +661,7 @@ export function detectAbuseOrFrustration(text: string): {
   }
   // Mild — frustration markers without profanity.
   const mild =
-    /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
+    /(no entiende[ns]?|no me entiende[ns]?|no entiendes nada|esto no sirve|no sirve|este chat (es )?(malo|inutil)|in[uú]til|estoy harto|estoy cansado|estoy frustrado|estoy enojado|estoy furioso|me tienes harto|no me ayuda[ns]?|tonto|tonta|est[aá]s perdid[oa]?|esta perdido|you'?re lost|you are lost|sin sentido|no tiene sentido|no te entiendo|you make no sense|makes no sense|why (do|are) you (keep|asking)|por qu[eé] (sigues|repites|me preguntas)|stop asking|deja de preguntar|you do(n['’]| no)t understand|this is stupid|this is useless|this is(n['’]| no)t working|this is dumb|this is broken|i['’]?m frustrated|i am frustrated|i give up|forget it|whatever)/i;
   if (mild.test(lower)) return { detected: true, severity: 'mild' };
   // V20 — soft refusals that signal disengagement. "nooo" / "ya no" / "no quiero"
   // are not insults but still mean the form is failing. Treat as mild.
@@ -2011,6 +2011,28 @@ export function detectProblemType(text: string): string {
   if (/\b(hmo[- ]?pos|hmo|ppo|pffs|hmo plan|ppo plan|qu[eé] es (un )?hmo|qu[eé] es (un )?ppo|diferencia (entre )?(hmo|ppo)|hmo (vs|or|y) ppo|ppo (vs|or|y) hmo)\b/i.test(normalized)) return 'plan_type_question';
   // WAVE 39 — SPAP / state pharmaceutical assistance.
   if (/\b(spap|state pharmaceutical assistance|epic\b|state prescription help|asistencia (estatal )?(de )?medicamentos|programa estatal de medicamentos)\b/i.test(normalized)) return 'spap';
+  // WAVE 49 — Extra Help / LIS / Medicare Savings Programs (MSP/QMB/SLMB/QI/PACE).
+  // Real low-income assistance programs. Must NEVER fall back to generic. We
+  // place this BEFORE bill+drug detection so "premium" + "ayuda" routes here
+  // (not to bill). Bot gives general info + advisor pivot, never confirms
+  // eligibility (CMS compliance — eligibility depends on income/assets/state).
+  if (
+    // Direct program names — strongest signal.
+    /\b(extra help|low[- ]income subsidy|\blis\b|medicare savings program|\bmsp\b|\bqmb\b|\bslmb\b|\bqi\b|\bpace\b)\b/i.test(normalized)
+    // "help / ayuda with cost-related Medicare thing"
+    || /\b(ayuda|ayudas|asistencia|subsidio|ayudar)\b.{0,30}\b(pagar|paying|prima|premium|copagos?|copays?|deducibles?|deductibles?|medicare|medicamentos?|medicinas?|recetas?|prescripci[oó]n|drug)\b/i.test(normalized)
+    || /\b(help|assistance|subsidy)\b.{0,30}\b(paying|pay|with|for|my|medicare|premium|copays?|deductibles?|drugs?|medications?|prescriptions?)\b/i.test(normalized)
+    // "I can't / no puedo afford / pagar X" specifically for the Medicare premium
+    || /\b(can'?t afford|cannot afford|no puedo pagar)\b.{0,30}\b(premium|prima|copay|copago|medicare|drug|medication|medicina|medicamento)\b/i.test(normalized)
+    // "savings program / programa de ahorro" (with or without 'medicare')
+    || /\b(programa[s]? de ahorro|savings program|saving on medicare|ahorro de medicare|ahorro en medicare|ahorrar en medicare|save on medicare|reduce medicare cost|reducir.*medicare|baj(ar|en) los costos|lower (medicare )?costs)\b/i.test(normalized)
+    // "financial assistance" / "asistencia financiera"
+    || /\b(financial assistance|economic assistance|asistencia (financiera|econ[oó]mica|social))\b/i.test(normalized)
+    // "low income" / "bajos ingresos"
+    || /\b(low ?income|bajos? ingresos?)\b/i.test(normalized)
+    // "ayudas de ahorros" / "savings help" specifically.
+    || /\b(ayudas? (de|con|para) ahorros?|savings help|ayuda de ahorro)\b/i.test(normalized)
+  ) return 'savings_program';
   // WAVE 39 — Moving to another state (triggers SEP).
   // WAVE 46 — accent-stripped for past-tense verb endings ("me mudé" / "me mude").
   if (/\b(me mud[oe]|me voy a mudar|nos mudamos|moving to|moving out of|just moved|i moved|i just moved|cambio de estado|cambiar(me)? de estado|mudandome|me mude (a|para)|acabo de mudarme)\b/i.test(normalized.normalize('NFD').replace(/[̀-ͯ]/g, ''))) return 'moving_state_sep';
@@ -2182,10 +2204,22 @@ function detectEmotion(text: string): string {
   return 'calm';
 }
 
-// WAVE 47 — public entrypoint wraps processMessageInner with a global
-// loop-guard so two adjacent bot turns can NEVER share the exact same response
-// text. Defense in depth: if a handler bug ever produces a duplicate, we pivot
-// with a short follow-up question instead of repeating ourselves.
+// WAVE 47/49 — public entrypoint wraps processMessageInner with a global
+// loop-guard so the bot can never repeat itself. Two flavors of repetition:
+//
+//   (a) EXACT TEXT REPEAT — two adjacent bot responses identical after
+//       normalization. The handler bug case.
+//
+//   (b) SEMANTIC MENU REPEAT — two adjacent bot responses that BOTH list
+//       the same multi-topic chip-style menu ("¿es sobre factura, doctor,
+//       medicamentos, carta, cobertura?" twice with different wording).
+//       The Sawil "estás perdido" case — bot kept asking the same menu
+//       with different lipstick. We detect by counting the number of
+//       Medicare-topic words listed AND whether both are interrogatives.
+//
+// On either match we replace the duplicate with a real escalation pivot
+// (offer advisor + 3 concrete choices). Defense in depth — handlers should
+// not loop, but if one does the user never sees it.
 export function processMessage(
   userMessage: string,
   state: ConversationState,
@@ -2194,12 +2228,17 @@ export function processMessage(
   const prevBotText = (prevBot?.content || '').trim();
   const result = processMessageInner(userMessage, state);
   const respText = (result.response || '').trim();
-  if (respText && prevBotText && _normalizeForCompare(respText) === _normalizeForCompare(prevBotText)) {
+
+  const exactDup = !!(respText && prevBotText
+    && _normalizeForCompare(respText) === _normalizeForCompare(prevBotText));
+  const menuDup = !exactDup && !!(respText && prevBotText
+    && _looksLikeChipMenu(respText) && _looksLikeChipMenu(prevBotText));
+
+  if (exactDup || menuDup) {
     const isEs = result.newState.language === 'es';
     const pivot = isEs
-      ? 'Disculpe — para no repetirme: ¿quiere que un asesor licenciado de ClearPoint le llame para revisar opciones de plan en su área, o prefiere primero información general sobre otro tema (cobertura, medicamentos, doctores, inscripción, factura)?'
-      : "Sorry — to avoid repeating myself: would you like a licensed ClearPoint advisor to call you and review plan options in your area, or would you rather get general information on another topic first (coverage, drugs, doctors, enrollment, bill)?";
-    // Replace the just-pushed duplicate bot message with the pivot.
+      ? 'Disculpe — para no dar vueltas: ¿quiere que un asesor licenciado de ClearPoint le llame ahora para revisar sus opciones (sin costo), o tiene una pregunta puntual sobre Medicare que pueda contestar primero?'
+      : "Sorry — to avoid going in circles: would you like a licensed ClearPoint advisor to call you now to review your options (at no cost), or do you have one specific Medicare question I can answer first?";
     if (result.newState.messages.length > 0) {
       const lastIdx = result.newState.messages.length - 1;
       if (result.newState.messages[lastIdx].role === 'bot') {
@@ -2213,8 +2252,8 @@ export function processMessage(
       }
     }
     result.newState.quickReplies = isEs
-      ? ['Sí, llamar asesor', 'Información general', 'Otro tema']
-      : ['Yes, call advisor', 'General info', 'Another topic'];
+      ? ['Sí, llamar asesor', 'Tengo una pregunta', 'Más tarde']
+      : ['Yes, call advisor', 'I have a question', 'Later'];
     result.newState.lastBotIntent = 'loop_guard_pivot';
     return { response: pivot, newState: result.newState, needsHuman: result.needsHuman };
   }
@@ -2227,6 +2266,29 @@ function _normalizeForCompare(s: string): string {
     .replace(/\s+/g, ' ')
     .replace(/[*_`]/g, '')
     .trim();
+}
+
+// WAVE 49 — heuristic: does this bot response look like a multi-topic chip
+// menu? We count distinct Medicare-topic words AND require the message be
+// short-ish (under 400 chars) and end in a question.
+function _looksLikeChipMenu(s: string): boolean {
+  const n = _normalizeForCompare(s);
+  if (n.length > 400) return false;
+  // Must be a question (ends in ? or has interrogative opener).
+  const isQuestion = /\?$|\bes (sobre|acerca|de)\b|\bis it (about|a)\b/.test(n);
+  if (!isQuestion) return false;
+  const topicWords = [
+    'factura', 'doctor', 'medicina', 'medicamento', 'carta', 'cobertura',
+    'inscripcion', 'plan', 'farmacia', 'asesor', 'proveedor', 'tarjeta',
+    'bill', 'doctor', 'drug', 'medication', 'letter', 'coverage',
+    'enrollment', 'plan', 'pharmacy', 'advisor', 'provider', 'card',
+  ];
+  let hits = 0;
+  for (const w of topicWords) {
+    if (new RegExp(`\\b${w}\\b`).test(n)) hits++;
+    if (hits >= 3) return true;
+  }
+  return false;
 }
 
 function processMessageInner(
@@ -2263,7 +2325,36 @@ function processMessageInner(
     newState.normalizedLastUserMessage = curNorm;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────────
+  // WAVE 49 — VAGUE-AFTER-MENU ESCALATION
+  //
+  // If the bot's last message was a chip-style topic menu AND the user's
+  // current message is short / vague / "no se" / "ayuda" / "estas perdido",
+  // do NOT give another menu. Escalate to advisor offer instead. Prevents
+  // the dead-end loop Sawil hit on live preview ("ayuda" → menu → "no se"
+  // → another menu).
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language) {
+    const _prevBot = [...(newState.messages || [])].slice(0, -1).reverse().find((m) => m.role === 'bot');
+    const _prevWasMenu = _prevBot && _looksLikeChipMenu(_prevBot.content || '');
+    const _userMsgNorm = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _userIsVague =
+      _userMsgNorm.length < 20
+      && /^(ayuda|help|no se|no sé|i don'?t know|dunno|idk|nada|nothing|no entiendo|no idea|no estoy seguro|not sure|cualquier|whatever|whichever|todo|all|all of it|todas|de todo|estas perdido|youre lost|you're lost|no se que|i dont know what|esto es|this is)\.?$/i.test(_userMsgNorm);
+    if (_prevWasMenu && _userIsVague && !newState.advisorHandoffStarted) {
+      const _isEs = newState.language === 'es';
+      const out = _isEs
+        ? `Entiendo. No voy a seguir repitiendo preguntas. Puedo pasarle con un asesor licenciado de ClearPoint, o hacerle una sola pregunta más para organizar el caso. ¿Qué prefiere?`
+        : `I understand. I won't keep asking the same thing. I can hand you off to a licensed ClearPoint advisor, or ask you one more focused question to organize the case. What do you prefer?`;
+      newState.quickReplies = _isEs
+        ? ['Hablar con asesor', 'Una pregunta más', 'Empezar de nuevo']
+        : ['Talk to advisor', 'One more question', 'Start over'];
+      newState.lastBotIntent = 'vague_after_menu_escalation';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
   // ──────────────────────────────────────────────────────────────────────
   // WAVE 47 — EXISTING-CLIENT GATE RESPONSE HANDLER
   //
@@ -3582,6 +3673,22 @@ function processMessageInner(
       const out = isSpanish
         ? `Entiendo. La inscripción a Medicare tiene varias ventanas y cada una tiene sus reglas. ¿Cuál es su situación: está cumpliendo 65 años (IEP), quiere cambiar durante el periodo anual (AEP, del 15 de octubre al 7 de diciembre), o tuvo un evento especial como una mudanza (SEP)? Sin presión — un asesor licenciado puede revisar las opciones con usted.`
         : `I understand. Medicare enrollment has different windows, each with its own rules. Which situation fits you: turning 65 (IEP), switching during the annual period (AEP, Oct 15 - Dec 7), or did you have a special event like moving (SEP)? No pressure — a licensed advisor can walk through the options with you.`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // WAVE 49 — Extra Help / LIS / Medicare Savings Programs. Real Medicare
+    // assistance programs. Bot must NEVER confirm eligibility (CMS compliance
+    // — eligibility depends on income, assets, household). Gives general info
+    // and routes to licensed advisor.
+    if (problemType === 'savings_program') {
+      newState.serviceCategory = 'savings_program';
+      const out = isSpanish
+        ? `Entiendo. Hay varios programas que pueden bajar los costos de Medicare: **Extra Help / LIS** (ayuda con copagos de medicinas), **MSP** (Medicare Savings Programs — QMB, SLMB, QI — ayuda con la prima de la Parte B y a veces más), y en algunos estados programas locales. La elegibilidad depende de sus ingresos, sus activos, y el estado donde vive. Aquí no puedo confirmar su elegibilidad — eso lo verifica un asesor licenciado o Medicaid del estado, sin costo. ¿Quiere que un asesor le llame para revisarlo?`
+        : `I understand. Several programs can lower Medicare costs: **Extra Help / LIS** (helps with drug copays), **MSP** (Medicare Savings Programs — QMB, SLMB, QI — helps with the Part B premium and sometimes more), and in some states local programs. Eligibility depends on income, assets, and the state you live in. I can't confirm your eligibility here — a licensed advisor or your state Medicaid office can verify that, at no cost. Would you like an advisor to call and review it?`;
+      newState.quickReplies = isSpanish
+        ? ['Sí, llamar asesor', 'No, otra cosa']
+        : ['Yes, call advisor', 'No, something else'];
+      newState.lastBotIntent = 'savings_program_info';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
