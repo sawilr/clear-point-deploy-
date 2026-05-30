@@ -2428,9 +2428,26 @@ export function processMessage(
         flagInconsistency(newState, `zip_not_in_service_area: ${zipDigits}`, 25);
       }
       newState.step = 'asking_topic';
-      const out = isSpanish
-        ? 'Gracias. ¿En qué le puedo ayudar hoy?'
-        : 'Thank you. How can I help you today?';
+      // WAVE 45 — confirm the ZIP back to the user and tell them which state
+      // it maps to. If outside service area (NY/NJ/FL/CT), the bot is honest
+      // that ClearPoint advisors may not cover every plan there.
+      const stateLabel = isSpanish
+        ? (detectedState === 'NY' ? 'Nueva York'
+         : detectedState === 'NJ' ? 'Nueva Jersey'
+         : detectedState === 'FL' ? 'Florida'
+         : detectedState === 'CT' ? 'Connecticut'
+         : '')
+        : (detectedState || '');
+      let out: string;
+      if (detectedState && isSpanish) {
+        out = `Gracias. Anotado, su ZIP ${zipDigits} es de **${stateLabel}**. Eso ayuda a ubicar los planes disponibles en su área cuando hablemos con un asesor licenciado. ¿En qué le puedo ayudar hoy?`;
+      } else if (detectedState) {
+        out = `Thanks. Got it, your ZIP ${zipDigits} is in **${stateLabel}**. That helps locate plans available in your area when we connect you with a licensed advisor. How can I help you today?`;
+      } else if (isSpanish) {
+        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/FL/CT), pero podemos seguir ayudándole con información general y conectarle con un asesor licenciado. ¿En qué le puedo ayudar hoy?`;
+      } else {
+        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/FL/CT), but I can still help with general information and connect you with a licensed advisor. How can I help you today?`;
+      }
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -3350,6 +3367,33 @@ export function processMessage(
       newState.askedQuestions = newState.askedQuestions || [];
 
       // ────────────────────────────────────────────────────────────────────
+      // WAVE 45 — sí/yes confirmation AFTER advisor offer must start handoff,
+      // not loop back to the first provider question. Bug: after bot said
+      // "¿Quiere que coordine eso?" user "si por favor" was re-routed to
+      // detectProblemType, came back as 'casual'/'general', and the V26/V27
+      // fallback re-asked "¿Es problema con el especialista...?".
+      // Detect a bot advisor offer in lastBotQuestion / lastBotIntent.
+      // ────────────────────────────────────────────────────────────────────
+      const _yesPattern = /^(si|sí|s[ií]\s+(por favor|claro|gracias)|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo)\.?$/i;
+      const _userSaidYes = _yesPattern.test(userMessage.trim());
+      // Look at the actual last bot message (the user just replied to it).
+      const _lastBot = [...(newState.messages || [])].reverse().find((m) => m.role === 'bot');
+      const _lastBotText = (_lastBot?.content || newState.lastBotPrompt || newState.lastBotQuestion || '').toLowerCase();
+      const _botJustOfferedAdvisor = /asesor licenciado|licensed advisor|coordin[eo] eso|quiere que (un )?asesor|le contact|le gustar[ií]a que (un )?asesor|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso/i.test(_lastBotText);
+      if (_userSaidYes && _botJustOfferedAdvisor) {
+        newState.advisorHandoffStarted = true;
+        newState.needsHuman = true;
+        newState.advisorHandoffReason = newState.advisorHandoffReason
+          || `provider_${newState.providerIssueType || newState.subIssue || 'unclear'}_user_consented`;
+        const out = isSpanish
+          ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+          : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+        newState.lastBotIntent = 'provider_advisor_handoff_start';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: true };
+      }
+
+      // ────────────────────────────────────────────────────────────────────
       // WAVE 32 — PROVIDER ACCESS TRIAGE STATE MACHINE
       //
       // Fires for the Sawil case: "mi doctor no quiere aceptarme".
@@ -3618,12 +3662,20 @@ export function processMessage(
       // (planChangeAcknowledged=false). Acknowledge preference + ask WHO told.
       if ((newState.subIssue === 'told_to_change_plan' || newState.doesNotWantPlanChange)
           && !newState.planChangeAcknowledged) {
-        const keptItem = newState.wantsToKeepSpecialist ? (isSpanish ? 'especialista' : 'specialist')
-                       : newState.wantsToKeepDoctor ? (isSpanish ? 'doctor' : 'doctor')
-                       : (isSpanish ? 'plan' : 'plan');
+        // WAVE 45 — fix doubled-word bug: when neither specialist nor doctor
+        // is the explicit kept-item, default to a clean sentence without the
+        // "ni de X" tail (which previously rendered as "...plan ni de plan").
+        const keptKind: 'specialist' | 'doctor' | 'none' =
+          newState.wantsToKeepSpecialist ? 'specialist'
+        : newState.wantsToKeepDoctor ? 'doctor'
+        : 'none';
         const out = isSpanish
-          ? `Entiendo. Si usted no quiere cambiar de plan ni de ${keptItem}, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`
-          : `Understood. If you don't want to change your plan or your ${keptItem}, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`;
+          ? (keptKind === 'none'
+              ? `Entiendo. Si usted no quiere cambiar de plan, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`
+              : `Entiendo. Si usted no quiere cambiar de plan ni de ${keptKind === 'specialist' ? 'especialista' : 'doctor'}, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`)
+          : (keptKind === 'none'
+              ? `Understood. If you don't want to change your plan, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`
+              : `Understood. If you don't want to change your plan or your ${keptKind}, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`);
         newState.planChangeAcknowledged = true;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
