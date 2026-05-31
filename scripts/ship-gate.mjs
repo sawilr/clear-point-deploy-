@@ -20,6 +20,7 @@ const SUITES = [
   { name: 'V49 savings + menuloop',    path: 'scripts/test-customer-service-v49-savings-menuloop.mjs',       weight: 122 },
   { name: 'V50 classifier adversarial',path: 'scripts/test-classifier-adversarial.mjs',                      weight: 0 },
   { name: 'V50 conversation simulator',path: 'scripts/test-conversation-simulator.mjs',                      weight: 0 },
+  { name: 'V50 human probe (50+ flows)',path: 'scripts/human-probe.mjs',                                      weight: 0 },
 ];
 
 function runOne(path) {

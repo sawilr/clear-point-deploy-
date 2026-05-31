@@ -151,7 +151,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     positives: [
       // Strongest signals — direct program names
       { re: /\b(extra help|low[- ]income subsidy|\blis\b)\b/i, weight: 1.0, tag: 'extra_help' },
-      { re: /\b(medicare savings program|\bmsp\b|\bqmb\b|\bslmb\b|\bqi[-_]? ?(program|medicare)?\b|\bpace\b)\b/i, weight: 1.0, tag: 'msp_qmb' },
+      { re: /\b(medicare savings programs?|\bmsp\b|\bqmb\b|\bslmb\b|\bqi[-_]? ?(program|medicare)?\b|\bpace\b)\b/i, weight: 1.0, tag: 'msp_qmb' },
+      { re: /\btell me about (medicare )?(savings|extra help|lis|msp)/i, weight: 1.0, tag: 'tell_me_about_savings' },
+      { re: /\bcu[eé]ntame de (los )?(ahorros|programas de ahorro|extra help|lis|msp)/i, weight: 1.0, tag: 'cuentame_savings' },
       // "ayudas de/para ahorros" — the exact phrase Sawil tried
       { re: /\bayudas? (de|con|para) ahorros?/i, weight: 1.0, tag: 'ayudas_ahorros' },
       { re: /\b(savings help|ayuda de ahorro)\b/i, weight: 1.0, tag: 'savings_help_phrase' },
@@ -177,6 +179,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot
       { re: /\b(me est[aá]n cobrando|me cobran|cobran(do)?)\b.{0,20}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'cobrando_prima' },
       { re: /\bcharging me\b.{0,15}\b(premium|part [abcd]|monthly)\b/i, weight: 1.0, tag: 'charging_me_premium_en' },
+      // "por qué me cobran tanto" — cost rage / why-so-expensive
+      { re: /\b(por que|porq|porque|why)\b.{0,15}\b(me cobran|cobran|charge|charging)\b.{0,15}\b(tanto|so much|much)\b/i, weight: 0.9, tag: 'why_charge_so_much' },
+      { re: /\bme cobran (tanto|mucho)\b/i, weight: 0.7, tag: 'cobran_mucho' },
       { re: /\bno (me )?alcanz[aoe]\b.{0,15}\b(prima|premium|copago|copay|medicare)\b/i, weight: 0.8, tag: 'no_alcanza' },
       // "financial assistance"
       { re: /\b(financial assistance|economic assistance|asistencia (financiera|econ[oó]mica))\b/i, weight: 0.8, tag: 'financial' },
@@ -221,7 +226,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     positives: [
       { re: /\bqu[eé] plan (es )?(mejor|el mejor|bueno|me conviene|me recomienda)/i, weight: 1.0, tag: 'es_which_plan_best' },
       { re: /\bcu[aá]l plan (me conviene|es mejor|es bueno|recomienda|debo|deber[ií]a)/i, weight: 1.0, tag: 'es_which_plan' },
-      { re: /\bwhich plan (is |should |would )?(best|better|right|good|recommend)/i, weight: 1.0, tag: 'en_which_plan_best' },
+      { re: /\bwhich plan (is |should |would )?(the )?(best|better|right|good|recommend)/i, weight: 1.0, tag: 'en_which_plan_best' },
+      { re: /\bwhich (medicare )?plan (is )?(the )?best (for|para)/i, weight: 1.0, tag: 'which_plan_best_for' },
+      { re: /\btell me about\b.{0,30}\bplans?\b/i, weight: 0.7, tag: 'tell_me_about_plans' },
       { re: /\b(recommend (me )?a plan|recomi[eé]ndame un plan|recomienda un plan)\b/i, weight: 1.0, tag: 'recommend_plan' },
       { re: /\b(best medicare plan|mejor plan (de )?medicare|el mejor plan)\b/i, weight: 0.9, tag: 'best_medicare' },
       { re: /\bwhat plan (should|shall|do) i (get|pick|choose|enroll|select)/i, weight: 0.9, tag: 'what_plan_should_en' },
@@ -237,7 +244,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     threshold: 0.5,
     positives: [
       // denial verbs paired with a procedure noun
-      { re: new RegExp(`\\b((no (me )?(quieren|quiere|aprueban|aprueba|aprobaron|aprobo|cubrieron|cubrio|cubre|cubren|cubrir[aá]n)|won'?t (cover|approve)|will not (cover|approve)|didn'?t (approve|cover|accept)|did not (approve|cover|accept)|denied|rejected|rechazaron|rechaz[oóa]|rechazada?|rechazado?|denegaron|denegado|denego|denied|negaron))\\b[^.?!]{0,40}\\b${RX.procedure}\\b`, 'i'), weight: 1.0, tag: 'denial_procedure' },
+      { re: new RegExp(`\\b((no (me )?(quieren|quiere|aprueban|aprueba|aprobaron|aprobo|cubrieron|cubrio|cubre|cubren|cubrir[aá]n)|won'?t (cover|approve)|will not (cover|approve)|didn'?t (approve|cover|accept)|did not (approve|cover|accept)|denied|rejected|rechazaron|rechaz[oóa]|rechazada?|rechazado?|denegaron|denegado|denego|denied|negaron|me negaron|me denegaron|me rechazaron))\\b[^.?!]{0,40}\\b${RX.procedure}\\b`, 'i'), weight: 1.0, tag: 'denial_procedure' },
+      // Bare "negaron|denegaron|rejected" + procedure (no "no" required).
+      { re: new RegExp(`\\b(me )?(negaron|denegaron|rechazaron|rejected|denied)\\b[^.?!]{0,40}\\b${RX.procedure}\\b`, 'i'), weight: 1.0, tag: 'bare_denial' },
       // "tratamiento rechazado", "denied my surgery"
       { re: /\b(tratamiento rechazado|procedimiento rechazado|cirug[ií]a rechazada|treatment was rejected|procedure was rejected|surgery was rejected)\b/i, weight: 0.9, tag: 'rejected_procedure' },
       { re: /\b(appeal a denial|appeal the denial|denied (my )?(procedure|surgery|treatment|claim)|apelar.{0,20}denegaci[oó]n)\b/i, weight: 0.9, tag: 'appeal_denial' },
@@ -479,8 +488,11 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bis my (doctor|hospital|clinic|drug|medication|prescription) (covered|in network|in-network)/i, weight: 1.0, tag: 'is_x_covered_en' },
       { re: /\bdoes my (plan |insurance )?cover (my |the )?(doctor|hospital|drug|medicine|medication)/i, weight: 1.0, tag: 'does_my_plan_cover' },
       { re: /\best[aá] (mi |el |la )?(doctor|hospital|cl[ií]nica|medicina|medicamento) (cubierto|cubierta|en (la )?red|en (mi )?plan)/i, weight: 1.0, tag: 'is_x_covered_es' },
-      { re: /\bcubre (mi |el |la )?(plan |seguro )?(mi |el |la )?(doctor|hospital|cl[ií]nica|medicina|medicamento)/i, weight: 1.0, tag: 'covers_x' },
-      { re: /\bqu[eé] (incluye|cubre) (mi |la )?cobertura\b/i, weight: 0.9, tag: 'what_covers' },
+      { re: /\bcubre (mi |el |la )?(plan |seguro )?(mi |el |la )?(doctor|hospital|cl[ií]nica|medicina|medicamento|transporte|dental|vision|comidas?)/i, weight: 1.0, tag: 'covers_x' },
+      { re: /\bqu[eé] (incluye|cubre) (mi |la )?(cobertura|plan)\b/i, weight: 0.9, tag: 'what_covers' },
+      { re: /\bno s[eé] (lo )?qu[eé] cubre (mi )?plan/i, weight: 0.9, tag: 'no_se_que_cubre' },
+      { re: /\bi don'?t know what (my )?(plan|insurance) covers\b/i, weight: 0.9, tag: 'i_dont_know_covered' },
+      { re: /\b(que pasa si|what happens if)\b.{0,30}\b(fuera de red|out of network|out-of-network)/i, weight: 0.9, tag: 'oon_question' },
       { re: /\bwhat does (my )?coverage (include|cover)\b/i, weight: 0.9, tag: 'what_does_cov' },
       { re: /\bdoes (my |the |your )?(plan|insurance|coverage) cover (my |the |any )?(drug|medication|medicine|prescription|hospital|doctor)\b/i, weight: 1.0, tag: 'does_plan_cover_x' },
       { re: /\bcobertura|coverage\b/i, weight: 0.5, tag: 'coverage_word' },

@@ -628,7 +628,8 @@ export function detectAbuseOrFrustration(text: string): {
     // ─── Spanish — general ───
     /\b(maldit[oa]s? madre|tu madre|tu mama|mama (de )?tu)\b/i,
     /\b(mama?\s?(gue|hue)(v|b)?[oa]?s?|mamagu?e?(v|b)[ao]|mamagueb[oa]|mamahueb[oa]|mamabichos?|mamabicha|comemierda|comebichos?|comebolsa)\b/i,
-    /\b(hijo (de )?(la )?puta|hijo ?e ?puta|hijueputa|huep[uú]ta|hueputa|hijaperra|hijoperro|hp|hdp)\b/i,
+    /\b(hijo (de )?(la )?puta|hijo ?e ?puta|hijueputa|huep[uú]ta|hueputa|hijaperra|hijoperro|hp|hdp|puta madre|puta vida|puta mierda|puta sea|me cago|jodete)\b/i,
+    /\bputas?\b/i,
     /\b(idiota|estupid[oa]s?|imbecil|tarad[oa]|tonto del culo|menso|baboso|babosa)\b/i,
     /\b(mierda|mierdas|que mierda|mier|joder|jodete|jodase|jodanse|jodido|jodida)\b/i,
     /\b(cono|carajo|coj?ones|verg[aoz]|verga|cabr[oó]n|cabron|cabrona|cabrones|culero|culera)\b/i,
@@ -1919,17 +1920,33 @@ export function detectProblemType(text: string): string {
   // WAVE 50 — try the new scored classifier first. Engine uses confident
   // results to short-circuit the legacy regex roulette below. Falls back
   // to legacy if the classifier is unclear or ambiguous.
-  // Only take over from legacy for the NEW intents we explicitly added
-  // (savings_program, plan_recommendation). For everything else, defer to
-  // the legacy regex chain that's tuned against 1,183 regression tests.
+  // Take over from legacy whenever the scored classifier is confident.
+  // "Trusted" intents are ones I've covered with explicit handlers (or that
+  // legacy code routes correctly already). The classifier becomes the
+  // tie-breaker — when score >= 0.7 we use it, otherwise legacy regex chain
+  // runs (proven against 1,183 regression tests).
   //
-  // For savings_program we tolerate "ambiguous" (e.g. cost-of-premium has
-  // valid bill / savings interpretations both leading to the same advisor
-  // pivot — savings handler is the more useful entrypoint).
+  // For savings_program we tolerate "ambiguous" (cost-of-premium has valid
+  // bill / savings interpretations both leading to the same advisor pivot).
+  const TRUSTED = new Set([
+    'savings_program', 'plan_recommendation', 'appeal', 'coverage',
+    'doctor_provider_network', 'doctor_change_request',
+    'drug', 'urgent_medication',
+    'fraud_scam', 'medical_emergency_911',
+    'enrollment', 'medicare_advantage',
+    'moving_state_sep', 'er_hospital_visit', 'telehealth',
+    'about_clearpoint', 'family_referral', 'returning_customer',
+    'eob_explanation', 'spap',
+  ]);
   try {
     const r = _classifyIntent(text);
     if (r && r.intent && !r.isUnclear && r.score >= 0.7) {
+      // Always trust savings/plan_recommendation even when ambiguous.
       if (r.intent === 'savings_program' || r.intent === 'plan_recommendation') {
+        return r.intent;
+      }
+      // For other trusted intents, require non-ambiguous.
+      if (!r.isAmbiguous && TRUSTED.has(r.intent)) {
         return r.intent;
       }
     }
@@ -2815,7 +2832,7 @@ function processMessageInner(
     }
     // Path B: user refused ZIP — "no", "no quiero", "skip", "prefiero no".
     if (/^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(trimmed)
-        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say))\b/i.test(trimmed)) {
+        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say)|no s[eé] (mi |el |my )?(zip|c[oó]digo|zip code)|i don'?t know my zip|i forgot my zip|i forget my zip)\b/i.test(trimmed)) {
       newState.zipRefused = true;
       newState.step = 'asking_topic';
       const out = isSpanish
@@ -4835,9 +4852,23 @@ function processMessageInner(
     // V29 — restrict broad chip menu: only fire when NO serviceCategory is
     // active AND we're truly about to repeat. If category is set, ask a
     // category-specific question instead.
+    // WAVE 50.2 — replace the "give me more detail" line with a concrete
+    // topic menu (chips). The generic question never tells the user what
+    // the bot CAN help with; it just stalls.
+    const userMsgTrim = userMessage.trim();
+    const userMsgVague = userMsgTrim.length < 20
+      && /^(s[ií]|yes|ok|okay|no se|i don'?t know|ayuda|help|que|qu[eé]|what|c[oó]mo|how|hola|hi|hello|gracias|thanks|porfa|por favor)\.?$/i.test(userMsgTrim);
+    if (userMsgVague && !newState.serviceCategory) {
+      newState.quickReplies = isSpanish ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
+      const out = isSpanish
+        ? `Claro${withName(newState.name)}. ¿En qué le puedo ayudar hoy? Algunos temas comunes: factura, doctor, medicamentos, carta, cobertura, inscripción, o hablar con un asesor licenciado.`
+        : `Of course${withName(newState.name)}. How can I help today? Common topics: a bill, a doctor, medications, a letter, coverage, enrollment, or talking to a licensed advisor.`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
     const defaultOut = isSpanish
-      ? `Gracias por contarme${withName(newState.name)}. ¿Puede darme un poco más de detalle sobre su situación?`
-      : `Thanks for telling me${withName(newState.name)}. Can you give me a bit more detail about your situation?`;
+      ? `Para orientarle mejor${withName(newState.name)}, ¿es sobre factura, doctor, medicamentos, carta, cobertura, inscripción, o prefiere hablar con un asesor licenciado?`
+      : `So I can help you best${withName(newState.name)}, is this about a bill, a doctor, medications, a letter, coverage, enrollment, or would you rather talk to a licensed advisor?`;
     const wouldRepeat = newState.lastFallbackResponse === defaultOut;
     if (wouldRepeat && !newState.serviceCategory) {
       newState.quickReplies = isSpanish ? [...TOPIC_CHIPS_ES] : [...TOPIC_CHIPS_EN];
