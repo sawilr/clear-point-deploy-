@@ -50,7 +50,9 @@ const CANONICAL = [
   'fueron', 'tener', 'tenga', 'tengan',
   'antes', 'ahora', 'despues', 'siempre', 'nunca', 'todo', 'todos', 'todas',
   'nada', 'algo', 'alguien', 'nadie', 'todavia', 'aun',
-  'donde', 'cuando', 'como', 'porque',
+  'donde', 'cuando', 'cuanto', 'cuanta', 'cuantos', 'cuantas', 'como', 'porque',
+  // Spanish basics — preserve
+  'parte', 'partes', 'parts', 'medicare', 'medicaid', 'plan', 'planes',
 ];
 
 const STOPWORDS = new Set([

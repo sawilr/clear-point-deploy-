@@ -22,6 +22,7 @@ const SUITES = [
   { name: 'V50 conversation simulator',path: 'scripts/test-conversation-simulator.mjs',                      weight: 0 },
   { name: 'V50 human probe (50+ flows)',path: 'scripts/human-probe.mjs',                                      weight: 0 },
   { name: 'V50 bilingual parity (49 pairs)',path: 'scripts/bilingual-parity-probe.mjs',                       weight: 0 },
+  { name: 'V52 mega probe (120 flows)', path: 'scripts/mega-probe.mjs',                                       weight: 0 },
 ];
 
 function runOne(path) {

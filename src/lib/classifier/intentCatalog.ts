@@ -343,8 +343,11 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // "I want to change my plan" → enrollment, not bill (no $ context)
       { re: /\b(change|switch|cambiar)\b.{0,15}\b(plan|planes)\b/i, weight: 0.7 },
       // EOB explanation request → eob_explanation, not bill
-      { re: /\b(what (is|does)|qu[eé] es|explain|expli(que|car))\b.{0,15}\beob\b/i, weight: 0.8 },
+      { re: /\b(what (is|does)|qu[eé] es|explain|expli(que|car))\b.{0,15}\beob\b/i, weight: 1.0 },
       { re: /\bexpli(que|car|came)me?\b.{0,15}\beob\b/i, weight: 0.9 },
+      { re: /\bi got an? eob\b|\bme lleg[oó] un eob\b/i, weight: 0.9 },
+      { re: /\bdon'?t know what (an?|the) eob (is|means)/i, weight: 1.0 },
+      { re: /\bno se que es (un )?eob/i, weight: 1.0 },
       // "do you charge" / "cobran ustedes" → about_clearpoint, not bill
       { re: /\bdo you charge\b/i, weight: 1.0 },
       { re: /\b(ustedes|uds|clearpoint) cobran\b/i, weight: 0.9 },
@@ -581,6 +584,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(gracias|thank|thanks|hola|hello|hi|hey)\b/i, weight: 0.5, tag: 'greeting' },
     ],
     negatives: [
+      // "yes thanks" / "sí gracias" → that's a YES, not casual greeting.
+      { re: /^(s[ií]|yes|sure|ok|okay|claro|perfect|perfecto)\s+(thanks|gracias|please|por favor)/i, weight: 1.0 },
       // Any Medicare topic suppresses casual.
       { re: /\b(medicare|medicaid|doctor|m[eé]dico|drug|medication|medicina|medicamento|bill|factura|cobro|premium|prima|copay|copago|coverage|cobertura|plan|insurance|aseguranza|seguro|appeal|apelaci[oó]n|enroll|inscripci[oó]n|extra help|msp|qmb|slmb|hospital|farmacia|pharmacy|carta|letter|cirug[ií]a|surgery|identidad|identity|robaron|robo|fraud|scam|estafa|fraude|recetas?|prescription)\b/i, weight: 0.6 },
     ],
@@ -628,21 +633,26 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
   cost_basics: {
     threshold: 0.5,
     positives: [
-      { re: /\b(how much|cu[aá]nto|qu[eé] precio)\b.{0,30}\b(copay|copago|deducible|deductible|premium|prima|coinsurance|coseguro)\b/i, weight: 1.0, tag: 'how_much' },
+      { re: /\b(how much|cu[aá]nto|qu[eé] precio)\b.{0,30}\b(copay|copago|deducible|deductible|premium|prima|coinsurance|coseguro|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'how_much' },
+      { re: /\b(cu[aá]nto cuesta|cu[aá]nto es)\b.{0,15}\b(la (parte|prima|part [abcd]|parte [abcd]))\b/i, weight: 1.0, tag: 'cuanto_cuesta_parte' },
+      { re: /\b(how much (is|does) (the )?(part [abcd]|premium|copay|deductible))\b/i, weight: 1.0, tag: 'how_much_is' },
     ],
-    seedsEs: ['cuánto es el deducible', 'cuánto cuesta la prima'],
-    seedsEn: ['how much is the deductible', 'how much is the premium'],
+    seedsEs: ['cuánto es el deducible', 'cuánto cuesta la prima', 'cuánto cuesta la parte B'],
+    seedsEn: ['how much is the deductible', 'how much is the premium', 'how much is part B'],
   },
   medicare_basics: {
     threshold: 0.5,
     positives: [
       { re: /\b(what is medicare|qu[eé] es medicare|how does medicare work|c[oó]mo funciona medicare|parts? of medicare|partes? de medicare|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'medicare_basics' },
+      { re: /\b(qu[eé] diferencia|what'?s? the difference|difference between)\b.{0,15}\b(part [abcd]|parte [abcd]|a y b|a and b|hospital|m[eé]dico)/i, weight: 1.0, tag: 'difference_a_b' },
     ],
     negatives: [
       // "they're charging me for the Part B premium" → bill or savings, not basics
       { re: /\b(cobrando|cobran|me cobr|charging|charge|pagar|paying|afford|alcanz|subi[oó]|aument[oó])\b.{0,30}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 0.9 },
       // "help with part B premium" → savings
       { re: /\b(ayuda|help|asistencia|assistance)\b.{0,30}\b(part [abcd]|parte [abcd]|prima|premium)\b/i, weight: 0.9 },
+      // "how much" → cost_basics, not basics
+      { re: /\b(cu[aá]nto|how much|qu[eé] precio|what'?s the cost)\b/i, weight: 0.7 },
     ],
     seedsEs: ['qué es medicare', 'cómo funciona medicare', 'partes de medicare'],
     seedsEn: ['what is medicare', 'how does medicare work', 'parts of medicare'],
@@ -697,9 +707,12 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     threshold: 0.4,
     positives: [
       { re: /\b(what (is|does) (an? )?eob|qu[eé] es (un )?eob|explain (the |an? )?eob|expli(que|car)( la| una| un)? eob)\b/i, weight: 1.0, tag: 'eob' },
-      { re: /\beob\b/i, weight: 0.6, tag: 'eob_alone' },
+      { re: /\beob\b/i, weight: 0.9, tag: 'eob_alone' },
       { re: /\bexplanation of benefits|explicaci[oó]n de beneficios\b/i, weight: 1.0, tag: 'expl_benefits' },
-      { re: /\bme lleg[oó] (un )?eob|i got an? eob\b/i, weight: 0.9, tag: 'got_eob' },
+      { re: /\bme lleg[oó] (un )?eob|i got an? eob\b/i, weight: 1.0, tag: 'got_eob' },
+      { re: /\bi (got|received) an?\s+(eob|explanation of benefits)\b/i, weight: 1.0, tag: 'received_eob' },
+      { re: /\bdon'?t know what (an?|the) eob\s+is/i, weight: 1.0, tag: 'dont_know_eob' },
+      { re: /\bno se que es (un )?eob\b/i, weight: 1.0, tag: 'no_se_eob' },
     ],
     seedsEs: ['qué es un EOB', 'expliqueme el EOB', 'me llegó un EOB', 'explicación de beneficios'],
     seedsEn: ['what is an EOB', 'explain the EOB', 'I got an EOB', 'explanation of benefits'],

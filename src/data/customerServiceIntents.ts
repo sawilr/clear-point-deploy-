@@ -742,14 +742,14 @@ export const PHRASE_BANK: Record<PhraseKey, { es: string[]; en: string[] }> = {
   },
   recovery_case_a_tier2: {
     es: [
-      'No quiero adivinar. Escríbame una palabra: medicamentos, doctor, carta, factura o asesor.',
-      'Mejor no asumo. ¿Puede mandarme una sola palabra — medicamentos, doctor, carta, factura o asesor?',
-      'Para no equivocarme, dígame una palabra: medicamentos, doctor, carta, factura o asesor.',
+      'Entiendo que esto es frustrante. Le voy a conectar directo con un asesor licenciado de ClearPoint que puede ayudarle mejor por teléfono — sin costo. ¿Le parece bien?',
+      'Mejor le ahorro vueltas. Un asesor licenciado de ClearPoint le puede atender ahora mismo por teléfono, gratis. ¿Le conectamos?',
+      'Para no seguir adivinando, le paso con un asesor licenciado de ClearPoint. Sin costo y le atienden en español. ¿Acepta?',
     ],
     en: [
-      "I don't want to guess. Just send one word: medications, doctor, letter, bill, or advisor.",
-      "Rather not assume. Could you send one word — medications, doctor, letter, bill, or advisor?",
-      "So I don't get it wrong, send me one word: medications, doctor, letter, bill, or advisor.",
+      "I understand this is frustrating. I'm going to connect you directly with a ClearPoint licensed advisor who can help better by phone — at no cost. Does that work?",
+      "Better to skip the back-and-forth. A licensed ClearPoint advisor can help you right now by phone, at no cost. Connect you?",
+      "Rather than keep guessing, I'll hand you off to a licensed ClearPoint advisor. No cost. Want me to set that up?",
     ],
   },
   recovery_case_a_tier3: {

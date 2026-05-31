@@ -748,7 +748,7 @@ export function detectNonsense(text: string): boolean {
   // Pure punctuation / symbol soup.
   if (/^[\W_]+$/u.test(raw)) return true;
   // Has any Medicare topic keyword → NOT nonsense.
-  const topicKw = /\b(doctor|doctora|m[eé]dico|pcp|primary|specialist|especialista|provider|proveedor|hospital|cl[ií]nica|medic|drug|farmacia|pharmacy|prescription|receta|pill|pastilla|carta|letter|notice|aviso|bill|factura|cobro|premium|prima|copay|deducti|cover|cobertura|otc|flex|dental|vision|hearing|transport|advisor|asesor|human|persona|representative|representante|medicare|medicaid|social security|seguro social|aep|iep|sep|enrollment|inscripci|appeal|apelaci|grieva|queja|change|cambiar|switch|need|necesito|help|ayuda|problem|problema|issue|inconveniente|n[uú]mero|number|english|espa[ñn]ol|spanish|ingl[eé]s|part|parte|advantage|ventaja|hmo|ppo|mapd|spap|epic|medigap|supplement|suplement|plan|planes|snp|ship|eob|emergencia|emergency|telemedicina|telehealth|insulina|insulin|gimnasio|gym|terapia|therapy|quiropr|chiropract|acupunctur|acupuntura|cobra|tricare|vaccine|vacuna|copay|copago|estafa|scam|fraude|fraud|ridicul|cuidad|caregiver|jubil|retir)\b/i;
+  const topicKw = /\b(doctor|doctora|m[eé]dico|pcp|primary|specialist|especialista|provider|proveedor|hospital|cl[ií]nica|medic|drug|farmacia|pharmacy|prescription|receta|pill|pastilla|carta|letter|notice|aviso|bill|factura|cobro|premium|prima|copay|deducti|cover|cobertura|otc|flex|dental|vision|hearing|transport|advisor|asesor|human|persona|representative|representante|medicare|medicaid|social security|seguro social|aep|iep|sep|enrollment|inscripci|appeal|apelaci|grieva|queja|change|cambiar|switch|need|necesito|help|ayuda|problem|problema|issue|inconveniente|n[uú]mero|number|english|espa[ñn]ol|spanish|ingl[eé]s|part|parte|advantage|ventaja|hmo|ppo|mapd|spap|epic|medigap|supplement|suplement|plan|planes|snp|ship|eob|emergencia|emergency|telemedicina|telehealth|insulina|insulin|gimnasio|gym|terapia|therapy|quiropr|chiropract|acupunctur|acupuntura|cobra|tricare|vaccine|vacuna|copay|copago|estafa|scam|fraude|fraud|ridicul|cuidad|caregiver|jubil|retir|msp|qmb|slmb|lis|irmaa|moop|anoc|extra help|ahorrar|ahorros?|ahorro|savings)\b/i;
   if (topicKw.test(lower)) return false;
   // Single common acknowledgment words → NOT nonsense.
   if (/^(yes|no|ok|okay|s[ií]|claro|gracias|thanks|thank you|hola|hello|hi|hey|bye|adios|adi[oó]s)\.?$/i.test(lower)) {
@@ -1958,6 +1958,7 @@ export function detectProblemType(text: string): string {
     'moving_state_sep', 'er_hospital_visit', 'telehealth',
     'about_clearpoint', 'family_referral', 'returning_customer',
     'eob_explanation', 'spap',
+    'cost_basics', 'medicare_basics', 'plan_type_question',
     // 'casual' deliberately NOT trusted — "sí gracias" / "yes thanks" after
     // an advisor offer is a YES, not a greeting. Let the provider/handler
     // yes-checks catch it.
@@ -2212,6 +2213,11 @@ export function detectProblemType(text: string): string {
   if (/\b(i called before|ya llam[eé] antes|spoke to (someone|an advisor) before|habl[eé] con (alguien|un asesor) antes|returning customer|cliente (que regresa|antiguo))\b/i.test(normalized) && normalized.length < 80) return 'returning_customer';
   // Family referral.
   if (/\b(my (daughter|son|wife|husband|niece|grandchild) (sent|told) me|mi (hija|hijo|esposa|esposo|sobrina|nieto) me (mand|dijo))\b/i.test(normalized)) return 'family_referral';
+  // Wave 52 — "yes thanks" / "sí gracias" / "yes please" / "sí por favor" is
+  // a YES-equivalent, NOT a casual greeting. Exclude.
+  if (/^(s[ií]|yes|sure|ok|okay|claro|perfect|perfecto|adelante|dale)\s+(thanks|gracias|please|por favor)\b/i.test(normalized)) {
+    return 'general'; // let downstream handlers decide
+  }
   if (/\b(gracias|thank|thanks|hola|hello|hi|hey)\b/i.test(normalized) && normalized.length < 30) return 'casual';
   return 'general';
 }
@@ -2320,6 +2326,29 @@ export function processMessage(
   }
   if (exactDup || menuDup) {
     const isEs = result.newState.language === 'es';
+    // WAVE 52 — when the user's CURRENT message is yes-equivalent and we're
+    // about to pivot to "would you like an advisor?", just start the handoff
+    // directly. They already said yes — don't ask again.
+    const userMsgTrim = userMessage.trim();
+    const userSaidYes = /^(s[ií]|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo|dale|hagamoslo|hag[aá]moslo|perfecto|perfect|excelente|excellent|great|sounds good|sounds great|that works|that'?s perfect|seria perfecto|ser[ií]a perfecto|me parece (bien|perfecto)|esta bien|est[aá] bien|claro que si|por supuesto|go ahead|let'?s do it|do it|yes thanks|yes please|si gracias|s[ií] gracias|s[ií] por favor|s[ií] claro)\.?$/i.test(userMsgTrim);
+    if (userSaidYes && !result.newState.advisorHandoffStarted) {
+      result.newState.advisorHandoffStarted = true;
+      result.newState.needsHuman = true;
+      result.newState.advisorHandoffReason = result.newState.advisorHandoffReason || 'loop_guard_yes_handoff';
+      const out = isEs
+        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+      if (result.newState.messages.length > 0) {
+        const lastIdx = result.newState.messages.length - 1;
+        if (result.newState.messages[lastIdx].role === 'bot') {
+          result.newState.messages[lastIdx] = { role: 'bot', content: out, timestamp: Date.now() };
+        } else {
+          result.newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        }
+      }
+      result.newState.lastBotIntent = 'loop_guard_to_handoff';
+      return { response: out, newState: result.newState, needsHuman: true };
+    }
     const pivot = isEs
       ? 'Disculpe — para no dar vueltas: ¿quiere que un asesor licenciado de ClearPoint le llame ahora para revisar sus opciones (sin costo), o tiene una pregunta puntual sobre Medicare que pueda contestar primero?'
       : "Sorry — to avoid going in circles: would you like a licensed ClearPoint advisor to call you now to review your options (at no cost), or do you have one specific Medicare question I can answer first?";
@@ -2477,9 +2506,10 @@ function processMessageInner(
   // last message contained an advisor offer. Start handoff immediately.
   // ──────────────────────────────────────────────────────────────────────
   if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language && !newState.advisorHandoffStarted) {
-    const _prev = [...(newState.messages || [])].slice(0, -1).reverse().find((m) => m.role === 'bot');
-    const _prevBotText = (_prev?.content || '').toLowerCase();
-    const _prevWasAdvisorOffer = /asesor licenciado|licensed advisor|coordin[eo] eso|quiere que (un )?asesor|le contact|le gustar[ií]a que (un )?asesor|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso|llamar?(le)?|call you/i.test(_prevBotText);
+    // Look at the LAST 3 bot messages — advisor offer might be 1-2 turns back.
+    const _recentBots = [...(newState.messages || [])].slice(0, -1).reverse().filter((m) => m.role === 'bot').slice(0, 3);
+    const _recentBotText = _recentBots.map((m) => m.content || '').join(' ').toLowerCase();
+    const _prevWasAdvisorOffer = /asesor licenciado|licensed advisor|coordin[eo] eso|quiere que (un )?asesor|le contact|le gustar[ií]a que (un )?asesor|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso|llamar?(le)?|call you|advisor.{0,20}(call|review|help)|asesor.{0,20}(llame|revise|ayud)/i.test(_recentBotText);
     const _msgTrim = userMessage.trim();
     const _yesEqGlobal = /^(s[ií]|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo|dale|hagamoslo|hag[aá]moslo|perfecto|perfect|excelente|excellent|great|sounds good|sounds great|that works|that'?s perfect|seria perfecto|ser[ií]a perfecto|me parece (bien|perfecto)|esta bien|est[aá] bien|claro que si|por supuesto|go ahead|let'?s do it|do it|yes thanks|yes please|si gracias|s[ií] gracias|s[ií] por favor|s[ií] claro)\.?$/i.test(_msgTrim)
       || /^(s[ií]|yes)[,\s]+(por favor|please|gracias|thanks|dale|claro|adelante|go ahead|let'?s do it)\b/i.test(_msgTrim)
