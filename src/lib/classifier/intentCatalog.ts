@@ -152,8 +152,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // Strongest signals — direct program names
       { re: /\b(extra help|low[- ]income subsidy|\blis\b)\b/i, weight: 1.0, tag: 'extra_help' },
       { re: /\b(medicare savings programs?|\bmsp\b|\bqmb\b|\bslmb\b|\bqi[-_]? ?(program|medicare)?\b|\bpace\b)\b/i, weight: 1.0, tag: 'msp_qmb' },
-      { re: /\btell me about (medicare )?(savings|extra help|lis|msp)/i, weight: 1.0, tag: 'tell_me_about_savings' },
+      { re: /\b(tell me|i (want to know|wanna know|need to know))\s+about (medicare )?(savings|extra help|lis|msp|cost|costs|plan options)/i, weight: 1.0, tag: 'want_to_know_savings' },
       { re: /\bcu[eé]ntame de (los )?(ahorros|programas de ahorro|extra help|lis|msp)/i, weight: 1.0, tag: 'cuentame_savings' },
+      { re: /\b(quiero saber|me gustar[ií]a saber) (de |sobre |acerca de )?(ahorros|extra help|lis|msp|programas? de ahorro)/i, weight: 1.0, tag: 'quiero_saber_savings' },
       // "ayudas de/para ahorros" — the exact phrase Sawil tried
       { re: /\bayudas? (de|con|para) ahorros?/i, weight: 1.0, tag: 'ayudas_ahorros' },
       { re: /\b(savings help|ayuda de ahorro)\b/i, weight: 1.0, tag: 'savings_help_phrase' },
@@ -179,8 +180,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot
       { re: /\b(me est[aá]n cobrando|me cobran|cobran(do)?)\b.{0,20}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'cobrando_prima' },
       { re: /\bcharging me\b.{0,15}\b(premium|part [abcd]|monthly)\b/i, weight: 1.0, tag: 'charging_me_premium_en' },
-      // "por qué me cobran tanto" — cost rage / why-so-expensive
-      { re: /\b(por que|porq|porque|why)\b.{0,15}\b(me cobran|cobran|charge|charging)\b.{0,15}\b(tanto|so much|much)\b/i, weight: 0.9, tag: 'why_charge_so_much' },
+      // "por qué me cobran tanto" / "why am I charged so much"
+      { re: /\b(por que|porq|porque|why)\b.{0,25}\b(me cobran|cobran|charge|charging|charged|paying)\b.{0,25}\b(tanto|so much|much|too much)\b/i, weight: 1.0, tag: 'why_charge_so_much' },
+      { re: /\bwhy am i (being )?(charged|paying)\b.{0,20}\b(so much|too much|this much)\b/i, weight: 1.0, tag: 'why_am_i_charged' },
       { re: /\bme cobran (tanto|mucho)\b/i, weight: 0.7, tag: 'cobran_mucho' },
       { re: /\bno (me )?alcanz[aoe]\b.{0,15}\b(prima|premium|copago|copay|medicare)\b/i, weight: 0.8, tag: 'no_alcanza' },
       // "financial assistance"
@@ -396,6 +398,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(out of (my )?(medication|meds|medicine|insulin|inhaler|prescription|pills?)|sin (mi )?(medicina|medicamento|insulina|inhalador|receta|pastilla)|run out of|se me acab[oó]\s+(la|el|mi|un|una)?\s*(medicina|medicamento|medicacion|medicación|receta|pastilla|p[ií]ldora|insulina|inhalador|tratamiento))\b/i, weight: 1.0 },
       // "no tengo mi medicamento" → urgent_medication
       { re: /\bno tengo (mi )?(medicina|medicamento|insulina|receta|pastilla|tratamiento)\b/i, weight: 1.0 },
+      // "I have no insulin / meds / medication" → urgent_medication
+      { re: /\bi have no (insulin|inhaler|prescription|medication|meds|medicine|pill|pills|drug|drugs)\b/i, weight: 1.0 },
       // "is my drug covered" → coverage (interrogative form)
       { re: /\bis (my |the )?(drug|medication|medicine) (covered|in network|in-network)\b/i, weight: 0.8 },
       // Spanish interrogative "está cubierta mi medicina" → coverage
@@ -442,6 +446,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     negatives: [
       // "find me a new doctor" / "change my pcp" → doctor_change_request
       { re: /\b(find (me )?a (new )?(doctor|pcp|primary|physician)|busco (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|pcp|primario|primaria|m[eé]dic[ao])|buscar (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|pcp|primario|primaria|m[eé]dic[ao])|necesito (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|m[eé]dic[ao]|pcp)|quiero (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|m[eé]dic[ao]|pcp|primario|primaria)|need (a )?new (doctor|pcp|primary|physician)|change (my )?(doctor|pcp|primary|doc|physician)|cambiar de (doctor|m[eé]dico|pcp|primario)|my (doctor|pcp|physician) (retired|moved|closed)|mi (doctor|m[eé]dico|pcp|primario) (se )?(jubil[oó]|cerr[oó]|se mud[oó]|se fue|dej[oó]))\b/i, weight: 1.0 },
+      // "what happens if I go OON" → coverage, not provider access
+      { re: /\b(what happens if|que pasa si)\b.{0,40}\b(out of network|out-of-network|fuera de red)\b/i, weight: 0.9 },
+      { re: /\b(i want a |i'?m looking for a )(new |another )?(doctor|pcp|primary|physician|provider)\b/i, weight: 0.9 },
     ],
     seedsEs: [
       'mi doctor no acepta mi plan',
@@ -469,6 +476,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bquiero (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|m[eé]dic[ao]|pcp|primario|primaria)\b/i, weight: 1.0, tag: 'quiero_nuevo_doc' },
       { re: /\bnecesito (un |una )?(nuevo |nueva |otro |otra )?(doctor|doctora|m[eé]dic[ao]|pcp|primario|primaria)\b/i, weight: 1.0, tag: 'necesito_nuevo_doc' },
       { re: /\bneed (a |an )?(new |another |different )?(doctor|pcp|primary|physician|provider)\b/i, weight: 1.0, tag: 'need_new_doc_en' },
+      { re: /\bi want a (new |another |different )?(doctor|pcp|primary|physician|provider)\b/i, weight: 1.0, tag: 'i_want_a_doc' },
+      { re: /\bi want to (find|get|see) a (new |another |different )?(doctor|pcp|primary|physician|provider)\b/i, weight: 1.0, tag: 'i_want_to_find_doc' },
       { re: /\banother (doctor|pcp|primary|physician|provider)\b/i, weight: 1.0, tag: 'another_doc' },
       { re: /\b(looking for|i'?m looking for)\b.{0,15}\b(a |an |new )?(doctor|pcp|primary|physician|provider)\b/i, weight: 1.0, tag: 'looking_for_doc' },
       { re: /\bcambiar de (doctor|doctora|m[eé]dic[ao]|pcp|primario|primaria)\b/i, weight: 1.0, tag: 'cambiar_de_doc' },
@@ -488,11 +497,14 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bis my (doctor|hospital|clinic|drug|medication|prescription) (covered|in network|in-network)/i, weight: 1.0, tag: 'is_x_covered_en' },
       { re: /\bdoes my (plan |insurance )?cover (my |the )?(doctor|hospital|drug|medicine|medication)/i, weight: 1.0, tag: 'does_my_plan_cover' },
       { re: /\best[aá] (mi |el |la )?(doctor|hospital|cl[ií]nica|medicina|medicamento) (cubierto|cubierta|en (la )?red|en (mi )?plan)/i, weight: 1.0, tag: 'is_x_covered_es' },
+      // Reversed word order: "está cubierto mi doctor" / "está cubierta mi medicina"
+      { re: /\best[aá] (cubierto|cubierta)\b.{0,15}\b(doctor|doctora|m[eé]dico|hospital|cl[ií]nica|medicina|medicamento|receta)/i, weight: 1.0, tag: 'is_covered_x' },
       { re: /\bcubre (mi |el |la )?(plan |seguro )?(mi |el |la )?(doctor|hospital|cl[ií]nica|medicina|medicamento|transporte|dental|vision|comidas?)/i, weight: 1.0, tag: 'covers_x' },
       { re: /\bqu[eé] (incluye|cubre) (mi |la )?(cobertura|plan)\b/i, weight: 0.9, tag: 'what_covers' },
       { re: /\bno s[eé] (lo )?qu[eé] cubre (mi )?plan/i, weight: 0.9, tag: 'no_se_que_cubre' },
       { re: /\bi don'?t know what (my )?(plan|insurance) covers\b/i, weight: 0.9, tag: 'i_dont_know_covered' },
-      { re: /\b(que pasa si|what happens if)\b.{0,30}\b(fuera de red|out of network|out-of-network)/i, weight: 0.9, tag: 'oon_question' },
+      { re: /\b(que pasa si|what happens if)\b.{0,60}\b(fuera de red|out of network|out-of-network)/i, weight: 0.9, tag: 'oon_question' },
+      { re: /\b(out of network|out-of-network|fuera de red)\b/i, weight: 0.7, tag: 'oon_alone' },
       { re: /\bwhat does (my )?coverage (include|cover)\b/i, weight: 0.9, tag: 'what_does_cov' },
       { re: /\bdoes (my |the |your )?(plan|insurance|coverage) cover (my |the |any )?(drug|medication|medicine|prescription|hospital|doctor)\b/i, weight: 1.0, tag: 'does_plan_cover_x' },
       { re: /\bcobertura|coverage\b/i, weight: 0.5, tag: 'coverage_word' },
@@ -643,7 +655,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bno me queda (mi |la |el )?(medicina|medicamento|insulina|receta)\b/i, weight: 0.9, tag: 'no_me_queda' },
       { re: /\b(emergency refill|emergencia con (mi )?(medicina|receta))\b/i, weight: 0.9, tag: 'emergency_refill' },
       { re: /\b(no more|don'?t have any (more )?)(pill|pills|meds|medication|medicine|insulin|inhaler|prescription)/i, weight: 0.9, tag: 'no_more_pills' },
-      { re: /\bi have no (more )?(pill|pills|meds|medication|medicine)/i, weight: 0.9, tag: 'have_no_more' },
+      { re: /\bi have no (more )?(pill|pills|meds|medication|medicine|insulin|inhaler|prescription|drug|drugs)/i, weight: 0.9, tag: 'have_no_more' },
+      { re: /\bi have no (insulin|inhaler|prescription)/i, weight: 1.0, tag: 'have_no_insulin' },
     ],
     seedsEs: ['se me acabó la medicina', 'estoy sin insulina', 'no tengo mi medicamento', 'se me acabó el inhalador'],
     seedsEn: ["I'm out of my medication", 'run out of insulin', "I have no more pills", 'out of inhaler'],
