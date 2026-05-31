@@ -170,11 +170,13 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // "low income" / "bajos ingresos"
       { re: /\b(low ?income|bajos? ingresos?)\b/i, weight: 0.7, tag: 'low_income' },
       // "save on medicare" / "reduce cost"
-      { re: /\b(save on medicare|saving on medicare|ahorro de medicare|ahorro en medicare|ahorrar en medicare|reduce medicare cost|reducir.*medicare|baj(ar|en) los costos|lower (medicare )?costs)\b/i, weight: 0.8, tag: 'save_money' },
+      { re: /\b(save on medicare|saving on medicare|ahorro de medicare|ahorro en medicare|ahorrar en medicare|reduce medicare cost|reducir.*medicare|baj(ar|en) los costos|lower (medicare )?costs|save money on medicare|save (some )?money\b.{0,15}\bmedicare)\b/i, weight: 0.8, tag: 'save_money' },
+      { re: /\bi want to (save|cut) (money|costs?)\b.{0,15}\b(medicare|on medicare)\b/i, weight: 1.0, tag: 'i_want_save_money' },
       // "ahorros (en/de/con) medicare" / "tener ahorros" — plural or alone.
       { re: /\bahorros?\b.{0,15}\b(en|de|con|para|sobre) medicare\b/i, weight: 1.0, tag: 'ahorros_en_medicare' },
-      { re: /\b(quiero|necesito|busco|me hace falta|tener)\b.{0,15}\bahorros?\b/i, weight: 0.8, tag: 'quiero_ahorros' },
-      { re: /\bquiero ahorrar\b/i, weight: 0.8, tag: 'quiero_ahorrar' },
+      { re: /\b(quiero|necesito|busco|me hace falta|tener)\b.{0,15}\bahorr\w*\b/i, weight: 0.8, tag: 'quiero_ahorros_fuzzy' },
+      { re: /\bquiero ahorr\w*/i, weight: 0.8, tag: 'quiero_ahorrar_fuzzy' },
+      { re: /\bahorr\w*\b.{0,15}\b(medicare|en medicare|de medicare|con medicare)\b/i, weight: 1.0, tag: 'ahorr_medicare_fuzzy' },
       // "ayudame a ahorrar"
       { re: /\b(ay[uú]deme|ay[uú]dame|ayuda) a ahorrar\b/i, weight: 0.9, tag: 'ayuda_ahorrar' },
       // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot

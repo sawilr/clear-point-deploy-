@@ -211,7 +211,61 @@ const PAIRS = [
   ['PORQ ME COBRAN TANTO',
    'WHY AM I BEING CHARGED SO MUCH',
    /asesor|advisor|extra help|\bmsp\b|programas?|premium|prima|factura|bill/i],
+
+  // Typo tolerance (Sawil: "una gente se puede equivocar escribiendo")
+  ['quiero ahorror en medicare',
+   'I want to save money on medicare',
+   /extra help|\blis\b|\bmsp\b|programas?|savings program|lower medicare/i],
+  ['nesecito un nuevo dr',
+   'I need a new dr',
+   /doctor|m[eé]dico|pcp|primario|primary|asesor|advisor/i],
+  ['mi medicna es cara',
+   'my medicne is expensive',
+   /drug|medication|medicina|medicamento|asesor|advisor|extra help|\blis\b/i],
 ];
+
+// Multi-turn parity check: advisor-offer confirmation must trigger handoff
+// across many "yes-equivalent" phrasings, in both languages.
+const ADVISOR_YES_PHRASES_ES = [
+  'sí', 'si por favor', 'claro', 'adelante', 'dale', 'perfecto',
+  'seria perfecto', 'me parece bien', 'hagámoslo', 'esta bien',
+  'por supuesto', 'sí gracias', 'ok',
+];
+const ADVISOR_YES_PHRASES_EN = [
+  'yes', 'yes please', 'sure', 'go ahead', 'perfect', 'sounds good',
+  'sounds great', "that's perfect", "let's do it", "ok",
+  'yes thanks', 'great', 'of course',
+];
+
+function runHandoffPair(yesPhrase, lang) {
+  const turns = lang === 'es'
+    ? ['español', '07407', 'tbn tengo problemas con mi doctor',
+       'dice q debo cambiar de plan', 'me dijeron q debo cambiar el plan',
+       'el especialista', yesPhrase]
+    : ['english', '10550', "I also have problems with my doctor",
+       'they say I need to change plans', 'they told me to change my plan',
+       'the specialist', yesPhrase];
+  const { state, responses } = run(turns);
+  const last = responses[responses.length - 1];
+  const handoffStarted = state.advisorHandoffStarted === true || state.needsHuman === true;
+  const asksForContact = /nombre.*tel[eé]fono|name.*phone/i.test(last);
+  return { handoffStarted, asksForContact, last };
+}
+
+for (const y of ADVISOR_YES_PHRASES_ES) {
+  const r = runHandoffPair(y, 'es');
+  if (!(r.handoffStarted && r.asksForContact)) {
+    ISSUES.push({ pair: 'handoff', lang: 'ES', kind: 'no_handoff_after_yes',
+      phrase: y, resp: r.last.slice(0, 160) });
+  }
+}
+for (const y of ADVISOR_YES_PHRASES_EN) {
+  const r = runHandoffPair(y, 'en');
+  if (!(r.handoffStarted && r.asksForContact)) {
+    ISSUES.push({ pair: 'handoff', lang: 'EN', kind: 'no_handoff_after_yes',
+      phrase: y, resp: r.last.slice(0, 160) });
+  }
+}
 
 // ─── Run pairs ──────────────────────────────────────────────────────────────
 const isFallbackEs = (r) => /Gracias por contarme\.\s+¿Puede darme un poco m[aá]s de detalle|Perd[oó]n, no pude procesar/i.test(r);

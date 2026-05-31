@@ -6,7 +6,18 @@
 import { processMessage, createInitialState } from '../src/lib/customerServiceEngine.ts';
 
 const FLOWS = [
-  // ───── Sawil's recorded failures (must work) ─────
+  // ───── Sawil live-preview failures recorded as permanent guards ─────
+  { id: 'sawil-w503-ahorror-typo', turns: [
+    'español', '07407', 'quiero ahorror en medicare',
+  ]},
+  { id: 'sawil-w503-seria-perfecto-handoff', turns: [
+    'español', '07407', 'tbn tengo problemas con mi doctor',
+    'dice q debo cambiar de plan',
+    'me dijeron q debo cambiar el plan',
+    'el especialista',
+    'seria perfecto',
+  ]},
+  // ───── Sawil's earlier recorded failures (must work) ─────
   { id: 'sawil-1-ahorros', turns: [
     'español', '06205', 'quiero tener ahorros en medicare',
     'me estan cobrando la prima de la part b',

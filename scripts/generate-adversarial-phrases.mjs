@@ -44,9 +44,18 @@ const FILLERS_EN = {
   trail: ['', ' please', ' thanks', ' can you help', ' please advise', ' ...', '?', '!', '.', ' urgent'],
 };
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-function rand(n) { return Math.floor(Math.random() * n); }
+// ─── seeded PRNG (so tests are deterministic) ──────────────────────────────
+// Mulberry32 — tiny, fast, decent distribution.
+let _seed = 0xC0FFEE;
+function rand(n) {
+  _seed |= 0; _seed = (_seed + 0x6D2B79F5) | 0;
+  let t = _seed;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n);
+}
 function pick(arr) { return arr[rand(arr.length)]; }
+function resetSeed() { _seed = 0xC0FFEE; }
 
 /** Inject a consonant swap typo at a random position. */
 function typo(s) {
@@ -155,6 +164,7 @@ function generateFromSeed(seed, lang, n) {
 
 // ─── build full corpus ──────────────────────────────────────────────────────
 export function buildAdversarialCorpus(perSeedCount = 30) {
+  resetSeed(); // deterministic output across calls
   const corpus = [];
   for (const [intent, spec] of Object.entries(INTENT_CATALOG)) {
     if (intent === 'general') continue;

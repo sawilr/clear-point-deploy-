@@ -1937,6 +1937,9 @@ export function detectProblemType(text: string): string {
     'moving_state_sep', 'er_hospital_visit', 'telehealth',
     'about_clearpoint', 'family_referral', 'returning_customer',
     'eob_explanation', 'spap',
+    // 'casual' deliberately NOT trusted — "sí gracias" / "yes thanks" after
+    // an advisor offer is a YES, not a greeting. Let the provider/handler
+    // yes-checks catch it.
   ]);
   try {
     const r = _classifyIntent(text);
@@ -2360,6 +2363,41 @@ function processMessageInner(
       newState.repeatedUserMessageCount = 0;
     }
     newState.normalizedLastUserMessage = curNorm;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // WAVE 50.4 — YES-AFTER-ADVISOR-OFFER GLOBAL CATCH
+  //
+  // Bug Sawil hit on live preview (yet again): bot offered "¿Quiere que
+  // coordine eso?" / "Want me to set that up?", user said "sí gracias" /
+  // "yes thanks" / "seria perfecto" / "perfect" — and the legacy
+  // `detectProblemType` classified those as "casual" because of the trailing
+  // greeting word, routing to a greeting handler instead of the provider's
+  // local yes-check.
+  //
+  // Solution: detect yes-equivalent BEFORE any topic routing when the bot's
+  // last message contained an advisor offer. Start handoff immediately.
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language && !newState.advisorHandoffStarted) {
+    const _prev = [...(newState.messages || [])].slice(0, -1).reverse().find((m) => m.role === 'bot');
+    const _prevBotText = (_prev?.content || '').toLowerCase();
+    const _prevWasAdvisorOffer = /asesor licenciado|licensed advisor|coordin[eo] eso|quiere que (un )?asesor|le contact|le gustar[ií]a que (un )?asesor|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso|llamar?(le)?|call you/i.test(_prevBotText);
+    const _msgTrim = userMessage.trim();
+    const _yesEqGlobal = /^(s[ií]|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo|dale|hagamoslo|hag[aá]moslo|perfecto|perfect|excelente|excellent|great|sounds good|sounds great|that works|that'?s perfect|seria perfecto|ser[ií]a perfecto|me parece (bien|perfecto)|esta bien|est[aá] bien|claro que si|por supuesto|go ahead|let'?s do it|do it|yes thanks|yes please|si gracias|s[ií] gracias|s[ií] por favor|s[ií] claro)\.?$/i.test(_msgTrim)
+      || /^(s[ií]|yes)[,\s]+(por favor|please|gracias|thanks|dale|claro|adelante|go ahead|let'?s do it)\b/i.test(_msgTrim)
+      || /\b(seria perfecto|ser[ií]a perfecto|sounds (good|great|perfect)|that (works|sounds) (good|great|perfect)|perfecto gracias|hag[aá]moslo|let'?s do it|go ahead|adelante por favor|of course please|por supuesto)\b/i.test(_msgTrim);
+    if (_prevWasAdvisorOffer && _yesEqGlobal) {
+      const _isEs = newState.language === 'es';
+      newState.advisorHandoffStarted = true;
+      newState.needsHuman = true;
+      newState.advisorHandoffReason = newState.advisorHandoffReason || 'global_yes_after_advisor_offer';
+      const out = _isEs
+        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+      newState.lastBotIntent = 'global_advisor_handoff_start';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -3818,8 +3856,11 @@ function processMessageInner(
       // fallback re-asked "¿Es problema con el especialista...?".
       // Detect a bot advisor offer in lastBotQuestion / lastBotIntent.
       // ────────────────────────────────────────────────────────────────────
-      const _yesPattern = /^(si|sí|s[ií]\s+(por favor|claro|gracias)|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo)\.?$/i;
-      const _userSaidYes = _yesPattern.test(userMessage.trim());
+      const _yesPattern = /^(si|sí|s[ií]\s+(por favor|claro|gracias)|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo|dale|hagamoslo|hag[aá]moslo|perfecto|perfect|excelente|excellent|great|sounds good|sounds great|that works|that'?s perfect|seria perfecto|ser[ií]a perfecto|me parece (bien|perfecto)|esta bien|est[aá] bien|of course|claro que si|por supuesto|go ahead|let'?s do it|do it|yes thanks|yes please|si gracias|s[ií] gracias|sounds (good|great|perfect))\.?$/i;
+      const _userSaidYes = _yesPattern.test(userMessage.trim())
+        // Also catch yes-equivalent prefixes followed by extra words
+        || /^(s[ií]|yes)[,\s]+(por favor|please|gracias|thanks|dale|claro|adelante|go ahead|let'?s do it)\b/i.test(userMessage.trim())
+        || /\b(seria perfecto|ser[ií]a perfecto|sounds (good|great|perfect)|that (works|sounds) (good|great|perfect)|perfecto gracias|hag[aá]moslo|let'?s do it|go ahead|adelante|of course|por supuesto)\b/i.test(userMessage.trim());
       // Look at the actual last bot message (the user just replied to it).
       const _lastBot = [...(newState.messages || [])].reverse().find((m) => m.role === 'bot');
       const _lastBotText = (_lastBot?.content || newState.lastBotPrompt || newState.lastBotQuestion || '').toLowerCase();
