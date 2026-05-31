@@ -1913,7 +1913,23 @@ function normalizeText(text: string): string {
   return normalized;
 }
 
+import { classifyIntent as _classifyIntent } from './classifier/classifyIntent';
+
 export function detectProblemType(text: string): string {
+  // WAVE 50 — try the new scored classifier first. Engine uses confident
+  // results to short-circuit the legacy regex roulette below. Falls back
+  // to legacy if the classifier is unclear or ambiguous.
+  // Only take over from legacy for the NEW intents we explicitly added
+  // (savings_program, plan_recommendation). For everything else, defer to
+  // the legacy regex chain that's tuned against 1,183 regression tests.
+  try {
+    const r = _classifyIntent(text);
+    if (r && r.intent && !r.isAmbiguous && !r.isUnclear && r.score >= 0.7) {
+      if (r.intent === 'savings_program' || r.intent === 'plan_recommendation') {
+        return r.intent;
+      }
+    }
+  } catch { /* fall through to legacy */ }
   const normalized = normalizeText(text);
   // Wave 19: explicit "talk to advisor" trumps every topic so the user can
   // bail out at any moment.
