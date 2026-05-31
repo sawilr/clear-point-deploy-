@@ -168,6 +168,16 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(low ?income|bajos? ingresos?)\b/i, weight: 0.7, tag: 'low_income' },
       // "save on medicare" / "reduce cost"
       { re: /\b(save on medicare|saving on medicare|ahorro de medicare|ahorro en medicare|ahorrar en medicare|reduce medicare cost|reducir.*medicare|baj(ar|en) los costos|lower (medicare )?costs)\b/i, weight: 0.8, tag: 'save_money' },
+      // "ahorros (en/de/con) medicare" / "tener ahorros" — plural or alone.
+      { re: /\bahorros?\b.{0,15}\b(en|de|con|para|sobre) medicare\b/i, weight: 1.0, tag: 'ahorros_en_medicare' },
+      { re: /\b(quiero|necesito|busco|me hace falta|tener)\b.{0,15}\bahorros?\b/i, weight: 0.8, tag: 'quiero_ahorros' },
+      { re: /\bquiero ahorrar\b/i, weight: 0.8, tag: 'quiero_ahorrar' },
+      // "ayudame a ahorrar"
+      { re: /\b(ay[uú]deme|ay[uú]dame|ayuda) a ahorrar\b/i, weight: 0.9, tag: 'ayuda_ahorrar' },
+      // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot
+      { re: /\b(me est[aá]n cobrando|me cobran|cobran(do)?)\b.{0,20}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'cobrando_prima' },
+      { re: /\bcharging me\b.{0,15}\b(premium|part [abcd]|monthly)\b/i, weight: 1.0, tag: 'charging_me_premium_en' },
+      { re: /\bno (me )?alcanz[aoe]\b.{0,15}\b(prima|premium|copago|copay|medicare)\b/i, weight: 0.8, tag: 'no_alcanza' },
       // "financial assistance"
       { re: /\b(financial assistance|economic assistance|asistencia (financiera|econ[oó]mica))\b/i, weight: 0.8, tag: 'financial' },
       // SPAP / EPIC (state programs)
@@ -600,6 +610,12 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     threshold: 0.5,
     positives: [
       { re: /\b(what is medicare|qu[eé] es medicare|how does medicare work|c[oó]mo funciona medicare|parts? of medicare|partes? de medicare|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'medicare_basics' },
+    ],
+    negatives: [
+      // "they're charging me for the Part B premium" → bill or savings, not basics
+      { re: /\b(cobrando|cobran|me cobr|charging|charge|pagar|paying|afford|alcanz|subi[oó]|aument[oó])\b.{0,30}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 0.9 },
+      // "help with part B premium" → savings
+      { re: /\b(ayuda|help|asistencia|assistance)\b.{0,30}\b(part [abcd]|parte [abcd]|prima|premium)\b/i, weight: 0.9 },
     ],
     seedsEs: ['qué es medicare', 'cómo funciona medicare', 'partes de medicare'],
     seedsEn: ['what is medicare', 'how does medicare work', 'parts of medicare'],

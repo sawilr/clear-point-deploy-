@@ -1922,9 +1922,13 @@ export function detectProblemType(text: string): string {
   // Only take over from legacy for the NEW intents we explicitly added
   // (savings_program, plan_recommendation). For everything else, defer to
   // the legacy regex chain that's tuned against 1,183 regression tests.
+  //
+  // For savings_program we tolerate "ambiguous" (e.g. cost-of-premium has
+  // valid bill / savings interpretations both leading to the same advisor
+  // pivot — savings handler is the more useful entrypoint).
   try {
     const r = _classifyIntent(text);
-    if (r && r.intent && !r.isAmbiguous && !r.isUnclear && r.score >= 0.7) {
+    if (r && r.intent && !r.isUnclear && r.score >= 0.7) {
       if (r.intent === 'savings_program' || r.intent === 'plan_recommendation') {
         return r.intent;
       }

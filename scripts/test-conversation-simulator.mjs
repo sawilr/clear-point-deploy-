@@ -73,6 +73,30 @@ function assertNoUndefined(label, conv) {
 
 console.log('\n=== SCENARIOS ===\n');
 
+// SAWIL LIVE-PREVIEW RECORDED FAILURES — these stay as permanent regression
+// guards. Every time he reports a failing phrase, it gets added here so it
+// can never break silently again.
+{
+  const conv = run([
+    'español', '06205',
+    'quiero tener ahorros en medicare',
+  ]);
+  const L = 'S0a.sawil_ahorros_medicare';
+  check(`${L}.routes_savings`, /extra help|\blis\b|\bmsp\b|programas? que pueden bajar/i.test(conv.turns[2].bot));
+  assertCompliance(L, conv);
+}
+{
+  const conv = run([
+    'español', '06205',
+    'quiero tener ahorros en medicare',
+    'me estan cobrando la prima de la part b',
+  ]);
+  const L = 'S0b.sawil_prima_part_b';
+  check(`${L}.does_not_lecture_4_parts`, !/Medicare tiene 4 partes/i.test(conv.turns[3].bot));
+  check(`${L}.mentions_savings_or_advisor`, /extra help|\blis\b|\bmsp\b|asesor licenciado|advisor/i.test(conv.turns[3].bot));
+  assertCompliance(L, conv);
+}
+
 // 1. Sawil's savings → ayuda → estás perdido (Wave 49 regression)
 {
   const conv = run([
