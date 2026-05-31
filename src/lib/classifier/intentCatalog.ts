@@ -180,7 +180,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       // "ayudame a ahorrar"
       { re: /\b(ay[uú]deme|ay[uú]dame|ayuda) a ahorrar\b/i, weight: 0.9, tag: 'ayuda_ahorrar' },
       // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot
-      { re: /\b(me est[aá]n cobrando|me cobran|cobran(do)?)\b.{0,20}\b(prima|premium|part [abcd]|parte [abcd])\b/i, weight: 1.0, tag: 'cobrando_prima' },
+      { re: /\b(me est[aá]n? cobrando|me cobran|cobran(do)?)\b.{0,25}\b(prima|premium|part [abcd]|parte [abcd]|medicare|medicaid)\b/i, weight: 1.0, tag: 'cobrando_prima' },
+      { re: /\bme cobr(a|an|ando|aron)\b/i, weight: 0.6, tag: 'me_cobran_alone' },
       { re: /\bcharging me\b.{0,15}\b(premium|part [abcd]|monthly)\b/i, weight: 1.0, tag: 'charging_me_premium_en' },
       // "por qué me cobran tanto" / "why am I charged so much"
       { re: /\b(por que|porq|porque|why)\b.{0,25}\b(me cobran|cobran|charge|charging|charged|paying)\b.{0,25}\b(tanto|so much|much|too much)\b/i, weight: 1.0, tag: 'why_charge_so_much' },

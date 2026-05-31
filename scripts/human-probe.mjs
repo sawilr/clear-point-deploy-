@@ -7,6 +7,16 @@ import { processMessage, createInitialState } from '../src/lib/customerServiceEn
 
 const FLOWS = [
   // ───── Sawil live-preview failures recorded as permanent guards ─────
+  { id: 'sawil-w510-cobrando-medicare', turns: [
+    'español', '10033', 'me esta cobrando medicare',
+  ]},
+  { id: 'sawil-w510-famarcaia-typo', turns: [
+    'español', '10033', 'mi receta de famarcaia es muy cara',
+  ]},
+  { id: 'sawil-w510-pregunte-ahorrar', turns: [
+    'español', '10033', 'me esta cobrando medicare',
+    'ya te dije', 'pue no entiendes nada', 'pregunte de ahorrar',
+  ]},
   { id: 'sawil-w503-ahorror-typo', turns: [
     'español', '07407', 'quiero ahorror en medicare',
   ]},

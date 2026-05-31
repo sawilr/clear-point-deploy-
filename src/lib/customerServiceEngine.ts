@@ -220,6 +220,11 @@ export interface ConversationState {
   contactFraudFlags?: string[];
   /** Rotation index for appeal fallback variants (0..2). */
   appealFallbackVariant?: number;
+  /** Wave 51: count how many times the bot has emitted a chip-style topic
+   *  menu in this session. After 2, NEVER show another menu — escalate. */
+  menuShownCount?: number;
+  /** Wave 51: prevent infinite recursion in conversation-memory replay. */
+  _memoryReplayUsed?: boolean;
   // ─── Wave 36: human conversation layer ───
   /** Per-phrase-key index of variants the bot has already used this session.
    *  selectPhrase() picks an UNUSED variant; once all used, resets and rotates. */
@@ -1915,8 +1920,24 @@ function normalizeText(text: string): string {
 }
 
 import { classifyIntent as _classifyIntent } from './classifier/classifyIntent';
+import { correctTypos as _correctTypos } from './classifier/typoCorrect';
+import { findStrongestPriorIntent as _findStrongestPriorIntent, isBackReference as _isBackReference } from './classifier/conversationMemory';
 
 export function detectProblemType(text: string): string {
+  // WAVE 51 — charitable typo correction. Real customer-service reads what
+  // the customer MEANT. "famarcaia" → "farmacia", "mdiccna" → "medicina",
+  // "ahorror" → "ahorrar" before classification runs.
+  const correctedText = _correctTypos(text);
+  if (correctedText !== text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')) {
+    // Try classifier with corrected text first.
+    try {
+      const r = _classifyIntent(correctedText);
+      if (r && r.intent && !r.isUnclear && r.score >= 0.7
+          && (r.intent === 'savings_program' || r.intent === 'plan_recommendation' || !r.isAmbiguous)) {
+        return r.intent;
+      }
+    } catch { /* fall through */ }
+  }
   // WAVE 50 — try the new scored classifier first. Engine uses confident
   // results to short-circuit the legacy regex roulette below. Falls back
   // to legacy if the classifier is unclear or ambiguous.
@@ -2274,6 +2295,29 @@ export function processMessage(
   const menuDup = !exactDup && !!(respText && prevBotText
     && _looksLikeChipMenu(respText) && _looksLikeChipMenu(prevBotText));
 
+  // Wave 51 — count menu emissions for hard escalation on the 3rd attempt.
+  const respIsMenu = _looksLikeChipMenu(respText);
+  if (respIsMenu) {
+    result.newState.menuShownCount = (result.newState.menuShownCount || 0) + 1;
+  }
+  // Hard escalation: 3rd menu in a row → force advisor offer with sí/no chips.
+  if (respIsMenu && (result.newState.menuShownCount || 0) >= 3 && !result.newState.advisorHandoffStarted) {
+    const isEs = result.newState.language === 'es';
+    const pivot = isEs
+      ? `He visto que no estoy entendiendo bien lo que necesita. En vez de seguir preguntando, paso directamente con un asesor licenciado de ClearPoint — ellos le pueden ayudar mejor por teléfono, sin costo. ¿Le parece bien? (sí / no)`
+      : `I see I'm not understanding what you need. Instead of more questions, I'll connect you directly with a licensed ClearPoint advisor — they can help much better by phone, at no cost. Does that work? (yes / no)`;
+    if (result.newState.messages.length > 0) {
+      const lastIdx = result.newState.messages.length - 1;
+      if (result.newState.messages[lastIdx].role === 'bot') {
+        result.newState.messages[lastIdx] = { role: 'bot', content: pivot, timestamp: Date.now() };
+      } else {
+        result.newState.messages.push({ role: 'bot', content: pivot, timestamp: Date.now() });
+      }
+    }
+    result.newState.quickReplies = isEs ? ['Sí, asesor', 'No, otra cosa'] : ['Yes, advisor', 'No, something else'];
+    result.newState.lastBotIntent = 'menu_loop_hard_escalation';
+    return { response: pivot, newState: result.newState, needsHuman: result.needsHuman };
+  }
   if (exactDup || menuDup) {
     const isEs = result.newState.language === 'es';
     const pivot = isEs
@@ -2363,6 +2407,60 @@ function processMessageInner(
       newState.repeatedUserMessageCount = 0;
     }
     newState.normalizedLastUserMessage = curNorm;
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // WAVE 51 — CONVERSATION MEMORY: BACK-REFERENCE + STRONGEST-PRIOR-INTENT
+  //
+  // A real customer-service rep REMEMBERS what the caller said earlier. If
+  // the caller says "pregunté de ahorrar" / "I asked about saving", the rep
+  // looks back to the earlier mention and answers THAT, not asks a menu.
+  // If the caller says "ya te dije" / "I already told you", the rep checks
+  // what the caller already said.
+  //
+  // We also scan prior user messages so that if the CURRENT message is
+  // vague / frustrated / a back-reference, the bot can route to the
+  // strongest topic mentioned earlier.
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language && !newState.advisorHandoffStarted) {
+    const _msgLow = userMessage.trim().toLowerCase();
+    const _isVague = _msgLow.length < 25
+      && /^(ayuda|help|ya te dije|ya le dije|ya dije|no se|i don'?t know|que|qu[eé]|pue|pues|eso|esto|por favor|please|si|no)\.?$/i.test(_msgLow);
+    const _isMetaFrust = /\b(no entiend|you don'?t understand|estas perdido|you'?re lost)\b/i.test(_msgLow);
+    const _isBackRef = _isBackReference(userMessage);
+    // Only fire when the current turn is one of those scenarios AND we don't
+    // already have a serviceCategory established.
+    if ((_isVague || _isMetaFrust || _isBackRef) && !newState.serviceCategory) {
+      const hit = _findStrongestPriorIntent(newState.messages, {
+        excludeIntents: ['general', 'casual'],
+        minScore: 0.6,
+      });
+      if (hit) {
+        // Route to that intent by replaying — set the user message context
+        // and let the normal handler chain process it. We do this by
+        // recursively calling processMessageInner with the prior message.
+        // Avoid infinite recursion: only do this once per turn.
+        if (!newState._memoryReplayUsed) {
+          const _replayState = { ...newState, _memoryReplayUsed: true } as ConversationState & { _memoryReplayUsed: boolean };
+          const inner = processMessageInner(hit.fromMessage, _replayState);
+          const _isEs = newState.language === 'es';
+          const _preface = _isEs
+            ? `Disculpe, retomo lo que mencionó antes. `
+            : `Sorry — let me come back to what you mentioned earlier. `;
+          // Get the bot response from inner
+          const innerBot = [...inner.newState.messages].reverse().find((m) => m.role === 'bot');
+          const innerBotText = innerBot?.content || inner.response;
+          const out = _preface + innerBotText;
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          // Adopt service category from the replay
+          newState.serviceCategory = inner.newState.serviceCategory;
+          newState.intent = inner.newState.intent;
+          newState.quickReplies = inner.newState.quickReplies;
+          newState.lastBotIntent = 'memory_recall_' + hit.intent;
+          return { response: out, newState, needsHuman: inner.needsHuman };
+        }
+      }
+    }
   }
 
   // ──────────────────────────────────────────────────────────────────────
