@@ -9,6 +9,8 @@
 // ============================================================================
 
 import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
+// PHASE D — canonical language policy (priority rules, false-positive guard).
+import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy';
 
 export type Language = 'en' | 'es' | null;
 
@@ -221,10 +223,27 @@ export interface ConversationState {
   /** Rotation index for appeal fallback variants (0..2). */
   appealFallbackVariant?: number;
   /** Wave 51: count how many times the bot has emitted a chip-style topic
-   *  menu in this session. After 2, NEVER show another menu — escalate. */
+   *  menu in this session. After 2, NEVER show another menu — escalate.
+   *  PHASE A — now incremented ONLY when lastBotEmittedMenu is true. */
   menuShownCount?: number;
   /** Wave 51: prevent infinite recursion in conversation-memory replay. */
   _memoryReplayUsed?: boolean;
+  // ─── PHASE A (Wave 53): explicit conversation markers ───
+  /** TRUE when the IMMEDIATELY PRIOR bot response was an explicit chip
+   *  topic menu (Bill / Letter / Doctor / Meds / Coverage / Enrollment /
+   *  Advisor). FALSE for topic-progressing questions even if they mention
+   *  Medicare keywords. The wrapper reads ONLY this flag to decide
+   *  "duplicate menu" and to gate the hard-escalation counter. */
+  lastBotEmittedMenu?: boolean;
+  /** TRUE the moment the bot offers an advisor handoff. Lets us detect
+   *  "yes-after-advisor" without vocabulary heuristics. */
+  lastBotOfferedAdvisor?: boolean;
+  /** Source of the user's CURRENT message — 'chip' for chip clicks,
+   *  'text' for typed text, 'system' for synthetic resets. Default 'text'. */
+  lastUserActionType?: 'chip' | 'text' | 'system';
+  /** If the current user message came from a chip click, this carries the
+   *  semantic intent so the engine can bypass classification entirely. */
+  pendingChipIntent?: string;
   // ─── Wave 36: human conversation layer ───
   /** Per-phrase-key index of variants the bot has already used this session.
    *  selectPhrase() picks an UNUSED variant; once all used, resets and rotates. */
@@ -1764,6 +1783,11 @@ function enterRecoveryMode(
   state.quickReplies = rec.chips;
   state.lastBotPrompt = rec.response;
   state.lastBotIntent = 'recovery_stage_' + rec.nextStage;
+  // PHASE A — recovery tier 1 emits a topic chip menu; mark it so the wrapper
+  // counts it correctly. Tier 2 (advisor handoff offer) is a single proposal,
+  // not a topic menu — only mark tier 1.
+  if (rec.nextStage === 1) state.lastBotEmittedMenu = true;
+  if (rec.nextStage >= 2) state.lastBotOfferedAdvisor = true;
   state.inconsistencies = [...(state.inconsistencies || []), `recovery_${reason}`];
   state.messages.push({ role: 'bot', content: rec.response, timestamp: Date.now() });
   // Stage 3 with no topic → set advisor handoff reason for telemetry; UI only
@@ -2271,43 +2295,71 @@ function detectEmotion(text: string): string {
   return 'calm';
 }
 
-// WAVE 47/49 — public entrypoint wraps processMessageInner with a global
-// loop-guard so the bot can never repeat itself. Two flavors of repetition:
+// WAVE 47/49/PHASE-A — public entrypoint wraps processMessageInner.
 //
-//   (a) EXACT TEXT REPEAT — two adjacent bot responses identical after
-//       normalization. The handler bug case.
+// PHASE A change: the wrapper no longer uses vocabulary heuristics to detect
+// "menu duplicates". It now relies on the EXPLICIT state markers
+// `state.lastBotEmittedMenu` and `state.lastBotOfferedAdvisor` set by
+// handlers when they emit a topic chip menu or an advisor offer.
 //
-//   (b) SEMANTIC MENU REPEAT — two adjacent bot responses that BOTH list
-//       the same multi-topic chip-style menu ("¿es sobre factura, doctor,
-//       medicamentos, carta, cobertura?" twice with different wording).
-//       The Sawil "estás perdido" case — bot kept asking the same menu
-//       with different lipstick. We detect by counting the number of
-//       Medicare-topic words listed AND whether both are interrogatives.
+// Two duplicate flavors:
+//   (a) EXACT TEXT REPEAT  — same text two turns in a row (defense in depth).
+//   (b) EXPLICIT MENU REPEAT — both prior AND current turn are TAGGED as
+//       chip menus. Vocabulary similarity alone no longer triggers anything.
 //
-// On either match we replace the duplicate with a real escalation pivot
-// (offer advisor + 3 concrete choices). Defense in depth — handlers should
-// not loop, but if one does the user never sees it.
+// PHASE A also adds an optional third argument that lets the UI tell the
+// engine "this user message came from a chip click; here is the semantic
+// intent". When present, the engine routes by `intentHint` and skips the
+// classifier (chips ARE the structured intent — never NLP them).
 export function processMessage(
   userMessage: string,
   state: ConversationState,
+  meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
 ): { response: string; newState: ConversationState; needsHuman: boolean } {
+  // PHASE A — stamp the action type + chip hint onto state BEFORE running the
+  // inner pipeline. processMessageInner reads these to bypass classification.
+  const seededState: ConversationState = {
+    ...state,
+    lastUserActionType: meta?.source || 'text',
+    pendingChipIntent: meta?.source === 'chip' ? (meta?.intentHint || '') : undefined,
+  };
+  // Remember whether the IMMEDIATELY-PRIOR bot turn was an explicit menu /
+  // advisor offer. We carry this forward via state markers, NOT vocabulary.
+  const priorEmittedMenu = !!state.lastBotEmittedMenu;
+  // Reset per-turn markers; handlers re-set them when applicable.
+  seededState.lastBotEmittedMenu = false;
+  seededState.lastBotOfferedAdvisor = false;
+
   const prevBot = [...(state.messages || [])].reverse().find((m) => m.role === 'bot');
   const prevBotText = (prevBot?.content || '').trim();
-  const result = processMessageInner(userMessage, state);
+  const result = processMessageInner(userMessage, seededState);
   const respText = (result.response || '').trim();
 
   const exactDup = !!(respText && prevBotText
     && _normalizeForCompare(respText) === _normalizeForCompare(prevBotText));
-  const menuDup = !exactDup && !!(respText && prevBotText
-    && _looksLikeChipMenu(respText) && _looksLikeChipMenu(prevBotText));
+  // PHASE A — explicit-menu-only duplicate detection. Both prior AND current
+  // turn must be tagged as menus. No more vocabulary guessing.
+  const menuDup = !exactDup && priorEmittedMenu && !!result.newState.lastBotEmittedMenu;
 
-  // Wave 51 — count menu emissions for hard escalation on the 3rd attempt.
-  const respIsMenu = _looksLikeChipMenu(respText);
+  // PHASE A — count menu emissions ONLY when handler explicitly tagged the
+  // response as a menu. Topic-progressing questions no longer increment.
+  const respIsMenu = !!result.newState.lastBotEmittedMenu;
   if (respIsMenu) {
     result.newState.menuShownCount = (result.newState.menuShownCount || 0) + 1;
+  } else {
+    // A non-menu response RESETS the consecutive-menu counter so that a
+    // healthy topic-progression conversation can't accidentally cross the
+    // hard-escalation threshold turns later.
+    result.newState.menuShownCount = 0;
   }
-  // Hard escalation: 3rd menu in a row → force advisor offer with sí/no chips.
-  if (respIsMenu && (result.newState.menuShownCount || 0) >= 3 && !result.newState.advisorHandoffStarted) {
+  // Hard escalation: 3rd menu in a row → force advisor offer.
+  // PHASE A — additionally require the user is showing disengagement
+  // signals (short / vague message) before escalating. A 3-menu count from
+  // healthy engagement should not trigger this.
+  const trimUser = userMessage.trim();
+  const userLooksStuck = trimUser.length < 25
+    && /^(s[ií]|yes|ok|okay|no|que|qu[eé]|what|c[oó]mo|how|hmm|huh|ya|nada|nothing|ayuda|help|estoy perdid|i'?m lost)\.?$/i.test(trimUser);
+  if (respIsMenu && (result.newState.menuShownCount || 0) >= 3 && userLooksStuck && !result.newState.advisorHandoffStarted) {
     const isEs = result.newState.language === 'es';
     const pivot = isEs
       ? `He visto que no estoy entendiendo bien lo que necesita. En vez de seguir preguntando, paso directamente con un asesor licenciado de ClearPoint — ellos le pueden ayudar mejor por teléfono, sin costo. ¿Le parece bien? (sí / no)`
@@ -2414,6 +2466,112 @@ function processMessageInner(
   // The user has responded — any previously-rendered chips no longer apply
   // unless we explicitly re-add them in this turn.
   newState.quickReplies = [];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE A (A3, A5, A6) — CHIP-EVENT DISPATCHER
+  //
+  // When the UI signals that this message came from a chip click (carrying a
+  // semantic intent_hint), we route DIRECTLY by intent and skip classifier +
+  // topic-detection roulette. Chips ARE structured intents — never run NLP
+  // over their labels.
+  //
+  // Supported hints: change_topic | advisor | have_question | more_options |
+  //                  yes | no | start_over | back
+  // ─────────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural'
+      && newState.language && newState.pendingChipIntent) {
+    const hint = newState.pendingChipIntent;
+    newState.pendingChipIntent = undefined;
+    const isEs = newState.language === 'es';
+
+    if (hint === 'change_topic') {
+      // A5 — reset stale topic state; emit short topic-choice prompt.
+      newState.serviceCategory = '';
+      newState.intent = '';
+      newState.askedQuestions = [];
+      newState.existingClientAsked = false;
+      newState.planChangePushMade = false;
+      newState.appealFallbackVariant = undefined;
+      newState.lastFallbackResponse = undefined;
+      newState.menuShownCount = 0;
+      const out = isEs
+        ? 'Claro. ¿Qué necesita resolver ahora? Puede escribirlo en sus palabras o elegir una opción.'
+        : "Of course. What do you need help with now? You can type it in your own words or choose an option.";
+      newState.quickReplies = isEs
+        ? ['Doctor o especialista', 'Medicinas o farmacia', 'Factura o cobro', 'Hablar con asesor']
+        : ['Doctor or specialist', 'Medication or pharmacy', 'Bill or charge', 'Talk to an advisor'];
+      newState.lastBotIntent = 'change_topic_prompt';
+      newState.lastBotEmittedMenu = true; // explicit topic menu
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (hint === 'have_question') {
+      // A6 — invite the question; do NOT escalate, do NOT show a menu.
+      const out = isEs
+        ? 'Claro, dígame su pregunta y le ayudo con información general. Si requiere revisar su caso, lo puedo conectar con un asesor licenciado.'
+        : "Of course. Tell me your question and I'll help with general information. If it requires reviewing your specific case, I can connect you with a licensed advisor.";
+      newState.lastBotIntent = 'await_user_question';
+      newState.lastBotEmittedMenu = false;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (hint === 'advisor') {
+      // Direct advisor handoff start.
+      newState.advisorHandoffStarted = true;
+      newState.needsHuman = true;
+      newState.advisorHandoffReason = newState.advisorHandoffReason || 'chip_request_advisor';
+      const out = isEs
+        ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor, su nombre y un teléfono donde le puedan llamar — y por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.'
+        : "Perfect. A ClearPoint licensed advisor will contact you. Please share your name and a phone number where they can reach you — and for safety, don't send Medicare ID, SSN, or banking info here.";
+      newState.lastBotIntent = 'chip_advisor_handoff_start';
+      newState.lastBotEmittedMenu = false;
+      newState.lastBotOfferedAdvisor = true;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: true };
+    }
+
+    if (hint === 'more_options') {
+      // Show next option group; for Phase A scope we treat as a "show
+      // alternate categories" prompt with explicit menu flag.
+      newState.quickReplies = isEs
+        ? ['Dental, visión, OTC', 'Inscripción', 'Tarjeta de Medicare', 'Hablar con asesor']
+        : ['Dental, vision, OTC', 'Enrollment', 'Medicare card', 'Talk to an advisor'];
+      const out = isEs
+        ? '¿Es sobre alguno de estos temas, o prefiere hablar con un asesor?'
+        : 'Is it about any of these, or would you rather talk to an advisor?';
+      newState.lastBotIntent = 'more_options';
+      newState.lastBotEmittedMenu = true;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+
+    if (hint === 'start_over') {
+      // A safe reset hint — the UI is expected to require confirmation
+      // BEFORE sending this. Here we just acknowledge.
+      const out = isEs
+        ? 'Listo, empezamos de nuevo. ¿En qué le puedo ayudar?'
+        : 'Done, starting over. How can I help?';
+      newState.serviceCategory = undefined;
+      newState.askedQuestions = [];
+      newState.menuShownCount = 0;
+      newState.lastBotIntent = 'chip_start_over';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // Unknown hint → fall through to normal text processing.
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE A (A5, A6) — TEXT FALLBACK for the same intents.
+  // If user typed (not clicked) the same intents, route the same way.
+  // Crisis / PHI / safety still run below — these check come AFTER the
+  // existing global short-circuits so they cannot override safety routes.
+  // ─────────────────────────────────────────────────────────────────────────
+  // (intentionally evaluated near the existing "WAVE 49 vague-after-menu"
+  //  block further down so that crisis + PHI fire first.)
+
 
   // ─────────────────────────────────────────────────────────────────────────
   // WAVE 32 — REPETITION TRACKING
@@ -2529,17 +2687,65 @@ function processMessageInner(
   }
 
   // ──────────────────────────────────────────────────────────────────────
+  // PHASE A (A5, A6) — TEXT FALLBACK for change-topic and have-question
+  //
+  // Catches typed equivalents of the chip clicks. Runs AFTER safety handlers
+  // (crisis / PHI / abuse) but BEFORE vague-after-menu and topic routing.
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language) {
+    const _msgTrimChange = userMessage.trim();
+    const _isEsX = newState.language === 'es';
+    // A5 — change-topic phrases.
+    if (/^(no,? ?otra cosa|otra cosa|cambiar (de )?tema|otro tema|no,? ?something else|something else|change (the )?topic|different (topic|question)|let'?s talk about something else|quiero hablar de otra cosa)\.?$/i.test(_msgTrimChange)) {
+      newState.serviceCategory = '';
+      newState.intent = '';
+      newState.askedQuestions = [];
+      newState.existingClientAsked = false;
+      newState.planChangePushMade = false;
+      newState.appealFallbackVariant = undefined;
+      newState.lastFallbackResponse = undefined;
+      newState.menuShownCount = 0;
+      const out = _isEsX
+        ? 'Claro. ¿Qué necesita resolver ahora? Puede escribirlo en sus palabras o elegir una opción.'
+        : "Of course. What do you need help with now? You can type it in your own words or choose an option.";
+      newState.quickReplies = _isEsX
+        ? ['Doctor o especialista', 'Medicinas o farmacia', 'Factura o cobro', 'Hablar con asesor']
+        : ['Doctor or specialist', 'Medication or pharmacy', 'Bill or charge', 'Talk to an advisor'];
+      newState.lastBotIntent = 'change_topic_prompt';
+      newState.lastBotEmittedMenu = true;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+    // A6 — "I have a question" phrases.
+    if (/^(tengo (una )?pregunta|quiero (hacer )?(una )?pregunta|quiero preguntar( algo)?|puedo (hacer )?(una )?pregunta|i have a question|can i ask (something|a question)|i want to ask( something)?|may i ask|let me ask( you something)?)\.?$/i.test(_msgTrimChange)) {
+      const out = _isEsX
+        ? 'Claro, dígame su pregunta y le ayudo con información general. Si requiere revisar su caso, lo puedo conectar con un asesor licenciado.'
+        : "Of course. Tell me your question and I'll help with general information. If it requires reviewing your specific case, I can connect you with a licensed advisor.";
+      newState.lastBotIntent = 'await_user_question';
+      newState.lastBotEmittedMenu = false;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
   // WAVE 49 — VAGUE-AFTER-MENU ESCALATION
   //
-  // If the bot's last message was a chip-style topic menu AND the user's
-  // current message is short / vague / "no se" / "ayuda" / "estas perdido",
-  // do NOT give another menu. Escalate to advisor offer instead. Prevents
-  // the dead-end loop Sawil hit on live preview ("ayuda" → menu → "no se"
-  // → another menu).
+  // If the bot's last message was an EXPLICIT chip topic menu AND the
+  // user's current message is short / vague, escalate. PHASE A: prior-menu
+  // detection now uses the explicit state flag, NOT vocabulary heuristics.
   // ──────────────────────────────────────────────────────────────────────
   if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language) {
     const _prevBot = [...(newState.messages || [])].slice(0, -1).reverse().find((m) => m.role === 'bot');
-    const _prevWasMenu = _prevBot && _looksLikeChipMenu(_prevBot.content || '');
+    // PHASE A — use the explicit state marker carried into seededState.
+    // `state.lastBotEmittedMenu` reflects the PRIOR bot turn (we copied it
+    // before resetting in the wrapper). Fall back to `lastBotIntent`-based
+    // detection for handlers that haven't been migrated yet.
+    const _priorMenuByFlag = !!(state as ConversationState).lastBotEmittedMenu;
+    const _priorMenuByIntent = (state as ConversationState).lastBotIntent === 'change_topic_prompt'
+      || (state as ConversationState).lastBotIntent === 'more_options'
+      || (state as ConversationState).lastBotIntent === 'recovery_stage_1';
+    const _prevWasMenu = _priorMenuByFlag || _priorMenuByIntent || (_prevBot && _looksLikeChipMenu(_prevBot.content || ''));
     const _userMsgNorm = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const _userIsVague =
       _userMsgNorm.length < 20
@@ -2567,8 +2773,16 @@ function processMessageInner(
   // ──────────────────────────────────────────────────────────────────────
   if (newState.existingClientAsked && newState.isExistingClient === undefined) {
     const _t = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-    if (/^(si|si soy cliente|si, soy cliente|yes|yes i am|yes i'?m a client|claro que si|por supuesto|soy cliente)\.?$/i.test(_t)
-        || /\b(soy cliente|i am a client|i'?m a client|tengo asesor|mi asesor)\b/i.test(_t)) {
+    // PHASE Q — negation guard. "no soy cliente" / "i'm not a client" /
+    // "i don't have an advisor" must NOT route through the YES branch via
+    // the broad `\b(soy cliente|...)\b` substring fallback. Check negation
+    // FIRST so a negative claim wins even if the YES regex would match the
+    // tail of the phrase.
+    const _userSaysNotClient = /\b(no soy (cliente|nuevo)|no tengo (asesor|cuenta)|i'?m not a client|i am not a client|i do not have an advisor|i don'?t have an advisor|never (called|been a client|been a customer)|first time|primera vez)\b/i.test(_t)
+      || /^(no|nope|nah|no thanks)\.?$/i.test(_t);
+    if (!_userSaysNotClient && (
+        /^(si|si soy cliente|si, soy cliente|yes|yes i am|yes i'?m a client|claro que si|por supuesto|soy cliente)\.?$/i.test(_t)
+        || /\b(soy cliente|i am a client|i'?m a client|tengo asesor|mi asesor)\b/i.test(_t))) {
       newState.isExistingClient = true;
       newState.advisorHandoffStarted = true;
       newState.needsHuman = true;
@@ -2809,10 +3023,18 @@ function processMessageInner(
     }
   }
 
-  // V20 — strict language switch (only on explicit request).
-  // V31 — when in medication flow, preserve topic context in the switch.
+  // PHASE D — language switch via the canonical policy. Replaces V20's
+  // raw `detectExplicitLanguageSwitch` for the conversation-step switch.
+  // The policy resolves priority 1-4 in one call and respects the
+  // "already-in-requested-language" guard so "yes I prefer English" while
+  // already in English does NOT flip back to itself.
   if (newState.language && newState.step !== 'asking_language') {
-    const sw = detectExplicitLanguageSwitch(userMessage);
+    const _resolved = _resolveLanguage({
+      text: userMessage,
+      currentLanguage: newState.language,
+      step: newState.step,
+    });
+    const sw = _resolved.newLanguage;
     if (sw && sw !== newState.language) {
       newState.language = sw;
       const inMedFlow = newState.serviceCategory === 'drug'
@@ -2861,18 +3083,23 @@ function processMessageInner(
   // ───── STEP 1: ASKING LANGUAGE ─────
   if (newState.step === 'asking_language') {
     const msg = userMessage.toLowerCase();
-    if (msg.includes('english') || msg === 'en') {
+    // PHASE D — accept both "Spanish" and "Español" (canonical policy says
+    // both are valid initial selections at this step).
+    const initial = _resolveLanguage({
+      text: userMessage,
+      currentLanguage: null,
+      step: 'asking_language',
+    });
+    if (initial.newLanguage === 'en' || msg === 'en') {
       newState.language = 'en';
       newState.step = 'asking_zip_natural';
-      // V25 — ZIP early but natural, NO chips.
       const out = "Of course. To best help you and stay in your area, could you write your ZIP code?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    if (msg.includes('español') || msg.includes('espanol') || msg === 'es') {
+    if (initial.newLanguage === 'es' || msg === 'es') {
       newState.language = 'es';
       newState.step = 'asking_zip_natural';
-      // V25 — ZIP early but natural, NO chips.
       const out = 'Claro. Para ubicar bien el área y orientarle mejor, ¿me puede escribir su ZIP code?';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
@@ -3977,6 +4204,33 @@ function processMessageInner(
       newState.askedQuestions = newState.askedQuestions || [];
 
       // ────────────────────────────────────────────────────────────────────
+      // PHASE A (A7) — STALE-STATE RESET ON DUAL-PROVIDER MESSAGE
+      //
+      // If the user's CURRENT message clearly mentions BOTH a primary doctor
+      // AND a specialist (e.g. "el primario no acepta mi plan, y también el
+      // especialista me dijo lo mismo"), ASK which one is the issue rather
+      // than continuing a stale single-provider triage branch from a prior
+      // turn. One clarifying question; no menu; no escalation.
+      // ────────────────────────────────────────────────────────────────────
+      {
+        const _msgDualLow = userMessage.toLowerCase();
+        const _mentionsPrimary = /\b(primario|primary|pcp|m[eé]dico de cabecera|primary care)\b/i.test(_msgDualLow);
+        const _mentionsSpecialist = /\b(especialista|specialist|cardi[oó]logo|cardiologist|neur[oó]logo|gastro|endocrin[oó]logo|reumat[oó]logo|onc[oó]logo|oncologist)\b/i.test(_msgDualLow);
+        if (_mentionsPrimary && _mentionsSpecialist && !(newState.askedQuestions || []).includes('provider_primary_or_specialist_after_dual')) {
+          newState.askedQuestions = [...(newState.askedQuestions || []), 'provider_primary_or_specialist_after_dual'];
+          const out = isSpanish
+            ? 'Entiendo. Para organizarlo bien: ¿el problema principal ahora es con su doctor primario, con el especialista, o con ambos?'
+            : "I understand. To organize this properly: is the main issue right now with your primary doctor, with the specialist, or with both?";
+          newState.quickReplies = isSpanish
+            ? ['Primario', 'Especialista', 'Ambos', 'Hablar con asesor']
+            : ['Primary', 'Specialist', 'Both', 'Talk to advisor'];
+          newState.lastBotIntent = 'provider_dual_clarify';
+          newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          return { response: out, newState, needsHuman: false };
+        }
+      }
+
+      // ────────────────────────────────────────────────────────────────────
       // WAVE 45 — sí/yes confirmation AFTER advisor offer must start handoff,
       // not loop back to the first provider question. Bug: after bot said
       // "¿Quiere que coordine eso?" user "si por favor" was re-routed to
@@ -5032,6 +5286,7 @@ function processMessageInner(
       const out = isSpanish
         ? `Claro${withName(newState.name)}. ¿En qué le puedo ayudar hoy? Algunos temas comunes: factura, doctor, medicamentos, carta, cobertura, inscripción, o hablar con un asesor licenciado.`
         : `Of course${withName(newState.name)}. How can I help today? Common topics: a bill, a doctor, medications, a letter, coverage, enrollment, or talking to a licensed advisor.`;
+      newState.lastBotEmittedMenu = true; // PHASE A — explicit menu marker
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -5044,6 +5299,7 @@ function processMessageInner(
       const out = isSpanish
         ? `Para no perder tiempo: ¿es sobre factura, doctor, medicamentos, tarjeta, cobertura, inscripción, o prefiere hablar con un asesor?`
         : `So I don't waste your time: is this about a bill, a doctor, medications, a card, coverage, enrollment, or would you rather talk to an advisor?`;
+      newState.lastBotEmittedMenu = true; // PHASE A — explicit menu marker
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       newState.lastFallbackResponse = out;
       return { response: out, newState, needsHuman: false };
