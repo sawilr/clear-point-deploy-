@@ -497,6 +497,63 @@ export const SAWIL_RECORDED_FAILURES = [
       mustMatch: /extra help|\bMSP\b|programas?|asesor/i,
     },
   },
+  // ── PREVIEW SESSION (Jun 2026) — 4 NEW BUGS ────────────────────────────
+  {
+    id: 'sawil-rejected-zip-not-invented-amount',
+    description: 'Rejected ZIP "074074" must NOT leak into bill drill-down as $74,074',
+    turns: [
+      'español', '074074', '10033',
+      'tengo problemas me llego un bill del hospital',
+      'dice q debo pagar',
+    ],
+    expectedAfterLast: {
+      // The bot must NOT echo $74,074 or any 4-7 digit dollar amount.
+      mustNotMatch: /\$74,?074|\$\d{4,7}/,
+      mustMatch: /factura|bill|asesor/i,
+    },
+  },
+  {
+    id: 'sawil-topic-switch-medicinas-after-savings',
+    description: 'After bill→savings→menu, "Medicinas o farmacia" must NOT trigger bill drill-down',
+    turns: [
+      'español', '10033',
+      'tengo problemas me llego un bill del hospital',
+      'dice q debo pagar',
+      'No estoy seguro',
+      'Tengo una pregunta',
+      'me estan cobrando la prima de medicare como puedo salvar eso',
+      'No, otra cosa',
+      'Medicinas o farmacia',
+    ],
+    expectedAfterLast: {
+      mustNotMatch: /hospital|factura de \$|amount due/i,
+      mustMatch: /medicament|farmacia|medicina|pharmacy|drug|asesor/i,
+    },
+  },
+  {
+    id: 'sawil-closing-gracias-por-la-info',
+    description: '"gracias por la info" → warm closing, NOT reset to greeting',
+    turns: [
+      'español', '10033', 'tengo problemas con mi doctor',
+      'gracias por la info',
+    ],
+    expectedAfterLast: {
+      mustNotMatch: /^Hola[.,]|^¿En qué puedo ayudarle con Medicare hoy\?$/,
+      mustMatch: /placer|fue un placer|disposici[oó]n|que tenga|excelente d[ií]a/i,
+    },
+  },
+  {
+    id: 'sawil-closing-ya-termine',
+    description: '"ya terminé" → warm closing, NOT topic menu',
+    turns: [
+      'español', '10033', 'tengo problemas con una carta',
+      'ya termine',
+    ],
+    expectedAfterLast: {
+      mustNotMatch: /Para orientarle mejor.*factura.*doctor.*medicamentos/i,
+      mustMatch: /placer|fue un placer|disposici[oó]n|que tenga|excelente d[ií]a/i,
+    },
+  },
 ];
 
 // Build the full scenario list. For each topic family, emit one scenario per

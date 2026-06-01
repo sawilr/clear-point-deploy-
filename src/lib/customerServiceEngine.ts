@@ -84,6 +84,13 @@ export interface ConversationState {
   // ─── Wave 19: conversation recovery ───
   /** Times the caller failed to enter a valid ZIP. After 2 we stop asking. */
   failedZipAttempts?: number;
+  /** PHASE A2: every numeric ZIP attempt that was REJECTED, kept as a string
+   *  list so the history scanner can strip them before parsing amounts. Without
+   *  this, "074074" / "1234" leak into bill parsing as $74,074 / $1,234. */
+  rejectedZipNumbers?: string[];
+  /** PHASE A2: bot signed off with a closing message. A subsequent "hola" /
+   *  "thanks" is welcomed back without forcing the menu/intake again. */
+  conversationClosed?: boolean;
   /** Times the caller failed to enter a usable name. */
   failedNameAttempts?: number;
   /** Times the caller used abusive/frustrated/profane language. */
@@ -422,7 +429,10 @@ export function parseAmount(text: string): number | null {
   //       deducible, cuanto, costo, total, saldo, adeudo
   const hasMoneyContext = /\b(bill|charge[ds]?|paid|owe|premium|copay|deductible|fee|cost|total|balance|due|amount|factura|cobro|cobraron|cobr[oó]|pagu[eé]|debo|prima|copago|deducible|cu[aá]nto|costo|saldo|adeudo)\b/i.test(cleaned);
   if (hasMoneyContext) {
-    const bareMatch = cleaned.match(/\b(\d{4,7})\b/);
+    // PHASE A2 — reject leading-zero numbers (those are ZIP-looking, never
+    // dollar amounts). "074074" must NOT be parsed as $74,074. Also reject
+    // numbers that EXACTLY equal a recently-rejected ZIP attempt.
+    const bareMatch = cleaned.match(/\b([1-9]\d{3,6})\b/);
     if (bareMatch) return parseInt(bareMatch[1], 10);
   }
   return null;
@@ -1573,6 +1583,8 @@ export function detectPHILeak(text: string): boolean {
 function isTopicSwitch(oldIntent: string | undefined, newRaw: string): boolean {
   if (!oldIntent) return false;
   // Group related topics — switches only fire across groups.
+  // bill+drug stay coupled (a pharmacy bill is BOTH) so a single-word
+  // source clarification ("farmacia") doesn't reset the bill slots.
   const groupFor = (t: string): string => {
     if (t === 'bill' || t === 'drug') return 'money_or_drugs';
     if (t === 'letter') return 'letter';
@@ -2331,6 +2343,25 @@ function detectAmount(history: string): string | null {
   const parsed = parseAmount(history);
   if (parsed !== null && parsed > 0) return String(parsed);
   return null;
+}
+
+/** PHASE A2 — recognize closing / sign-off intent. Returns true for phrases
+ *  like "ya terminé", "gracias por la info", "I'm done", "that's all". A
+ *  real virtual assistant ends with a warm closure, NOT a fresh greeting. */
+export function isClosingIntent(text: string): boolean {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!t) return false;
+  // Spanish closing markers
+  if (/\b(ya termine|ya termin[eé]|ya acabe|ya acab[eé]|eso es todo|es todo|nada mas|nada m[aá]s|no necesito mas|no necesito m[aá]s|listo gracias|todo listo|todo claro|adios|adi[oó]s|hasta luego|hasta pronto|chao|chau|que tenga (un )?(buen|buen[ai]) (d[ií]a|noche|tarde))\b/i.test(t)) return true;
+  // "ya esta / ya está" closing — only when ALONE (avoid matching "ya está en mi plan")
+  if (/^(ya (esta|est[aá])|me voy)[.! ]*$/i.test(t)) return true;
+  if (/\b(gracias|grasias|graxias|gracas)\b.{0,20}\b(por (la |su |tu )?(info|informacion|informaci[oó]n|ayuda|atencion|atenci[oó]n|orientacion|orientaci[oó]n|tiempo|todo)|eso es todo|todo bien)\b/i.test(t)) return true;
+  // bare "gracias" after a substantial response is also closing
+  if (/^(muchas |muchisimas |muy )?(gracias|grasias|graxias|thank you|thanks|thnks|thx)( a (usted|ti))?[.! ]*$/i.test(t)) return true;
+  // English closing markers
+  if (/\b(that'?s (all|it)|that is all|that is it|i'?m done|i am done|im done|all set|all good|all done|nothing else|no more questions|i'?m good|im good|appreciate (it|your help)|thanks for (the |your )?(info|information|help|time|everything))\b/i.test(t)) return true;
+  if (/\b(bye|goodbye|good ?bye|have a (good|great|nice) (day|night|evening|one)|see you|talk (to you )?later)\b/i.test(t)) return true;
+  return false;
 }
 
 function detectEmotion(text: string): string {
@@ -3306,6 +3337,11 @@ function processMessageInner(
 
     if (zipRejectReason) {
       newState.failedZipAttempts = (newState.failedZipAttempts || 0) + 1;
+      // PHASE A2 — remember every rejected numeric attempt so the bill scanner
+      // can strip them. "074074" → tracked → later not parsed as $74,074.
+      if (allDigitsConcat && allDigitsConcat.length >= 3) {
+        newState.rejectedZipNumbers = [...(newState.rejectedZipNumbers || []), allDigitsConcat];
+      }
       const out = isSpanish
         ? 'Ese ZIP no parece correcto. Por favor escriba un ZIP de 5 dígitos para mantener la información relacionada con su área.'
         : "That ZIP code doesn't look right. Please enter a 5-digit ZIP code so I can keep the information relevant to your area.";
@@ -3440,6 +3476,11 @@ function processMessageInner(
         // Fall through to the conversation block below. Don't return.
       } else {
         newState.failedZipAttempts = (newState.failedZipAttempts || 0) + 1;
+        // PHASE A2 — remember the digits so the bill scanner can strip them
+        // from history later. Without this, "074074" leaks in as $74,074.
+        if (zip.length >= 3) {
+          newState.rejectedZipNumbers = [...(newState.rejectedZipNumbers || []), zip];
+        }
         // Wave 19 Rule 1 — after 2 failed ZIP attempts, stop asking and recover.
         if ((newState.failedZipAttempts || 0) >= 2) {
           return enterRecoveryMode(newState, 'zip_loop');
@@ -3512,6 +3553,26 @@ function processMessageInner(
   // ───── STEP 4+: PROBLEM / FREE CONVERSATION ─────
   if (newState.step === 'asking_problem' || newState.step === 'conversation') {
     newState.step = 'conversation';
+    // PHASE A2 — closing intent runs BEFORE classification so "gracias por
+    // la info" / "ya terminé" / "I'm done" sign off warmly instead of
+    // restarting the menu. Real-assistant behaviour.
+    if (isClosingIntent(userMessage)) {
+      // Don't close twice in a row — if we already signed off, treat the
+      // repeat as confirmation and stay quiet-ish.
+      if (newState.conversationClosed) {
+        const out = isSpanish
+          ? `Para servirle${withName(newState.name)}. Que tenga excelente día.`
+          : `Glad to help${withName(newState.name)}. Have a wonderful day.`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      newState.conversationClosed = true;
+      const out = isSpanish
+        ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
+        : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
     // Wave 19 — deferred ZIP capture. If the user previously skipped ZIP
     // (because they were declaring intent first) and now sends a bare
     // 5-digit number, capture it as a late ZIP and run the same cross-check.
@@ -3546,9 +3607,30 @@ function processMessageInner(
     } else if (isTopicSwitch(oldIntent, rawProblemType)) {
       effectiveIntent = rawProblemType;
       didTopicSwitch = true;
-      // Reset slot data tied to the OLD topic so the new flow starts clean.
+      // PHASE A2 — Reset slot data tied to the OLD topic so the new flow
+      // starts clean. Without clearing serviceCategory, the bill drill-down
+      // handler keeps firing on the next turn even though the user moved on.
       newState.billSource = undefined;
       newState.amountMentioned = undefined;
+      newState.serviceCategory = undefined;
+      newState.subIssue = undefined;
+      newState.letterSender = undefined;
+      newState.lastBotQuestion = undefined;
+    }
+    // PHASE A2 — when a NEW concrete topic word appears in the message that
+    // does NOT match the active serviceCategory's family, clear the prior
+    // bill state. Catches Sawil's flow: bill → savings → menu → "medicinas"
+    // (drug) where bill+drug share an isTopicSwitch group so the reset
+    // above doesn't fire, but the user clearly moved on.
+    const _activeCat = newState.serviceCategory;
+    const _activeIsBill = _activeCat === 'bill' || _activeCat === 'bill_provider' || _activeCat === 'bill_pharmacy' || _activeCat === 'bill_plan' || _activeCat === 'irmaa_premium';
+    if (_activeIsBill && rawProblemType && rawProblemType !== 'bill' && rawProblemType !== 'general' && rawProblemType !== 'casual') {
+      // The user clearly moved on. Release the bill drill-down state.
+      newState.billSource = undefined;
+      newState.amountMentioned = undefined;
+      newState.serviceCategory = undefined;
+      newState.subIssue = undefined;
+      newState.lastBotQuestion = undefined;
     }
     newState.intent = effectiveIntent;
     let problemType = effectiveIntent;
@@ -3708,6 +3790,15 @@ function processMessageInner(
       let history = fullUserHistory(newState, userMessage);
       if (newState.zipCode) {
         history = history.replace(new RegExp(`\\b${newState.zipCode}\\b`, 'g'), ' ');
+      }
+      // PHASE A2 — also strip every rejected ZIP attempt. Without this,
+      // a 6-digit typo ("074074") leaks into amount parsing as $74,074.
+      if (newState.rejectedZipNumbers && newState.rejectedZipNumbers.length) {
+        for (const r of newState.rejectedZipNumbers) {
+          if (r && r.length >= 3) {
+            history = history.replace(new RegExp(`\\b${r}\\b`, 'g'), ' ');
+          }
+        }
       }
       // billSource is only captured when there is also an explicit bill/
       // charge keyword in history. Without this, "tengo problemas con mis
@@ -5263,12 +5354,23 @@ function processMessageInner(
       return { response: out, newState, needsHuman: true };
     }
     if (problemType === 'casual') {
-      // WAVE 40 — split casual into farewell vs greeting.
-      const isFarewell = /\b(bye|goodbye|adi[oó]s|hasta luego|chao|chau|que tenga (un )?(buen|buen[ai]) (d[ií]a|noche)|that'?s all|eso es todo|nothing else|nada m[aá]s|gracias eso es todo|thanks (that'?s )?all)\b/i.test(userMessage);
-      if (isFarewell) {
+      // PHASE A2 — real-assistant-style closing. Recognize gratitude +
+      // closure phrases, sign off warmly, do NOT restart the menu.
+      if (isClosingIntent(userMessage)) {
+        newState.conversationClosed = true;
         const out = isSpanish
-          ? `De nada${withName(newState.name)}. Que tenga un buen día. Si necesita algo más, aquí estoy — o puede llamar a ClearPoint al **1-866-310-8702**.`
-          : `You're welcome${withName(newState.name)}. Have a good day. If you need anything else, I'm here — or call ClearPoint at **1-866-310-8702**.`;
+          ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
+          : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
+      // If the conversation was already closed and the user comes back with a
+      // greeting, acknowledge the return without forcing the menu again.
+      if (newState.conversationClosed) {
+        const out = isSpanish
+          ? `Hola de nuevo${withName(newState.name)}. ¿En qué más le puedo ayudar?`
+          : `Welcome back${withName(newState.name)}. What else can I help with?`;
+        newState.conversationClosed = false;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
