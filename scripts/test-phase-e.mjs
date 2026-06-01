@@ -171,7 +171,7 @@ check('uses shouldCollapseDisclosure',
 check('window resize listener present',
   /addEventListener\(['"]resize['"]/.test(BOT_SRC));
 check('visualViewport listener present',
-  /visualViewport[\s\S]{0,400}addEventListener\(['"]resize['"]/.test(BOT_SRC));
+  /visualViewport[\s\S]{0,3500}addEventListener\(['"]resize['"]/.test(BOT_SRC));
 check('hasNewBotMessage state hook',
   /hasNewBotMessage|setHasNewBotMessage/.test(BOT_SRC));
 check('showResetConfirm state hook',
@@ -194,6 +194,21 @@ check('debounced scroll-pin (scrollPinDebounceRef)',
   /scrollPinDebounceRef/.test(BOT_SRC));
 check('min-h-[44px] on chip buttons (tap target)',
   /min-h-\[44px\]/.test(BOT_SRC));
+
+// Sawil bugfix layer — verify the 3 live-preview fixes shipped:
+check('SAWIL-FIX-1: scroll effect does NOT depend on isTyping',
+  /useEffect\(\(\) => \{[\s\S]*?const last = messages/.test(BOT_SRC) &&
+  /\}, \[messages, scrollToBottom\]\);/.test(BOT_SRC));
+check('SAWIL-FIX-1: visualViewport guard uses 200px keyboard threshold',
+  /diff > 200/.test(BOT_SRC));
+check('SAWIL-FIX-2: GHL submit gated on state.name && state.phoneNumber',
+  /if \(!state\.name\) return;[\s\S]*?if \(!state\.phoneNumber\) return;/.test(BOT_SRC));
+check('SAWIL-FIX-2: hasSubmittedRef single-fire guard',
+  /hasSubmittedRef\.current = true/.test(BOT_SRC));
+check('SAWIL-FIX-3: post-success follow-up question wired',
+  /(any other concern|otra inquietud)/i.test(BOT_SRC) && /askedFollowupRef/.test(BOT_SRC));
+check('SAWIL-FIX-3: reset clears single-fire guards',
+  /hasSubmittedRef\.current = false[\s\S]*?askedFollowupRef\.current = false/.test(BOT_SRC));
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LAYER 3 — CONVERSATION FLOWS (engine-level; no UI in node)
@@ -366,7 +381,7 @@ const isFallback = (r) =>
 // Flow 18 — iOS keyboard (STRUCTURAL: visualViewport listener present)
 {
   check('F18.visualViewport listener wired',
-    /visualViewport[\s\S]{0,200}addEventListener\(['"]resize['"]/.test(BOT_SRC));
+    /visualViewport[\s\S]{0,3500}addEventListener\(['"]resize['"]/.test(BOT_SRC));
   check('F18.containerHeightStyle accepts visualViewport height',
     typeof containerHeightStyle(390, 500).height === 'string');
   check('F18.NOT REAL DEVICE TESTED — iOS Safari behavior must be verified on device', true);
@@ -375,7 +390,7 @@ const isFallback = (r) =>
 // Flow 19 — Android keyboard (STRUCTURAL: same visualViewport coverage)
 {
   check('F19.visualViewport listener wired (same as iOS)',
-    /visualViewport[\s\S]{0,200}addEventListener\(['"]resize['"]/.test(BOT_SRC));
+    /visualViewport[\s\S]{0,3500}addEventListener\(['"]resize['"]/.test(BOT_SRC));
   check('F19.NOT REAL DEVICE TESTED — Android Chrome behavior must be verified on device', true);
 }
 

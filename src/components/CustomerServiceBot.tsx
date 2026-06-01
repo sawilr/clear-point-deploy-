@@ -112,6 +112,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   // Debounce scroll-pin detection so transient typing-indicator
   // appear/disappear doesn't flip the pin state.
   const scrollPinDebounceRef = useRef<number | null>(null);
+  // Sawil bugfix — gate the GHL POST: submit only when BOTH name and phone
+  // are captured. The engine sets needsHuman=true the moment the bot says
+  // "tell me your name and phone", which used to fire an empty lead at GHL
+  // immediately. Use a ref so we POST exactly once per session.
+  const hasSubmittedRef = useRef(false);
+  // Latest-escalateHandler ref so the submit effect can call it without a
+  // forward-declaration error (escalateHandler depends on onEscalate which
+  // is defined further below).
+  const escalateHandlerRef = useRef<((s: ConversationState, m: Message[]) => void) | null>(null);
 
   // PHASE E — deterministic scroll lifecycle. The decideScrollAction() helper
   // owns the policy; this effect just dispatches on the result.
@@ -157,46 +166,60 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // PHASE E — visualViewport listener for iOS / Android keyboard handling.
-  // When the keyboard opens, visualViewport.height shrinks; we use that
-  // value to compute a real-pixel container height so the input remains
-  // visible above the keyboard. Reads the value passively; never forces
-  // scroll on keyboard events (that's the iOS jump-loop trap).
+  // PHASE E + Sawil bugfix — visualViewport listener for iOS / Android
+  // keyboard handling, BUT only react to LARGE viewport changes (keyboard
+  // open/close, > 200 px). iOS Safari fires `resize` on every URL-bar
+  // show/hide, which would otherwise cause a scroll-bouncing loop while the
+  // bot is responding. We trust CSS `dvh` for small changes.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     const vv = window.visualViewport;
-    const update = () => setVisualViewportHeight(vv.height);
+    const baseline = window.innerHeight;
+    let raf: number | null = null;
+    const update = () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const diff = baseline - vv.height;
+        if (diff > 200) {
+          // Keyboard almost certainly open — switch to concrete px height.
+          setVisualViewportHeight(vv.height);
+        } else {
+          // Trivial viewport change (URL bar / pinch) — let CSS dvh handle it.
+          setVisualViewportHeight((cur) => (cur === undefined ? cur : undefined));
+        }
+      });
+    };
     update();
     vv.addEventListener('resize', update);
-    return () => vv.removeEventListener('resize', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
   }, []);
 
-  // PHASE E — primary scroll dispatch. Runs on message + typing changes.
+  // PHASE E + Sawil bugfix — scroll dispatch runs ONLY on `messages` change,
+  // NOT on `isTyping` transitions. Typing indicator appearing/disappearing
+  // must never cause a scroll (it was the source of the up-down bouncing
+  // Sawil reported). The typing indicator itself is rendered inline; the
+  // scroll position is unaffected when it appears or disappears.
   useEffect(() => {
-    // Detect what caused this run.
     const last = messages[messages.length - 1];
-    const cause: 'user_sent' | 'bot_responded' | 'typing_started' =
-      isTyping ? 'typing_started'
-      : last?.sender === 'user' ? 'user_sent'
-      : 'bot_responded';
-
+    if (!last) return;
+    const cause: 'user_sent' | 'bot_responded' =
+      last.sender === 'user' ? 'user_sent' : 'bot_responded';
     const action = decideScrollAction({
       cause,
       userPinnedUp: userPinnedUpRef.current,
-      isTyping,
+      isTyping: false, // typing indicator is irrelevant to scroll decision
     });
-
     if (action === 'follow') {
-      // User-initiated → instant scroll (don't animate over the keyboard).
-      // Bot response → smooth.
-      const smooth = cause !== 'user_sent';
-      scrollToBottom(smooth);
+      // User-initiated → instant; bot response → smooth.
+      scrollToBottom(cause !== 'user_sent');
       setHasNewBotMessage(false);
     } else if (action === 'show_new_indicator') {
       setHasNewBotMessage(true);
     }
-    // 'no_op' → do nothing.
-  }, [messages, isTyping, scrollToBottom]);
+  }, [messages, scrollToBottom]);
 
   // PHASE E — collapse the persistent disclosure band after the first user
   // turn. Senior can still expand by tapping. Lets messages take more
@@ -207,6 +230,52 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       setDisclosureCollapsed(true);
     }
   }, [messages, disclosureCollapsed]);
+
+  // Sawil bugfix — gated GHL submit. POST to /api/submit-lead ONLY when
+  // (a) engine flagged needsHuman, AND (b) we have both a name and a
+  // phone in state. Single-fire per session via hasSubmittedRef. Removes
+  // the empty-lead bug that produced "Su mensaje fue preparado, pero no
+  // pudimos confirmar el envío" + the call button before contact existed.
+  useEffect(() => {
+    if (hasSubmittedRef.current) return;
+    if (!state.needsHuman) return;
+    if (!state.name) return;
+    if (!state.phoneNumber) return;
+    if (submitState !== 'idle') return;
+    hasSubmittedRef.current = true;
+    // Brief delay so the bot's "thank you" bubble finishes paint first.
+    const timer = setTimeout(() => {
+      escalateHandlerRef.current?.(state, messages);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [state, messages, submitState]);
+
+  // Sawil bugfix — world-class CS rep: after the GHL POST lands successfully,
+  // ask "anything else I can help with?" so the user doesn't get bounced to
+  // the phone number with no closing. Fires ONCE per successful submit.
+  const askedFollowupRef = useRef(false);
+  useEffect(() => {
+    if (submitState !== 'submitted') return;
+    if (askedFollowupRef.current) return;
+    askedFollowupRef.current = true;
+    const followupLang = state.language || pageLang;
+    const followup = followupLang === 'es'
+      ? 'Antes de cerrar — ¿hay alguna otra inquietud con la que le pueda ayudar hoy?'
+      : 'Before we close — is there anything else I can help with today?';
+    const timer = setTimeout(() => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: 'followup-' + Date.now(),
+          text: followup,
+          sender: 'bot',
+          timestamp: new Date(),
+        },
+      ]);
+    }, 1500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [submitState]);
 
   // V28 — Language sync: if user changes the global site language BEFORE
   // selecting bot language, the welcome message updates to match the new
@@ -310,6 +379,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   }
 
   const escalateHandler = onEscalate || defaultEscalate;
+  // Keep the ref in sync with the latest escalateHandler so the gated-submit
+  // effect (defined earlier) can call it without a forward-declaration error.
+  escalateHandlerRef.current = escalateHandler;
 
   async function handleSendMessage(
     text: string,
@@ -372,9 +444,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
       }
 
-      if (needsHuman) {
-        setTimeout(() => escalateHandler(newState, [...messages, userMessage, botMessage]), 800);
-      }
+      // Sawil bugfix — DO NOT fire escalateHandler from here. A dedicated
+      // useEffect below polls state.needsHuman + state.name + state.phoneNumber
+      // and POSTs to GHL exactly once when all three are present.
+      // Touch the unused params so the lint rule stays quiet.
+      void needsHuman; void userMessage; void botMessage;
     } finally {
       // Always clear, even if anything above throws synchronously after the
       // outer try started. Guarantees the input never stays frozen.
@@ -409,6 +483,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     setHasNewBotMessage(false);
     setDisclosureCollapsed(false);
     userPinnedUpRef.current = false;
+    // Sawil bugfix — clear the single-fire submit + follow-up guards so the
+    // next conversation can submit again and ask the follow-up question.
+    hasSubmittedRef.current = false;
+    askedFollowupRef.current = false;
     setMessages([{
       id: 'welcome-' + Date.now(),
       text: "Hi, I'm the ClearPoint Support Guide. I can help organize questions about Medicare bills, letters, coverage, medications, doctors, enrollment, or cost help.\n\nHola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar preguntas sobre facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
