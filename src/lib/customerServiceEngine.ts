@@ -10,7 +10,7 @@
 
 import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 // PHASE D — canonical language policy (priority rules, false-positive guard).
-import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy';
+import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -1323,16 +1323,19 @@ export function detectVagueProblemReport(text: string): { isVague: boolean; topi
   const broadPattern = /\b(tengo (un )?problemas? con|tengo (una )?duda con|necesito ayuda con|no entiendo|tengo (un )?inconveniente con|mi .{0,15} tiene (un )?problema|mi .{0,15} no funciona|mi .{0,15} no esta funcionando|me lleg[oó]|recib[ií]|i (have|got|am having) (a |an )?problems? with|i need help with|i don'?t understand|i'?m having trouble with|my .{0,15} (has|is having) (a |an )?(problem|problems|issue|issues)|my .{0,15} (isn'?t|is not) working|i got (a |an |my )?|^problems? with (my |the )?|^problemas? con (mi |el |la )?)\b/i;
   if (!broadPattern.test(lower)) return { isVague: false, topic: null };
   // Step 2: identify the topic noun.
+  // ORDER MATTERS: concrete resources (bill/letter/card/medication) come
+  // BEFORE provider nouns (doctor/specialist/hospital) so messages like
+  // "me llego una factura del doctor" route to 'bill', not 'doctor'.
   const topicChecks: Array<[VagueTopic, RegExp]> = [
-    ['specialist', /\b(specialists?|especialistas?)\b/i],
-    ['doctor', /\b(doctors?|doctora|m[eé]dico|pcp|primary)\b/i],
-    ['hospital', /\b(hospitals?|cl[ií]nica|er|emergency room)\b/i],
-    ['medication', /\b(medication|medicine|drug|prescription|medicina|medicamentos?|pastillas?|receta)\b/i],
-    ['pharmacy', /\b(pharmacy|farmacia|drugstore|drugstores)\b/i],
     ['bill', /\b(bill|invoice|charge|cobro|factura|facturas)\b/i],
     ['letter', /\b(letter|notice|carta|aviso)\b/i],
     ['otc', /\b(otc|over[- ]the[- ]counter|flex card|tarjeta otc|tarjeta flex)\b/i],
     ['card', /\b(card|tarjeta|tarjetas)\b/i],
+    ['medication', /\b(medication|medicine|drug|prescription|medicina|medicamentos?|pastillas?|receta)\b/i],
+    ['pharmacy', /\b(pharmacy|farmacia|drugstore|drugstores)\b/i],
+    ['specialist', /\b(specialists?|especialistas?)\b/i],
+    ['doctor', /\b(doctors?|doctora|m[eé]dico|pcp|primary)\b/i],
+    ['hospital', /\b(hospitals?|cl[ií]nica|er|emergency room)\b/i],
     ['plan', /\b(plan|planes|carrier|aseguradora|insurance|seguro)\b/i],
     ['dental', /\b(dental|dentist|dientes|dentadura)\b/i],
     ['vision', /\b(vision|eyes?|ojos?|glasses|lentes|anteojos)\b/i],
@@ -1417,9 +1420,9 @@ export function getTopicClarification(topic: VagueTopic, isSpanish: boolean): st
       case 'doctor':         return 'Entiendo. ¿Qué pasó con su doctor?';
       case 'specialist':     return 'Entiendo. ¿Qué pasó con su especialista?';
       case 'hospital':       return 'Entiendo. ¿El problema es una factura, una cobertura, una autorización, o una cita/procedimiento?';
-      case 'bill':           return 'Entiendo. ¿El documento dice que usted debe pagar una cantidad, o parece ser una explicación de beneficios del plan?';
+      case 'bill':           return 'Entiendo. Para esa factura o cobro, ¿el documento dice que usted debe pagar una cantidad, o parece ser una explicación de beneficios del plan?';
       case 'letter':         return 'Entiendo. ¿La carta es de Medicare, Medicaid, Social Security o de su plan?';
-      case 'medication':     return 'Entiendo. ¿El problema es el costo, que no la cubrieron, o que la farmacia no pudo procesarla?';
+      case 'medication':     return 'Entiendo. Con esa medicina o medicamento, ¿el problema es el costo, que no la cubrieron, o que la farmacia no pudo procesarla?';
       case 'pharmacy':       return 'Entiendo. ¿La farmacia le dijo que el medicamento no está cubierto, que está muy caro, o que necesita autorización?';
       case 'plan':           return 'Entiendo. ¿El problema es con cobertura, costo, doctores, medicamentos, o una carta que recibió?';
       case 'card':           return 'Entiendo. ¿Es sobre una tarjeta perdida, una que no le llegó, o una que no funciona?';
@@ -1434,9 +1437,9 @@ export function getTopicClarification(topic: VagueTopic, isSpanish: boolean): st
     case 'doctor':         return "I understand. What happened with your doctor?";
     case 'specialist':     return "I understand. What happened with your specialist?";
     case 'hospital':       return "I understand. Is it about a bill, coverage, an authorization, or an appointment/procedure?";
-    case 'bill':           return "I understand. Does the document say you owe an amount, or does it look like an Explanation of Benefits?";
+    case 'bill':           return "I understand. For that bill or charge, does the document say you owe an amount, or does it look like an Explanation of Benefits?";
     case 'letter':         return "I understand. Is the letter from Medicare, Medicaid, Social Security, or from your plan?";
-    case 'medication':     return "I understand. Is the issue that it's too expensive, not covered, or the pharmacy couldn't process it?";
+    case 'medication':     return "I understand. With that medication, is the issue that it's too expensive, not covered, or the pharmacy couldn't process it?";
     case 'pharmacy':       return "I understand. Did the pharmacy say the medication isn't covered, it's too expensive, or it needs prior authorization?";
     case 'plan':           return "I understand. Is the issue about coverage, cost, doctors, medications, or a letter you received?";
     case 'card':           return "I understand. Is it about a lost card, one that didn't arrive, or one that's not working?";
@@ -1527,8 +1530,10 @@ export function detectExplicitWantToChange(text: string): boolean {
 /** Returns true if message contains crisis / self-harm / suicide language. */
 export function detectCrisisLanguage(text: string): boolean {
   const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  // Spanish crisis phrases
-  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|pensar en suicid|suicid|quitarme la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo)\b/i.test(t)) return true;
+  // Spanish crisis phrases. Corpus fix: include verb-conjugation variants
+  // (suicidarme/suicidarse), bare "quitar la vida" (no "me" attached),
+  // "matarme", and additional self-harm signals.
+  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|matarme|quiero matarme|pensar en suicid|suicid\w*|me voy a (quitar|quitarme) la vida|quitar(me|se)? la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo|no quiero vivir m[aá]s|estoy pensando en hacerme da[nñ]o|hacerme da[nñ]o)\b/i.test(t)) return true;
   // English crisis phrases (Wave 40 — added "i cannot take this anymore",
   // "can't take this", "can't do this anymore", "no point").
   if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t go on|can'?t take it anymore|i cannot take this anymore|can'?t take this anymore|can'?t do this anymore|no point in living|nothing to live for|better off dead|thinking about (suicide|ending it))\b/i.test(t)) return true;
@@ -1943,9 +1948,9 @@ function normalizeText(text: string): string {
   return normalized;
 }
 
-import { classifyIntent as _classifyIntent } from './classifier/classifyIntent';
-import { correctTypos as _correctTypos } from './classifier/typoCorrect';
-import { findStrongestPriorIntent as _findStrongestPriorIntent, isBackReference as _isBackReference } from './classifier/conversationMemory';
+import { classifyIntent as _classifyIntent } from './classifier/classifyIntent.ts';
+import { correctTypos as _correctTypos } from './classifier/typoCorrect.ts';
+import { findStrongestPriorIntent as _findStrongestPriorIntent, isBackReference as _isBackReference } from './classifier/conversationMemory.ts';
 
 export function detectProblemType(text: string): string {
   // WAVE 51 — charitable typo correction. Real customer-service reads what
@@ -2157,6 +2162,30 @@ export function detectProblemType(text: string): string {
       || /\b(autorizaci[oó]n|prior auth(orization)?)\b.{0,15}\b(for|para)\b.{0,25}\b(therapy|terapia|procedure|procedimiento|cirug[ií]a|surgery|treatment|tratamiento)\b/i.test(normalized)) return 'appeal';
   // WAVE 48 — "they won't let me see X" / "no me dejan ver" → provider access.
   if (/\b(they (won'?t|will not|wouldn'?t|would not) let me see|no me dejan ver|no me permiten ver|no me dejan ir)\b/i.test(normalized)) return 'doctor_provider_network';
+  // Corpus fix: more provider-network signals.
+  //   "ya no esta en mi plan" / "ya no esta en la red"  (provider departed)
+  //   "el cardiologo necesita autorizacion" / "authorization for cardiologist"
+  //   "mi doctor refuses my insurance" / "rechaza mi seguro"
+  if (/\b(ya no (est[aá]|esta) en (mi|la) (plan|red|network))\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(cardio(log)?o|cardiologist|neurologo|neurologist|oncologo|oncologist|primario|primary care|especialista|specialist|doctor|m[eé]dico|pcp)\b.{0,30}\b(necesit[ao] autorizaci[oó]n|need(s)? (a |an )?authoriz|need(s)? (a |an )?referral|necesit[ao] referido)\b/i.test(normalized)) return 'doctor_provider_network';
+  if (/\bauthoriz(ation|e)\s+(for|to see)\s+(a |an |the )?(cardio|neuro|onco|specialist|primary|pcp|doctor)/i.test(normalized)) return 'doctor_provider_network';
+  if (/\b(doctor|m[eé]dico|pcp|primario|primary|specialist|especialista)\b.{0,15}\b(refuses?|rechaza|will not see|wont see|no me ver[aá])\b/i.test(normalized)) return 'doctor_provider_network';
+  // Corpus fix: enrollment signals
+  if (/\b(voy a (tener|cumplir) 65|i'?ll turn 65|i will turn 65|next month i (will )?turn 65|el periodo anual|annual period|periodo anual)\b/i.test(normalized)) return 'enrollment';
+  // Corpus fix: denial letter → appeal (not letter).
+  if (/\b(carta de (denegaci[oó]n|negaci[oó]n)|denial letter|letter of denial|me negaron por carta|denegacion por carta)\b/i.test(normalized)) return 'appeal';
+  // Corpus fix: fraud signals (broader).
+  if (/\b(me llamaron|alguien me llam[oó])\b.{0,30}\b(fingiendo|pretending|haciendose pasar|impersonando)\b/i.test(normalized)) return 'fraud_scam';
+  if (/\b(charged|cobraron|cobro|charge)\b.{0,30}\b(by a )?(visit|consulta|cita) (i didn'?t (have|attend)|que no tuve)\b/i.test(normalized)) return 'fraud_scam';
+  if (/\bcharge i don'?t recognize\b|\bcobro (extra[ñn]o|que no reconozco)\b/i.test(normalized)) return 'fraud_scam';
+  // Corpus fix: drug "step therapy" implicit ("tengo que probar otra primero").
+  if (/\b(tengo que probar otra|need to try another|have to try (another|something else) first|trial another (drug|medication) first)\b/i.test(normalized)) return 'drug';
+  if (/\bpills?\b.{0,30}\b(too|way too|expensive|pricey|costly|caras?)\b/i.test(normalized)) return 'drug';
+  // Corpus fix: lost OTC / lost card explicit (engine has id_card; route there).
+  if (/\b(tarjeta (de )?(venta libre|OTC)|over the counter card|OTC card)\b/i.test(normalized)) return 'coverage';
+  // Corpus fix: dental/vision/hearing/transportation "mi plan cubre X"
+  if (/\bmi plan cubre\b.{0,15}\b(dental|visi[oó]n|vision|audici[oó]n|hearing|audifono|transporte|comidas|gym)\b/i.test(normalized)) return 'coverage';
+  if (/\b(does (my|the) plan cover|plan cover(s)?)\b.{0,15}\b(dental|vision|hearing|transportation|meals|gym)\b/i.test(normalized)) return 'coverage';
   // (Wave 42 SPECIFIC detectors above were moved upstream — kept this marker
   // for diff readability.)
   // WAVE 40 — bare dollar amount with charged/paid/cobraron context → bill.
@@ -2165,7 +2194,23 @@ export function detectProblemType(text: string): string {
       || /\bme cobraron \$/i.test(normalized)) {
     return 'bill';
   }
+  // Corpus fix: any "billed me / charged me" verbal form → bill.
+  // Without this "me cobraron en el consultorio" / "el plan me esta cobrando"
+  // / "didnt expect this charge" / "doctor charged me" all fall through.
+  // Also: pharmacy + extra (la farmacia me cobro extra) IS bill not drug.
+  if (/\b(me (cobraron|cobr[oó]|est[aá]n? cobrando|cobran)|cobran(do)?\b|(?:doctor|hospital|farmacia|pharmacy|(?:el|the|mi|my)\s+plan|carrier) (me )?(cobr[oó]|cobraron|est[aá] cobrando|charge[ds]?|billed|billing me|is billing me))\b/i.test(normalized)) return 'bill';
+  if (/\b(la farmacia|pharmacy)\b.{0,15}\b(me )?cobr(o|ó|aron|a) (extra|m[aá]s|mucho|too much|more)\b/i.test(normalized)) return 'bill';
+  if (/\b(unexpected|surprise|sorpresa|didn'?t expect|no esperaba|no esperaba)\b.{0,20}\b(charge|bill|cobro|factura)\b/i.test(normalized)) return 'bill';
   if (/\b(bill|bills|factura|facturas|cobro|cobros|premium|prima|copay|copago|deductible|eob)\b/i.test(normalized)) return 'bill';
+  // Corpus fix: a "carta/letter" message that ALSO names a provider type
+  // (doctor / hospital / farmacia / plan / pharmacy) AND a dollar amount is
+  // really a BILL, not a generic letter. Route to bill so the bill handler
+  // takes over and we don't re-ask "vino de Medicare, SSA, Medicaid, plan?".
+  if (/\b(carta|cartas|letter|notice|aviso)\b/i.test(normalized)
+      && /\b(doctor|m[eé]dic[oa]|hospital|farmacia|pharmacy|cl[ií]nica|clinic)\b/i.test(normalized)
+      && /(\$\d|\b\d{2,5}\b.{0,20}(dolar|dollar|usd|debo))/i.test(normalized)) {
+    return 'bill';
+  }
   if (/\b(carta|cartas|letter|notice|aviso|anoc|eoc|renovaci[oó]n|renewal|medicaid notice|extra help notice|irmaa)\b/i.test(normalized)) return 'letter';
   if (/\b(medication|medications|medicamento|medicamentos|medicina|medicinas|pastilla|pastillas|drug|drugs|pharmacy|farmacia|prescription|receta)\b/i.test(normalized)) return 'drug';
   // WAVE 47 — plan recommendation question. Bot must NEVER answer "which plan is
@@ -2184,7 +2229,10 @@ export function detectProblemType(text: string): string {
   const _accentlessFraud = normalized.normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (/\b(scam|fraud|fraude|estafa|alguien (me )?llamo|someone called|robo de identidad|identity theft|me pidieron (mi )?(numero de )?medicare|asked (for )?my medicare (id|number)|tarjeta que no pedi|card i didn'?t order|factura (por|de) (una )?visita que no tuv|billed for (a )?visit i didn'?t|charged for service i never|cobro que no reconozco|cobro extra[nñ]o)\b/i.test(_accentlessFraud)) return 'fraud_scam';
   // Off-topic non-Medicare chitchat (weather, politics, jokes, religion).
-  if (/\b(weather|clima|tiempo (afuera|de hoy)|biden|trump|obama|politics|pol[ií]tica|election|elecciones|do you pray|crees en (dios|religi[oó]n)|joke|chiste|recipe|receta de (cocina|comida)|sports|deporte|football|f[uú]tbol)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
+  if (/\b(weather|clima|biden|trump|obama|politics|pol[ií]tica|election|elecciones|do you pray|crees en (dios|religi[oó]n)|joke|chiste|recipe|receta de (cocina|comida)|sports|deporte|football|f[uú]tbol)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
+  // Corpus fix: "como esta el tiempo" / "que tal el clima" / "how's the weather"
+  if (/\b(c[oó]mo (est[aá]|esta)|qu[eé] tal)\b.{0,5}\b(el )?(tiempo|clima)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
+  if (/\b(how'?s the weather|hows the weather|what'?s the weather)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
   // About ClearPoint / agent identity.
   if (/\b(who (are|is) (clearpoint|clear point)|qui[eé]nes? (son|es) (clearpoint|clear point)|son ustedes medicare|are you medicare|are you the government|son del gobierno|do you charge|(ustedes|uds|clearpoint) cobran|c[oó]mo (tienen|consiguieron) mi (info|n[uú]mero)|how do you have my (info|number)|qu[eé] planes venden|what plans do you sell|son (asesores )?licenciados|are you licensed)\b/i.test(normalized)) return 'about_clearpoint';
   // Doctor change / search request (NOT "doctor doesn't accept" — that's
@@ -2647,6 +2695,47 @@ function processMessageInner(
           return { response: out, newState, needsHuman: inner.needsHuman };
         }
       }
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // CORPUS FIX — CONTEXT-PUSHBACK + INLINE-ANSWER acknowledgment.
+  //
+  // Sawil case: bot asked "¿La carta vino de Medicare, Seguro Social,
+  // Medicaid, o de su plan?". User answered "del doctor te dije". The "te
+  // dije" is the pushback signal; "del doctor" is the actual answer. The
+  // engine used to route the "doctor" keyword to the coverage handler,
+  // dropping the in-flight letter/bill triage entirely.
+  //
+  // Rule: when the user message starts with a pushback marker AND contains
+  // an inline answer naming a source (doctor / hospital / pharmacy / plan),
+  // we acknowledge with a short apology, set the missing context, and
+  // route to the bill handler so the conversation progresses.
+  // ──────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural' && newState.language) {
+    const _msg = userMessage.trim();
+    const _msgNorm = _msg.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _isPushback = /\b(ya te dije|te dije|ya le dije|le dije|ya dije|i already told you|told you|i said)\b/i.test(_msgNorm);
+    const _hasInlineDoctor = /\b(del )?(doctor|m[eé]dic[oa]|hospital|farmacia|pharmacy|cl[ií]nica|clinic)\b/i.test(_msgNorm);
+    if (_isPushback && _hasInlineDoctor
+        && (newState.serviceCategory === 'letter' || newState.serviceCategory === 'bill' || newState.serviceCategory === 'bill_provider'
+            || (newState.intent === 'letter' || newState.intent === 'bill'))) {
+      const _isEs = newState.language === 'es';
+      // Capture the inline source.
+      const _source = /\bhospital\b/.test(_msgNorm) ? 'hospital'
+        : /\b(farmacia|pharmacy)\b/.test(_msgNorm) ? 'pharmacy'
+        : /\b(cl[ií]nica|clinic)\b/.test(_msgNorm) ? 'clinic'
+        : /\bdoctor|m[eé]dic/.test(_msgNorm) ? 'doctor'
+        : 'provider';
+      newState.billSource = 'provider';
+      newState.serviceCategory = 'bill';
+      newState.intent = 'bill';
+      const out = _isEs
+        ? `Sí, perdón — anotado, viene del ${_source === 'pharmacy' ? 'la farmacia' : _source === 'hospital' ? 'hospital' : _source === 'clinic' ? 'la clínica' : 'doctor'}. Para revisarlo con su asesor licenciado, ¿la factura dice "amount due" o "patient responsibility" con una cantidad específica? Si la tiene a la mano, también ayuda saber el monto.`
+        : `Yes, sorry — got it, it's from the ${_source}. So a licensed advisor can review this, does the bill show "amount due" or "patient responsibility" with a specific amount? If you have it handy, the amount also helps.`;
+      newState.lastBotIntent = 'context_pushback_acknowledged';
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
     }
   }
 

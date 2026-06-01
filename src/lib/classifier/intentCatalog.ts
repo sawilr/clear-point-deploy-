@@ -130,7 +130,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bsomeone called.{0,40}(medicare|insurance|government)/i, weight: 0.9, tag: 'someone_called_en' },
       { re: /\b(asked (for )?my medicare (id|number|card)|me pid(io|ió|ieron) (mi )?(numero de |n[uú]mero de )?medicare)\b/i, weight: 0.8, tag: 'asked_for_id' },
       { re: /\b(tarjeta que no ped[ií]|card i didn'?t order)\b/i, weight: 0.8, tag: 'unordered_card' },
-      { re: /\b((factura|bill).{0,15}(por|de|for).{0,15}(una )?visita que no tuve|billed for (a )?visit i didn'?t)\b/i, weight: 0.8, tag: 'ghost_visit' },
+      { re: /\b((factura|bill|me cobraron|cobraron|cobro|charged?).{0,20}(por|de|for).{0,20}(una )?(visita|consulta|servicio|cita|procedure|appointment) (que )?(no (tuve|tuvimos|atendi[ao]|recib[ií])|i didn'?t (have|attend|receive)))\b/i, weight: 1.0, tag: 'ghost_visit' },
+      { re: /\b(me cobraron|cobraron|cobro|charged?)\b.{0,15}\b(por|de|for)\b.{0,15}\b(una )?(visita|consulta|cita|servicio|appointment|visit|procedure)\b.{0,15}\bque no\b/i, weight: 1.0, tag: 'cobraron_visita_no' },
       { re: /\b(cobro extra[ñn]o)\b/i, weight: 1.0, tag: 'cobro_extrano' },
       { re: /\bc[op]?bro que (no |mo )?(rec|recno|reno)\w*/i, weight: 1.1, tag: 'cobro_no_reconozco_fuzzy' },
       { re: /\bcharge i don'?t recogn?ize/i, weight: 1.0, tag: 'charge_dont_recognize' },
@@ -181,12 +182,19 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(ay[uú]deme|ay[uú]dame|ayuda) a ahorrar\b/i, weight: 0.9, tag: 'ayuda_ahorrar' },
       // "no puedo con la prima" / "me estan cobrando la prima" → savings pivot
       { re: /\b(me est[aá]n? cobrando|me cobran|cobran(do)?)\b.{0,25}\b(prima|premium|part [abcd]|parte [abcd]|medicare|medicaid)\b/i, weight: 1.0, tag: 'cobrando_prima' },
-      { re: /\bme cobr(a|an|ando|aron)\b/i, weight: 0.6, tag: 'me_cobran_alone' },
+      // Corpus fix: REMOVED bare `me cobran` because it was catching
+      // billing questions ("me cobraron por una visita...") as savings.
+      // Bill detection at detectProblemType already catches these.
       { re: /\bcharging me\b.{0,15}\b(premium|part [abcd]|monthly)\b/i, weight: 1.0, tag: 'charging_me_premium_en' },
       // "por qué me cobran tanto" / "why am I charged so much"
       { re: /\b(por que|porq|porque|why)\b.{0,25}\b(me cobran|cobran|charge|charging|charged|paying)\b.{0,25}\b(tanto|so much|much|too much)\b/i, weight: 1.0, tag: 'why_charge_so_much' },
       { re: /\bwhy am i (being )?(charged|paying)\b.{0,20}\b(so much|too much|this much)\b/i, weight: 1.0, tag: 'why_am_i_charged' },
       { re: /\bme cobran (tanto|mucho)\b/i, weight: 0.7, tag: 'cobran_mucho' },
+      // Corpus fix: dual-eligibility (Medicare + Medicaid together) → savings.
+      { re: /\btengo medicare y medicaid\b/i, weight: 1.0, tag: 'dual_es' },
+      { re: /\bi have (both )?medicare and medicaid\b/i, weight: 1.0, tag: 'dual_en' },
+      { re: /\bsoy de doble elegibilidad\b/i, weight: 1.0, tag: 'dual_es_label' },
+      { re: /\b(i'?m |im )?dual(-| )eligible\b/i, weight: 1.0, tag: 'dual_en_label' },
       { re: /\bno (me )?alcanz[aoe]\b.{0,15}\b(prima|premium|copago|copay|medicare)\b/i, weight: 0.8, tag: 'no_alcanza' },
       // "financial assistance"
       { re: /\b(financial assistance|economic assistance|asistencia (financiera|econ[oó]mica))\b/i, weight: 0.8, tag: 'financial' },
@@ -259,8 +267,9 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(apelaci[oó]n|apelar|appeal|appeals|reconsideration|fair hearing|grievance|queja formal)\b/i, weight: 0.8, tag: 'appeal_word' },
       // "need authorization for procedure"
       { re: new RegExp(`\\b(need|necesito|requires?|require)\\s+(an? |una? )?(auth(orization)?|autorizaci[oó]n|prior auth(orization)?)\\b.{0,40}\\b${RX.procedure}\\b`, 'i'), weight: 0.7, tag: 'need_auth' },
-      // "my plan won't approve X"
-      { re: /\b(mi plan (no )?(quiere|me )?(aprob|cubrir|cubre|aprueba|deja)|my plan (won'?t|wouldn'?t|will not|did not|didn'?t) (approve|cover))\b/i, weight: 0.8, tag: 'plan_wont' },
+      // "my plan won't approve X" — REQUIRES the negation (no / won't /
+      // wouldn't). Without "no", "mi plan cubre" matched falsely.
+      { re: /\b(mi plan no (quiere|me |me )?(aprob|cubrir|cubre|aprueba|deja|cubri)|my plan (won'?t|wouldn'?t|will not|did not|didn'?t) (approve|cover))\b/i, weight: 0.8, tag: 'plan_wont' },
     ],
     negatives: [
       // Medication denial is drug handler's job, not appeal.
@@ -338,8 +347,6 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(help|assistance|ayuda|asistencia|subsidio|subsidy)\b.{0,30}\b(premium|prima|copay|copago|paying|pagar|drug|medicine|medication|medicina|medicamento)\b/i, weight: 0.9 },
       // "can't afford premium / drug" → savings_program
       { re: /\b(can'?t afford|cant afford|no puedo pagar\w*|no puedo pagar)\b.{0,30}\b(premium|prima|drug|medication|medicine|medicare)\b/i, weight: 0.9 },
-      // pharmacy charged → drug, not bill
-      { re: /\b(farmacia|pharmacy).{0,20}(cobr|charge)/i, weight: 0.9 },
       // "I want to change my plan" → enrollment, not bill (no $ context)
       { re: /\b(change|switch|cambiar)\b.{0,15}\b(plan|planes)\b/i, weight: 0.7 },
       // EOB explanation request → eob_explanation, not bill
@@ -357,6 +364,8 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bunrecognized charge\b/i, weight: 1.0 },
       // "billed for ghost visit" → fraud_scam
       { re: /\b(billed for|cobr[oa]ron por).{0,15}(visit|visita) (i didn'?t|que no tuve)/i, weight: 0.9 },
+      // Corpus fix: "me cobraron por una visita/consulta/cita que no tuve" → fraud
+      { re: /\b(me cobraron|cobraron|charged?)\b.{0,15}\b(por|de|for)\b.{0,15}\b(una )?(visita|consulta|cita|servicio|visit|appointment)\b.{0,15}\bque no\b/i, weight: 1.1 },
     ],
     seedsEs: [
       'me llegó una factura del hospital',
@@ -418,11 +427,14 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\bis (my |the )?(drug|medication|medicine|prescription) covered\b/i, weight: 1.0 },
       // "does (my) (plan|insurance) cover (my) drug" → coverage
       { re: /\bdoes (my |the |your )?(plan|insurance|coverage) cover (my |the |any )?(drug|medication|medicine|prescription)\b/i, weight: 1.0 },
+      // Corpus fix: "la farmacia me cobró EXTRA" / "pharmacy charged me EXTRA"
+      // → bill (wrong/unexpected charge), not drug. Note: "cobra mucho" /
+      // "charges a lot" stays drug (high price = drug cost question).
+      { re: /\b(la farmacia|pharmacy)\b.{0,20}\b(me )?(cobr[oó]|cobraron|charged?)\b.{0,15}\b(extra|de m[aá]s)\b/i, weight: 1.0 },
     ],
     seedsEs: [
       'mi medicina es muy cara',
       'no me cubrieron el medicamento',
-      'la farmacia me cobró mucho',
       'necesito mi receta',
       'el plan no cubre mi medicina',
       'refill de mi medicina',
@@ -430,7 +442,6 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
     seedsEn: [
       'my medication is too expensive',
       "they didn't cover my drug",
-      'pharmacy charged me a lot',
       'I need my prescription',
       "plan doesn't cover my medicine",
       'refill my medication',
@@ -541,16 +552,30 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(are you (licensed|certified|brokers|agents))\b/i, weight: 0.9, tag: 'licensed_en' },
       { re: /\b(qu[eé] (es )?clearpoint|qu[eé] (es )?clear ?point)\b/i, weight: 1.0, tag: 'que_es_cp' },
       { re: /\bwhat is clear ?point\b/i, weight: 1.0, tag: 'what_is_cp' },
+      // Corpus fix: bare "cost / fee" questions when no Medicare-specific
+      // anchor is present (premium / copay / Part X) — the user is asking
+      // about CSA's pricing, not a Medicare cost. Patterns are non-anchored
+      // so they match with optional filler ("oiga, ... por favor").
+      { re: /\b(cu[aá]nto cobran|cuanto cobran)\b/i, weight: 1.0, tag: 'cuanto_cobran' },
+      { re: /\b(tienen|tiene)\s+(costo|cargo|tarifa|comisi[oó]n|cuota)\b/i, weight: 1.0, tag: 'tienen_costo' },
+      { re: /\b(what (does|will) it cost|how much (do|does) (it|you|this) cost|whats? the cost|is (it|this) free|do you charge)\b/i, weight: 1.0, tag: 'what_cost_en' },
+      { re: /\b(es gratis|es gratuito|servicio gratis|es free)\b/i, weight: 1.0, tag: 'es_gratis_es' },
     ],
-    seedsEs: ['quién es clearpoint', 'qué es clearpoint', 'son del gobierno', 'cobran ustedes', 'cómo tienen mi número', 'son licenciados'],
-    seedsEn: ['who is clearpoint', 'what is clearpoint', 'are you the government', 'do you charge', 'how do you have my number', 'are you licensed'],
+    seedsEs: ['quién es clearpoint', 'qué es clearpoint', 'son del gobierno', 'cobran ustedes', 'cómo tienen mi número', 'son licenciados', 'cuánto cobran', 'tienen costo'],
+    seedsEn: ['who is clearpoint', 'what is clearpoint', 'are you the government', 'do you charge', 'how do you have my number', 'are you licensed', 'what does it cost'],
   },
 
   family_referral: {
     threshold: 0.5,
     positives: [
-      { re: /\b(my (daughter|son|wife|husband|niece|grandchild|kid|mom|dad) (sent|told|asked) me)\b/i, weight: 1.0, tag: 'family_en' },
-      { re: /\b(mi (hija|hijo|esposa|esposo|sobrina|nieto|mam[aá]|pap[aá]) me (mand|dijo|pidi[oó]))\b/i, weight: 1.0, tag: 'family_es' },
+      { re: /\b(my (daughter|son|wife|husband|niece|grandchild|kid|mom|dad|father|mother) (sent|told|asked) me)\b/i, weight: 1.0, tag: 'family_en' },
+      { re: /\b(mi (hija|hijo|esposa|esposo|sobrina|nieto|mam[aá]|pap[aá]|mami|papi) me (mand|dijo|pidi[oó]))\b/i, weight: 1.0, tag: 'family_es' },
+      // Corpus fix: broader caregiver patterns
+      { re: /\b(i'?m )?calling for (my )?(mom|dad|father|mother|wife|husband|son|daughter|grandm|grandp|aunt|uncle|sister|brother|spouse)\b/i, weight: 1.0, tag: 'calling_for_en' },
+      { re: /\bllamo por (mi )?(mam[aá]|pap[aá]|mami|papi|esposa|esposo|hij[oa]|abuel[oa]|t[ií][oa]|sobrin[oa])\b/i, weight: 1.0, tag: 'llamo_por_es' },
+      { re: /\b(my )?(mom|dad|mother|father|wife|husband|spouse|son|daughter) needs (help|medicare|coverage|insurance)\b/i, weight: 0.9, tag: 'family_needs_en' },
+      { re: /\b(mi )?(mam[aá]|pap[aá]|mami|papi|esposa|esposo|hij[oa]) necesita (ayuda|medicare|cobertura|seguro)\b/i, weight: 0.9, tag: 'family_needs_es' },
+      { re: /\bi'?m a caregiver|cuidador|caregiver for\b/i, weight: 0.9, tag: 'caregiver_label' },
     ],
     seedsEs: ['mi hija me dijo que llamara', 'mi esposo me mandó'],
     seedsEn: ['my daughter sent me', 'my son told me to call'],
@@ -568,11 +593,14 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
   off_topic: {
     threshold: 0.5,
     positives: [
-      { re: /\b(weather|clima|tiempo (afuera|de hoy)|biden|trump|obama|politics|pol[ií]tica|election|elecciones)\b/i, weight: 1.0, tag: 'politics_weather' },
+      { re: /\b(weather|clima|biden|trump|obama|politics|pol[ií]tica|election|elecciones)\b/i, weight: 1.0, tag: 'politics_weather' },
+      // "como esta el tiempo" / "que tal el clima" / "how's the weather"
+      { re: /\b(c[oó]mo (est[aá]|esta)|qu[eé] tal)\b.{0,5}\b(el )?(tiempo|clima)\b/i, weight: 1.0, tag: 'how_is_weather_es' },
+      { re: /\b(how'?s the weather|hows the weather|what'?s the weather)\b/i, weight: 1.0, tag: 'how_is_weather_en' },
       { re: /\b(do you pray|crees en (dios|religi[oó]n)|joke|chiste|recipe|receta de (cocina|comida)|sports|deporte|football|f[uú]tbol)\b/i, weight: 1.0, tag: 'offtopic' },
     ],
-    seedsEs: ['cuéntame un chiste', 'cómo está el clima'],
-    seedsEn: ['tell me a joke', "how's the weather"],
+    seedsEs: ['cuéntame un chiste', 'cómo está el clima', 'como esta el tiempo'],
+    seedsEn: ['tell me a joke', "how's the weather", 'hows the weather'],
   },
 
   casual: {
