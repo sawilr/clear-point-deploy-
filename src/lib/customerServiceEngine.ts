@@ -91,6 +91,20 @@ export interface ConversationState {
   /** PHASE A2: bot signed off with a closing message. A subsequent "hola" /
    *  "thanks" is welcomed back without forcing the menu/intake again. */
   conversationClosed?: boolean;
+  /** PHASE A3 — ENTERPRISE ANTI-REPETITION SYSTEM.
+   *  Set when the user declined an advisor offer ("Más tarde" / "Later").
+   *  Handlers must NOT loop back to the same offer; they pivot to
+   *  topic-specific sub-chips or escalate. */
+  advisorOfferDismissed?: boolean;
+  /** PHASE A3 — turn index (0-based) when an advisor offer was last emitted. */
+  advisorOfferLastTurn?: number;
+  /** PHASE A3 — count of consecutive loop-guard pivots fired in a row.
+   *  After 2, the loop guard escalates directly to handoff instead of
+   *  asking "advisor or question?" yet again. */
+  loopGuardConsecutive?: number;
+  /** PHASE A3 — last bot response, hash/normalized form, so the output
+   *  guard can flag near-duplicates (≥75% Jaccard) and force advance. */
+  lastBotResponseNormalized?: string;
   /** Times the caller failed to enter a usable name. */
   failedNameAttempts?: number;
   /** Times the caller used abusive/frustrated/profane language. */
@@ -2345,6 +2359,48 @@ function detectAmount(history: string): string | null {
   return null;
 }
 
+/** PHASE A3 — recognize when the user is telling the bot it's repeating
+ *  itself ("ya me dijiste", "you already said that", "estás rayada",
+ *  "no entiendes"). These complaints MUST force an escalation, never
+ *  another menu or another advisor offer in the same wording. */
+export function detectRepetitionComplaint(text: string): boolean {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!t || t.length > 200) return false;
+  // Spanish complaints
+  if (/\b(ya (me )?dijiste|ya me lo dijiste|me lo dijiste ya|lo repetiste|estas repitiendo|repites lo mismo|me repites|repite lo mismo|no entiendes|no me entiendes|no entendiste|no entiende|estas rayada|estas rayado|esta rayada|esta rayado|estas mal|no sirves|no funcionas|eres tonto|eres tonta|que tonto|q tonto|no es eso|no es lo que pregunto|no es lo que digo|no me estas escuchando|me estas mareando|ya me cansaste|ya basta)\b/i.test(t)) return true;
+  // English complaints
+  if (/\b(you already (said|told)|already told me|you'?re repeating|stop repeating|stop asking the same|you don'?t understand|you'?re not listening|you'?re broken|this is broken|this is stupid|that'?s not what i asked|are you (broken|stupid|listening))\b/i.test(t)) return true;
+  return false;
+}
+
+/** PHASE A3 — recognize when the user is dismissing/deferring an advisor
+ *  offer ("más tarde", "no por ahora", "later"). The bot must remember
+ *  and not immediately re-offer the same call. */
+export function detectAdvisorDismissal(text: string): boolean {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!t || t.length > 80) return false;
+  // Short, explicit dismissal/defer
+  if (/^(mas tarde|m[aá]s tarde|despues|despu[eé]s|luego|ahora no|por ahora no|no por ahora|todavia no|todav[ií]a no|aun no|a[uú]n no|en otro momento|otro dia|otro d[ií]a|no gracias|no thanks|no thank you|later|not (now|right now|yet)|maybe later|some other time|in a bit|not at the moment|not at this moment)\.?$/i.test(t)) return true;
+  // Slightly longer dismissals
+  if (/\b(prefiero (no|esperar)|preferir[ií]a (no|esperar)|i'?d rather (not|wait)|prefer not to|i don'?t want to (talk|call) (now|yet)|no quiero (hablar|llamar) (todav[ií]a|ahora))\b/i.test(t)) return true;
+  return false;
+}
+
+/** PHASE A3 — Jaccard token similarity between two strings. Used by the
+ *  output guard to detect near-duplicate bot responses. 0 → no overlap,
+ *  1 → identical token sets. */
+function _jaccardSimilarity(a: string, b: string): number {
+  const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w\s]/g, ' ');
+  const tokens = (s: string) => new Set(normalize(s).split(/\s+/).filter((w) => w.length >= 3));
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const w of ta) if (tb.has(w)) inter++;
+  const union = ta.size + tb.size - inter;
+  return inter / union;
+}
+
 /** PHASE A2 — recognize closing / sign-off intent. Returns true for phrases
  *  like "ya terminé", "gracias por la info", "I'm done", "that's all". A
  *  real virtual assistant ends with a warm closure, NOT a fresh greeting. */
@@ -2411,6 +2467,48 @@ export function processMessage(
 
   const prevBot = [...(state.messages || [])].reverse().find((m) => m.role === 'bot');
   const prevBotText = (prevBot?.content || '').trim();
+
+  // PHASE A3 — track turn count for "recent offer" detection.
+  // NOTE: processMessageInner also increments turnCount; we read the
+  // incoming value here (pre-increment) just for offer-recency math.
+  const _currentTurnIdx = (state.turnCount || 0) + 1;
+
+  // PHASE A3 — repetition complaint INTERCEPT. Fires BEFORE the normal
+  // handler chain so "ya me dijiste", "no entiendes", "esta rayada" never
+  // reach the loop guard's "Disculpe — para no dar vueltas" (which itself
+  // was already shown). Forces direct handoff with name+phone prompt.
+  if (detectRepetitionComplaint(userMessage) && !state.advisorHandoffStarted) {
+    const isEs = (state.language || 'es') === 'es';
+    const out = isEs
+      ? `Tiene toda la razón, le pido disculpas. Para no hacerle perder más tiempo, voy a conectarlo directamente con un asesor licenciado de ClearPoint — sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+      : `You're absolutely right, I apologize. So I don't waste any more of your time, I'm connecting you directly with a licensed ClearPoint advisor — at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name and a phone number where they can reach you?`;
+    const newState: ConversationState = {
+      ...state,
+      turnCount: _currentTurnIdx,
+      advisorHandoffStarted: true,
+      needsHuman: true,
+      advisorHandoffReason: 'repetition_complaint',
+      lastBotIntent: 'repetition_complaint_handoff',
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: out, timestamp: Date.now() },
+      ],
+    };
+    return { response: out, newState, needsHuman: true };
+  }
+
+  // PHASE A3 — advisor-offer dismissal MEMORY. If user just said
+  // "Más tarde" / "Later" AND the immediately-prior bot turn looks like
+  // an advisor offer (loop-guard pivot or explicit chip menu),
+  // remember it so the next handler does NOT loop the same offer.
+  const _priorLooksLikeAdvisorOffer = !!prevBotText
+    && /\b(asesor|advisor|llamar|call you|nombre.*tel[eé]fono|name.*phone|le contact|will reach out)\b/i.test(prevBotText);
+  if (detectAdvisorDismissal(userMessage) && _priorLooksLikeAdvisorOffer) {
+    seededState.advisorOfferDismissed = true;
+    seededState.advisorOfferLastTurn = _currentTurnIdx;
+  }
+
   const result = processMessageInner(userMessage, seededState);
   const respText = (result.response || '').trim();
 
@@ -2455,7 +2553,13 @@ export function processMessage(
     result.newState.lastBotIntent = 'menu_loop_hard_escalation';
     return { response: pivot, newState: result.newState, needsHuman: result.needsHuman };
   }
-  if (exactDup || menuDup) {
+  // PHASE A3 — Jaccard near-duplicate guard. Catches subtle paraphrases
+  // the exact-string compare misses ("Sobre medicamentos. ¿El problema es
+  // el costo..." vs "Sobre medicamentos. ¿El problema es la cobertura..."
+  // share enough tokens to be treated as a repeat). Threshold 0.75.
+  const _nearDup = !exactDup && !!prevBotText && !!respText
+    && _jaccardSimilarity(respText, prevBotText) >= 0.75;
+  if (exactDup || menuDup || _nearDup) {
     const isEs = result.newState.language === 'es';
     // WAVE 52 — when the user's CURRENT message is yes-equivalent and we're
     // about to pivot to "would you like an advisor?", just start the handoff
@@ -2480,6 +2584,31 @@ export function processMessage(
       result.newState.lastBotIntent = 'loop_guard_to_handoff';
       return { response: out, newState: result.newState, needsHuman: true };
     }
+    // PHASE A3 — if the loop guard ALREADY fired in the prior turn (the
+    // previous bot text contains the "para no dar vueltas" / "going in
+    // circles" wording), OR we've fired the loop guard once already in
+    // this session, escalate directly to handoff. We've now offered
+    // an advisor twice — re-asking would itself be a loop.
+    const _priorWasLoopGuard = /Disculpe — para no dar vueltas|going in circles/i.test(prevBotText);
+    const _alreadyLoopGuardFiredOnce = (result.newState.loopGuardConsecutive || 0) >= 1;
+    if ((_priorWasLoopGuard || _alreadyLoopGuardFiredOnce) && !result.newState.advisorHandoffStarted) {
+      result.newState.advisorHandoffStarted = true;
+      result.newState.needsHuman = true;
+      result.newState.advisorHandoffReason = 'loop_guard_double_fire';
+      const out = isEs
+        ? `Lo entiendo, no le voy a hacer perder más tiempo. Lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+        : `I understand, I won't waste more of your time. I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking information or private medical records here. What's your name and a phone number where they can reach you?`;
+      if (result.newState.messages.length > 0) {
+        const lastIdx = result.newState.messages.length - 1;
+        if (result.newState.messages[lastIdx].role === 'bot') {
+          result.newState.messages[lastIdx] = { role: 'bot', content: out, timestamp: Date.now() };
+        } else {
+          result.newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        }
+      }
+      result.newState.lastBotIntent = 'loop_guard_double_fire_handoff';
+      return { response: out, newState: result.newState, needsHuman: true };
+    }
     const pivot = isEs
       ? 'Disculpe — para no dar vueltas: ¿quiere que un asesor licenciado de ClearPoint le llame ahora para revisar sus opciones (sin costo), o tiene una pregunta puntual sobre Medicare que pueda contestar primero?'
       : "Sorry — to avoid going in circles: would you like a licensed ClearPoint advisor to call you now to review your options (at no cost), or do you have one specific Medicare question I can answer first?";
@@ -2499,7 +2628,50 @@ export function processMessage(
       ? ['Sí, llamar asesor', 'Tengo una pregunta', 'Más tarde']
       : ['Yes, call advisor', 'I have a question', 'Later'];
     result.newState.lastBotIntent = 'loop_guard_pivot';
+    // PHASE A3 — bump TOTAL loop-guard fire count (not just consecutive).
+    // This persists across the whole session so a 2nd fire forces handoff.
+    result.newState.loopGuardConsecutive = (result.newState.loopGuardConsecutive || 0) + 1;
     return { response: pivot, newState: result.newState, needsHuman: result.needsHuman };
+  }
+  // PHASE A3 — additional safety net: if THIS response exactly matches ANY
+  // prior bot message in the conversation, the engine just repeated itself
+  // through a different code path. Force escalation or re-prompt depending
+  // on whether the handoff is already in progress.
+  if (respText) {
+    const _allPriorBot = (state.messages || [])
+      .filter((m) => m.role === 'bot')
+      .map((m) => _normalizeForCompare(m.content));
+    const _thisNorm = _normalizeForCompare(respText);
+    if (_thisNorm.length >= 30 && _allPriorBot.includes(_thisNorm)) {
+      const isEs = (result.newState.language || 'es') === 'es';
+      let out: string;
+      if (result.newState.advisorHandoffStarted) {
+        // Already in handoff — gentle re-prompt for name+phone, no
+        // repeat of any topic content.
+        out = isEs
+          ? `Perdón por la repetición. Para conectarle con el asesor, ¿me puede compartir su nombre y un teléfono donde le puedan llamar? Por favor sin Medicare ID, Seguro Social ni datos bancarios.`
+          : `Apologies for the repeat. So the advisor can reach you, what's your name and a phone number? Please don't share Medicare ID, SSN or banking details.`;
+        result.newState.lastBotIntent = 'duplicate_in_session_handoff_reprompt';
+      } else {
+        // Not yet in handoff — force escalation.
+        result.newState.advisorHandoffStarted = true;
+        result.newState.needsHuman = true;
+        result.newState.advisorHandoffReason = 'duplicate_in_session_handoff';
+        out = isEs
+          ? `Disculpe, noté que ya le dije lo mismo. Para no hacerle perder tiempo, lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
+          : `I'm sorry — I see I just repeated myself. So I don't waste your time, I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name and a phone number where they can reach you?`;
+        result.newState.lastBotIntent = 'duplicate_in_session_handoff';
+      }
+      if (result.newState.messages.length > 0) {
+        const lastIdx = result.newState.messages.length - 1;
+        if (result.newState.messages[lastIdx].role === 'bot') {
+          result.newState.messages[lastIdx] = { role: 'bot', content: out, timestamp: Date.now() };
+        } else {
+          result.newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        }
+      }
+      return { response: out, newState: result.newState, needsHuman: !!result.newState.needsHuman };
+    }
   }
   return result;
 }
@@ -4064,9 +4236,36 @@ function processMessageInner(
     // follow-up to avoid repeating the same question.
     if (problemType === 'drug' && !newState.billSource && !newState.amountMentioned
         && newState.subIssue !== 'vague_report') {
+      // PHASE A3 — never re-emit the same drug clarification. If we've
+      // already asked, ADVANCE to either advisor pivot (when offer was
+      // dismissed) or to a more specific second-level question.
+      const _alreadyAskedDrugQ1 = (newState.askedQuestions || []).includes('drug_q1_cost_cover_auth');
+      if (_alreadyAskedDrugQ1) {
+        // If the user already deferred the advisor, give them a CHOICE
+        // chip menu instead of re-asking the same question text.
+        const isDismissed = !!newState.advisorOfferDismissed;
+        const out = isSpanish
+          ? (isDismissed
+            ? `De acuerdo${withName(newState.name)}. Sin presión. Para no repetirle lo mismo, dígame cuál se acerca más a su caso: **alto costo**, **medicina no cubierta**, **necesita autorización**, o **prefiero hablar con asesor**.`
+            : `Disculpe la insistencia${withName(newState.name)}. Para avanzar, ¿podría decirme cuál de estas se acerca a su caso: el **precio**, que la **medicina no la cubre el plan**, o que **necesita autorización previa**? Si no está seguro, un asesor licenciado puede revisarlo sin costo.`)
+          : (isDismissed
+            ? `Got it${withName(newState.name)}. No pressure. So I don't repeat myself, tell me which is closest to your case: **high cost**, **medication not covered**, **needs authorization**, or **I'd rather talk to an advisor**.`
+            : `Apologies for asking again${withName(newState.name)}. To move forward, which of these is closest to your case: the **price**, the **medication not covered by the plan**, or **needs prior authorization**? If you're not sure, a licensed advisor can review it at no cost.`);
+        newState.quickReplies = isSpanish
+          ? ['Alto costo', 'No me la cubren', 'Necesita autorización', 'Hablar con asesor']
+          : ['High cost', 'Not covered', 'Needs authorization', 'Talk to advisor'];
+        newState.askedQuestions = [...(newState.askedQuestions || []), 'drug_q2_advance'];
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
       const out = isSpanish
         ? `Sobre medicamentos${withName(newState.name)}. ¿El problema es el costo, que no está cubierto, o necesita autorización previa? Un asesor licenciado debe verificar el formulario y la farmacia antes de cualquier decisión.`
         : `About medications${withName(newState.name)}. Is the issue the cost, not covered, or prior authorization? A licensed advisor must verify the formulary and pharmacy before any decision.`;
+      // PHASE A3 — always offer escape chips with the first clarification.
+      newState.quickReplies = isSpanish
+        ? ['Alto costo', 'No me la cubren', 'Necesita autorización', 'Hablar con asesor']
+        : ['High cost', 'Not covered', 'Needs authorization', 'Talk to advisor'];
+      newState.askedQuestions = [...(newState.askedQuestions || []), 'drug_q1_cost_cover_auth'];
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

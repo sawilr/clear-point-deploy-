@@ -542,7 +542,7 @@ export const INTENT_CATALOG: Record<IntentName, IntentSpec> = {
       { re: /\b(who (are|is) (clearpoint|clear ?point))\b/i, weight: 1.0, tag: 'who_is_cp' },
       { re: /\bqui[eé]n(es)? (son|es) (clearpoint|clear ?point|ustedes|uds)\b/i, weight: 1.0, tag: 'who_is_cp_es' },
       { re: /\b(are you medicare|son (ustedes |uds )?medicare)\b/i, weight: 1.0, tag: 'are_you_medicare' },
-      { re: /\b(son del gobierno|are you the government|are you with the government)\b/i, weight: 1.0, tag: 'gov' },
+      { re: /\b(son (ustedes |uds )?del gobierno|son del gobierno|es del gobierno|trabajan para el gobierno|are you (with )?(the )?government|do you work for the government)\b/i, weight: 1.0, tag: 'gov' },
       { re: /\b(do you charge|cost (to|for) (call|talk))\b/i, weight: 0.9, tag: 'do_you_charge' },
       { re: /\b(ustedes|uds|clearpoint) cobran\b/i, weight: 0.9, tag: 'ustedes_cobran' },
       { re: /\bcobran (ustedes|uds)\b/i, weight: 0.9, tag: 'cobran_ustedes' },
