@@ -2550,8 +2550,14 @@ export function processMessage(
   // Robust to: name+phone together (still captures both in one go), phone-first
   // then name, name-first then phone, various phone formats (spaces, dashes,
   // parens, optional leading 1).
-  if ((state.advisorHandoffStarted || state.schedulingCallback)
-      && !(state.name && state.phoneNumber)) {
+  // PHASE A8 — also fires for email + anything-else follow-up steps
+  // (both happen AFTER name+phone are captured but before conversation
+  // closes). The wrapper's structural-first check already gates on this
+  // same condition.
+  const _inHandoffCollection = (state.advisorHandoffStarted || state.schedulingCallback)
+    && !state.conversationClosed
+    && state.lastBotIntent !== 'handoff_paused_for_question';
+  if (_inHandoffCollection) {
     const _msg = userMessage.trim();
     const isEs = (state.language || 'es') === 'es';
     // Parse phone (10–11 digits, any common separators)
@@ -2641,11 +2647,17 @@ export function processMessage(
 
       // Email step IS active. Did the user provide one or skip?
       if (state.emailAsked && !haveEmail && !userSaidSkip
-          && state.lastBotIntent === 'handoff_asking_email') {
-        // No valid email and not a skip — gently re-ask once, or move on.
+          && (state.lastBotIntent === 'handoff_asking_email'
+              || state.lastBotIntent === 'handoff_asking_email_retry')) {
+        // Detect affirmative intent ("Sí, le doy mi correo" / chip click).
+        const userSaidYesToEmail = /^(s[ií]|yes|yeah|yep|claro|sure|ok|okay|por favor|please|le doy|si por favor|s[ií] por favor|s[ií]?,? le doy.*correo|yes.*email)/i.test(_msg);
         const out = isEs
-          ? `Entendido. Si prefiere no compartirlo, puede decir "saltar". O escribe un correo válido como ejemplo@correo.com.`
-          : `Got it. If you'd rather not share, say "skip". Or type a valid email like example@email.com.`;
+          ? (userSaidYesToEmail
+            ? `Claro, dígame su correo electrónico (por ejemplo: nombre@correo.com).`
+            : `Entendido. Si prefiere no compartirlo, puede decir "saltar". O escribe un correo válido como ejemplo@correo.com.`)
+          : (userSaidYesToEmail
+            ? `Sure, what's your email? (for example: name@example.com)`
+            : `Got it. If you'd rather not share, say "skip". Or type a valid email like example@email.com.`);
         const newState: ConversationState = {
           ...state,
           turnCount: _currentTurnIdx,
