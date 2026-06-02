@@ -24,7 +24,7 @@ You serve BOTH current ClearPoint clients AND visitors who simply have Medicare 
 - Patient — seniors may need extra time and reassurance.
 - Professional but human. Sound like a kind, knowledgeable receptionist, not a chatbot.
 - Acknowledge feelings when the caller is worried, frustrated, or confused ("Entiendo que esto puede ser confuso" / "I understand this can be confusing").
-- USTED form in Spanish — never tutear.
+- **SPANISH USTED FORM IS MANDATORY.** Use SU (not TU), TIENE (not TIENES), PUEDE (not PUEDES), CALIFICA (not CALIFICAS), LE LLAMARÁ (not TE LLAMARÁ), CON USTED (not CONTIGO). Tutear (using TÚ form) with a Spanish-speaking senior is disrespectful and forbidden. A post-filter will catch slips but you MUST get it right.
 - Concise — 2–4 sentences typically. Long lists overwhelm.
 
 # Your scope
@@ -178,6 +178,11 @@ export default async function handler(req, res) {
 
     // Compliance post-filter — strip / replace any forbidden phrases.
     cleanText = compliancePostFilter(cleanText);
+    // USTED post-filter — for Spanish callers, normalize TÚ-form leakage
+    // to USTED-form (Haiku occasionally slips into tú with senior speech).
+    if (body.context && body.context.language === 'es') {
+      cleanText = ustedPostFilter(cleanText);
+    }
 
     return res.status(200).json({
       response: cleanText,
@@ -197,9 +202,14 @@ export default async function handler(req, res) {
 function buildContextSummary(ctx) {
   if (!ctx) return '';
   var lines = [];
-  if (ctx.language) lines.push('Caller language: ' + (ctx.language === 'es' ? 'Spanish (use USTED form)' : 'English'));
+  if (ctx.language) lines.push('Caller language: ' + (ctx.language === 'es' ? 'Spanish — RESPOND IN SPANISH USING USTED FORM ONLY (su / tiene / puede — NEVER tu / tienes / puedes)' : 'English'));
   if (ctx.zipCode) lines.push('Caller ZIP: ' + ctx.zipCode + (ctx.state ? ' (' + ctx.state + ')' : ''));
   if (ctx.name) lines.push('Caller name: ' + ctx.name);
+  if (ctx.phoneNumber) lines.push('Caller phone: ' + ctx.phoneNumber + ' (already captured — DO NOT ask again)');
+  if (ctx.email) lines.push('Caller email: ' + ctx.email + ' (already captured)');
+  if (ctx.scheduledCallbackWindow) lines.push('Scheduled callback window: ' + ctx.scheduledCallbackWindow);
+  if (ctx.advisorHandoffStarted) lines.push('Advisor handoff: IN PROGRESS or COMPLETE — name, phone, email already in system. NEVER ask the caller to give them again.');
+  if (ctx.conversationClosed) lines.push('NOTE: Conversation was closed earlier with a warm sign-off. The caller has returned with a new question. Welcome them back briefly, then answer. Their contact details are already captured.');
   if (ctx.serviceCategory) lines.push('Current topic: ' + ctx.serviceCategory);
   if (ctx.advisorOfferDismissed) lines.push('NOTE: Caller already deferred an advisor offer — treat next "Más tarde" as SCHEDULE, not handoff.');
   if (ctx.clarificationCount && ctx.clarificationCount >= 2) lines.push('NOTE: Caller has asked for clarification ' + ctx.clarificationCount + ' times — offer advisor instead of more re-explanation.');
@@ -227,5 +237,65 @@ function compliancePostFilter(text) {
     /\b(your (doctor|provider|hospital) is (in|in[- ]network|covered)|su (doctor|m[eé]dico|hospital|proveedor) (est[aá] (en la red|cubierto)|si est[aá]))\b[^.!?]*/gi,
     function () { return 'I can\'t confirm whether a specific doctor is in network — only the plan\'s directory or a licensed advisor can verify that'; }
   );
+  return out;
+}
+
+// Convert common TÚ verb conjugations to USTED. Defensive — only the most
+// common slip-ups for senior-care customer service.
+function ustedPostFilter(text) {
+  if (!text) return text;
+  var out = text;
+  var subs = [
+    // possessive / object pronouns (whole-word boundaries)
+    [/\btu (nombre|tel[eé]fono|correo|email|plan|doctor|m[eé]dico|medicina|medicamento|farmacia|carta|factura|cobro|prima|copago|deducible|cobertura|edad|ingreso|caso|situaci[oó]n|familia|esposo|esposa|hijo|hija)\b/gi,
+      function (_m, n) { return 'su ' + n; }],
+    [/\btus (nombres|tel[eé]fonos|correos|emails|planes|doctores|medicinas|medicamentos|cartas|facturas|cobros|primas|copagos|cobertura)\b/gi,
+      function (_m, n) { return 'sus ' + n; }],
+    [/\bcontigo\b/g, 'con usted'],
+    [/\bti\s+(mismo|misma)\b/gi, function (_m, n) { return 'usted ' + n; }],
+    // common verb forms — TÚ → USTED
+    [/\btienes\b/g, 'tiene'],
+    [/\bpuedes\b/g, 'puede'],
+    [/\bquieres\b/g, 'quiere'],
+    [/\bnecesitas\b/g, 'necesita'],
+    [/\bestas\b/g, 'está'],
+    [/\bsabes\b/g, 'sabe'],
+    [/\bcalificas\b/g, 'califica'],
+    [/\bdebes\b/g, 'debe'],
+    [/\bvas\b/g, 'va'],
+    [/\bhaces\b/g, 'hace'],
+    [/\beres\b/g, 'es'],
+    [/\bvives\b/g, 'vive'],
+    [/\brecibes\b/g, 'recibe'],
+    [/\btomas\b/g, 'toma'],
+    [/\bsigues\b/g, 'sigue'],
+    [/\bpiensas\b/g, 'piensa'],
+    [/\bcomprendes\b/g, 'comprende'],
+    [/\bentiendes\b/g, 'entiende'],
+    [/\bpodr[ií]as\b/g, 'podría'],
+    [/\bdeber[ií]as\b/g, 'debería'],
+    [/\btendr[ií]as\b/g, 'tendría'],
+    [/\bquerr[ií]as\b/g, 'querría'],
+    [/\bllamar?te\b/g, 'llamarle'],
+    [/\bayudar?te\b/g, 'ayudarle'],
+    [/\bconectar?te\b/g, 'conectarle'],
+    [/\bdar?te\b/g, 'darle'],
+    [/\bdecir?te\b/g, 'decirle'],
+    [/\borient[aá]r?te\b/g, 'orientarle'],
+    [/\bcontactar?te\b/g, 'contactarle'],
+    [/\bte (gustar[ií]a|llamar[eé]?|llamamos|enviar[eé]?|enviaremos|veo|oigo|escucho|recordar[eé]?|pediremos|orientamos|conectamos|ayudamos|debe|debemos|atendemos|recibe|dar[eé]?|daremos|atenderemos|invitamos|deseamos)\b/g,
+      function (_m, verb) { return 'le ' + verb; }],
+    // imperative reflexive "espérate" → "espérese" common cases
+    [/\besp[eé]rate\b/g, 'espérese'],
+    [/\bcu[eé]ntame\b/g, 'cuénteme'],
+    [/\bd[ií]me(lo)?\b/g, function (_m, lo) { return lo ? 'dígamelo' : 'dígame'; }],
+    [/\bperd[oó]name\b/g, 'perdóneme'],
+    [/\bdiscúlpame\b/g, 'discúlpeme'],
+    // "para ti" → "para usted"
+    [/\bpara ti\b/g, 'para usted'],
+  ];
+  for (var i = 0; i < subs.length; i++) {
+    out = out.replace(subs[i][0], subs[i][1]);
+  }
   return out;
 }

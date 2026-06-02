@@ -2582,10 +2582,14 @@ export function processMessage(
       const lower = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       if (/\?/.test(s)) return true;
       // Spanish: questions, fillers, common verbs, common topic nouns,
-      // chip-button command words.
-      if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|cobro|doctor|medic|carta|plan|asesor|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|mañana|ayer|saltar|siguiente|ninguno|nada|continuar|comenzar|empezar|otra|otro|listo|correo|email|telefono|nombre)\b/i.test(lower)) return true;
-      // English: questions, fillers, verbs, nouns, chip-button commands.
-      if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|charge|doctor|medic|letter|plan|advisor|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday|skip|next|nothing|continue|start|begin|other|another|ready|email|phone|name)\b/i.test(lower)) return true;
+      // chip-button command words, Medicare domain terms.
+      if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|facturas|cobro|cobros|doctor|doctora|m[eé]dic|medico|medicos|medicamento|medicamentos|medicina|medicinas|receta|recetas|farmacia|carta|cartas|plan|planes|asesor|asesora|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|ma[ñn]ana|ayer|saltar|siguiente|ninguno|nada|continuar|comenzar|empezar|otra|otro|otros|otras|listo|correo|email|tel[eé]fono|nombre|prima|primas|copago|copagos|deducible|cobertura|red|medicare|medicaid|seguro|sociales)\b/i.test(lower)) return true;
+      // English: questions, fillers, verbs, nouns, chip-button commands,
+      // Medicare domain terms.
+      if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|bills|charge|charges|doctor|doctors|medic|medicine|medicines|medication|medications|drug|drugs|pharmacy|prescription|letter|letters|plan|plans|advisor|advisors|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday|skip|next|nothing|continue|start|begin|other|another|ready|email|phone|name|premium|premiums|copay|copays|deductible|coverage|network|medicare|medicaid|insurance|social|security)\b/i.test(lower)) return true;
+      // No name should be just a verb or single common word followed by topic
+      // words (e.g. "quiero ayuda" / "tengo problema"). Reject if every token
+      // is a stop-word-ish term. (Defensive — the above mostly catches it.)
       return false;
     };
     let nameCandidate = '';
@@ -3233,6 +3237,11 @@ export async function processMessageAsync(
     zipCode: state.zipCode,
     state: state.state,
     name: state.name,
+    phoneNumber: state.phoneNumber,
+    email: state.email,
+    scheduledCallbackWindow: state.scheduledCallbackWindow,
+    conversationClosed: state.conversationClosed,
+    advisorHandoffStarted: state.advisorHandoffStarted,
     serviceCategory: state.serviceCategory,
     advisorOfferDismissed: state.advisorOfferDismissed,
     clarificationCount: state.clarificationCount,

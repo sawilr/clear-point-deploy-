@@ -18,6 +18,11 @@ export interface LLMContext {
   zipCode?: string;
   state?: string;
   name?: string;
+  phoneNumber?: string;
+  email?: string;
+  scheduledCallbackWindow?: string;
+  conversationClosed?: boolean;
+  advisorHandoffStarted?: boolean;
   serviceCategory?: string;
   advisorOfferDismissed?: boolean;
   clarificationCount?: number;
