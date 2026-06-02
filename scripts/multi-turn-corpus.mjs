@@ -774,7 +774,55 @@ export const MULTI_TURN_SCENARIOS = [
   },
 
   // ═══════════════════════════════════════════════════════════════════════
-  // 26. ORIGINAL SAWIL DRUG-PHARMACY (kept for regression)
+  // 27. SAWIL JUN 2026 #3 — CONTACT CAPTURE AFTER HANDOFF PROMPT
+  // The fatal bug: bot asks "name and phone?", user types "Mario Perez
+  // 3458742345", bot answers "Sorry for the repetition" instead of
+  // confirming the capture. This MUST work.
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    id: 'sawil-jun3-contact-capture-after-handoff',
+    description: 'Bot must capture "Name + 10 digits" reply and confirm callback',
+    turns: [
+      { msg: 'español' },
+      { msg: '10033' },
+      { msg: 'tengo problemas medicare me esta cobrando' },
+      { msg: 'medicare me esta cobrando' },
+      { msg: 'no quiero hablar pense q me podias dar una orientacion' },
+      { msg: 'Cobertura' },
+      { msg: 'ok' },
+      { msg: 'mario perez 3458742345',
+        mustMatch: /Mario Perez|345-?874-?2345|perfecto|confirm|placer|excelente d[ií]a/i,
+        mustNotMatch: /Perd[oó]n por la repetici[oó]n|sorry for the repeat|noté que ya le dije/i },
+    ],
+  },
+  {
+    id: 'contact-capture-en-format',
+    description: 'EN handoff capture',
+    turns: [
+      { msg: 'english' },
+      { msg: '10550' },
+      { msg: 'my doctor problems' },
+      { msg: 'ok' },
+      { msg: 'John Smith 555-123-4567',
+        mustMatch: /John Smith|555-123-4567|perfect|confirm|pleasure|great day/i,
+        mustNotMatch: /apologies for the repeat|sorry — i see/i },
+    ],
+  },
+  {
+    id: 'contact-capture-spaces-format',
+    description: 'Phone with spaces',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo factura' },
+      { msg: 'ok' },
+      { msg: 'Ana Lopez 347 555 1234',
+        mustMatch: /Ana Lopez|347-?555-?1234|perfecto|placer/i },
+    ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 28. ORIGINAL SAWIL DRUG-PHARMACY (kept for regression)
   // ═══════════════════════════════════════════════════════════════════════
   {
     id: 'sawil-jun-drug-pharmacy-cobrando-mucho',

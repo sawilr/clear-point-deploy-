@@ -2510,6 +2510,62 @@ export function processMessage(
   // incoming value here (pre-increment) just for offer-recency math.
   const _currentTurnIdx = (state.turnCount || 0) + 1;
 
+  // PHASE A5 — HANDOFF / SCHEDULE CONTACT CAPTURE.
+  // When the bot has asked for name+phone (advisorHandoffStarted OR
+  // schedulingCallback is true) and the user replies with anything that
+  // looks like "Name + 10-digit phone", capture them and confirm.
+  // Without this, the user types "mario perez 3458742345" and the engine
+  // falls back to the same prompt → my duplicate-guard fires → loop.
+  if ((state.advisorHandoffStarted || state.schedulingCallback)
+      && !state.name && !state.phoneNumber) {
+    const _msg = userMessage.trim();
+    // Phone: a contiguous run of 10–11 digits OR formatted 3-3-4.
+    const phoneMatch = _msg.replace(/[\s\-().]/g, '').match(/(?:1)?(\d{10})\b/);
+    const phoneDigits = phoneMatch?.[1] || '';
+    // Name: tokens BEFORE the phone digits, length 2–40 letters/spaces/apostrophe.
+    let nameCandidate = '';
+    if (phoneDigits) {
+      // Strip the phone-like substring out of the message and trim.
+      const noDigits = _msg.replace(/[\d\s\-().]{7,}$/, '').trim();
+      // Accept a name with 1–4 alpha tokens (letters, spaces, apostrophes, accents).
+      if (/^[A-Za-zÀ-ÿ' .]{2,40}$/.test(noDigits) && /[A-Za-zÀ-ÿ]/.test(noDigits)) {
+        nameCandidate = noDigits.replace(/\s+/g, ' ').trim();
+      }
+    }
+    if (phoneDigits && nameCandidate) {
+      const isEs = (state.language || 'es') === 'es';
+      const fmt = `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
+      // Title-case the name.
+      const titled = nameCandidate
+        .split(/\s+/)
+        .map((w) => w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)
+        .join(' ');
+      const window = state.scheduledCallbackWindow || '';
+      const windowEs = window ? ` Le llamaremos ${window}.` : '';
+      const windowEn = window ? ` We'll call you ${window}.` : '';
+      const out = isEs
+        ? `Perfecto, ${titled}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${windowEs} Gracias por su tiempo — fue un placer ayudarle. Que tenga excelente día.`
+        : `Perfect, ${titled}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${windowEn} Thanks for your time — it was a pleasure helping you. Have a great day.`;
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        name: titled,
+        nameIsValid: true,
+        phoneNumber: phoneDigits,
+        advisorHandoffStarted: true,
+        needsHuman: true,
+        conversationClosed: true,
+        lastBotIntent: 'handoff_captured_contact',
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: true };
+    }
+  }
+
   // PHASE A4 — CLARIFICATION REQUEST INTERCEPT.
   // "no me explicaron bien" / "no entiendo" / "I don't understand" is a
   // request to SIMPLIFY, not a complaint or dismissal. The bot must
