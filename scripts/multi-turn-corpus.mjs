@@ -677,6 +677,105 @@ export const MULTI_TURN_SCENARIOS = [
   // ═══════════════════════════════════════════════════════════════════════
   // 24. SAWIL JUN 2026 PREVIEW SPECIFIC — drug-only flow
   // ═══════════════════════════════════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════════════
+  // 25. SAWIL JUN 2026 #2 — "no me explicaron bien" + "Más tarde"
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    id: 'sawil-jun2-no-explicaron-bien-then-mas-tarde',
+    description: '"no me explicaron bien" must SIMPLIFY (not loop guard), then "Más tarde" must SCHEDULE (not handoff)',
+    turns: [
+      { msg: 'español' },
+      { msg: '10033' },
+      { msg: 'tengo problemas con mi doctor' },
+      { msg: 'quiere q cambie de plan' },
+      { msg: 'no me explicaron bien',
+        // CRITICAL: must NOT fire loop guard; must SIMPLIFY with 4 causes
+        mustNotMatch: /^Disculpe — para no dar vueltas|going in circles/i,
+        mustMatch: /cuatro razones|four reasons|red|saliendo|terminando|autorizaci[oó]n|formulario|sencillo|simpler|explicar|explico/i },
+      { msg: 'Más tarde',
+        // CRITICAL: must offer SCHEDULE, not force handoff
+        mustNotMatch: /noté que ya le dije|going to waste|no le voy a hacer perder/i,
+        mustMatch: /agend|schedul|horario|cuando le quede|qué hora|that works|tiempo le funcione/i },
+    ],
+  },
+  {
+    id: 'clarification-no-entiendo-bill-flow',
+    description: '"no entiendo" in bill flow → simplifies with 3 types',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo una factura' },
+      { msg: 'no entiendo',
+        mustNotMatch: /^Disculpe — para no dar vueltas/i,
+        mustMatch: /tres tipos|three types|amount due|EOB|explicaci[oó]n|farmacia|claro|sencillo/i },
+    ],
+  },
+  {
+    id: 'clarification-no-entiendo-drug-flow',
+    description: '"no entiendo" in drug flow → simplifies with 3 causes',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo problema con mi medicina' },
+      { msg: 'no entiendo',
+        mustMatch: /cueste mucho|no la cubra|autorizaci[oó]n|cost too much|not cover|prior auth|claro|sencillo/i },
+    ],
+  },
+  {
+    id: 'clarification-no-entiendo-letter-flow',
+    description: '"no entiendo" in letter flow → simplifies with 4 sources',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'me llego una carta' },
+      { msg: 'no entiendo',
+        mustMatch: /Medicare|Seguro Social|Medicaid|plan|fuentes|sources|logo|nombre/i },
+    ],
+  },
+  {
+    id: 'clarification-i-dont-understand-en',
+    description: 'EN: "I don\'t understand" → simplifies',
+    turns: [
+      { msg: 'english' },
+      { msg: '10550' },
+      { msg: 'I have a problem with my doctor' },
+      { msg: "I don't understand",
+        mustNotMatch: /^Sorry — to avoid going in circles/i,
+        mustMatch: /four reasons|simpler|leaving|terminating|prior|formulary|explain/i },
+    ],
+  },
+  {
+    id: 'schedule-callback-after-defer',
+    description: 'User defers advisor, then provides scheduling info',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo problemas con mi plan' },
+      { msg: 'mi doctor no esta cubierto' },
+      { msg: 'no por ahora' },
+      { msg: 'Más tarde',
+        mustMatch: /agend|schedul|nombre|tel[eé]fono|horario|cuando le quede|que le quede mejor/i,
+        mustNotMatch: /noté que ya le dije/i },
+    ],
+  },
+  {
+    id: 'clarification-twice-then-advisor',
+    description: 'After 3 clarifications, bot offers advisor instead of looping',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo factura' },
+      { msg: 'no entiendo' },
+      { msg: 'no entiendo' },
+      { msg: 'no entiendo',
+        // 3rd clarification: bot should offer advisor
+        mustMatch: /asesor|llamar|sin costo|advisor|complicado|explicárselo|walk through/i },
+    ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 26. ORIGINAL SAWIL DRUG-PHARMACY (kept for regression)
+  // ═══════════════════════════════════════════════════════════════════════
   {
     id: 'sawil-jun-drug-pharmacy-cobrando-mucho',
     description: 'Drug + advisor offer + Más tarde + complaint',

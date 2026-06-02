@@ -105,6 +105,17 @@ export interface ConversationState {
   /** PHASE A3 — last bot response, hash/normalized form, so the output
    *  guard can flag near-duplicates (≥75% Jaccard) and force advance. */
   lastBotResponseNormalized?: string;
+  /** PHASE A4 — user defers advisor → bot offers to SCHEDULE a callback
+   *  (name + phone + preferred time) instead of forcing immediate handoff.
+   *  Tracks the scheduling flow as its own state so multi-turn collection
+   *  doesn't bleed into other handlers. */
+  schedulingCallback?: boolean;
+  /** PHASE A4 — captured user preferred callback window (e.g. "tomorrow
+   *  morning"). Used by lead-note builder so advisor knows when to call. */
+  scheduledCallbackWindow?: string;
+  /** PHASE A4 — count of clarification re-explanations. After 2 we offer
+   *  human advisor rather than a third re-explanation. */
+  clarificationCount?: number;
   /** Times the caller failed to enter a usable name. */
   failedNameAttempts?: number;
   /** Times the caller used abusive/frustrated/profane language. */
@@ -2373,6 +2384,32 @@ export function detectRepetitionComplaint(text: string): boolean {
   return false;
 }
 
+/** PHASE A4 — recognize when the user is asking for clarification (NOT
+ *  complaining the bot repeated, NOT dismissing — just confused).
+ *  Examples: "no me explicaron bien", "no entiendo", "puede explicarme",
+ *  "está confuso", "I don't understand", "can you explain that".
+ *  The bot's correct response is to SIMPLIFY and re-explain, NEVER to
+ *  trigger the loop-guard or force an advisor handoff.
+ *  NOTE: distinct from earlier `detectClarificationRequest` (which catches
+ *  "what is IRMAA?" style definition requests). This one is whole-message
+ *  confusion / "explain it differently" intent. */
+export function detectExplainItSimpler(text: string): boolean {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (!t || t.length > 150) return false;
+  // Exclude when there's a language word — that's a Phase D language switch.
+  // "no entiendo inglés" / "I don't understand Spanish" must NOT trigger this.
+  if (/\b(ingles|english|espa[ñn]ol|spanish)\b/i.test(t)) return false;
+  // Exclude when there's a concrete topic word — that means user is asking
+  // about THE letter / bill / etc., not asking for the process to be simpler.
+  // "no entiendo esta carta" → letter handler, not clarification.
+  if (/\b(carta|cartas|letter|factura|facturas|bill|cobro|medicina|medicament|medication|drug|farmacia|pharmacy)\b/i.test(t)) return false;
+  // Spanish — "I don't get it", "they didn't explain", "explain more"
+  if (/\b(no entiendo|no me entiendo|no me explicaron|no me lo explicaron|no me explico|no me lo explico|me lo puede explicar|puede explicarme|puede explicar|expliqueme|expl[ií]queme|m[aá]s claro|estoy perdid[oa]|estoy confundid[oa]|esta confuso|no esta claro|no me queda claro|no comprendo|no comprendi|no le entiendo|no he entendido)\b/i.test(t)) return true;
+  // English
+  if (/\b(i don'?t (understand|get it|follow|get)|i'?m confused|i'?m lost|can you explain|please explain|explain (it )?(more|again|simpler|to me)|that'?s not clear|i don'?t (quite )?follow|that'?s confusing|i need more (info|information))\b/i.test(t)) return true;
+  return false;
+}
+
 /** PHASE A3 — recognize when the user is dismissing/deferring an advisor
  *  offer ("más tarde", "no por ahora", "later"). The bot must remember
  *  and not immediately re-offer the same call. */
@@ -2472,6 +2509,68 @@ export function processMessage(
   // NOTE: processMessageInner also increments turnCount; we read the
   // incoming value here (pre-increment) just for offer-recency math.
   const _currentTurnIdx = (state.turnCount || 0) + 1;
+
+  // PHASE A4 — CLARIFICATION REQUEST INTERCEPT.
+  // "no me explicaron bien" / "no entiendo" / "I don't understand" is a
+  // request to SIMPLIFY, not a complaint or dismissal. The bot must
+  // re-explain in plainer words, NOT escalate to advisor handoff and
+  // NOT trigger the loop guard. After 2 clarifications we offer human help.
+  if (detectExplainItSimpler(userMessage) && !state.advisorHandoffStarted) {
+    const isEs = (state.language || 'es') === 'es';
+    const clarCount = (state.clarificationCount || 0) + 1;
+    const lastBot = [...(state.messages || [])].reverse().find((m) => m.role === 'bot');
+    const lastBotText = (lastBot?.content || '').toLowerCase();
+    // Recognize what the bot was asking about so we can simplify THAT.
+    const wasAskingProvider = /doctor|m[eé]dico|red|provider|network|especialista|specialist/i.test(lastBotText);
+    const wasAskingBill = /factura|cobro|bill|charge|amount due|pagar/i.test(lastBotText);
+    const wasAskingDrug = /medicament|medicina|drug|medication|farmacia|pharmacy/i.test(lastBotText);
+    const wasAskingLetter = /carta|letter|sender|fuente/i.test(lastBotText);
+    let out: string;
+    if (clarCount >= 3) {
+      // 3rd clarification — offer advisor instead of looping forever.
+      out = isEs
+        ? `Disculpe que no me esté explicando bien. Esto a veces es complicado de hablar por chat. ¿Quiere que un asesor licenciado le llame para explicárselo con calma — sin costo? O agendamos una llamada para más tarde si prefiere.`
+        : `I'm sorry I'm not explaining this well. This can be hard to handle over chat. Would you like a licensed advisor to call you to walk through it — at no cost? Or we can schedule a call for later if you prefer.`;
+    } else if (wasAskingProvider) {
+      out = isEs
+        ? `Claro, le explico más sencillo. Cuando un doctor le dice "cambie de plan" puede ser por **una** de cuatro razones comunes: (1) el doctor está saliendo de la red del plan, (2) el plan está terminando o cambiando, (3) hay problemas con autorizaciones previas, o (4) cambió el formulario de medicamentos. Yo no puedo confirmar cuál de estas es su caso — un asesor licenciado sí puede revisar el plan y el área. ¿Cuál de estas se parece más a lo que le pasó, o prefiere que le llame un asesor?`
+        : `Sure, let me explain more simply. When a doctor tells you "switch plans" it's usually for **one** of four common reasons: (1) the doctor is leaving the plan's network, (2) the plan is terminating or changing, (3) there are prior-authorization problems, or (4) the drug formulary changed. I can't confirm which one applies to your case — a licensed advisor can review the plan and your area. Which of these sounds closest to your situation, or would you prefer an advisor to call?`;
+    } else if (wasAskingBill) {
+      out = isEs
+        ? `Claro. Una factura puede ser de tres tipos: (a) le dicen que **usted** debe pagar una cantidad ("amount due"), (b) es una **explicación de beneficios** del plan (EOB — no es factura, no se paga), o (c) es un cobro de la farmacia. Para ayudarle mejor, ¿cuál parece que tiene? Si no está claro, un asesor licenciado puede revisarla.`
+        : `Sure. A bill usually falls into three types: (a) it says **you** owe an amount ("amount due"), (b) it's an **Explanation of Benefits** from the plan (EOB — not a bill, you don't pay it), or (c) it's a pharmacy charge. To help better, which does yours look like? If it's not clear, a licensed advisor can review it.`;
+    } else if (wasAskingDrug) {
+      out = isEs
+        ? `Claro. Un problema con su medicina puede ser: (a) que cueste mucho, (b) que el plan no la cubra, o (c) que necesite autorización previa del plan. ¿Cuál de estas se parece más a lo que le dijo la farmacia?`
+        : `Sure. A medication problem is usually: (a) it costs too much, (b) the plan doesn't cover it, or (c) it needs prior authorization from the plan. Which of these sounds most like what the pharmacy told you?`;
+    } else if (wasAskingLetter) {
+      out = isEs
+        ? `Claro. Las cartas de Medicare suelen venir de cuatro fuentes: **Medicare** (federal), **Seguro Social** (sobre la prima de Parte B), **Medicaid** (estatal), o **su plan** (renovación o cambio de beneficios). ¿Cuál nombre o logo aparece arriba en la carta?`
+        : `Sure. Medicare letters usually come from four sources: **Medicare** (federal), **Social Security** (about the Part B premium), **Medicaid** (state), or **your plan** (renewal or benefit change). Which name or logo is on top of the letter?`;
+    } else {
+      // Generic clarification — re-ask in simpler terms.
+      out = isEs
+        ? `Claro, le explico más sencillo. ¿Me puede decir qué necesita resolver hoy en sus propias palabras — por ejemplo, una factura, su doctor, una medicina, una carta, o algo del plan? Si prefiere, un asesor licenciado le puede llamar y explicar todo con calma sin costo.`
+        : `Sure, let me put it more simply. Can you tell me what you need to solve today in your own words — for example, a bill, your doctor, a medication, a letter, or something about your plan? If you'd prefer, a licensed advisor can call and explain everything calmly at no cost.`;
+    }
+    const newState: ConversationState = {
+      ...state,
+      turnCount: _currentTurnIdx,
+      clarificationCount: clarCount,
+      lastBotIntent: 'clarification_request',
+      // Reset loop-guard counter — this turn is legitimate progress.
+      loopGuardConsecutive: 0,
+      quickReplies: isEs
+        ? ['Hablar con asesor', 'Una pregunta más', 'Agendar para más tarde']
+        : ['Talk to advisor', 'One more question', 'Schedule for later'],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: out, timestamp: Date.now() },
+      ],
+    };
+    return { response: out, newState, needsHuman: false };
+  }
 
   // PHASE A3 — repetition complaint INTERCEPT. Fires BEFORE the normal
   // handler chain so "ya me dijiste", "no entiendes", "esta rayada" never
@@ -2584,14 +2683,38 @@ export function processMessage(
       result.newState.lastBotIntent = 'loop_guard_to_handoff';
       return { response: out, newState: result.newState, needsHuman: true };
     }
-    // PHASE A3 — if the loop guard ALREADY fired in the prior turn (the
-    // previous bot text contains the "para no dar vueltas" / "going in
-    // circles" wording), OR we've fired the loop guard once already in
-    // this session, escalate directly to handoff. We've now offered
-    // an advisor twice — re-asking would itself be a loop.
+    // PHASE A3/A4 — if the loop guard ALREADY fired in the prior turn,
+    // OR we've fired the loop guard once already, we are NOT going to
+    // ask the same question again. The user's intent here matters:
+    //   • If user deferred ("Más tarde"/"Later") → offer SCHEDULE
+    //     (collect name + phone + preferred time). NOT immediate handoff.
+    //   • Otherwise → force immediate handoff with name+phone prompt.
     const _priorWasLoopGuard = /Disculpe — para no dar vueltas|going in circles/i.test(prevBotText);
     const _alreadyLoopGuardFiredOnce = (result.newState.loopGuardConsecutive || 0) >= 1;
     if ((_priorWasLoopGuard || _alreadyLoopGuardFiredOnce) && !result.newState.advisorHandoffStarted) {
+      const userWantsLater = detectAdvisorDismissal(userMessage);
+      if (userWantsLater) {
+        // SCHEDULE path — collect name + phone + window. No immediate handoff.
+        result.newState.schedulingCallback = true;
+        result.newState.advisorOfferDismissed = true;
+        result.newState.lastBotIntent = 'schedule_callback_request';
+        const out = isEs
+          ? `Sin problema. Le agendo una llamada para cuando le quede mejor — un asesor licenciado de ClearPoint, sin costo. ¿Me puede dar su nombre, un teléfono donde le puedan llamar, y un horario que le funcione (por ejemplo, "mañana en la tarde")? Por favor no envíe número de Medicare, Seguro Social ni datos bancarios.`
+          : `No problem. I'll schedule a call for when it's better for you — a licensed ClearPoint advisor, at no cost. Can you give me your name, a phone number where they can reach you, and a time that works for you (for example, "tomorrow afternoon")? Please don't send Medicare ID, SSN, or banking information.`;
+        if (result.newState.messages.length > 0) {
+          const lastIdx = result.newState.messages.length - 1;
+          if (result.newState.messages[lastIdx].role === 'bot') {
+            result.newState.messages[lastIdx] = { role: 'bot', content: out, timestamp: Date.now() };
+          } else {
+            result.newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+          }
+        }
+        result.newState.quickReplies = isEs
+          ? ['Mañana en la mañana', 'Mañana en la tarde', 'Otro día', 'Mejor ahora']
+          : ['Tomorrow morning', 'Tomorrow afternoon', 'Another day', 'Actually, now'];
+        return { response: out, newState: result.newState, needsHuman: false };
+      }
+      // Not a "later" — immediate handoff.
       result.newState.advisorHandoffStarted = true;
       result.newState.needsHuman = true;
       result.newState.advisorHandoffReason = 'loop_guard_double_fire';
@@ -2645,7 +2768,20 @@ export function processMessage(
     if (_thisNorm.length >= 30 && _allPriorBot.includes(_thisNorm)) {
       const isEs = (result.newState.language || 'es') === 'es';
       let out: string;
-      if (result.newState.advisorHandoffStarted) {
+      // PHASE A4 — if user is deferring with "Más tarde" / "Later", offer
+      // SCHEDULE (collect name+phone+window). Do NOT force immediate handoff.
+      const _userIsDeferring = detectAdvisorDismissal(userMessage);
+      if (_userIsDeferring && !result.newState.advisorHandoffStarted) {
+        result.newState.schedulingCallback = true;
+        result.newState.advisorOfferDismissed = true;
+        result.newState.lastBotIntent = 'duplicate_in_session_to_schedule';
+        out = isEs
+          ? `Sin problema. Le agendo una llamada para cuando le quede mejor — un asesor licenciado de ClearPoint, sin costo. ¿Me puede dar su nombre, un teléfono donde le puedan llamar, y un horario que le funcione (por ejemplo, "mañana en la tarde")? Por favor no envíe número de Medicare, Seguro Social ni datos bancarios.`
+          : `No problem. I'll schedule a call for when it's better for you — a licensed ClearPoint advisor, at no cost. Can you give me your name, a phone number where they can reach you, and a time that works for you (for example, "tomorrow afternoon")? Please don't send Medicare ID, SSN, or banking information.`;
+        result.newState.quickReplies = isEs
+          ? ['Mañana en la mañana', 'Mañana en la tarde', 'Otro día', 'Mejor ahora']
+          : ['Tomorrow morning', 'Tomorrow afternoon', 'Another day', 'Actually, now'];
+      } else if (result.newState.advisorHandoffStarted) {
         // Already in handoff — gentle re-prompt for name+phone, no
         // repeat of any topic content.
         out = isEs
