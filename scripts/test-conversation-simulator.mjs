@@ -124,7 +124,7 @@ console.log('\n=== SCENARIOS ===\n');
   const L = 'S2.appeal_existing_client';
   check(`${L}.t2_asks_client_gate`, /cliente actual|clearpoint senior advisors/i.test(conv.turns[2].bot));
   check(`${L}.t4_starts_handoff`, conv.state.advisorHandoffStarted === true);
-  check(`${L}.t4_asks_name_phone`, /nombre.*tel[eé]fono/i.test(conv.turns[4].bot));
+  check(`${L}.t4_asks_name_first (progressive)`, /(¿cu[aá]l es su nombre|nombre, por favor)/i.test(conv.turns[4].bot));
   check(`${L}.t4_PHI_guardrail`, /medicare|seguro social|bancari/i.test(conv.turns[4].bot));
   assertNoLoop(L, conv);
   assertCompliance(L, conv);

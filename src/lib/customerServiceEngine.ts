@@ -2510,48 +2510,94 @@ export function processMessage(
   // incoming value here (pre-increment) just for offer-recency math.
   const _currentTurnIdx = (state.turnCount || 0) + 1;
 
-  // PHASE A5 — HANDOFF / SCHEDULE CONTACT CAPTURE.
-  // When the bot has asked for name+phone (advisorHandoffStarted OR
-  // schedulingCallback is true) and the user replies with anything that
-  // looks like "Name + 10-digit phone", capture them and confirm.
-  // Without this, the user types "mario perez 3458742345" and the engine
-  // falls back to the same prompt → my duplicate-guard fires → loop.
+  // PHASE A5 — closing intent ALWAYS wins, even during handoff collection.
+  // "gracias por la info" / "ya terminé" / "I'm done" must produce a warm
+  // sign-off, never re-ask name/phone.
+  if (isClosingIntent(userMessage) && !state.conversationClosed) {
+    const isEs = (state.language || 'es') === 'es';
+    const out = isEs
+      ? `¡Gracias a usted! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
+      : `Thank you! It was a pleasure helping. We're here whenever you need us — write back anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+    const newState: ConversationState = {
+      ...state,
+      turnCount: _currentTurnIdx,
+      conversationClosed: true,
+      lastBotIntent: 'warm_closing',
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: out, timestamp: Date.now() },
+      ],
+    };
+    return { response: out, newState, needsHuman: !!state.advisorHandoffStarted };
+  }
+
+  // PHASE A5 — PROGRESSIVE HANDOFF / SCHEDULE CONTACT CAPTURE.
+  // Real assistants ask one thing at a time. Flow:
+  //   step 1 — bot asks NAME only
+  //   step 2 — user gives name → bot acknowledges + asks PHONE
+  //   step 3 — user gives phone → bot confirms with name + formatted phone
+  //
+  // Robust to: name+phone together (still captures both in one go), phone-first
+  // then name, name-first then phone, various phone formats (spaces, dashes,
+  // parens, optional leading 1).
   if ((state.advisorHandoffStarted || state.schedulingCallback)
-      && !state.name && !state.phoneNumber) {
+      && !(state.name && state.phoneNumber)) {
     const _msg = userMessage.trim();
-    // Phone: a contiguous run of 10–11 digits OR formatted 3-3-4.
-    const phoneMatch = _msg.replace(/[\s\-().]/g, '').match(/(?:1)?(\d{10})\b/);
+    const isEs = (state.language || 'es') === 'es';
+    // Parse phone (10–11 digits, any common separators)
+    const stripped = _msg.replace(/[\s\-().]/g, '');
+    const phoneMatch = stripped.match(/(?:1)?(\d{10})/);
     const phoneDigits = phoneMatch?.[1] || '';
-    // Name: tokens BEFORE the phone digits, length 2–40 letters/spaces/apostrophe.
+    // Parse name candidate. Reject if the message looks like a question or
+    // contains common non-name tokens (Sawil bug: "que es aep" was captured
+    // as a name because it's only letters).
+    const looksLikeNonName = (s: string): boolean => {
+      const lower = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if (/\?/.test(s)) return true;
+      // Spanish: questions, fillers, common verbs, common topic nouns
+      if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|cobro|doctor|medic|carta|plan|asesor|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|mañana|ayer)\b/i.test(lower)) return true;
+      // English: questions, fillers, verbs, nouns
+      if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|charge|doctor|medic|letter|plan|advisor|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday)\b/i.test(lower)) return true;
+      return false;
+    };
     let nameCandidate = '';
     if (phoneDigits) {
-      // Strip the phone-like substring out of the message and trim.
-      const noDigits = _msg.replace(/[\d\s\-().]{7,}$/, '').trim();
-      // Accept a name with 1–4 alpha tokens (letters, spaces, apostrophes, accents).
-      if (/^[A-Za-zÀ-ÿ' .]{2,40}$/.test(noDigits) && /[A-Za-zÀ-ÿ]/.test(noDigits)) {
-        nameCandidate = noDigits.replace(/\s+/g, ' ').trim();
+      // Pull anything before/around the digits, strip the digits themselves
+      const without = _msg.replace(/[\d\s\-().]{7,}/g, ' ').replace(/\s+/g, ' ').trim();
+      if (/^[A-Za-zÀ-ÿ' .]{2,40}$/.test(without) && /[A-Za-zÀ-ÿ]/.test(without)
+          && !looksLikeNonName(without)) {
+        nameCandidate = without;
       }
+    } else if (/^[A-Za-zÀ-ÿ' .]{2,40}$/.test(_msg) && /[A-Za-zÀ-ÿ]/.test(_msg)
+               && !looksLikeNonName(_msg)) {
+      // No phone — message is a plausible name (e.g. "Mario Perez")
+      nameCandidate = _msg.replace(/\s+/g, ' ').trim();
     }
-    if (phoneDigits && nameCandidate) {
-      const isEs = (state.language || 'es') === 'es';
-      const fmt = `${phoneDigits.slice(0, 3)}-${phoneDigits.slice(3, 6)}-${phoneDigits.slice(6)}`;
-      // Title-case the name.
-      const titled = nameCandidate
-        .split(/\s+/)
-        .map((w) => w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w)
-        .join(' ');
+    const titled = nameCandidate
+      ? nameCandidate.split(/\s+/).map((w) => w.length ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w).join(' ')
+      : '';
+    // Determine what we already have + what's still missing
+    const haveName = !!(state.name || titled);
+    const havePhone = !!(state.phoneNumber || phoneDigits);
+    const finalName = state.name || titled;
+    const finalPhone = state.phoneNumber || phoneDigits;
+    if (haveName && havePhone) {
+      // BOTH — confirm and close
+      const fmt = `${finalPhone.slice(0, 3)}-${finalPhone.slice(3, 6)}-${finalPhone.slice(6)}`;
       const window = state.scheduledCallbackWindow || '';
       const windowEs = window ? ` Le llamaremos ${window}.` : '';
       const windowEn = window ? ` We'll call you ${window}.` : '';
       const out = isEs
-        ? `Perfecto, ${titled}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${windowEs} Gracias por su tiempo — fue un placer ayudarle. Que tenga excelente día.`
-        : `Perfect, ${titled}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${windowEn} Thanks for your time — it was a pleasure helping you. Have a great day.`;
+        ? `Perfecto, ${finalName}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${windowEs} Gracias por su tiempo — fue un placer ayudarle. Que tenga excelente día.`
+        : `Perfect, ${finalName}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${windowEn} Thanks for your time — it was a pleasure helping you. Have a great day.`;
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
-        name: titled,
+        name: finalName,
         nameIsValid: true,
-        phoneNumber: phoneDigits,
+        phoneNumber: finalPhone,
         advisorHandoffStarted: true,
         needsHuman: true,
         conversationClosed: true,
@@ -2563,6 +2609,79 @@ export function processMessage(
         ],
       };
       return { response: out, newState, needsHuman: true };
+    }
+    if (haveName && !havePhone) {
+      // Have name — ask for phone next
+      const out = isEs
+        ? `Gracias, ${finalName}. ¿Cuál es un teléfono donde le puedan llamar? (10 dígitos)`
+        : `Thanks, ${finalName}. What's a phone number where they can reach you? (10 digits)`;
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        name: finalName,
+        nameIsValid: true,
+        lastBotIntent: 'handoff_asking_phone',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+    if (havePhone && !haveName) {
+      // Have phone — ask for name next
+      const out = isEs
+        ? `Gracias. ¿Y su nombre, por favor?`
+        : `Thanks. And your name, please?`;
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        phoneNumber: finalPhone,
+        lastBotIntent: 'handoff_asking_name',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+    // Neither parsed. If we ALREADY asked for the same thing on the prior
+    // turn (state.lastBotIntent), the user is clearly not providing it —
+    // release the handoff so the normal flow can handle whatever they said.
+    const askingName = !state.name;
+    const alreadyAskedSame = askingName
+      ? state.lastBotIntent === 'handoff_asking_name'
+      : state.lastBotIntent === 'handoff_asking_phone';
+    if (alreadyAskedSame) {
+      // Fall through to processMessageInner with handoff DISABLED so the
+      // user's message gets routed by topic.
+      seededState.advisorHandoffStarted = false;
+      seededState.schedulingCallback = false;
+      // Don't return — let the rest of the wrapper continue.
+    } else {
+      const out = isEs
+        ? (askingName
+          ? `Para que el asesor lo contacte, ¿cuál es su nombre?`
+          : `Para que el asesor lo llame, ¿cuál es un teléfono (10 dígitos)?`)
+        : (askingName
+          ? `So the advisor can reach you, what's your name?`
+          : `So the advisor can reach you, what's a 10-digit phone number?`);
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        lastBotIntent: askingName ? 'handoff_asking_name' : 'handoff_asking_phone',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
     }
   }
 
@@ -2635,8 +2754,8 @@ export function processMessage(
   if (detectRepetitionComplaint(userMessage) && !state.advisorHandoffStarted) {
     const isEs = (state.language || 'es') === 'es';
     const out = isEs
-      ? `Tiene toda la razón, le pido disculpas. Para no hacerle perder más tiempo, voy a conectarlo directamente con un asesor licenciado de ClearPoint — sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-      : `You're absolutely right, I apologize. So I don't waste any more of your time, I'm connecting you directly with a licensed ClearPoint advisor — at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name and a phone number where they can reach you?`;
+      ? `Tiene toda la razón, le pido disculpas. Para no hacerle perder más tiempo, voy a conectarlo directamente con un asesor licenciado de ClearPoint — sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+      : `You're absolutely right, I apologize. So I don't waste any more of your time, I'm connecting you directly with a licensed ClearPoint advisor — at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name, please?`;
     const newState: ConversationState = {
       ...state,
       turnCount: _currentTurnIdx,
@@ -2726,8 +2845,8 @@ export function processMessage(
       result.newState.needsHuman = true;
       result.newState.advisorHandoffReason = result.newState.advisorHandoffReason || 'loop_guard_yes_handoff';
       const out = isEs
-        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name, please?`;
       if (result.newState.messages.length > 0) {
         const lastIdx = result.newState.messages.length - 1;
         if (result.newState.messages[lastIdx].role === 'bot') {
@@ -2755,8 +2874,8 @@ export function processMessage(
         result.newState.advisorOfferDismissed = true;
         result.newState.lastBotIntent = 'schedule_callback_request';
         const out = isEs
-          ? `Sin problema. Le agendo una llamada para cuando le quede mejor — un asesor licenciado de ClearPoint, sin costo. ¿Me puede dar su nombre, un teléfono donde le puedan llamar, y un horario que le funcione (por ejemplo, "mañana en la tarde")? Por favor no envíe número de Medicare, Seguro Social ni datos bancarios.`
-          : `No problem. I'll schedule a call for when it's better for you — a licensed ClearPoint advisor, at no cost. Can you give me your name, a phone number where they can reach you, and a time that works for you (for example, "tomorrow afternoon")? Please don't send Medicare ID, SSN, or banking information.`;
+          ? `Sin problema, le agendo una llamada con un asesor licenciado de ClearPoint — sin costo. Empecemos por su nombre, ¿cómo le llaman?`
+          : `No problem, I'll schedule a call with a licensed ClearPoint advisor — at no cost. Let's start with your name — what should I call you?`;
         if (result.newState.messages.length > 0) {
           const lastIdx = result.newState.messages.length - 1;
           if (result.newState.messages[lastIdx].role === 'bot') {
@@ -2775,8 +2894,8 @@ export function processMessage(
       result.newState.needsHuman = true;
       result.newState.advisorHandoffReason = 'loop_guard_double_fire';
       const out = isEs
-        ? `Lo entiendo, no le voy a hacer perder más tiempo. Lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-        : `I understand, I won't waste more of your time. I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking information or private medical records here. What's your name and a phone number where they can reach you?`;
+        ? `Lo entiendo, no le voy a hacer perder más tiempo. Lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+        : `I understand, I won't waste more of your time. I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking information or private medical records here. What's your name, please?`;
       if (result.newState.messages.length > 0) {
         const lastIdx = result.newState.messages.length - 1;
         if (result.newState.messages[lastIdx].role === 'bot') {
@@ -2832,8 +2951,8 @@ export function processMessage(
         result.newState.advisorOfferDismissed = true;
         result.newState.lastBotIntent = 'duplicate_in_session_to_schedule';
         out = isEs
-          ? `Sin problema. Le agendo una llamada para cuando le quede mejor — un asesor licenciado de ClearPoint, sin costo. ¿Me puede dar su nombre, un teléfono donde le puedan llamar, y un horario que le funcione (por ejemplo, "mañana en la tarde")? Por favor no envíe número de Medicare, Seguro Social ni datos bancarios.`
-          : `No problem. I'll schedule a call for when it's better for you — a licensed ClearPoint advisor, at no cost. Can you give me your name, a phone number where they can reach you, and a time that works for you (for example, "tomorrow afternoon")? Please don't send Medicare ID, SSN, or banking information.`;
+          ? `Sin problema, le agendo una llamada con un asesor licenciado de ClearPoint — sin costo. Empecemos por su nombre, ¿cómo le llaman?`
+          : `No problem, I'll schedule a call with a licensed ClearPoint advisor — at no cost. Let's start with your name — what should I call you?`;
         result.newState.quickReplies = isEs
           ? ['Mañana en la mañana', 'Mañana en la tarde', 'Otro día', 'Mejor ahora']
           : ['Tomorrow morning', 'Tomorrow afternoon', 'Another day', 'Actually, now'];
@@ -2841,8 +2960,8 @@ export function processMessage(
         // Already in handoff — gentle re-prompt for name+phone, no
         // repeat of any topic content.
         out = isEs
-          ? `Perdón por la repetición. Para conectarle con el asesor, ¿me puede compartir su nombre y un teléfono donde le puedan llamar? Por favor sin Medicare ID, Seguro Social ni datos bancarios.`
-          : `Apologies for the repeat. So the advisor can reach you, what's your name and a phone number? Please don't share Medicare ID, SSN or banking details.`;
+          ? `Para conectarle con el asesor, ¿cuál es su nombre? Por favor sin Medicare ID, Seguro Social ni datos bancarios.`
+          : `So the advisor can reach you, what's your name? Please don't share Medicare ID, SSN or banking details.`;
         result.newState.lastBotIntent = 'duplicate_in_session_handoff_reprompt';
       } else {
         // Not yet in handoff — force escalation.
@@ -2850,8 +2969,8 @@ export function processMessage(
         result.newState.needsHuman = true;
         result.newState.advisorHandoffReason = 'duplicate_in_session_handoff';
         out = isEs
-          ? `Disculpe, noté que ya le dije lo mismo. Para no hacerle perder tiempo, lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-          : `I'm sorry — I see I just repeated myself. So I don't waste your time, I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name and a phone number where they can reach you?`;
+          ? `Disculpe, noté que ya le dije lo mismo. Para no hacerle perder tiempo, lo paso con un asesor licenciado de ClearPoint, sin costo. Por favor no envíe número de Medicare, Seguro Social, datos bancarios ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+          : `I'm sorry — I see I just repeated myself. So I don't waste your time, I'll connect you with a licensed ClearPoint advisor at no cost. Please don't send Medicare ID, SSN, banking info or private medical records here. What's your name, please?`;
         result.newState.lastBotIntent = 'duplicate_in_session_handoff';
       }
       if (result.newState.messages.length > 0) {
@@ -2966,8 +3085,8 @@ function processMessageInner(
       newState.needsHuman = true;
       newState.advisorHandoffReason = newState.advisorHandoffReason || 'chip_request_advisor';
       const out = isEs
-        ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor, su nombre y un teléfono donde le puedan llamar — y por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.'
-        : "Perfect. A ClearPoint licensed advisor will contact you. Please share your name and a phone number where they can reach you — and for safety, don't send Medicare ID, SSN, or banking info here.";
+        ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor, ¿cuál es su nombre? Y por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.'
+        : "Perfect. A ClearPoint licensed advisor will contact you. Please, what's your name? And for safety, don't send Medicare ID, SSN, or banking info here.";
       newState.lastBotIntent = 'chip_advisor_handoff_start';
       newState.lastBotEmittedMenu = false;
       newState.lastBotOfferedAdvisor = true;
@@ -3162,8 +3281,8 @@ function processMessageInner(
       newState.needsHuman = true;
       newState.advisorHandoffReason = newState.advisorHandoffReason || 'global_yes_after_advisor_offer';
       const out = _isEs
-        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+        ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+        : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name, please?`;
       newState.lastBotIntent = 'global_advisor_handoff_start';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
@@ -3272,8 +3391,8 @@ function processMessageInner(
       newState.needsHuman = true;
       const isEs = newState.language === 'es';
       const out = isEs
-        ? `Perfecto. Voy a pasar su caso a su asesor asignado para que le contacte. Por favor, su nombre y el mejor teléfono — y por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.`
-        : `Perfect. I'll forward your case to your assigned advisor for follow-up. Please share your name and the best phone number — and for safety, don't send Medicare ID, SSN, or banking info here.`;
+        ? `Perfecto. Voy a pasar su caso a su asesor asignado para que le contacte. Por favor, ¿cuál es su nombre? Por seguridad, no envíe número de Medicare, Seguro Social, ni datos bancarios aquí.`
+        : `Perfect. I'll forward your case to your assigned advisor for follow-up. Please, what's your name? For safety, don't send Medicare ID, SSN, or banking info here.`;
       newState.lastBotIntent = 'lead_qual_existing_handoff';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
@@ -3408,8 +3527,8 @@ function processMessageInner(
         newState.needsHuman = true;
         newState.advisorHandoffStarted = true;
         const out = isSpanish
-          ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?'
-          : "Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?";
+          ? 'Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos aquí. ¿Cuál es su nombre, por favor?'
+          : "Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name, please?";
         newState.lastBotIntent = 'recovery_advisor_handoff_start';
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: true };
@@ -4824,8 +4943,8 @@ function processMessageInner(
         newState.advisorHandoffReason = newState.advisorHandoffReason
           || `provider_${newState.providerIssueType || newState.subIssue || 'unclear'}_user_consented`;
         const out = isSpanish
-          ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre y un teléfono donde le puedan llamar?`
-          : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name and a phone number where they can reach you?`;
+          ? `Perfecto. Un asesor licenciado de ClearPoint le va a contactar. Por favor no envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. ¿Cuál es su nombre, por favor?`
+          : `Perfect. A ClearPoint licensed advisor will contact you. Please don't send Medicare ID, SSN, banking information, or private medical records here. What's your name, please?`;
         newState.lastBotIntent = 'provider_advisor_handoff_start';
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: true };

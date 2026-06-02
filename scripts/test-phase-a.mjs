@@ -85,8 +85,8 @@ function run(turns, lastMeta) {
   // The existing-client gate fires after an appeal/savings type trigger.
   // Here we exercise the savings handler first then "soy cliente".
   const r = run(['español', '07407', 'mi plan no aprueba mi cirugia', 'si soy cliente']);
-  check('6. ES "soy cliente" → asks name+phone',
-    /nombre.*tel[eé]fono/i.test(r.response));
+  check('6. ES "soy cliente" → asks name (progressive)',
+    /(¿cu[aá]l es su nombre|nombre, por favor|por favor.*nombre)/i.test(r.response));
   check('6. ES "soy cliente" → mentions safety (no Medicare ID etc.)',
     /medicare|seguro social|bancari/i.test(r.response));
   check('6. ES "soy cliente" → does NOT confirm account status',
@@ -179,8 +179,8 @@ function run(turns, lastMeta) {
 // 16. "I'm a client"
 {
   const r = run(['english', '10550', "my plan won't approve my surgery", 'yes I am a client']);
-  check('16. EN "yes I am a client" → asks name+phone',
-    /name.*phone/i.test(r.response));
+  check('16. EN "yes I am a client" → asks name (progressive)',
+    /(what'?s your name|your name)/i.test(r.response));
   check('16. EN "yes I am a client" → does NOT confirm account',
     !/your account is (active|verified)/i.test(r.response));
 }
@@ -245,8 +245,8 @@ function run(turns, lastMeta) {
   );
   check('22. CHIP "Hablar con asesor" → handoff started',
     r.state.advisorHandoffStarted === true);
-  check('22. CHIP "Hablar con asesor" → asks name+phone',
-    /nombre.*tel[eé]fono/i.test(r.response));
+  check('22. CHIP "Hablar con asesor" → asks name (progressive)',
+    /(¿cu[aá]l es su nombre|nombre, por favor)/i.test(r.response));
 }
 
 // 23. Click "Más opciones" chip

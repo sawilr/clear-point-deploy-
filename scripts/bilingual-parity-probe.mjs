@@ -248,7 +248,8 @@ function runHandoffPair(yesPhrase, lang) {
   const { state, responses } = run(turns);
   const last = responses[responses.length - 1];
   const handoffStarted = state.advisorHandoffStarted === true || state.needsHuman === true;
-  const asksForContact = /nombre.*tel[eé]fono|name.*phone/i.test(last);
+  // Progressive collection — bot asks NAME first; phone comes on a later turn.
+  const asksForContact = /(¿cu[aá]l es su nombre|nombre, por favor|what'?s your name|your name)/i.test(last);
   return { handoffStarted, asksForContact, last };
 }
 

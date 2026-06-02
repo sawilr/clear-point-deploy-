@@ -795,9 +795,56 @@ export const MULTI_TURN_SCENARIOS = [
         mustNotMatch: /Perd[oó]n por la repetici[oó]n|sorry for the repeat|noté que ya le dije/i },
     ],
   },
+  // Progressive collection — bot must ask ONE thing at a time
   {
-    id: 'contact-capture-en-format',
-    description: 'EN handoff capture',
+    id: 'progressive-handoff-name-then-phone-es',
+    description: 'Bot asks name first, then phone, then confirms',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo factura del hospital' },
+      { msg: 'ok' },
+      // Bot should ask for name only here
+      { msg: 'Mario Perez',
+        mustMatch: /Mario Perez|tel[eé]fono|phone|10 d[ií]gitos/i,
+        mustNotMatch: /excelente d[ií]a|que tenga|placer/i }, // not the final close yet
+      { msg: '3458742345',
+        mustMatch: /Mario Perez|345-?874-?2345|perfecto|placer|excelente d[ií]a/i },
+    ],
+  },
+  {
+    id: 'progressive-handoff-name-then-phone-en',
+    description: 'EN progressive collection',
+    turns: [
+      { msg: 'english' },
+      { msg: '10550' },
+      { msg: 'I have a bill issue' },
+      { msg: 'ok' },
+      { msg: 'John Smith',
+        mustMatch: /John Smith|phone|number|10 digits/i,
+        mustNotMatch: /great day|pleasure helping/i },
+      { msg: '5551234567',
+        mustMatch: /John Smith|555-?123-?4567|perfect|pleasure|great day/i },
+    ],
+  },
+  {
+    id: 'progressive-handoff-phone-first-then-name',
+    description: 'User happens to give phone first, bot asks for name next',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'tengo problema' },
+      { msg: 'ok' },
+      { msg: '3458742345',
+        mustMatch: /nombre|name/i,
+        mustNotMatch: /excelente d[ií]a/i },
+      { msg: 'Maria Lopez',
+        mustMatch: /Maria Lopez|345-?874-?2345|perfecto|placer/i },
+    ],
+  },
+  {
+    id: 'contact-capture-en-format-combined',
+    description: 'EN handoff capture (combined name+phone still works)',
     turns: [
       { msg: 'english' },
       { msg: '10550' },
@@ -809,8 +856,8 @@ export const MULTI_TURN_SCENARIOS = [
     ],
   },
   {
-    id: 'contact-capture-spaces-format',
-    description: 'Phone with spaces',
+    id: 'contact-capture-spaces-format-combined',
+    description: 'Phone with spaces (combined still works)',
     turns: [
       { msg: 'español' },
       { msg: '10550' },

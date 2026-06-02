@@ -73,7 +73,7 @@ console.log('\n=== 2. Existing-client gate routes correctly ===');
     'si soy cliente',
   ]);
   check('2.1 ES "si soy cliente" → handoff started', state.advisorHandoffStarted === true);
-  check('2.1 ES handoff message asks name+phone', /nombre.*tel[eé]fono/i.test(responses[3]));
+  check('2.1 ES handoff message asks name (progressive)', /(¿cu[aá]l es su nombre|nombre, por favor)/i.test(responses[3]));
   check('2.1 ES handoff has PHI guardrail', /medicare|seguro social|bancari/i.test(responses[3]));
   check('2.1 isExistingClient=true', state.isExistingClient === true);
 }
@@ -105,7 +105,7 @@ console.log('\n=== 2b. EN parity for existing-client gate ===');
     'yes I am a client',
   ]);
   check('2b.1 EN "yes I am a client" → handoff', state.advisorHandoffStarted === true);
-  check('2b.1 EN asks name+phone', /name.*phone/i.test(responses[3]));
+  check('2b.1 EN asks name (progressive)', /(what'?s your name|your name)/i.test(responses[3]));
 }
 {
   const { responses, state } = run([

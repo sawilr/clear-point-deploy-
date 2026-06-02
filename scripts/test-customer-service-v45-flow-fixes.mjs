@@ -90,8 +90,8 @@ console.log('\n=== 3. "sí por favor" after advisor offer → handoff, not loop 
     r.needsHuman === true || s.needsHuman === true);
   check('3a: advisorHandoffStarted=true',
     s.advisorHandoffStarted === true);
-  check('3a: response asks for name + phone (handoff started)',
-    /nombre.*tel[eé]fono|name.*phone/i.test(r.response));
+  check('3a: response asks for name (progressive collection — phone asked next turn)',
+    /(¿cu[aá]l es su nombre|what'?s your name|nombre, por favor|por favor.*nombre|your name)/i.test(r.response));
   check('3a: response NOT a loop to first question',
     !/¿El problema es que el especialista ya no acepta su plan, necesita una autorización/i.test(r.response));
   check('3a: PHI guardrail present in handoff message',
@@ -129,9 +129,9 @@ console.log('\n=== 5. EN parity for yes confirmation ===');
   const offered = /licensed advisor|follow up|set (that|it) up|coordin/i.test(lastBot?.content || '');
   if (offered) {
     const r = processMessage('yes please', s);
-    check('5: EN "yes please" after advisor offer → handoff',
+    check('5: EN "yes please" after advisor offer → handoff (asks for name)',
       (r.needsHuman === true || r.newState.needsHuman === true)
-      && /name.*phone|phone.*name|name and a phone/i.test(r.response));
+      && /(what'?s your name|your name|name, please)/i.test(r.response));
   } else {
     // No advisor offer was made in this EN flow — skip without failing.
     check('5: EN advisor offer reached in this flow', true);

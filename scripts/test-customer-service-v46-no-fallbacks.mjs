@@ -289,7 +289,7 @@ const TESTS = [
      'me dijeron q debo cambiar de plan',
      'la muchacha de alante la de la oficina del doctor',
      'si por favor'],
-    /nombre.*tel[eé]fono|name.*phone/i],
+    /¿cu[aá]l es su nombre|nombre, por favor|what'?s your name|your name/i],
   ['ES Sawil exact: medicines and doctors', 'es', '07407',
     ['TENGO PROBLMAS CON MIS MEDICINAS Y DOCTORES'],
     /medicamento|medicina|cubr|farmacia|formulario|doctor/i],
