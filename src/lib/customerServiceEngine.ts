@@ -11,6 +11,8 @@
 import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 // PHASE D — canonical language policy (priority rules, false-positive guard).
 import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
+// PHASE A7 — LLM bridge (Claude Haiku via /api/chat). Optional, fails gracefully.
+import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -2993,6 +2995,123 @@ function _normalizeForCompare(s: string): string {
     .replace(/\s+/g, ' ')
     .replace(/[*_`]/g, '')
     .trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE A7 — ASYNC WRAPPER WITH LLM BRAIN
+//
+// `processMessageAsync` is the public entrypoint for the production UI. It:
+//   1. Runs structural sync steps first (language detection at step 0,
+//      ZIP capture, name+phone progressive collection, GHL submit trigger).
+//   2. If the structural layer produced a response (e.g., name captured,
+//      ZIP captured, contact prompt) → returns it immediately.
+//   3. Otherwise calls Claude Haiku via /api/chat with full conversation
+//      history + context. LLM understands intent and responds in the
+//      caller's language with CMS-compliant content.
+//   4. Honors LLM meta tags: [HANDOFF] → start name/phone collection,
+//      [CLOSE] → mark conversation closed, [SCHEDULE] → schedule callback.
+//   5. If the LLM call fails (no key / network / 5xx) → falls back to
+//      the legacy regex `processMessage` so the bot never crashes.
+//
+// Sync `processMessage` is preserved unchanged for test corpus + offline.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Does this turn need to be handled by the structural layer (sync only)?
+ *  Returns the structural response if yes; returns null to defer to LLM. */
+function _runStructuralFirst(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  // Step 0 — language not set yet, or asking_language step → use sync engine.
+  if (!state.language || state.step === 'asking_language') {
+    return processMessage(userMessage, state);
+  }
+  // ZIP step — sync engine handles it.
+  if (state.step === 'asking_zip' || state.step === 'asking_zip_natural') {
+    return processMessage(userMessage, state);
+  }
+  // Active handoff / scheduling collection — sync engine captures name+phone.
+  if ((state.advisorHandoffStarted || state.schedulingCallback)
+      && !(state.name && state.phoneNumber)) {
+    return processMessage(userMessage, state);
+  }
+  // Crisis (suicide / 911) MUST short-circuit any LLM call for safety.
+  // Run sync engine and check if crisis fired; if so, return immediately.
+  const lower = userMessage.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\b(suicid\w*|matarme|quitar(me|se)? la vida|kill myself|end my life|me duele el pecho|dolor (en )?el pecho|chest pain|heart attack|stroke|derrame|no puedo respirar|can'?t breathe|infarto)\b/i.test(lower)) {
+    return processMessage(userMessage, state);
+  }
+  // Closing intent — sync engine handles warmly.
+  if (isClosingIntent(userMessage) && !state.conversationClosed) {
+    return processMessage(userMessage, state);
+  }
+  return null;
+}
+
+/** Public async entry: structural sync + LLM brain + fallback. */
+export async function processMessageAsync(
+  userMessage: string,
+  state: ConversationState,
+  meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
+): Promise<{ response: string; newState: ConversationState; needsHuman: boolean }> {
+  // 1) Structural first.
+  const structural = _runStructuralFirst(userMessage, state);
+  if (structural) return structural;
+
+  // 2) LLM brain.
+  const history = _buildHistory(state.messages || []);
+  const llmRes = await _callLLM(userMessage, history, {
+    language: state.language,
+    zipCode: state.zipCode,
+    state: state.state,
+    name: state.name,
+    serviceCategory: state.serviceCategory,
+    advisorOfferDismissed: state.advisorOfferDismissed,
+    clarificationCount: state.clarificationCount,
+  });
+
+  if (!llmRes.ok) {
+    // 3) Fallback to regex engine.
+    return processMessage(userMessage, state, meta);
+  }
+
+  // 4) Apply LLM meta tags.
+  const isEs = (state.language || 'es') === 'es';
+  let newState: ConversationState = {
+    ...state,
+    turnCount: (state.turnCount || 0) + 1,
+    messages: [
+      ...(state.messages || []),
+      { role: 'user', content: userMessage, timestamp: Date.now() },
+      { role: 'bot', content: llmRes.response, timestamp: Date.now() },
+    ],
+    lastBotIntent: 'llm_response',
+  };
+
+  let response = llmRes.response;
+  let needsHuman = false;
+
+  if (llmRes.meta.wantHandoff) {
+    newState.advisorHandoffStarted = true;
+    newState.advisorHandoffReason = newState.advisorHandoffReason || 'llm_decided_handoff';
+    needsHuman = true;
+    // If LLM didn't already ask for the name, append the structured prompt.
+    if (!/nombre|name/i.test(llmRes.response)) {
+      const ask = isEs
+        ? '\n\nPara conectarle con un asesor licenciado de ClearPoint, ¿cuál es su nombre, por favor?'
+        : '\n\nTo connect you with a licensed ClearPoint advisor, what\'s your name, please?';
+      response = llmRes.response + ask;
+      // replace the last bot message
+      newState.messages[newState.messages.length - 1] = { role: 'bot', content: response, timestamp: Date.now() };
+    }
+  } else if (llmRes.meta.wantSchedule) {
+    newState.schedulingCallback = true;
+    newState.advisorOfferDismissed = true;
+  } else if (llmRes.meta.wantClose) {
+    newState.conversationClosed = true;
+  }
+
+  return { response, newState, needsHuman };
 }
 
 // WAVE 49 — heuristic: does this bot response look like a multi-topic chip

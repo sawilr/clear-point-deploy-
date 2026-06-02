@@ -6,7 +6,7 @@
 // ============================================================================
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  processMessage,
+  processMessageAsync,
   createInitialState,
   sanitizeResponse,
   type ConversationState,
@@ -411,9 +411,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       let newState = state;
       let needsHuman = false;
       try {
-        // PHASE A (A3) — pass chip metadata when the message came from a
-        // chip click. The engine routes by intent_hint instead of NLP.
-        const result = processMessage(text, state, meta);
+        // PHASE A7 — async LLM brain (Claude Haiku) + structural fallback.
+        // The async wrapper handles ZIP / name+phone / crisis / closing
+        // synchronously, then calls the LLM for topic conversation. If
+        // the LLM call fails, it falls back to the legacy regex engine.
+        const result = await processMessageAsync(text, state, meta);
         response = result.response;
         newState = result.newState;
         needsHuman = result.needsHuman;
