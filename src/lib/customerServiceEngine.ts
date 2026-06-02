@@ -77,6 +77,12 @@ export interface ConversationState {
   stateDeclaredByUser?: string;
   /** Phone number once captured (normalized to 10 digits). */
   phoneNumber?: string;
+  /** PHASE A8 — optional email. May be skipped. */
+  email?: string;
+  /** PHASE A8 — bot asked for email already (avoid re-asking). */
+  emailAsked?: boolean;
+  /** PHASE A8 — bot asked "anything else?" already. */
+  anythingElseAsked?: boolean;
   /** Set when ZIP + declared state disagree, or when name/ZIP/phone fail validation. */
   probableFakeLead?: boolean;
   /** Human-readable inconsistency list for the advisor to review. */
@@ -2551,7 +2557,18 @@ export function processMessage(
     // Parse phone (10–11 digits, any common separators)
     const stripped = _msg.replace(/[\s\-().]/g, '');
     const phoneMatch = stripped.match(/(?:1)?(\d{10})/);
-    const phoneDigits = phoneMatch?.[1] || '';
+    let phoneDigits = phoneMatch?.[1] || '';
+    // PHASE A8 — phone sanity: reject obvious fakes (all same digit,
+    // sequential, area code starting with 0/1, classic 555-555-XXXX).
+    if (phoneDigits) {
+      const isAllSame = /^(\d)\1{9}$/.test(phoneDigits);
+      const isSequential = phoneDigits === '0123456789' || phoneDigits === '1234567890' || phoneDigits === '9876543210';
+      const badAreaCode = /^[01]/.test(phoneDigits);
+      const fakePrefix = /^555555/.test(phoneDigits);
+      if (isAllSame || isSequential || badAreaCode || fakePrefix) {
+        phoneDigits = '';
+      }
+    }
     // Parse name candidate. Reject if the message looks like a question or
     // contains common non-name tokens (Sawil bug: "que es aep" was captured
     // as a name because it's only letters).
@@ -2586,20 +2603,129 @@ export function processMessage(
     const finalName = state.name || titled;
     const finalPhone = state.phoneNumber || phoneDigits;
     if (haveName && havePhone) {
-      // BOTH — confirm and close
+      // BOTH captured. PHASE A8 — progressive next steps:
+      //   1) If we haven't asked for email yet → ask for it (optional)
+      //   2) If we haven't asked "anything else?" → ask
+      //   3) Otherwise → final confirmation + close
       const fmt = `${finalPhone.slice(0, 3)}-${finalPhone.slice(3, 6)}-${finalPhone.slice(6)}`;
+
+      // Step 1 — try to parse email from THIS message if email step is active
+      const emailMatch = _msg.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+      const emailCandidate = emailMatch?.[0] || '';
+      const userSaidSkip = /^(no|nope|nada|saltar|skip|next|siguiente|ninguno|ningun|no gracias|no thanks)\.?$/i.test(_msg);
+      const haveEmail = !!(state.email || emailCandidate);
+      const finalEmail = state.email || emailCandidate;
+
+      // If email step not yet asked → ask
+      if (!state.emailAsked) {
+        const out = isEs
+          ? `Gracias, ${finalName}. ¿Tiene un correo electrónico donde el asesor también pueda enviarle información? Es opcional — puede decir "saltar" si prefiere.`
+          : `Thanks, ${finalName}. Do you have an email address where the advisor can also send you information? It's optional — say "skip" if you prefer.`;
+        const newState: ConversationState = {
+          ...state,
+          turnCount: _currentTurnIdx,
+          name: finalName,
+          nameIsValid: true,
+          phoneNumber: finalPhone,
+          emailAsked: true,
+          lastBotIntent: 'handoff_asking_email',
+          quickReplies: isEs ? ['Saltar', 'Sí, le doy mi correo'] : ['Skip', 'Sure, my email'],
+          messages: [
+            ...(state.messages || []),
+            { role: 'user', content: userMessage, timestamp: Date.now() },
+            { role: 'bot', content: out, timestamp: Date.now() },
+          ],
+        };
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Email step IS active. Did the user provide one or skip?
+      if (state.emailAsked && !haveEmail && !userSaidSkip
+          && state.lastBotIntent === 'handoff_asking_email') {
+        // No valid email and not a skip — gently re-ask once, or move on.
+        const out = isEs
+          ? `Entendido. Si prefiere no compartirlo, puede decir "saltar". O escribe un correo válido como ejemplo@correo.com.`
+          : `Got it. If you'd rather not share, say "skip". Or type a valid email like example@email.com.`;
+        const newState: ConversationState = {
+          ...state,
+          turnCount: _currentTurnIdx,
+          lastBotIntent: 'handoff_asking_email_retry',
+          quickReplies: isEs ? ['Saltar'] : ['Skip'],
+          messages: [
+            ...(state.messages || []),
+            { role: 'user', content: userMessage, timestamp: Date.now() },
+            { role: 'bot', content: out, timestamp: Date.now() },
+          ],
+        };
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Step 2 — "anything else?" not asked yet → ask
+      if (!state.anythingElseAsked) {
+        const out = isEs
+          ? `Perfecto. Antes de cerrar — ¿hay algo más sobre Medicare que quiera consultar?`
+          : `Perfect. Before we close — is there anything else about Medicare you'd like to ask?`;
+        const newState: ConversationState = {
+          ...state,
+          turnCount: _currentTurnIdx,
+          name: finalName,
+          nameIsValid: true,
+          phoneNumber: finalPhone,
+          email: finalEmail || state.email,
+          anythingElseAsked: true,
+          lastBotIntent: 'handoff_anything_else',
+          quickReplies: isEs ? ['No, gracias', 'Sí, tengo otra pregunta'] : ['No thanks', 'Yes, another question'],
+          messages: [
+            ...(state.messages || []),
+            { role: 'user', content: userMessage, timestamp: Date.now() },
+            { role: 'bot', content: out, timestamp: Date.now() },
+          ],
+        };
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Step 3 — anything else WAS asked. Did the user say no or ask something?
+      const userSaidNo = /^(no|nada|nope|ningun|ninguna|no gracias|no thanks|that'?s all|eso es todo|ya termine|ya terminé|estoy bien|i'?m good|all set|that'?ll be all|nothing else|nada m[aá]s)\.?$/i.test(_msg);
+      if (state.anythingElseAsked && state.lastBotIntent === 'handoff_anything_else' && !userSaidNo) {
+        // User asked another question — let LLM handle (release flag) but
+        // keep advisorHandoffStarted so name/phone/email are preserved.
+        // Returning null here would crash the wrapper; instead emit a brief
+        // ack and let the next turn flow normally.
+        const out = isEs
+          ? `Claro, dígame.`
+          : `Sure, go ahead.`;
+        const newState: ConversationState = {
+          ...state,
+          turnCount: _currentTurnIdx,
+          // Clear anythingElseAsked so the question goes to LLM next turn
+          anythingElseAsked: false,
+          lastBotIntent: 'handoff_paused_for_question',
+          quickReplies: [],
+          messages: [
+            ...(state.messages || []),
+            { role: 'user', content: userMessage, timestamp: Date.now() },
+            { role: 'bot', content: out, timestamp: Date.now() },
+          ],
+        };
+        return { response: out, newState, needsHuman: false };
+      }
+
+      // Final close.
       const window = state.scheduledCallbackWindow || '';
       const windowEs = window ? ` Le llamaremos ${window}.` : '';
       const windowEn = window ? ` We'll call you ${window}.` : '';
+      const emailLineEs = finalEmail || state.email ? ` También anotamos su correo ${finalEmail || state.email}.` : '';
+      const emailLineEn = finalEmail || state.email ? ` We also have your email ${finalEmail || state.email}.` : '';
       const out = isEs
-        ? `Perfecto, ${finalName}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${windowEs} Gracias por su tiempo — fue un placer ayudarle. Que tenga excelente día.`
-        : `Perfect, ${finalName}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${windowEn} Thanks for your time — it was a pleasure helping you. Have a great day.`;
+        ? `Perfecto, ${finalName}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${emailLineEs}${windowEs} Fue un placer ayudarle. Que tenga excelente día.`
+        : `Perfect, ${finalName}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${emailLineEn}${windowEn} It was a pleasure helping you. Have a great day.`;
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
         name: finalName,
         nameIsValid: true,
         phoneNumber: finalPhone,
+        email: finalEmail || state.email,
         advisorHandoffStarted: true,
         needsHuman: true,
         conversationClosed: true,
@@ -2651,6 +2777,29 @@ export function processMessage(
       };
       return { response: out, newState, needsHuman: false };
     }
+    // PHASE A8 — phone provided but rejected as obvious fake.
+    // The original digits matched the regex but failed our sanity filter.
+    // Tell the user politely it doesn't look real, ask again ONCE.
+    const _originalPhoneFound = !!phoneMatch?.[1];
+    const _phoneWasRejected = _originalPhoneFound && !phoneDigits;
+    if (_phoneWasRejected && !state.phoneNumber && state.lastBotIntent !== 'handoff_phone_rejected') {
+      const out = isEs
+        ? `Disculpe, ese número no parece válido. ¿Me puede dar un teléfono real de 10 dígitos donde el asesor le pueda llamar?`
+        : `Sorry, that number doesn't look valid. Can you give me a real 10-digit phone where the advisor can reach you?`;
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        lastBotIntent: 'handoff_phone_rejected',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+
     // Neither parsed. If we ALREADY asked for the same thing on the prior
     // turn (state.lastBotIntent), the user is clearly not providing it —
     // release the handoff so the normal flow can handle whatever they said.
@@ -3030,9 +3179,12 @@ function _runStructuralFirst(
   if (state.step === 'asking_zip' || state.step === 'asking_zip_natural') {
     return processMessage(userMessage, state);
   }
-  // Active handoff / scheduling collection — sync engine captures name+phone.
+  // Active handoff / scheduling collection — sync engine captures name+phone,
+  // optional email, and "anything else?" follow-up. LLM only resumes after
+  // the user explicitly opts into another question.
   if ((state.advisorHandoffStarted || state.schedulingCallback)
-      && !(state.name && state.phoneNumber)) {
+      && !state.conversationClosed
+      && state.lastBotIntent !== 'handoff_paused_for_question') {
     return processMessage(userMessage, state);
   }
   // Crisis (suicide / 911) MUST short-circuit any LLM call for safety.
@@ -3924,14 +4076,18 @@ function processMessageInner(
          : '')
         : (detectedState || '');
       let out: string;
+      // PHASE A8 — compliance disclaimer woven into welcome: bot serves
+      // BOTH current ClearPoint clients AND visitors with Medicare questions.
+      // This is required for CMS TPMO transparency and discourages false-
+      // positive leads from people who think the bot only helps clients.
       if (detectedState && isSpanish) {
-        out = `Gracias. Anotado, su ZIP ${zipDigits} es de **${stateLabel}**. Eso ayuda a ubicar los planes disponibles en su área cuando hablemos con un asesor licenciado. ¿En qué le puedo ayudar hoy?`;
+        out = `Gracias. Anotado, su ZIP ${zipDigits} es de **${stateLabel}**. ClearPoint es un broker independiente de Medicare — atendemos tanto a clientes actuales como a personas que tienen preguntas sobre Medicare, sin costo. ¿En qué le puedo ayudar hoy?`;
       } else if (detectedState) {
-        out = `Thanks. Got it, your ZIP ${zipDigits} is in **${stateLabel}**. That helps locate plans available in your area when we connect you with a licensed advisor. How can I help you today?`;
+        out = `Thanks. Got it, your ZIP ${zipDigits} is in **${stateLabel}**. ClearPoint is an independent Medicare broker — we help both current clients and visitors with Medicare questions, at no cost. How can I help you today?`;
       } else if (isSpanish) {
-        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/FL/CT), pero podemos seguir ayudándole con información general y conectarle con un asesor licenciado. ¿En qué le puedo ayudar hoy?`;
+        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/FL/CT). ClearPoint es un broker independiente de Medicare — atendemos a clientes y visitantes con preguntas, sin costo. ¿En qué le puedo ayudar?`;
       } else {
-        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/FL/CT), but I can still help with general information and connect you with a licensed advisor. How can I help you today?`;
+        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/FL/CT). ClearPoint is an independent Medicare broker — we help clients and visitors with questions at no cost. How can I help?`;
       }
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };

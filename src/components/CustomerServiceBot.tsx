@@ -349,7 +349,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         last_name: '',
         full_name: s.name || '',
         phone: s.phoneNumber || '',
-        email: '',
+        email: s.email || '',
         zip_code: s.zipCode || '',
         // PHASE D — canonical mapping. en→English, es→Spanish, null→Unknown.
         // Never hard-codes English when state.language is unknown.
