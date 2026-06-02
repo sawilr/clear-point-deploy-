@@ -809,6 +809,117 @@ export const MULTI_TURN_SCENARIOS = [
   // PHASE A5/A8 interceptor.
 
   // ═══════════════════════════════════════════════════════════════════════
+  // SAWIL RAMONA TRANSCRIPT — full A5/A8 flow with email + close
+  // (Sawil bug: "No, gracias" with comma didn't match the close regex)
+  // ═══════════════════════════════════════════════════════════════════════
+  {
+    id: 'sawil-ramona-full-flow-close-with-comma',
+    description: 'Full handoff: name → phone → email → anything-else → close. "No, gracias" with comma MUST close.',
+    turns: [
+      { msg: 'español' },
+      { msg: '32828' },
+      { msg: 'perdi mi plan y no se porque' },
+      // bot probably offers advisor
+      { msg: 'si por favor' },
+      { msg: 'ramona' },
+      { msg: '3205639632' },
+      { msg: 'Sí, le doy mi correo' },
+      { msg: 'ramona@gmail.com' },
+      // Bot asks "anything else?"
+      { msg: 'No, gracias',
+        mustNotMatch: /Claro, d[ií]game|hay algo m[aá]s/i,
+        mustMatch: /placer|excelente d[ií]a|que tenga|disposici[oó]n|3205639632|ramona@gmail\.com|Ramona/i },
+    ],
+  },
+  {
+    id: 'close-variants-es-comma-no-thanks',
+    description: 'Various ES "no" closing variants all must close warmly',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'mi doctor problemas' },
+      { msg: 'si por favor' },
+      { msg: 'Maria Lopez' },
+      { msg: '3478742345' },
+      { msg: 'Saltar' },
+      // anything else?
+      { msg: 'No',
+        mustMatch: /placer|excelente d[ií]a|que tenga|disposici[oó]n/i },
+    ],
+  },
+  {
+    id: 'close-variants-es-nada-mas',
+    description: '"Nada más" closes',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'me llego una carta' },
+      { msg: 'de Medicare' },
+      { msg: 'si por favor' },
+      { msg: 'Juan Hernandez' },
+      { msg: '7185551234' },
+      { msg: 'saltar' },
+      { msg: 'Nada más, gracias',
+        mustMatch: /placer|excelente d[ií]a|disposici[oó]n/i,
+        mustNotMatch: /Claro, d[ií]game/i },
+    ],
+  },
+  {
+    id: 'close-variants-en-no-thanks',
+    description: 'EN "No thanks" / "Nothing else" close',
+    turns: [
+      { msg: 'english' },
+      { msg: '10550' },
+      { msg: 'my plan denied my surgery' }, // appeal flow → existing-client gate → handoff
+      { msg: 'yes I am a client' },         // handoff confirmed, asks for name
+      { msg: 'John Smith' },
+      { msg: '5169999999' },
+      { msg: 'skip' },
+      { msg: 'No thanks',
+        mustMatch: /pleasure|great day|here whenever/i,
+        mustNotMatch: /Sure, go ahead|tell me/i },
+    ],
+  },
+  {
+    id: 'anything-else-yes-then-no',
+    description: 'User opens new question, then closes',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'mi plan no aprueba mi cirugia' },
+      { msg: 'si soy cliente' },
+      { msg: 'Pedro Garcia' },
+      { msg: '3475551234' },
+      { msg: 'saltar' },
+      // Anything else?
+      { msg: 'Sí, tengo otra pregunta' },
+      // LLM/handler handles next question
+      { msg: 'quiero saber del programa Extra Help' },
+      // After that, user closes
+      { msg: 'No, gracias',
+        mustMatch: /placer|excelente d[ií]a|disposici[oó]n/i },
+    ],
+  },
+  {
+    id: 'email-skip-chip-then-no-close',
+    description: 'Skip email chip → No to anything else → close',
+    turns: [
+      { msg: 'español' },
+      { msg: '10550' },
+      { msg: 'mi plan no aprueba mi cirugia' },
+      { msg: 'si soy cliente' },
+      { msg: 'Ana Rodriguez' },
+      { msg: '7185556789' },
+      // Email asked
+      { msg: 'Saltar' },
+      // Anything else?
+      { msg: 'No, gracias',
+        mustMatch: /placer|excelente|disposici[oó]n/i,
+        mustNotMatch: /Claro, d[ií]game/i },
+    ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════
   // 28. ORIGINAL SAWIL DRUG-PHARMACY (kept for regression)
   // ═══════════════════════════════════════════════════════════════════════
   {

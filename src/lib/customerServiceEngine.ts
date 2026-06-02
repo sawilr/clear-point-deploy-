@@ -2581,10 +2581,11 @@ export function processMessage(
     const looksLikeNonName = (s: string): boolean => {
       const lower = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       if (/\?/.test(s)) return true;
-      // Spanish: questions, fillers, common verbs, common topic nouns
-      if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|cobro|doctor|medic|carta|plan|asesor|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|mañana|ayer)\b/i.test(lower)) return true;
-      // English: questions, fillers, verbs, nouns
-      if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|charge|doctor|medic|letter|plan|advisor|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday)\b/i.test(lower)) return true;
+      // Spanish: questions, fillers, common verbs, common topic nouns,
+      // chip-button command words.
+      if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|cobro|doctor|medic|carta|plan|asesor|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|mañana|ayer|saltar|siguiente|ninguno|nada|continuar|comenzar|empezar|otra|otro|listo|correo|email|telefono|nombre)\b/i.test(lower)) return true;
+      // English: questions, fillers, verbs, nouns, chip-button commands.
+      if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|charge|doctor|medic|letter|plan|advisor|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday|skip|next|nothing|continue|start|begin|other|another|ready|email|phone|name)\b/i.test(lower)) return true;
       return false;
     };
     let nameCandidate = '';
@@ -2697,20 +2698,23 @@ export function processMessage(
       }
 
       // Step 3 — anything else WAS asked. Did the user say no or ask something?
-      const userSaidNo = /^(no|nada|nope|ningun|ninguna|no gracias|no thanks|that'?s all|eso es todo|ya termine|ya terminé|estoy bien|i'?m good|all set|that'?ll be all|nothing else|nada m[aá]s)\.?$/i.test(_msg);
+      // PHASE A8.2 — accept comma + multi-form "no" answers from chip clicks.
+      // Original regex missed "No, gracias" (with comma).
+      const _msgNoP = _msg.replace(/[.,!?;:]/g, '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const userSaidNo = /^(no|nada|nope|ningun|ninguna|no gracias|no thanks|that'?s all|eso es todo|ya termine|estoy bien|i'?m good|all set|that'?ll be all|nothing else|nada mas|no por ahora|no thank you|gracias|thanks|thank you|listo|ready|all good)$/i.test(_msgNoP);
       if (state.anythingElseAsked && state.lastBotIntent === 'handoff_anything_else' && !userSaidNo) {
-        // User asked another question — let LLM handle (release flag) but
+        // User asked another question — let LLM/handler handle but
         // keep advisorHandoffStarted so name/phone/email are preserved.
-        // Returning null here would crash the wrapper; instead emit a brief
-        // ack and let the next turn flow normally.
+        // KEEP anythingElseAsked = true so the NEXT "no" goes to close,
+        // not back to this prompt.
         const out = isEs
           ? `Claro, dígame.`
           : `Sure, go ahead.`;
         const newState: ConversationState = {
           ...state,
           turnCount: _currentTurnIdx,
-          // Clear anythingElseAsked so the question goes to LLM next turn
-          anythingElseAsked: false,
+          // anythingElseAsked STAYS true. Only lastBotIntent changes
+          // so the next turn falls through to the LLM/topic handler.
           lastBotIntent: 'handoff_paused_for_question',
           quickReplies: [],
           messages: [
