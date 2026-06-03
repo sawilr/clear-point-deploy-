@@ -179,9 +179,9 @@ export function Header() {
                 squeezing the logo. Spanish "Revisión Inteligente" + "Períodos de
                 Inscripción" et al. add ~80px to row width vs English. */}
             <div className="hidden lg:flex items-center gap-2 2xl:gap-4">
-              {/* Services dropdown — products / coverage categories only.
-                  Extra Help / LIS moved to Education dropdown — it's a federal
-                  assistance program (educational topic), not a service we offer. */}
+              {/* Services dropdown — products / coverage categories ClearPoint
+                  is authorized to broker. Medicare Supplement / Medigap MOVED to
+                  Education (per Sawil 2026-06: pending broker authorization). */}
               <div className="relative" ref={servicesRef}>
                 <button
                   onClick={() => { setServicesOpen(!servicesOpen); setEducationOpen(false); }}
@@ -195,14 +195,16 @@ export function Header() {
                 {servicesOpen && (
                   <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
                     <Link to="/medicare-advantage" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
-                    <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
+                    {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap relocated to Education dropdown below until ClearPoint is broker-authorized. */}
+                    {/* <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
                     <Link to="/part-d" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
                   </div>
                 )}
               </div>
 
               {/* Education dropdown — learning + assistance topics. Houses Extra Help
-                  / LIS (federal assistance program — not a sellable service). */}
+                  / LIS (federal assistance program — not a sellable service) and
+                  Medicare Supplement (educational reference — pending authorization). */}
               <div className="relative" ref={educationRef}>
                 <button
                   onClick={() => { setEducationOpen(!educationOpen); setServicesOpen(false); }}
@@ -217,6 +219,7 @@ export function Header() {
                   <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
                     <Link to="/resources" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
                     <button onClick={() => { handleScrollNav('/#annual-review'); }} className="block w-full text-left px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
+                    <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
                     <Link to="/extra-help" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
                     <Link to="/help-paying-costs" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
                     <Link to="/otc-benefits" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
@@ -280,12 +283,14 @@ export function Header() {
           <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-70px)] overflow-y-auto">
             <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
             <Link to="/medicare-advantage" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
-            <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
+            {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap moved to Education section below. Restore by uncommenting. */}
+            {/* <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
             <Link to="/part-d" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Education', 'Educación')}</p>
               <Link to="/resources" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
               <button onClick={() => handleScrollNav('/#annual-review')} className="block text-base font-medium text-earth-800 w-full text-left">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
+              <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
               <Link to="/extra-help" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
               <Link to="/help-paying-costs" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
               <Link to="/otc-benefits" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
