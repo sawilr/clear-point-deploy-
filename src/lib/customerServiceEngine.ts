@@ -3201,10 +3201,14 @@ function _runStructuralFirst(
   }
   // Active handoff / scheduling collection — sync engine captures name+phone,
   // optional email, and "anything else?" follow-up. LLM only resumes after
-  // the user explicitly opts into another question.
+  // the user explicitly opts into another question (paused) or while LLM
+  // is mid-conversation (llm_response). The structural close ONLY runs
+  // when (a) we're still collecting fields, or (b) the user explicitly
+  // closes — which is handled by the closing-intent check below.
   if ((state.advisorHandoffStarted || state.schedulingCallback)
       && !state.conversationClosed
-      && state.lastBotIntent !== 'handoff_paused_for_question') {
+      && state.lastBotIntent !== 'handoff_paused_for_question'
+      && state.lastBotIntent !== 'llm_response') {
     return processMessage(userMessage, state);
   }
   // Crisis (suicide / 911) MUST short-circuit any LLM call for safety.
