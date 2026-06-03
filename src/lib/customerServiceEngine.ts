@@ -2564,14 +2564,38 @@ export function processMessage(
     const stripped = _msg.replace(/[\s\-().]/g, '');
     const phoneMatch = stripped.match(/(?:1)?(\d{10})/);
     let phoneDigits = phoneMatch?.[1] || '';
-    // PHASE A8 — phone sanity: reject obvious fakes (all same digit,
-    // sequential, area code starting with 0/1, classic 555-555-XXXX).
+    // PHASE A9 — phone sanity: reject obvious fakes.
+    // - all same digit (1111111111)
+    // - any 6+ digit run of sequential ascending/descending digits anywhere
+    //   (1234567892 = 12345678 + 92 — still obviously fake)
+    // - area code starting with 0/1
+    // - classic 555-555-XXXX
+    // - "555-1234-XXX" patterns
     if (phoneDigits) {
       const isAllSame = /^(\d)\1{9}$/.test(phoneDigits);
-      const isSequential = phoneDigits === '0123456789' || phoneDigits === '1234567890' || phoneDigits === '9876543210';
+      // Detect a sequential run of >= 7 consecutive digits anywhere
+      const hasSequentialRun = (s: string, minLen: number): boolean => {
+        let asc = 1, desc = 1;
+        for (let i = 1; i < s.length; i++) {
+          if (Number(s[i]) === Number(s[i - 1]) + 1) { asc++; if (asc >= minLen) return true; } else asc = 1;
+          if (Number(s[i]) === Number(s[i - 1]) - 1) { desc++; if (desc >= minLen) return true; } else desc = 1;
+        }
+        return false;
+      };
+      const isSequential = hasSequentialRun(phoneDigits, 7);
       const badAreaCode = /^[01]/.test(phoneDigits);
       const fakePrefix = /^555555/.test(phoneDigits);
       if (isAllSame || isSequential || badAreaCode || fakePrefix) {
+        phoneDigits = '';
+      }
+    }
+    // PHASE A9 — if the raw stripped digits are NOT exactly 10 (or 11 with
+    // a leading 1), reject silently. "347852256" (9 digits) is NOT a phone.
+    // Without this check, the parser may match a shorter substring inside
+    // a malformed entry, leading the bot to say "Tengo su teléfono: 347-852-256".
+    if (phoneDigits) {
+      const allDigits = stripped.match(/\d+/g)?.join('') || '';
+      if (allDigits.length !== 10 && allDigits.length !== 11) {
         phoneDigits = '';
       }
     }
@@ -2759,16 +2783,25 @@ export function processMessage(
       return { response: out, newState, needsHuman: true };
     }
     if (haveName && !havePhone) {
+      // PHASE A9 — was the user attempting to give a phone that failed
+      // validation? If so, gently re-ask with explicit reason.
+      const _userAttemptedPhone = /\d{5,}/.test(_msg.replace(/[\s\-().]/g, ''));
+      const wasRetry = state.lastBotIntent === 'handoff_asking_phone' || state.lastBotIntent === 'handoff_asking_phone_retry';
+      const isInvalidRetry = _userAttemptedPhone && wasRetry;
       // Have name — ask for phone next
       const out = isEs
-        ? `Gracias, ${finalName}. ¿Cuál es un teléfono donde le puedan llamar? (10 dígitos)`
-        : `Thanks, ${finalName}. What's a phone number where they can reach you? (10 digits)`;
+        ? (isInvalidRetry
+          ? `Disculpe, ese número no parece tener 10 dígitos correctos. ¿Me lo puede dar de nuevo? (10 dígitos, sin guiones — por ejemplo, 3475551234)`
+          : `Gracias, ${finalName}. ¿Cuál es un teléfono donde le puedan llamar? (10 dígitos)`)
+        : (isInvalidRetry
+          ? `Sorry — that doesn't look like a 10-digit phone number. Could you try again? (10 digits, no dashes — e.g., 3475551234)`
+          : `Thanks, ${finalName}. What's a phone number where they can reach you? (10 digits)`);
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
         name: finalName,
         nameIsValid: true,
-        lastBotIntent: 'handoff_asking_phone',
+        lastBotIntent: isInvalidRetry ? 'handoff_asking_phone_retry' : 'handoff_asking_phone',
         quickReplies: [],
         messages: [
           ...(state.messages || []),

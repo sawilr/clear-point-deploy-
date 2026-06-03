@@ -153,7 +153,8 @@ export function Footer() {
                   the address correctly. <wbr> is silent for screen readers. */}
               <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors break-words lg:whitespace-nowrap">info@clearpoint<wbr />senioradvisors<wbr />.com</a></li>
               <li className="text-cream-50/40 text-xs">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
-              <li className="text-cream-50/40 text-xs mt-2">{t('Serving: NY, FL, CT, NJ', 'Sirviendo: NY, FL, CT, NJ')}</li>
+              {/* HIDDEN per Sawil 2026-06: FL not yet licensed. Restore once authorization confirmed. Keeping file/text intact for easy re-enable. */}
+              <li className="text-cream-50/40 text-xs mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
             </ul>
           </div>
         </div>

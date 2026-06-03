@@ -86,7 +86,8 @@ export default function About() {
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {[
-              { icon: <ShieldIcon className="w-7 h-7" />, title: 'Licensed Insurance Agent', titleEs: 'Agente de Seguros Licenciado', desc: 'Licensed in NY, FL, CT, NJ', descEs: 'Licenciado en NY, FL, CT, NJ' },
+              // HIDDEN per Sawil 2026-06: FL pending authorization. Original: 'Licensed in NY, FL, CT, NJ' / 'Licenciado en NY, FL, CT, NJ'.
+              { icon: <ShieldIcon className="w-7 h-7" />, title: 'Licensed Insurance Agent', titleEs: 'Agente de Seguros Licenciado', desc: 'Licensed in NY, CT, NJ', descEs: 'Licenciado en NY, CT, NJ' },
               { icon: <CheckIcon className="w-7 h-7" />, title: 'Medicare Certified', titleEs: 'Certificado en Medicare', desc: 'Annual CMS training completed', descEs: 'Capacitación anual de CMS completada' },
               { icon: <UsersIcon className="w-7 h-7" />, title: 'Bilingual Service', titleEs: 'Servicio Bilingüe', desc: 'English & Spanish fluently', descEs: 'Inglés y español con fluidez' },
               { icon: <StarIcon className="w-7 h-7" />, title: 'Independent Agent', titleEs: 'Agente Independiente', desc: 'Works for you, not carriers', descEs: 'Trabaja para usted, no aseguradoras' },
