@@ -248,7 +248,17 @@ export default function Home() {
               {t('We work with all major carriers to find the plan that fits your health needs, budget, and lifestyle.', 'Trabajamos con todas las aseguradoras principales para encontrar el plan que se adapte a sus necesidades de salud, presupuesto y estilo de vida.')}
             </p>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {/* Grid width auto-adapts to service count so cards stay centered
+              after Sawil 2026-06 hid Medicare Supplement + Extra Help.
+              With 2 services: max-w-3xl 2-col. Original was sm:grid-cols-2
+              lg:grid-cols-4 (for 4 cards). Restore the 4-col grid when the
+              hidden services are uncommented above. */}
+          <div className={`grid gap-5 mx-auto ${
+            services.length >= 4 ? 'sm:grid-cols-2 lg:grid-cols-4 max-w-6xl' :
+            services.length === 3 ? 'sm:grid-cols-2 lg:grid-cols-3 max-w-5xl' :
+            services.length === 2 ? 'sm:grid-cols-2 max-w-3xl' :
+            'max-w-md'
+          }`}>
             {services.map((s) => (
               <ServiceCard key={s.link} {...s} />
             ))}
