@@ -60,7 +60,8 @@ export default function Contact() {
                 {[
                   { icon: <PhoneIcon className="w-5 h-5" />, title: 'Phone', titleEs: 'Teléfono', value: '1-866-310-8702', href: 'tel:18663108702', sub: 'Mon–Fri · 9am–6pm ET', subEs: 'Lun–Vie · 9am–6pm ET' },
                   { icon: <MailIcon className="w-5 h-5" />, title: 'Email', titleEs: 'Correo', value: 'info@clearpointsenioradvisors.com', href: 'mailto:info@clearpointsenioradvisors.com', sub: 'Response within 24h', subEs: 'Respuesta en 24h' },
-                  { icon: <MapPinIcon className="w-5 h-5" />, title: 'Service Area', titleEs: 'Área de Servicio', value: 'NY, FL, CT, NJ', href: null, sub: 'Licensed in all four states', subEs: 'Licenciados en los cuatro estados' },
+                  // HIDDEN per Sawil 2026-06: FL pending authorization. Original: value: 'NY, FL, CT, NJ', sub/subEs: 'all four states'/'los cuatro estados'.
+                  { icon: <MapPinIcon className="w-5 h-5" />, title: 'Service Area', titleEs: 'Área de Servicio', value: 'NY, CT, NJ', href: null, sub: 'Licensed in all three states', subEs: 'Licenciados en los tres estados' },
                   { icon: <GlobeIcon className="w-5 h-5" />, title: 'Languages', titleEs: 'Idiomas', value: 'English & Español', href: null, sub: 'All advisors are bilingual', subEs: 'Todos los asesores son bilingües' },
                 ].map((item, i) => (
                   <div key={i} className="bg-cream-50 rounded-xl p-5 shadow-xs">

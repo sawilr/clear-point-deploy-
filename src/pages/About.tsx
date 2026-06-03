@@ -19,8 +19,11 @@ export default function About() {
         eyebrowEs="Conozca Clear Point Senior Advisors"
         headline="Clear Point Senior Advisors"
         headlineEs="Clear Point Senior Advisors"
-        subheadline="Our licensed advisory team helps Medicare beneficiaries understand their options with clear, bilingual, no-pressure education. Serving New York, Florida, Connecticut, and New Jersey."
-        subheadlineEs="Nuestro equipo asesor licenciado ayuda a beneficiarios de Medicare a entender sus opciones con educación clara, bilingüe y sin presión. Sirviendo Nueva York, Florida, Connecticut y Nueva Jersey."
+        // HIDDEN per Sawil 2026-06: FL pending authorization. Original lines below kept for one-line restore.
+        // subheadline="Our licensed advisory team helps Medicare beneficiaries understand their options with clear, bilingual, no-pressure education. Serving New York, Florida, Connecticut, and New Jersey."
+        // subheadlineEs="Nuestro equipo asesor licenciado ayuda a beneficiarios de Medicare a entender sus opciones con educación clara, bilingüe y sin presión. Sirviendo Nueva York, Florida, Connecticut y Nueva Jersey."
+        subheadline="Our licensed advisory team helps Medicare beneficiaries understand their options with clear, bilingual, no-pressure education. Serving New York, New Jersey, and Connecticut."
+        subheadlineEs="Nuestro equipo asesor licenciado ayuda a beneficiarios de Medicare a entender sus opciones con educación clara, bilingüe y sin presión. Sirviendo Nueva York, Nueva Jersey y Connecticut."
         variant="page"
       />
 

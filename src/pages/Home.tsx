@@ -20,14 +20,17 @@ const services = [
     descriptionEs: 'Planes todo en uno que frecuentemente incluyen dental, visión, audición y cobertura de medicamentos — a veces con prima de $0.',
     link: '/medicare-advantage',
   },
-  {
-    image: '/service-supplement.jpg',
-    title: 'Medicare Supplement',
-    titleEs: 'Suplemento de Medicare',
-    description: 'Fill the gaps in Original Medicare — reduce or eliminate your out-of-pocket costs for hospital and medical services.',
-    descriptionEs: 'Llene los vacíos del Medicare Original — reduzca o elimine sus costos de bolsillo para servicios hospitalarios y médicos.',
-    link: '/medicare-supplement',
-  },
+  // HIDDEN per Sawil 2026-06: Medicare Supplement / Medigap moved to Education
+  // until ClearPoint is authorized to broker it. Page kept accessible at
+  // /medicare-supplement for educational reference. Restore by uncommenting.
+  // {
+  //   image: '/service-supplement.jpg',
+  //   title: 'Medicare Supplement',
+  //   titleEs: 'Suplemento de Medicare',
+  //   description: 'Fill the gaps in Original Medicare — reduce or eliminate your out-of-pocket costs for hospital and medical services.',
+  //   descriptionEs: 'Llene los vacíos del Medicare Original — reduzca o elimine sus costos de bolsillo para servicios hospitalarios y médicos.',
+  //   link: '/medicare-supplement',
+  // },
   {
     image: '/service-partd.jpg',
     title: 'Part D Drug Plans',
@@ -36,14 +39,17 @@ const services = [
     descriptionEs: 'Cobertura de medicamentos para personas en Medicare Original. Comparamos planes según sus medicamentos específicos.',
     link: '/part-d',
   },
-  {
-    image: '/service-extrahelp.jpg',
-    title: 'Extra Help / LIS',
-    titleEs: 'Ayuda Extra / LIS',
-    description: 'You may qualify for federal assistance that lowers your drug plan premiums and copays. We check your eligibility at no charge.',
-    descriptionEs: 'Puede calificar para asistencia federal que reduce sus primas y copagos. Verificamos su elegibilidad sin cargo.',
-    link: '/extra-help',
-  },
+  // HIDDEN per Sawil 2026-06: Extra Help / LIS is NOT a ClearPoint service —
+  // we educate on how to apply if a beneficiary may qualify. Page /extra-help
+  // kept accessible as education. Restore by uncommenting.
+  // {
+  //   image: '/service-extrahelp.jpg',
+  //   title: 'Extra Help / LIS',
+  //   titleEs: 'Ayuda Extra / LIS',
+  //   description: 'You may qualify for federal assistance that lowers your drug plan premiums and copays. We check your eligibility at no charge.',
+  //   descriptionEs: 'Puede calificar para asistencia federal que reduce sus primas y copagos. Verificamos su elegibilidad sin cargo.',
+  //   link: '/extra-help',
+  // },
 ];
 
 const faqItems = [
