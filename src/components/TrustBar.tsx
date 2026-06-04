@@ -25,7 +25,9 @@ export function TrustBar({ stats }: TrustBarProps) {
     { num: 'Licensed', labelEn: 'Independent Advisors', labelEs: 'Asesores Independientes' },
     { num: 'Bilingual', labelEn: 'English & Español', labelEs: 'Inglés y Español' },
     { num: '$0', labelEn: 'Cost to You', labelEs: 'Costo Para Usted' },
-    { num: 'NY·FL·CT·NJ', labelEn: 'States Served', labelEs: 'Estados Atendidos' },
+    // HIDDEN per Sawil 2026-06: FL pending authorization. Original below.
+    // { num: 'NY·FL·CT·NJ', labelEn: 'States Served', labelEs: 'Estados Atendidos' },
+    { num: 'NY·CT·NJ', labelEn: 'States Served', labelEs: 'Estados Atendidos' },
   ];
 
   const displayStats = stats || defaultStats;
