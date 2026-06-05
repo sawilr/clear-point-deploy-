@@ -4120,8 +4120,8 @@ export function ChatBot() {
       case 'lead_phone':
         return [
           { text: es
-            ? 'Estoy pidiendo su número de teléfono para que un asesor licenciado pueda contactarle sobre su revisión. Por favor escriba un número válido de 10 dígitos, como 2125551234.'
-            : "I'm asking for your phone number so a licensed advisor can contact you about your review. Please enter a valid 10-digit number, like 2125551234.",
+            ? 'Estoy pidiendo su número de teléfono para que un asesor licenciado pueda contactarle sobre su revisión. Por favor escriba un número válido de 10 dígitos, como 2128679041.'
+            : "I'm asking for your phone number so a licensed advisor can contact you about your review. Please enter a valid 10-digit number, like 2128679041.",
             pace: 'short' },
           { text: es
             ? `Gracias, ${firstName}. ¿Cuál es el mejor número de teléfono para contactarle?`

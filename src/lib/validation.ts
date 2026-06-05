@@ -99,6 +99,9 @@ export function validatePhone(rawInput: string): {
 
   const areaCode = parseInt(national.slice(0, 3), 10);
   const exchange = national[3];
+  // The full 3-digit exchange prefix (positions 3-5). NANPA reserves the
+  // exchange "555" specifically for fictional use (TV, movies, fake leads).
+  const exchangePrefix = national.slice(3, 6);
 
   // Exchange code cannot start with 0 or 1
   if (exchange === '0' || exchange === '1') {
@@ -110,13 +113,34 @@ export function validatePhone(rawInput: string): {
     return FAIL('Not a valid U.S. area code');
   }
 
+  // ── PHASE A13 — anti-fake-lead hardening ─────────────────────────────────
+  // NANPA reserved the entire "555" exchange (XXX-555-XXXX) for fictional
+  // / entertainment use. Any number with exchange 555 is a fake lead —
+  // including the textbook 212-555-1234 that the bot was previously
+  // suggesting as an example.
+  if (exchangePrefix === '555') {
+    return FAIL('Phone appears fake (555 is reserved for fictional use)');
+  }
+
   // Block all-same-digit numbers (0000000000 through 9999999999)
   if (/^(\d)\1{9}$/.test(national)) return FAIL('Phone appears fake');
 
-  // Block obvious sequential fakes
-  if (['1234567890','0987654321','9876543210','0123456789'].includes(national)) {
-    return FAIL('Phone appears fake');
-  }
+  // PHASE A13 — detect ANY run of 8+ ascending or descending consecutive
+  // digits, anywhere in the number. Catches the textbook fakes
+  // (1234567890 / 0987654321 / 1234567892 / 4123456789) without
+  // false-positives on real numbers that happen to contain a 7-digit
+  // run by coincidence (e.g. 2122345678 — area 212 with a 7-run).
+  const hasSequentialRun = (s: string, minLen: number): boolean => {
+    let asc = 1, desc = 1;
+    for (let i = 1; i < s.length; i++) {
+      const a = Number(s[i]);
+      const b = Number(s[i - 1]);
+      if (a === b + 1) { asc++; if (asc >= minLen) return true; } else asc = 1;
+      if (a === b - 1) { desc++; if (desc >= minLen) return true; } else desc = 1;
+    }
+    return false;
+  };
+  if (hasSequentialRun(national, 8)) return FAIL('Phone appears fake');
 
   // Block numbers with same digit repeated 7+ consecutive times
   if (/(\d)\1{6,}/.test(national)) return FAIL('Phone appears fake');
