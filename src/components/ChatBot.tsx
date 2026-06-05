@@ -137,7 +137,9 @@ const SESSION_KEY = 'clear_point_chat_session_memory';
 
 
 
-const SUPPORTED_STATES = ['NY', 'NJ', 'CT', 'FL'];
+// HIDDEN per Sawil 2026-06: FL pending broker authorization. Original below.
+// const SUPPORTED_STATES = ['NY', 'NJ', 'CT', 'FL'];
+const SUPPORTED_STATES = ['NY', 'NJ', 'CT'];
 
 const SUPPORTED_STATES_LABELS: Record<string, string> = {
   NY: 'New York',
@@ -157,12 +159,14 @@ const MEDICARE_INTRO: Record<ChatLanguage, QueuedBotMessage[]> = {
       pace: 'slow',
     },
     {
-      text: 'We currently support New York, New Jersey, Connecticut, and Florida.',
+      // HIDDEN per Sawil 2026-06: FL pending authorization. Original text + Florida chip preserved in comments.
+      // text: 'We currently support New York, New Jersey, Connecticut, and Florida.',
+      text: 'We currently support New York, New Jersey, and Connecticut.',
       options: [
         { label: 'New York', value: 'state_NY' },
         { label: 'New Jersey', value: 'state_NJ' },
         { label: 'Connecticut', value: 'state_CT' },
-        { label: 'Florida', value: 'state_FL' },
+        // { label: 'Florida', value: 'state_FL' },
       ],
       pace: 'slow',
     },
@@ -173,12 +177,14 @@ const MEDICARE_INTRO: Record<ChatLanguage, QueuedBotMessage[]> = {
       pace: 'slow',
     },
     {
-      text: 'Actualmente trabajamos con New York, New Jersey, Connecticut y Florida.',
+      // HIDDEN per Sawil 2026-06: FL pending authorization. Original text + Florida chip preserved in comments.
+      // text: 'Actualmente trabajamos con New York, New Jersey, Connecticut y Florida.',
+      text: 'Actualmente trabajamos con New York, New Jersey y Connecticut.',
       options: [
         { label: 'New York', value: 'state_NY' },
         { label: 'New Jersey', value: 'state_NJ' },
         { label: 'Connecticut', value: 'state_CT' },
-        { label: 'Florida', value: 'state_FL' },
+        // { label: 'Florida', value: 'state_FL' },
       ],
       pace: 'slow',
     },
@@ -307,13 +313,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_supplement: [
+      // PHASE A14: Medigap is education-only. ClearPoint does not currently broker Medigap policies (pending authorization).
+      // The closing line was rewritten to remove the "our advisor can review Medigap" pitch.
       { text: 'Medicare Supplement, also called Medigap, is a separate policy that helps pay some of the costs that Original Medicare does not cover - like deductibles and coinsurance.', pace: 'long' },
       { text: 'You must have Original Medicare (Parts A and B) to get a Medigap policy. Medigap plans are labeled by letters (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
       { text: 'In most states, if you apply during your Medigap Open Enrollment Period - the 6-month window starting when you turn 65 and enroll in Part B - insurance companies cannot deny you or charge more based on health.', pace: 'slow' },
       {
-        text: isSupported
-          ? `A licensed advisor can review Medigap options in ${stateLabel} with you.`
-          : 'A licensed advisor can review Medigap options in your state with you.',
+        text: 'Note: ClearPoint does not currently offer Medigap plans — this information is shared for education only. To enroll in a Medigap policy, you would need to work with a broker who specializes in those.',
         options: [
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Tell me about Part D', value: 'edu_part_d' },
@@ -475,7 +481,8 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     ],
     edu_prequalify: [
       { text: 'I can help walk you through a pre-check to see which programs may be worth looking into. Let\'s go step by step. I\'ll ask one question at a time.', pace: 'slow' },
-      { text: 'First: What state do you live in?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, { label: 'Florida', value: 'state_FL' }, { label: 'Other', value: 'state_other' }], pace: 'slow' },
+      // HIDDEN per Sawil 2026-06: Florida chip removed from Medicaid state picker. Original kept in comment.
+      { text: 'First: What state do you live in?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, /* { label: 'Florida', value: 'state_FL' }, */ { label: 'Other', value: 'state_other' }], pace: 'slow' },
     ],
     edu_enrollment: [
       { text: 'Medicare has specific times when you can enroll, switch, or review your coverage. The right period depends on your situation.', pace: 'long' },
@@ -850,13 +857,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_supplement: [
+      // PHASE A14: Medigap es solo educativo. ClearPoint no ofrece Medigap actualmente (autorización pendiente).
+      // La línea de cierre se reescribió para quitar el "nuestro asesor puede revisar Medigap" pitch.
       { text: 'Medicare Supplement, también llamado Medigap, es una póliza separada que ayuda a pagar algunos costos que Medicare Original no cubre - como deducibles y coaseguros.', pace: 'long' },
       { text: 'Debes tener Medicare Original (Partes A y B) para obtener una póliza Medigap. Los planes Medigap se identifican por letras (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
       { text: 'En la mayoría de los estados, si solicitas durante tu Período de Inscripción Abierta de Medigap - los 6 meses que empiezan cuando cumples 65 y te inscribes en Parte B - las aseguradoras no pueden negarte ni cobrarte más por tu salud.', pace: 'slow' },
       {
-        text: isSupported
-          ? `Un asesor licenciado puede revisar opciones de Medigap en ${stateLabel} contigo.`
-          : 'Un asesor licenciado puede revisar opciones de Medigap en tu estado contigo.',
+        text: 'Nota: ClearPoint actualmente no ofrece planes Medigap — esta información se comparte solo con fines educativos. Para inscribirte en una póliza Medigap, tendrías que trabajar con un corredor que se especialice en estas.',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Explicar Parte D', value: 'edu_part_d' },
@@ -1018,7 +1025,8 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     ],
     edu_prequalify: [
       { text: 'Puedo ayudarte con una pre-evaluación para ver qué programas valdría la pena revisar. Vamos paso a paso. Te haré una pregunta a la vez.', pace: 'long' },
-      { text: 'Primero: ¿En qué estado vives?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, { label: 'Florida', value: 'state_FL' }, { label: 'Otro', value: 'state_other' }], pace: 'short' },
+      // HIDDEN per Sawil 2026-06: Florida chip removed from Medicaid state picker (ES). Original kept in comment.
+      { text: 'Primero: ¿En qué estado vives?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, /* { label: 'Florida', value: 'state_FL' }, */ { label: 'Otro', value: 'state_other' }], pace: 'short' },
     ],
     edu_enrollment: [
       { text: 'Medicare tiene momentos específicos en los que puedes inscribirte, cambiar o revisar tu cobertura. El período correcto depende de tu situación.', pace: 'long' },
@@ -4044,7 +4052,7 @@ export function ChatBot() {
             { label: 'New York', value: 'state_NY' },
             { label: 'New Jersey', value: 'state_NJ' },
             { label: 'Connecticut', value: 'state_CT' },
-            { label: 'Florida', value: 'state_FL' },
+            // HIDDEN per Sawil 2026-06: { label: 'Florida', value: 'state_FL' },
           ], pace: 'short' }]);
         break;
       case 'zipCode': {
