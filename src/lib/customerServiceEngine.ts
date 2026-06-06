@@ -53,7 +53,7 @@ export interface ConversationState {
   language: Language;
   name?: string;
   zipCode?: string;
-  state?: string; // NY, NJ, FL, CT, or unknown
+  state?: string; // NY, NJ, CT, or unknown
   isValidState: boolean;
   messages: { role: 'user' | 'bot'; content: string; timestamp: number }[];
   currentProblem: string;
@@ -124,6 +124,13 @@ export interface ConversationState {
   /** PHASE A4 — count of clarification re-explanations. After 2 we offer
    *  human advisor rather than a third re-explanation. */
   clarificationCount?: number;
+  /** PHASE A16 — SOA workflow signals. Set when the engine has captured
+   *  the lead and needs the React layer to fetch a signing token from
+   *  /api/soa-token and present it to the user. */
+  soaPending?: boolean;
+  soaToken?: string;
+  soaUrl?: string;
+  soaSigned?: boolean;
   /** Times the caller failed to enter a usable name. */
   failedNameAttempts?: number;
   /** Times the caller used abusive/frustrated/profane language. */
@@ -292,7 +299,7 @@ export interface ConversationState {
   conversationSummary?: string[];
 }
 
-// ── ZIP prefix → state. NY/NJ/FL/CT only (ClearPoint service area). ──
+// ── ZIP prefix → state. NY/NJ/CT only (ClearPoint service area). ──
 const VALID_ZIP_PATTERNS: Record<string, string[]> = {
   NY: ['100','101','102','103','104','105','106','107','108','109','110','111','112','113','114','115','116','117','118','119','120','121','122','123','124','125','126','127','128','129','130','131','132','133','134','135','136','137','138','139','140','141','142','143','144','145','146','147','148','149'],
   NJ: ['070','071','072','073','074','075','076','077','078','079','080','081','082','083','084','085','086','087','088','089'],
@@ -2754,15 +2761,21 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // Final close.
+      // PHASE A16 — Final close + SOA request.
+      // CMS 422.2264 requires a signed Scope of Sales Appointment before
+      // the advisor can discuss MA/PDP products with the beneficiary.
+      // The bot message announces the SOA step; the React layer fetches
+      // a signing token from /api/soa-token and renders the link.
       const window = state.scheduledCallbackWindow || '';
       const windowEs = window ? ` Le llamaremos ${window}.` : '';
       const windowEn = window ? ` We'll call you ${window}.` : '';
       const emailLineEs = finalEmail || state.email ? ` También anotamos su correo ${finalEmail || state.email}.` : '';
       const emailLineEn = finalEmail || state.email ? ` We also have your email ${finalEmail || state.email}.` : '';
       const out = isEs
-        ? `Perfecto, ${finalName}. Le confirmo: un asesor licenciado de ClearPoint lo va a contactar al ${fmt}.${emailLineEs}${windowEs} Fue un placer ayudarle. Que tenga excelente día.`
-        : `Perfect, ${finalName}. To confirm: a licensed ClearPoint advisor will reach you at ${fmt}.${emailLineEn}${windowEn} It was a pleasure helping you. Have a great day.`;
+        ? `Perfecto, ${finalName}. Antes de la llamada, **CMS requiere** que firme un formulario de 60 segundos llamado **Scope of Appointment** — confirma qué temas quiere discutir, sin obligación. Le voy a abrir el formulario ahora.\n\n` +
+          `Una vez firmado, un asesor licenciado de ClearPoint lo contactará al ${fmt}.${emailLineEs}${windowEs}`
+        : `Perfect, ${finalName}. Before the call, **CMS requires** you to sign a 60-second form called the **Scope of Appointment** — it confirms what topics you'd like to discuss, with no obligation. I'll open the form for you now.\n\n` +
+          `Once signed, a licensed ClearPoint advisor will contact you at ${fmt}.${emailLineEn}${windowEn}`;
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
@@ -2772,7 +2785,8 @@ export function processMessage(
         email: finalEmail || state.email,
         advisorHandoffStarted: true,
         needsHuman: true,
-        conversationClosed: true,
+        conversationClosed: false, // keep open so React can append SOA link
+        soaPending: true,           // signal to React: request a signing token
         lastBotIntent: 'handoff_captured_contact',
         messages: [
           ...(state.messages || []),
@@ -4128,7 +4142,7 @@ function processMessageInner(
       }
       newState.step = 'asking_topic';
       // WAVE 45 — confirm the ZIP back to the user and tell them which state
-      // it maps to. If outside service area (NY/NJ/FL/CT), the bot is honest
+      // it maps to. If outside service area (NY/NJ/CT), the bot is honest
       // that ClearPoint advisors may not cover every plan there.
       const stateLabel = isSpanish
         ? (detectedState === 'NY' ? 'Nueva York'
@@ -4147,9 +4161,9 @@ function processMessageInner(
       } else if (detectedState) {
         out = `Thanks. Got it, your ZIP ${zipDigits} is in **${stateLabel}**. ClearPoint is an independent Medicare broker — we help both current clients and visitors with Medicare questions, at no cost. How can I help you today?`;
       } else if (isSpanish) {
-        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/FL/CT). ClearPoint es un broker independiente de Medicare — atendemos a clientes y visitantes con preguntas, sin costo. ¿En qué le puedo ayudar?`;
+        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/CT). ClearPoint es un broker independiente de Medicare — atendemos a clientes y visitantes con preguntas, sin costo. ¿En qué le puedo ayudar?`;
       } else {
-        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/FL/CT). ClearPoint is an independent Medicare broker — we help clients and visitors with questions at no cost. How can I help?`;
+        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/CT). ClearPoint is an independent Medicare broker — we help clients and visitors with questions at no cost. How can I help?`;
       }
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
@@ -4332,15 +4346,15 @@ function processMessageInner(
         newState.step = 'conversation';
         newState.needsHuman = true;
         const outA = isSpanish
-          ? `Gracias${withName(newState.name)}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ, FL y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
-          : `Thank you${withName(newState.name)}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, FL, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
+          ? `Gracias${withName(newState.name)}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
+          : `Thank you${withName(newState.name)}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
         newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
         return { response: outA, newState, needsHuman: true };
       }
       newState.step = 'asking_problem';
       const out = isSpanish
-        ? `Gracias. Actualmente solo servimos NY, NJ, FL y CT. Aun así puedo orientarle con preguntas generales de Medicare. Cuénteme qué está pasando.`
-        : `Thank you. We currently only serve NY, NJ, FL, and CT. I can still help you with general Medicare guidance. Tell me what's going on.`;
+        ? `Gracias. Actualmente solo servimos NY, NJ y CT. Aun así puedo orientarle con preguntas generales de Medicare. Cuénteme qué está pasando.`
+        : `Thank you. We currently only serve NY, NJ, and CT. I can still help you with general Medicare guidance. Tell me what's going on.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
