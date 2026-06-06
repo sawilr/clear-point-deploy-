@@ -1,17 +1,52 @@
 // Vercel Serverless Function - GHL Lead Capture
+//
+// PHASE A15 — Security hardening:
+//   1. CORS allowlist (only our domain + Vercel previews)
+//   2. Per-IP rate limit (5 leads / hour, 10 / day)
+//   3. Existing honeypot anti-bot stays as first gate
+import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
+// PHASE A17 — Lead Intelligence: enrich the lead with structured AI analysis
+// BEFORE it lands in GHL. Graceful: returns null on failure, GHL still gets
+// the raw notes.
+import { analyzeLeadIntelligence, formatIntelForGhlNotes } from './_lib/lead-intel.js';
+
 export default async function handler(req, res) {
+  // ── A15.1 CORS — allowlist ──────────────────────────────────────────────
+  var allowedOrigin = checkOrigin(req);
+  if (allowedOrigin === null) {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  applyCors(req, res, allowedOrigin);
+  if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── A15.2 Rate limit (lead-specific: very conservative — anti-spam) ────
+  var ip = clientId(req);
+  var rlHour = await rateLimit(ip, { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-h' });
+  if (!rlHour.ok) {
+    res.setHeader('Retry-After', String(rlHour.retryAfter));
+    return res.status(429).json({ error: 'Too many submissions, try again later' });
+  }
+  var rlDay = await rateLimit(ip, { max: 10, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-d' });
+  if (!rlDay.ok) {
+    res.setHeader('Retry-After', String(rlDay.retryAfter));
+    return res.status(429).json({ error: 'Daily submission limit reached' });
+  }
 
   // Read body FIRST so the honeypot check can fire as the very first gate,
   // before any env/auth setup. This way bot traffic is discarded with the
   // minimum amount of server work and never touches GHL token logic.
+  // PHASE 6 — cap raw stream at 64 KB to prevent memory DoS.
   var body = {};
   try { body = req.body || {}; } catch (e1) {
-    // req.body getter failed - read raw stream
     try {
       body = await new Promise(function (resolve, reject) {
-        var chunks = [];
-        req.on('data', function (c) { chunks.push(c); });
+        var chunks = []; var total = 0; var MAX = 64 * 1024;
+        req.on('data', function (c) {
+          total += c.length;
+          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
+          chunks.push(c);
+        });
         req.on('end', function () {
           var raw = Buffer.concat(chunks).toString('utf8');
           resolve(raw && raw.trim() ? JSON.parse(raw) : {});
@@ -19,6 +54,7 @@ export default async function handler(req, res) {
         req.on('error', reject);
       });
     } catch (e2) {
+      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
       return res.status(400).json({ error: 'Cannot read request body' });
     }
   }
@@ -52,6 +88,66 @@ export default async function handler(req, res) {
     var utm_medium = body.utm_medium; var utm_campaign = body.utm_campaign;
     var lead_notes = body.lead_notes; var conversation_summary = body.conversation_summary;
     var lead_quality_flags = body.lead_quality_flags;
+    // PHASE 6 — cap unbounded free-text fields to stop token-cost amplification.
+    function _cap(v, max) { return typeof v === 'string' ? v.slice(0, max) : (v == null ? '' : String(v).slice(0, max)); }
+    lead_notes = _cap(lead_notes, 8000);
+    conversation_summary = _cap(conversation_summary, 8000);
+    lead_quality_flags = _cap(lead_quality_flags, 1000);
+
+    // ── PHASE 11 — Clara Phase 10 audit/identity fields ─────────────────────
+    // lead_type identifies which Clara path produced this lead.
+    // ghl_contact_id (Path A matched): switch from POST create to PUT update.
+    // ghl_assigned_user_id (Path A matched): assign the contact to advisor.
+    // consent_text/hash/version/UA: TCPA audit-trail persistence.
+    var lead_type = typeof body.lead_type === 'string' ? body.lead_type.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '') : '';
+    var ghl_contact_id = typeof body.ghl_contact_id === 'string' ? body.ghl_contact_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
+    var ghl_assigned_user_id = typeof body.ghl_assigned_user_id === 'string' ? body.ghl_assigned_user_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
+    var consent_text = _cap(body.consent_text, 4000);
+    var consent_receipt_hash = typeof body.consent_receipt_hash === 'string' ? body.consent_receipt_hash.slice(0, 128).replace(/[^a-f0-9]/g, '') : '';
+    var disclaimer_version = typeof body.disclaimer_version === 'string' ? body.disclaimer_version.slice(0, 32).replace(/[^a-zA-Z0-9._-]/g, '') : '';
+    var signer_user_agent = _cap(body.signer_user_agent, 240);
+    // Append the audit-trail receipt to lead_notes so it survives even if
+    // GHL custom-field mapping changes. PII-free (only hash + version + UA).
+    if (consent_receipt_hash || disclaimer_version) {
+      var receiptBits = [];
+      if (consent_receipt_hash) receiptBits.push('sha256=' + consent_receipt_hash.slice(0, 16) + '…');
+      if (disclaimer_version) receiptBits.push('disclaimer=' + disclaimer_version);
+      if (signer_user_agent) receiptBits.push('ua=' + signer_user_agent.slice(0, 60));
+      lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
+    }
+
+    // ── PHASE A17 — Lead Intelligence Pass ─────────────────────────────────
+    // One additional Haiku call to enrich the lead BEFORE it lands in GHL.
+    // The advisor opens the contact and sees a structured summary, temperature,
+    // and recommended first questions — no need to read the full transcript.
+    //
+    // Graceful: if the call fails (no key, network, timeout), `intel` is
+    // null and we proceed with the raw notes only.
+    var intel = null;
+    try {
+      intel = await analyzeLeadIntelligence({
+        leadNotes: (lead_notes || conversation_summary || '').toString(),
+        language: preferred_language || 'en',
+        source: lead_source || 'unknown',
+        metadata: {
+          zipCode: zip,
+          state: derived_state,
+          age: age || calculated_age,
+          medicareStatus: medicare_status,
+        },
+      });
+    } catch (e) {
+      console.warn('[submit-lead] intel call exception (continuing without)', e && e.message);
+    }
+    if (intel) {
+      var intelText = formatIntelForGhlNotes(intel);
+      lead_notes = (lead_notes || '').toString().trimEnd() + (intelText ? '\n' + intelText : '');
+      // Append a lead-quality flag so GHL workflows can route by temperature.
+      var tempTag = 'Temp-' + (intel.lead_temperature || 'cold');
+      var urgTag = 'Urg-' + (intel.urgency || 'low');
+      lead_quality_flags = (lead_quality_flags ? lead_quality_flags + '; ' : '') +
+        'AI: ' + tempTag + '/' + urgTag + ' (intent ' + intel.intent_strength + '/10)';
+    }
 
     var frontendTags = [];
     if (Array.isArray(body.tags)) {
@@ -154,13 +250,42 @@ export default async function handler(req, res) {
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(utm_source?['UTM-'+utm_source]:[])
         .concat(allTags.filter(function(t){return t!=='Status-NewLead'&&t.indexOf('Lang-')!==0&&t!=='Source-Web';}))
+        // PHASE A16 — SOA status tags so advisor pipelines can filter on them.
+        .concat(body.soa_signed === true ? ['SOA-Signed'] : (body.soa_pending === true ? ['SOA-Pending'] : []))
+        .concat(body.lead_source ? ['Source-' + String(body.lead_source).replace(/[^a-z0-9_]/gi,'')] : [])
+        // PHASE A17 — Lead-intel tags. Empty arrays if intel unavailable.
+        .concat(intel ? ['Temp-' + intel.lead_temperature, 'Urg-' + intel.urgency, 'Intent-' + intel.intent_strength] : [])
+        .concat(intel && intel.compliance_flags && intel.compliance_flags.length ? ['AI-Flagged'] : []),
     };
 
-    var ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
-      method: 'POST',
-      headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
-      body: JSON.stringify(contact)
-    });
+    // PHASE 11 — Lead type tag for queryability + assigned user routing.
+    if (lead_type) {
+      try { contact.tags = (contact.tags || []).concat(['LeadType-' + lead_type]); } catch (_t) { /* swallow */ }
+    }
+    if (ghl_assigned_user_id) {
+      contact.assignedTo = ghl_assigned_user_id;
+    }
+    // PHASE 11 — Path A matched flow: update existing GHL contact instead
+    // of creating a duplicate. Falls back to POST create if PUT fails.
+    var ghlRes;
+    var usedExisting = false;
+    if (ghl_contact_id) {
+      ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/' + ghl_contact_id, {
+        method: 'PUT',
+        headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
+        body: JSON.stringify(contact)
+      });
+      if (ghlRes.ok) { usedExisting = true; }
+      // If PUT 404s (stale id), fall through to POST create below.
+    }
+    if (!ghlRes || !ghlRes.ok) {
+      ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
+        method: 'POST',
+        headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
+        body: JSON.stringify(contact)
+      });
+    }
+    void usedExisting; // available for downstream conditional logic if needed
     if (!ghlRes.ok) {
       // Privacy: log HTTP status only — never the GHL response body (may echo
       // the contact payload we just sent, which contains PII).

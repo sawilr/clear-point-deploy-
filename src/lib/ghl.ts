@@ -80,6 +80,19 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     // discard bot submissions. Real users never see or fill this field; it
     // arrives empty (''). The API discards any submission where it's non-empty.
     if ((payload as any).website_url !== undefined) { body.website_url = (payload as any).website_url; }
+    // PHASE 11 — Phase 10 (Clara) outer-flow audit/identity fields. These
+    // are built client-side and must reach the server intact: existing-client
+    // routing (ghl_contact_id/ghl_assigned_user_id) avoids duplicate contacts,
+    // and the TCPA receipt (consent_text/hash/version/UA) is the auditable
+    // record CMS requires.
+    if ((payload as any).lead_type) { body.lead_type = (payload as any).lead_type; }
+    if ((payload as any).ghl_contact_id) { body.ghl_contact_id = (payload as any).ghl_contact_id; }
+    if ((payload as any).ghl_assigned_user_id) { body.ghl_assigned_user_id = (payload as any).ghl_assigned_user_id; }
+    if ((payload as any).consent_text) { body.consent_text = (payload as any).consent_text; }
+    if ((payload as any).consent_receipt_hash) { body.consent_receipt_hash = (payload as any).consent_receipt_hash; }
+    if ((payload as any).disclaimer_version) { body.disclaimer_version = (payload as any).disclaimer_version; }
+    if ((payload as any).signer_user_agent) { body.signer_user_agent = (payload as any).signer_user_agent; }
+    if ((payload as any).signer_ip) { body.signer_ip = (payload as any).signer_ip; }
 
     const response = await fetch(API_ROUTE, {
       method: 'POST',
@@ -127,12 +140,12 @@ export function clearPendingLeads(): void {
 
 export function getSuccessMessage(lang: 'en' | 'es'): string {
   return lang === 'es'
-    ? 'Gracias. Hemos recibido tu información. Un agente licenciado de ClearPoint Senior Advisors se comunicará contigo pronto.'
+    ? 'Gracias. Hemos recibido su información. Un agente licenciado de ClearPoint Senior Advisors se comunicará con usted pronto.'
     : 'Thank you. Your information has been received. A licensed agent from ClearPoint Senior Advisors will contact you soon.';
 }
 
 export function getErrorMessage(lang: 'en' | 'es'): string {
   return lang === 'es'
-    ? 'Algo salió mal al enviar tu solicitud. Inténtalo nuevamente o llámanos directamente.'
+    ? 'Algo salió mal al enviar su solicitud. Inténtalo nuevamente o llámenos directamente.'
     : 'Something went wrong while sending your request. Please try again or call us directly.';
 }

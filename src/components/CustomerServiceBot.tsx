@@ -27,7 +27,24 @@ import {
   isNearBottom,
   isFarFromBottom,
 } from './chat/MobileScrollController';
-import { Headphones, Phone, RotateCcw, Send, User } from 'lucide-react';
+import { Phone, RotateCcw, Send, User, Mic, MicOff } from 'lucide-react';
+import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
+import { getOfficeStatus } from '../lib/afterHours';
+import { readVisitorMemory, writeVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
+import { buildConsentReceipt } from '../lib/disclaimerVersion';
+import {
+  type ClaraOuterState,
+  createOuterState,
+  validateFullName,
+  isQualifiedProspect,
+  buildGhlPayload,
+  inferInitialPath,
+  inferYesClient,
+  inferMedicareStatus,
+  inferStateFromText,
+  inferTopic,
+} from '../lib/claraOuterFlow';
+import { detectSafetyTrigger } from '../lib/safetyRouter';
 
 interface Message {
   id: string;
@@ -92,7 +109,20 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const [isTyping, setIsTyping] = useState(false);
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // PHASE 9E — voice recognizer (Web Speech API, optional)
+  const [voiceListening, setVoiceListening] = useState(false);
+  const voiceSupported = isVoiceSupported();
+  const voiceRecognizerRef = useRef<ReturnType<typeof createVoiceRecognizer> | null>(null);
+  // PHASE 9E — after-hours awareness (Mon-Fri 9-6 ET)
+  const officeStatus = getOfficeStatus();
+  // PHASE 10 — Clara outer flow (Path A/B/C) sits ABOVE the engine.
+  // When outerStep !== 'B_engine_engaged', custom UI is rendered and the
+  // existing engine (customerServiceEngine.ts) does NOT process messages.
+  const [outerState, setOuterState] = useState<ClaraOuterState>(() =>
+    createOuterState((initialLanguage || pageLang) === 'es' ? 'es' : 'en'),
+  );
+  const [outerInProgress, setOuterInProgress] = useState(true); // false → engine takes over (Path B qualified)
   const bodyRef = useRef<HTMLDivElement>(null);
   const userPinnedUpRef = useRef(false);
   // WAVE 39 — synchronous re-entrancy lock. React state (isTyping) doesn't
@@ -294,28 +324,50 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageLang]);
 
-  // Bilingual welcome on mount
+  // Bilingual welcome on mount + PHASE 9E returning-visitor greeting
   useEffect(() => {
     if (messages.length === 0) {
+      // Check persistent memory for returning visitor.
+      const mem = readVisitorMemory();
+      const lang: 'en' | 'es' = (initialLanguage || mem?.language || (pageLang === 'es' ? 'es' : 'en')) as 'en' | 'es';
+      const returning = returningVisitorGreeting(mem, lang);
+      const welcome = returning
+        ? returning
+        : (lang === 'es'
+            ? `${officeStatus.greetingEs}. ¿Prefiere español o inglés?`
+            : `${officeStatus.greetingEn}. Do you prefer English or Spanish?`);
       setMessages([{
         id: 'welcome',
-        text: pageLang === 'es'
-          ? '¡Hola! ¿Prefiere español o inglés?'
-          : 'Hi. Do you prefer English or Spanish?',
+        text: welcome,
         sender: 'bot',
         timestamp: new Date(),
       }]);
-      // Honor any initialLanguage prop by auto-selecting (skips chip click).
       if (initialLanguage) {
         setTimeout(() => handleLanguageSelect(initialLanguage), 50);
+      } else if (mem?.language) {
+        // Returning visitor — skip language chip step.
+        setTimeout(() => handleLanguageSelect(mem.language as 'en' | 'es'), 80);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // PHASE 9E — persist captured fields to localStorage for next visit
+  useEffect(() => {
+    if (state.name || state.zipCode || state.state || state.language) {
+      writeVisitorMemory({
+        name: state.name,
+        zip: state.zipCode,
+        state: state.state,
+        language: state.language as 'en' | 'es' | undefined,
+        lastTopic: state.serviceCategory,
+      });
+    }
+  }, [state.name, state.zipCode, state.state, state.language, state.serviceCategory]);
+
   const getTypingText = () => {
     if (!state.language) return 'Typing…';
-    return state.language === 'es' ? 'Guía de Soporte está escribiendo' : 'Support Guide is typing';
+    return state.language === 'es' ? 'Clara está escribiendo' : 'Clara is typing';
   };
 
   // ── Default GHL escalation bridge ──
@@ -358,7 +410,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         // PHASE F — controlled interest_type label (advisor-readable).
         interest_type: note.interestType,
         best_time_to_contact: '',
-        // PHASE F — consent is NOT collected by this bot; never claim 'yes'.
+        // PHASE F + 9A — consent NOT collected by this bot; never claim 'yes'.
+        // This is INTENTIONAL TCPA safety. Sawil's GHL workflows must NOT
+        // auto-dial leads with consent_to_contact=false; they should queue
+        // for a human licensed advisor to call back manually.
+        // If we ever add an explicit in-chat consent question, also persist
+        // the TCPA receipt (see src/lib/disclaimerVersion.ts buildConsentReceipt).
         consent_to_contact: false,
         consent_text: '',
         // PHASE F — advisor-friendly note (top) + machine fields + transcript.
@@ -388,6 +445,179 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
   ) {
     if (!text.trim() || isTyping) return;
+    // PHASE 11 — Safety router runs BEFORE all routing (outer + engine).
+    // Federal liability table-stakes: 988 crisis / 911 emergency must
+    // short-circuit Clara's entire pipeline, mirror of Zara's wiring.
+    const safety = detectSafetyTrigger(text);
+    if (safety.action !== 'none') {
+      const reply = outerState.language === 'es' ? safety.responseEs : safety.responseEn;
+      pushUserMessageDirect(text.trim());
+      setInputValue('');
+      pushBotMessageDirect(reply);
+      return;
+    }
+    // PHASE 10 — When outer flow is in progress, route text inputs there
+    // instead of feeding the existing engine. Engine only takes over for
+    // Path B qualified prospects (outerInProgress=false).
+    if (outerInProgress) {
+      const trimmed = text.trim();
+      const isEs = outerState.language === 'es';
+      // PHASE 11.1 — Natural-language path inference. User typed freely;
+      // Clara silently classifies and asks ONE natural follow-up.
+      if (outerState.step === 'path_select') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const inferred = inferInitialPath(trimmed);
+        if (inferred === 'A') {
+          setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity', problemSummary: trimmed }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Claro, puedo ayudarle con eso. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
+            : 'Of course, I can help. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?'), 350);
+          return;
+        }
+        if (inferred === 'C') {
+          setOuterState((s) => ({ ...s, path: 'C', step: 'C_resources_shown', problemSummary: trimmed }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Ese tema no parece ser una especialidad de Clear Point. Si su pregunta es sobre Medicare, puedo orientarle; si no, le sugiero algunos recursos:\n\n• Medicare.gov o 1-800-MEDICARE\n• Su SHIP local (shiphelp.org)\n• Para Medicaid: HRA u oficina estatal\n\n¿Quiere que un asesor de Clear Point le contacte sobre Medicare?'
+            : 'That topic does not seem to be a Clear Point specialty. If your question is about Medicare, I can guide you; otherwise, here are some resources:\n\n• Medicare.gov or 1-800-MEDICARE\n• Your local SHIP (shiphelp.org)\n• For Medicaid: HRA or your state office\n\nWould you like a Clear Point advisor to contact you about Medicare?'), 350);
+          return;
+        }
+        // Ambiguous — single natural follow-up
+        setOuterState((s) => ({ ...s, step: 'awaiting_client_check', problemSummary: trimmed }));
+        setTimeout(() => pushBotMessageDirect(isEs
+          ? 'Claro, puedo orientarle. Una pregunta breve: ¿es cliente actual de Clear Point, o todavía está explorando opciones?'
+          : 'I can help with that. Quick question: are you a current Clear Point client, or are you still exploring options?'), 350);
+        return;
+      }
+      // After ambiguous question — infer A or B from yes/no
+      if (outerState.step === 'awaiting_client_check') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        if (inferYesClient(trimmed)) {
+          setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity' }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Perfecto. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
+            : 'Got it. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?'), 350);
+        } else {
+          setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_medicare' }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Con gusto le oriento. Para guiarle correctamente, ¿ya tiene Medicare Parte A y Parte B activos, o está cerca de cumplir 65?'
+            : 'Glad to help. To guide you correctly, do you already have Medicare Parts A and B, or are you near turning 65?'), 350);
+        }
+        return;
+      }
+      // Path B free-text qualification
+      if (outerState.step === 'B_q_medicare') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const ms = inferMedicareStatus(trimmed);
+        setOuterState((s) => ({ ...s, medicareStatus: ms, step: 'B_q_state' }));
+        setTimeout(() => pushBotMessageDirect(isEs
+          ? '¿En qué estado vive?'
+          : 'Which state do you live in?'), 300);
+        return;
+      }
+      if (outerState.step === 'B_q_state') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const st = inferStateFromText(trimmed);
+        setOuterState((s) => ({ ...s, state: st }));
+        if (st === 'FL') {
+          setOuterState((s) => ({ ...s, step: 'C_fl_offer', path: 'C' }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Actualmente Clear Point está priorizando servicio en NY, NJ y CT. Para información oficial puede visitar Medicare.gov o contactar SHIP en su estado. ¿Desea que Clear Point le contacte cuando el servicio esté disponible en su área?'
+            : 'Clear Point is currently prioritizing service in NY, NJ, and CT. For official information you can visit Medicare.gov or contact SHIP in your state. Would you like Clear Point to contact you when service becomes available in your area?'), 350);
+          return;
+        }
+        if (st === 'other') {
+          setOuterState((s) => ({ ...s, step: 'C_resources_shown', path: 'C', outOfScopeCategory: 'outside_state' }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Actualmente Clear Point sirve NY, NJ y CT. Para Medicare en su estado, su SHIP local puede ayudarle (shiphelp.org). ¿Aun así desea que Clear Point le contacte?'
+            : 'Clear Point currently serves NY, NJ, and CT. For Medicare in your state, your local SHIP can help (shiphelp.org). Would you still like Clear Point to contact you?'), 350);
+          return;
+        }
+        setOuterState((s) => ({ ...s, step: 'B_q_topic' }));
+        setTimeout(() => pushBotMessageDirect(isEs
+          ? '¿Sobre qué tema le orientamos? Por ejemplo: revisión de plan, factura, doctor o medicamentos.'
+          : 'What can we guide you on? For example: plan review, billing, doctor, or medications.'), 300);
+        return;
+      }
+      if (outerState.step === 'B_q_topic') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const tp = inferTopic(trimmed);
+        const newState: ClaraOuterState = { ...outerState, topic: tp, step: 'B_pitch' };
+        setOuterState(newState);
+        if (!isQualifiedProspect(newState)) {
+          setOuterState((s) => ({ ...s, step: 'C_resources_shown', path: 'C' }));
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Gracias. Para esta situación específica, le sugiero Medicare.gov o su SHIP local. ¿Aun así desea que Clear Point le contacte?'
+            : 'Thank you. For this specific situation, I suggest Medicare.gov or your local SHIP. Would you still like Clear Point to contact you?'), 350);
+          return;
+        }
+        setTimeout(() => pushBotMessageDirect(isEs
+          ? 'Gracias. En Clear Point somos brokers de Medicare independientes y licenciados. Tres puntos breves: nuestro servicio no tiene costo para usted; un asesor licenciado revisa su situación; no le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte?'
+          : "Thank you. At Clear Point we are independent licensed Medicare brokers. Three quick points: our service is at no cost to you; a licensed advisor reviews your situation; you are not passed between call centers. Would it be alright to take your name and phone so an advisor can reach out?"), 400);
+        return;
+      }
+      // Path A — identity collection (name + last4)
+      if (outerState.step === 'A_collect_identity') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        await handleAIdentitySubmit(trimmed);
+        return;
+      }
+      // Path A matched — collect topic summary, then submit existing_client_inquiry
+      if (outerState.step === 'A_matched_collect_topic') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const phoneFromMatch = ''; // we don't expose phone; advisor knows it
+        await submitOuterLead({ phone: phoneFromMatch, summary: trimmed });
+        setOuterState((s) => ({ ...s, problemSummary: trimmed, step: 'A_done' }));
+        return;
+      }
+      // Path A unmatched — collect phone + summary
+      if (outerState.step === 'A_unmatched_collect_topic') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        // Heuristic: if text contains a phone-like sequence, treat as phone+summary combined.
+        const phoneMatch = trimmed.match(/\+?[\d\s().-]{7,}/);
+        const phone = phoneMatch ? phoneMatch[0].replace(/\D+/g, '').slice(-10) : '';
+        const summary = phoneMatch ? trimmed.replace(phoneMatch[0], '').trim() : trimmed;
+        if (!phone || phone.length < 10) {
+          pushBotMessageDirect(outerState.language === 'es'
+            ? 'Necesito un número de teléfono de 10 dígitos. Por ejemplo: "(917) 555-1234 — mi factura subió".'
+            : 'I need a 10-digit phone number. For example: "(917) 555-1234 — my bill went up".');
+          return;
+        }
+        await submitOuterLead({ phone, summary });
+        setOuterState((s) => ({ ...s, phone, problemSummary: summary, step: 'A_done' }));
+        return;
+      }
+      // Path C opt-in capture — name + phone + summary
+      if (outerState.step === 'C_optin_capture') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const phoneMatch = trimmed.match(/\+?[\d\s().-]{7,}/);
+        const phone = phoneMatch ? phoneMatch[0].replace(/\D+/g, '').slice(-10) : '';
+        const nameAndSummary = phoneMatch ? trimmed.replace(phoneMatch[0], '').trim() : trimmed;
+        if (!phone || phone.length < 10) {
+          pushBotMessageDirect(outerState.language === 'es'
+            ? 'Necesito su nombre, un teléfono de 10 dígitos y un resumen breve.'
+            : 'I need your name, a 10-digit phone, and a brief summary.');
+          return;
+        }
+        // Try to extract name as the first 2 capitalized tokens.
+        const nameMatch = nameAndSummary.match(/^([A-Za-zÁÉÍÓÚÑáéíóúñ' .-]+?)(?:[,.\-—]|$)/);
+        const fullName = nameMatch ? nameMatch[1].trim() : nameAndSummary.split(/\s{2,}|[,.\-—]/)[0] || '';
+        setOuterState((s) => ({ ...s, fullName, phone, problemSummary: nameAndSummary }));
+        await submitOuterLead({ phone, summary: nameAndSummary });
+        setOuterState((s) => ({ ...s, step: 'C_done' }));
+        return;
+      }
+      // For other outer-flow steps, ignore free-text (chips drive these).
+      return;
+    }
     // WAVE 39 — synchronous re-entrancy guard. React state hasn't flushed
     // between two near-simultaneous clicks; the ref has.
     if (isSendingRef.current) return;
@@ -428,9 +658,26 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       // reach the user, even if a template slipped through.
       response = sanitizeResponse(response, (newState.language || state.language) === 'es');
 
-      // Sync page-level language when chip selection occurs
+      // Sync page-level language when chip selection occurs.
+      // PHASE 8 — capture the CS bot viewport position before the global
+      // re-render (Header/Hero/Footer text lengths differ between EN/ES,
+      // which would otherwise push the bot down the page visually) and
+      // restore it via scrollBy after React commits.
       if (newState.language && newState.language !== state.language) {
+        const botEl = typeof document !== 'undefined'
+          ? document.getElementById('customer-service-bot')
+          : null;
+        const beforeTop = botEl?.getBoundingClientRect().top ?? null;
         setLang(newState.language);
+        if (botEl && beforeTop !== null) {
+          requestAnimationFrame(() => {
+            const afterTop = botEl.getBoundingClientRect().top;
+            const delta = afterTop - beforeTop;
+            if (Math.abs(delta) > 1) {
+              window.scrollBy({ top: delta, behavior: 'auto' });
+            }
+          });
+        }
       }
 
       setState(newState);
@@ -441,6 +688,51 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, botMessage]);
+
+      // PHASE A16 — SOA token request side-effect.
+      // When the engine signals soaPending and the lead has name+phone,
+      // request a signing token and append a follow-up bot message
+      // with the link the user must click to sign the SOA.
+      if (newState.soaPending && !newState.soaToken && newState.name && newState.phoneNumber) {
+        // PHASE 6 — 12s timeout to prevent stuck UI on bad mobile networks.
+        const controller = new AbortController();
+        const soaTimer = setTimeout(() => controller.abort(), 12_000);
+        try {
+          const r = await fetch('/api/soa-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'omit',
+            signal: controller.signal,
+            body: JSON.stringify({
+              fullName: newState.name,
+              phone: newState.phoneNumber,
+              email: newState.email || '',
+              zip: newState.zipCode || '',
+              language: newState.language || 'es',
+              leadSource: 'customer_service',
+            }),
+          });
+          clearTimeout(soaTimer);
+          if (r.ok) {
+            const data = await r.json();
+            const soaUrl = window.location.origin + (data.soaUrl || `/soa/${data.token}`);
+            setState((prev) => ({ ...prev, soaToken: data.token, soaUrl }));
+            const isEs = (newState.language || 'es') === 'es';
+            const linkMsg: Message = {
+              id: (Date.now() + 2).toString(),
+              text: isEs
+                ? `🔒 **Firmar Scope of Appointment**\n\n${soaUrl}\n\n(El enlace es seguro y expira en 24 horas. Toma 60 segundos.)`
+                : `🔒 **Sign Scope of Appointment**\n\n${soaUrl}\n\n(Secure link, expires in 24 hours. Takes 60 seconds.)`,
+              sender: 'bot',
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, linkMsg]);
+          }
+        } catch (e) {
+          clearTimeout(soaTimer);
+          console.warn('[CSB] SOA token fetch failed', e);
+        }
+      }
 
       if (typeof window !== 'undefined' && !window.matchMedia?.('(pointer: coarse)')?.matches) {
         requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
@@ -459,9 +751,180 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     }
   }
 
+  // ── PHASE 10 — Clara outer-flow helpers (Path A/B/C above the engine) ──────
+
+  function pushBotMessageDirect(text: string) {
+    setMessages((prev) => [...prev, {
+      id: 'bot-' + Date.now() + '-' + Math.floor(Math.random() * 9999),
+      text,
+      sender: 'bot',
+      timestamp: new Date(),
+    }]);
+  }
+
+  function pushUserMessageDirect(text: string) {
+    setMessages((prev) => [...prev, {
+      id: 'usr-' + Date.now() + '-' + Math.floor(Math.random() * 9999),
+      text,
+      sender: 'user',
+      timestamp: new Date(),
+    }]);
+  }
+
+  // Path B pitch confirm (Yes → engine takes over for capture; No → goodbye).
+  function handleBPitchAccept(yes: boolean) {
+    const isEs = outerState.language === 'es';
+    pushUserMessageDirect(yes
+      ? (isEs ? 'Sí, tomar mi información' : 'Yes, take my info')
+      : (isEs ? 'No, gracias' : 'No, thanks'));
+    if (!yes) {
+      setOuterState((s) => ({ ...s, step: 'B_done' }));
+      setTimeout(() => pushBotMessageDirect(isEs
+        ? 'Entendido, sin presión. Si cambia de opinión, puede llamar al 1-866-310-8702 o regresar aquí.'
+        : 'Understood, no pressure. If you change your mind, you can call 1-866-310-8702 or come back anytime.'), 300);
+      return;
+    }
+    // Qualified prospect accepted — delegate to existing engine for capture.
+    setOuterState((s) => ({ ...s, step: 'B_engine_engaged' }));
+    setOuterInProgress(false);
+    // Trigger the engine's language confirmation (which starts the existing
+    // name/ZIP/topic flow). Feed the language word the engine expects.
+    setTimeout(() => handleSendMessage(isEs ? 'español' : 'english'), 200);
+  }
+
+  // Path C opt-in handler.
+  async function handleCOptin(optIn: boolean) {
+    const isEs = outerState.language === 'es';
+    pushUserMessageDirect(optIn
+      ? (isEs ? 'Sí, contáctenme' : 'Yes, contact me')
+      : (isEs ? 'No, gracias' : 'No, thanks'));
+    if (!optIn) {
+      setOuterState((s) => ({ ...s, step: 'C_done' }));
+      setTimeout(() => pushBotMessageDirect(isEs
+        ? 'Gracias por consultarnos. Espero que los recursos sean útiles.'
+        : 'Thank you for reaching out. I hope the resources are helpful.'), 300);
+      return;
+    }
+    setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
+    setTimeout(() => pushBotMessageDirect(isEs
+      ? '¿Puede compartir su nombre completo, teléfono y un resumen breve del tema?'
+      : 'May I have your full name, phone, and a brief summary of the topic?'), 300);
+  }
+
+  // Path A identity capture: parses single text input "Name | last4" or split flow.
+  async function handleAIdentitySubmit(rawText: string) {
+    const isEs = outerState.language === 'es';
+    // Try to extract both name and last 4 from one input.
+    const last4Match = rawText.match(/\b(\d{4})\b/);
+    const last4 = last4Match ? last4Match[1] : '';
+    const nameText = rawText.replace(/\b\d{4,}\b/g, '').replace(/\s{2,}/g, ' ').trim();
+    const nameCheck = validateFullName(nameText);
+    if (!nameCheck.ok || !last4) {
+      pushBotMessageDirect(isEs
+        ? 'Necesito su nombre completo y los últimos 4 dígitos del teléfono. Por ejemplo: "María García 5678".'
+        : 'I need your full name and the last 4 digits of your phone. For example: "John Smith 5678".');
+      return;
+    }
+    const fullName = nameCheck.cleaned!;
+    setOuterState((s) => ({ ...s, fullName, last4Phone: last4, step: 'A_verifying' }));
+    pushBotMessageDirect(isEs ? 'Verificando su caso, un momento…' : 'Verifying your case, one moment…');
+    setIsTyping(true);
+
+    // Call /api/lookup-client with timeout.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const r = await fetch('/api/lookup-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
+        signal: controller.signal,
+        body: JSON.stringify({ fullName, last4Phone: last4 }),
+      });
+      clearTimeout(timer);
+      setIsTyping(false);
+      const data = await r.json().catch(() => null);
+      if (data && data.found) {
+        const advisorName: string | null = data.advisorName || null;
+        setOuterState((s) => ({
+          ...s,
+          verifiedContactId: data.contactId,
+          assignedUserId: data.assignedUserId,
+          assignedAdvisorName: advisorName || undefined,
+          step: 'A_matched_collect_topic',
+        }));
+        const advBit = advisorName ? `, ${advisorName}` : '';
+        pushBotMessageDirect(isEs
+          ? `Encontré su caso. La voy a conectar con su asesor asignado${advBit}. ¿En qué le puedo ayudar hoy?`
+          : `I found your case. I'll connect you with your assigned advisor${advBit}. How can I help you today?`);
+      } else {
+        setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
+        pushBotMessageDirect(isEs
+          ? 'No pude verificar el caso automáticamente. Para proteger su privacidad, voy a pedir que un asesor de Clear Point revise su caso y le devuelva la llamada. ¿Puede compartir su número de teléfono y un resumen breve del tema?'
+          : 'I could not verify your case automatically. To protect your privacy, I will ask a Clear Point advisor to review your case and call you back. May I have your phone number and a brief summary of the topic?');
+      }
+    } catch {
+      clearTimeout(timer);
+      setIsTyping(false);
+      setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
+      pushBotMessageDirect(isEs
+        ? 'No pude verificar el caso ahora mismo. Voy a pedir que un asesor revise su caso. ¿Su teléfono y un resumen breve del tema?'
+        : 'I could not verify the case right now. I will ask an advisor to review. Could I have your phone and a brief summary?');
+    }
+  }
+
+  // Path A/C final capture submit.
+  async function submitOuterLead(extras: { phone?: string; summary?: string } = {}) {
+    const isEs = outerState.language === 'es';
+    setSubmitState('submitting');
+    try {
+      const receipt = await buildConsentReceipt(outerState.language);
+      const merged: ClaraOuterState = {
+        ...outerState,
+        phone: extras.phone || outerState.phone || '',
+        problemSummary: extras.summary || outerState.problemSummary || '',
+      };
+      const payload = buildGhlPayload(merged, {
+        consentText: receipt.consentText,
+        consentReceiptHash: receipt.consentTextHash,
+        disclaimerVersion: receipt.disclaimerVersion,
+        userAgent: receipt.userAgent,
+        problemSummary: merged.problemSummary,
+      });
+      const ok = await submitLeadToGHL({
+        source: 'clara_outer_flow',
+        page_url: typeof window !== 'undefined' ? window.location.href : '',
+        form_name: 'ClearPoint Clara Filter',
+        ...payload,
+      } as unknown as Parameters<typeof submitLeadToGHL>[0]);
+      setSubmitState(ok ? 'submitted' : 'failed');
+      if (ok) {
+        const closingEs = officeStatus.isOpen
+          ? 'Gracias. Su información fue enviada. Si prefiere hablar ahora, puede llamar al 1-866-310-8702. De lo contrario, un asesor le contactará pronto.'
+          : 'Gracias. Su información fue enviada. Ahora estamos fuera de horario; un asesor le devolverá la llamada el próximo día laboral.';
+        const closingEn = officeStatus.isOpen
+          ? 'Thank you. Your information was sent. If you prefer to speak now, you can call 1-866-310-8702. Otherwise, an advisor will contact you soon.'
+          : 'Thank you. Your information was sent. We are currently after hours; an advisor will call you back on the next business day.';
+        setTimeout(() => pushBotMessageDirect(isEs ? closingEs : closingEn), 200);
+      }
+    } catch {
+      setSubmitState('failed');
+    }
+  }
+
   function handleLanguageSelect(lang: Language) {
     if (!lang) return;
-    handleSendMessage(lang === 'en' ? 'english' : 'español');
+    // PHASE 10 — instead of feeding 'english/español' straight into the engine,
+    // we ask the path_select question. The engine is only engaged later for
+    // Path B qualified prospects.
+    setLang(lang);
+    setState((prev) => ({ ...prev, language: lang }));
+    setOuterState((s) => ({ ...s, language: lang, step: 'path_select' }));
+    const isEs = lang === 'es';
+    pushUserMessageDirect(isEs ? 'Español' : 'English');
+    setTimeout(() => pushBotMessageDirect(isEs
+      ? 'Hola, soy Clara. Estoy aquí para ayudarle con preguntas de servicio, cobertura o seguimiento con Clear Point. ¿En qué puedo ayudarle hoy?'
+      : "Hi, I'm Clara. I'm here to help with service questions, coverage concerns, or follow-up with Clear Point. How can I help today?"), 300);
   }
 
   function resetConversation() {
@@ -540,12 +1003,24 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       {/* Header */}
       <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0 gap-2">
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-          <div className="w-9 h-9 rounded-full bg-sage-300 flex items-center justify-center text-earth-900 flex-shrink-0">
-            <Headphones className="w-5 h-5" />
+          <div className="relative flex-shrink-0">
+            <div className="w-9 h-9 rounded-full overflow-hidden bg-cream-100">
+              <img
+                src="/clara-avatar.jpg"
+                alt="Clara"
+                width="36"
+                height="36"
+                loading="eager"
+                decoding="async"
+                className="w-full h-full object-cover"
+              />
+            </div>
+            {/* PHASE 9C — online status dot, premium chat signal */}
+            <span aria-hidden className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-earth-800 animate-pulse-online" />
           </div>
           <div className="leading-tight min-w-0 flex-1">
             <div className="text-[15px] font-semibold truncate">
-              {isSpanish ? 'Guía de Soporte ClearPoint' : 'ClearPoint Support Guide'}
+              {isSpanish ? 'Clara — Soporte Bilingüe de Clear Point' : 'Clara — Clear Point Bilingual Support'}
             </div>
             <div className="text-[11px] text-cream-200 font-normal truncate">
               {state.name && state.zipCode
@@ -637,6 +1112,40 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
             </div>
           ))}
 
+          {/* PHASE 11.1 — Chip menus for path_select / B qualification REMOVED.
+              Clara now starts with a natural greeting and the user types freely.
+              Inference happens silently in handleSendMessage. The only chips
+              that remain are 2-button yes/no confirmations after natural questions:
+              B_pitch accept and C opt-in (below). */}
+
+          {/* Path B — pitch accept/reject */}
+          {outerInProgress && outerState.step === 'B_pitch' && !isTyping && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button onClick={() => handleBPitchAccept(true)}
+                className="px-5 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'Sí, tomar mi información' : 'Yes, take my info'}
+              </button>
+              <button onClick={() => handleBPitchAccept(false)}
+                className="px-5 py-3 bg-cream-100 text-earth-700 border border-cream-300 rounded-full text-[15px] font-semibold hover:bg-cream-200 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'No, gracias' : 'No, thanks'}
+              </button>
+            </div>
+          )}
+
+          {/* Path C — opt-in offer */}
+          {outerInProgress && (outerState.step === 'C_resources_shown' || outerState.step === 'C_fl_offer') && !isTyping && (
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button onClick={() => handleCOptin(true)}
+                className="px-5 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'Sí, contáctenme' : 'Yes, contact me'}
+              </button>
+              <button onClick={() => handleCOptin(false)}
+                className="px-5 py-3 bg-cream-100 text-earth-700 border border-cream-300 rounded-full text-[15px] font-semibold hover:bg-cream-200 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'No, gracias' : 'No, thanks'}
+              </button>
+            </div>
+          )}
+
           {/* Language selection chips — only shown at step 1 */}
           {showLanguageChips && (
             <div className="flex flex-wrap justify-center gap-3 pt-2">
@@ -725,18 +1234,22 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         </div>
       </div>
 
-      {/* Footer chrome */}
+      {/* Footer chrome — PHASE 9E swaps "Call now" for callback messaging after hours. */}
       <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white">
         <a
           href="tel:18663108702"
           className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors"
         >
           <Phone className="w-4 h-4" />
-          {isSpanish ? 'Llamar ahora' : 'Call now'}
+          {officeStatus.isOpen
+            ? (isSpanish ? 'Llamar ahora' : 'Call now')
+            : (isSpanish ? `Llamar (devolución ${officeStatus.nextOpenLabel})` : `Call (callback ${officeStatus.nextOpenLabel})`)}
         </a>
         <span className="text-earth-300 select-none" aria-hidden="true">·</span>
-        <span className="text-[12px] text-earth-500">
-          {isSpanish ? 'Soporte bilingüe' : 'Bilingual support'}
+        <span className="text-[12px] text-earth-700">
+          {officeStatus.isOpen
+            ? (isSpanish ? 'Soporte bilingüe' : 'Bilingual support')
+            : (isSpanish ? 'Fuera de horario' : 'After hours')}
         </span>
       </div>
 
@@ -812,12 +1325,27 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         className="px-3 pt-2 border-t border-cream-200 flex-shrink-0 bg-white"
         style={_safeBottom}
       >
-        <div className="flex gap-2 min-w-0">
-          <input
+        <div className="flex gap-2 min-w-0 items-end">
+          <textarea
             ref={inputRef}
-            type="text"
+            rows={1}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={(e) => {
+              setInputValue(e.target.value);
+              // Auto-grow up to 4 lines.
+              const el = e.target as HTMLTextAreaElement;
+              el.style.height = 'auto';
+              el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+            }}
+            onKeyDown={(e) => {
+              // Enter sends, Shift+Enter newline (premium chat convention).
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!inputDisabled && inputValue.trim()) {
+                  handleSendMessage(inputValue);
+                }
+              }
+            }}
             placeholder={
               isSpanish
                 ? state.step === 'asking_name'
@@ -832,13 +1360,43 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
                     : 'Type your message…'
             }
             disabled={inputDisabled}
-            className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px] disabled:bg-cream-50 disabled:text-earth-400"
+            className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px] disabled:bg-cream-50 disabled:text-earth-400 resize-none leading-relaxed"
             aria-label={isSpanish ? 'Escriba su mensaje' : 'Type your message'}
           />
+          {voiceSupported && (
+            <button
+              type="button"
+              onClick={() => {
+                if (voiceListening) {
+                  voiceRecognizerRef.current?.stop();
+                  setVoiceListening(false);
+                  return;
+                }
+                voiceRecognizerRef.current = createVoiceRecognizer(isSpanish ? 'es' : 'en', {
+                  onInterim: (t) => setInputValue(t),
+                  onFinal: (t) => { setInputValue((prev) => (prev ? prev + ' ' : '') + t); },
+                  onEnd: () => setVoiceListening(false),
+                  onError: () => setVoiceListening(false),
+                });
+                voiceRecognizerRef.current?.start();
+                setVoiceListening(true);
+              }}
+              disabled={inputDisabled}
+              className={`px-3 py-3 rounded-lg transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center ${
+                voiceListening
+                  ? 'bg-red-500 text-cream-50 hover:bg-red-600 animate-pulse-online'
+                  : 'bg-cream-100 text-earth-700 hover:bg-cream-200 border border-cream-300'
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
+              aria-label={isSpanish ? (voiceListening ? 'Detener voz' : 'Hablar') : (voiceListening ? 'Stop voice' : 'Speak')}
+              title={isSpanish ? (voiceListening ? 'Detener' : 'Hablar (dictar mensaje)') : (voiceListening ? 'Stop' : 'Speak (dictate message)')}
+            >
+              {voiceListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </button>
+          )}
           <button
             type="submit"
             disabled={inputDisabled || !inputValue.trim()}
-            className="px-4 py-3 bg-earth-800 text-cream-50 rounded-lg hover:bg-earth-900 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+            className="px-4 py-3 bg-earth-800 text-cream-50 rounded-lg hover:bg-earth-900 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed active:scale-95"
             aria-label={isSpanish ? 'Enviar' : 'Send'}
           >
             <Send className="w-5 h-5" />
