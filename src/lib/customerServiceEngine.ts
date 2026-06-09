@@ -2599,7 +2599,14 @@ export function processMessage(
       const fakePrefix = /^555555/.test(phoneDigits);
       // 555 reserved exchange (XXX-555-XXXX) is fictional — reject it too.
       const reserved555 = /^\d{3}555/.test(phoneDigits);
-      if (isAllSame || isSequential || badAreaCode || badExchange || fakePrefix || reserved555) {
+      // Sawil 2026-06 — key-mash garbage that passes every NANP structural
+      // rule but is obviously fake. Caught a live one: "2332222122" (area 233
+      // ok, exchange 222 ok) where a single digit fills 7 of 10 places. Real
+      // US numbers effectively never repeat one digit 7+ times.
+      const digitCounts: Record<string, number> = {};
+      for (const d of phoneDigits) digitCounts[d] = (digitCounts[d] || 0) + 1;
+      const tooRepetitive = Math.max(...Object.values(digitCounts)) >= 7;
+      if (isAllSame || isSequential || badAreaCode || badExchange || fakePrefix || reserved555 || tooRepetitive) {
         phoneDigits = '';
       }
     }
@@ -5622,13 +5629,11 @@ function processMessageInner(
           newState.wantsToKeepSpecialist ? 'specialist'
         : newState.wantsToKeepDoctor ? 'doctor'
         : 'none';
+        const keepEs = keptKind === 'specialist' ? ' ni de especialista' : keptKind === 'doctor' ? ' ni de doctor' : '';
+        const keepEn = keptKind === 'specialist' ? ' or specialist' : keptKind === 'doctor' ? ' or doctor' : '';
         const out = isSpanish
-          ? (keptKind === 'none'
-              ? `Entiendo. Si usted no quiere cambiar de plan, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`
-              : `Entiendo. Si usted no quiere cambiar de plan ni de ${keptKind === 'specialist' ? 'especialista' : 'doctor'}, no vamos a asumir que cambiar sea la respuesta. Primero hay que verificar qué está causando el problema.\n\n¿Quién le dijo que tendría que cambiar: el especialista, el plan, o otra persona?`)
-          : (keptKind === 'none'
-              ? `Understood. If you don't want to change your plan, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`
-              : `Understood. If you don't want to change your plan or your ${keptKind}, we won't assume change is the answer. First we need to verify what's causing the problem.\n\nWho told you to change: the specialist, the plan, or someone else?`);
+          ? `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta. Cuando un doctor o el plan menciona un cambio, casi siempre es porque el proveedor podría estar saliendo de la red o el plan cambió — eso se puede revisar antes de cualquier decisión. No puedo verificar la red de un plan específico desde aquí, pero un asesor licenciado de ClearPoint puede revisarlo con su plan, explicarle sus opciones y ver si aplica un Período Especial de Inscripción, sin costo. ¿Quiere que un asesor lo revise con usted?`
+          : `I understand, and we won't assume changing your plan${keepEn} is the answer. When a doctor or the plan mentions a change, it's almost always because the provider may be leaving the network or the plan changed — that can be reviewed before any decision. I can't verify a specific plan's network from here, but a licensed ClearPoint advisor can review it with your plan, explain your options, and check whether a Special Enrollment Period applies — at no cost. Would you like an advisor to review it with you?`;
         newState.planChangeAcknowledged = true;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
@@ -5675,10 +5680,14 @@ function processMessageInner(
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }
-      // V27 — First mention. Short office-tone. 3 options including "told to change".
+      // V27 → Sawil 2026-06: LEAD WITH HELP, don't interrogate. A premium
+      // Medicare CSR acknowledges, explains (compliantly) WHY a doctor/plan
+      // would mention a change, and offers the advisor in ONE turn — no
+      // 3-question decision tree. Stays compliant: no specific plan, no network
+      // confirmation, no eligibility promise ("si aplica").
       const out = isSpanish
-        ? `Entiendo. Vamos a revisar eso con calma. ¿El problema es que el especialista ya no acepta su plan, necesita una autorización, o le dijeron que debe cambiar de plan?`
-        : `I understand. Let's look at this calmly. Is the issue that your specialist no longer accepts your plan, that you need an authorization, or that someone told you to change plans?`;
+        ? `Entiendo, y lo aclaramos juntos. Cuando un doctor menciona que debe cambiar de plan, casi siempre es porque el proveedor podría estar saliendo de la red del plan o el plan cambió — no significa que usted tenga que cambiar a ciegas. No puedo verificar la red de un plan específico desde aquí, pero un asesor licenciado de ClearPoint puede revisarlo con su plan, explicarle sus opciones y ver si aplica un Período Especial de Inscripción si hubo un cambio importante de red, sin costo. ¿Quiere que un asesor lo revise con usted?`
+        : `I understand, and we'll sort this out together. When a doctor says you should change plans, it's almost always because the provider may be leaving the plan's network or the plan changed — it does NOT mean you have to switch blindly. I can't verify a specific plan's network from here, but a licensed ClearPoint advisor can review it with your plan, explain your options, and check whether a Special Enrollment Period applies if there's been a significant network change — at no cost. Would you like an advisor to review it with you?`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
