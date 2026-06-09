@@ -156,8 +156,27 @@
 .support-shell {
   display: flex;
   flex-direction: column;
+  /* THE iOS keyboard fix (Sawil 2026-06, real-device). On phones the shell is
+     PINNED to the visual viewport, not the layout viewport. When iOS focuses
+     the input it shifts the visual viewport down (visualViewport.offsetTop > 0)
+     to reveal the field; a layout-anchored shell would let the header + the
+     conversation slide ABOVE the fold ("sube demasiado, se pierde el
+     contexto"). position:fixed + translateY(--vv-offset-top) re-pins the whole
+     surface to the visible window every frame (the hook listens to vv.scroll),
+     and height:--svh keeps it exactly the visible height so the composer sits
+     right above the keyboard. position:fixed (not static+transform) is required
+     because body{overflow:hidden} would otherwise clip the translated composer.
+     On Android offsetTop stays 0, so this is just a clean fixed full-height
+     column. The site header lives INSIDE the shell, so nav stays tappable —
+     not a trap. Desktop (md+) reverts to a normal scrollable page. */
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
   height: var(--svh, 100dvh);
   overflow: hidden;
+  transform: translateY(var(--vv-offset-top, 0px));
+  will-change: transform;
 }
 .support-main {
   flex: 1 1 0%;
@@ -165,7 +184,14 @@
   overflow: hidden;
 }
 @media (min-width: 768px) {
-  .support-shell { display: block; height: auto; min-height: 100vh; overflow: visible; }
+  .support-shell {
+    position: static;
+    display: block;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    transform: none;
+  }
   .support-main { flex: none; min-height: 0; overflow: visible; }
 }
 
