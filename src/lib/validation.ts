@@ -416,7 +416,7 @@ export function getQualityFlags(
   const emailResult = validateEmail(email);
   if (!emailResult.valid && email && email.trim()) flags.push(`Email: ${emailResult.flags.join(', ')}`);
   else if (emailResult.flags.length > 0) flags.push(emailResult.flags[0]);
-  if (!zipSupported && !zipLookupFailed) flags.push('ZIP outside supported states (NY/NJ/CT/FL)');
+  if (!zipSupported && !zipLookupFailed) flags.push('ZIP outside supported states (NY/NJ/CT)');
   if (zipLookupFailed) flags.push('ZIP lookup failed');
   return flags;
 }

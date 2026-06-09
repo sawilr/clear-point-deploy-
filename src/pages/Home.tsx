@@ -161,8 +161,8 @@ export default function Home() {
         image="/hero-bg.jpg"
         eyebrow="Independent · Licensed · No Cost to You"
         eyebrowEs="Independiente · Licenciado · Sin Costo"
-        headline="Navigate Medicare<br><em class='text-gold-300'>with Confidence</em>"
-        headlineEs="Navega Medicare<br><em class='text-gold-300'>con Confianza</em>"
+        headline="Navigate Medicare <span class='text-gold-400'>with Confidence</span>"
+        headlineEs="Navega Medicare <span class='text-gold-400'>con Confianza</span>"
         subheadline="We help seniors understand their Medicare options — clearly, honestly, and without pressure. Our advisors work for you, not for an insurance company."
         subheadlineEs="Ayudamos a los adultos mayores a entender sus opciones de Medicare — de forma clara, honesta y sin presión. Nuestros asesores trabajan para usted, no para una aseguradora."
         showForm={true}
@@ -196,7 +196,7 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-sm sm:text-[15px] leading-relaxed pl-9">
+          <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-sm sm:text-[15px] leading-relaxed sm:pl-9">
             <li className="flex items-start gap-2">
               <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
               <span>{t('Medicaid, Medicare Savings Programs (MSP), Extra Help / LIS', 'Medicaid, Programas de Ahorro de Medicare (MSP), Ayuda Extra / LIS')}</span>
@@ -240,7 +240,7 @@ export default function Home() {
       <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
-            <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
+            <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
               {t('Medicare Solutions We Offer', 'Soluciones Medicare Que Ofrecemos')}
             </h2>
@@ -297,7 +297,7 @@ export default function Home() {
                 ))}
               </div>
 
-              <p className="text-gold-600 text-xs mt-4">
+              <p className="text-earth-600 text-[13px] mt-4 leading-relaxed">
                 {t(
                   'Not every enrollment period applies to every person. Eligibility, timing, plan availability, and coverage options may vary by situation, location, and Medicare rules.',
                   'No todos los períodos de inscripción aplican a todas las personas. La elegibilidad, el tiempo, la disponibilidad de planes y las opciones de cobertura pueden variar según la situación, ubicación y reglas de Medicare.'
@@ -368,7 +368,7 @@ export default function Home() {
                   <p className="text-cream-100/70 text-sm leading-relaxed mb-6 max-w-sm mx-auto">
                     {t('Our advisors are available Monday through Friday, 9am–6pm Eastern Time. No robots. No hold music. Just a real person who knows Medicare.', 'Nuestros asesores están disponibles de lunes a viernes, 9am–6pm hora del Este. Sin robots. Sin música de espera. Solo una persona real que conoce Medicare.')}
                   </p>
-                  <span className="font-serif text-2xl font-bold text-gold-300 block mb-5">1-866-310-8702</span>
+                  <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-866-310-8702</span>
                   <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-gold-400 text-earth-900 font-bold text-sm px-6 py-3 rounded-xl hover:bg-gold-300 transition-all">
                     <PhoneIcon className="w-4 h-4" />
                     {t("Call Now — It's Free", 'Llamar Ahora — Es Gratis')}
@@ -412,7 +412,7 @@ export default function Home() {
 
       {/* Carriers */}
       <section className="py-16 lg:py-20 bg-cream-50">
-        <div className="max-w-[1100px] mx-auto px-6">
+        <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
           <h3 className="font-serif text-xl sm:text-2xl text-earth-900 mb-2">
             {t('Carriers We May Help You Review', 'Aseguradoras que podemos ayudarle a revisar')}
           </h3>
@@ -422,15 +422,15 @@ export default function Home() {
               'La disponibilidad de aseguradoras varía por ubicación y elegibilidad. Le ayudamos a revisar las opciones disponibles en su área.'
             )}
           </p>
-          <p className="text-xs text-gold-600 font-semibold mb-8">
+          <p className="text-sm text-earth-700 font-semibold mb-8">
             {t('Carrier participation and plan availability vary by county, state, eligibility, and appointment status.', 'La participación de aseguradoras y la disponibilidad de planes varían por condado, estado, elegibilidad y estado de cita.')}
           </p>
 
-          <div role="region" aria-label={t('Carriers we may help you review', 'Aseguradoras que podemos ayudarle a revisar')} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div role="region" aria-label={t('Carriers we may help you review', 'Aseguradoras que podemos ayudarle a revisar')} className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
             {carriers.map((carrier) => (
               <div
                 key={carrier.name}
-                className="h-[96px] bg-white/95 rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-4 py-4 overflow-hidden"
+                className="h-[72px] sm:h-[96px] bg-white/95 rounded-xl sm:rounded-2xl border border-cream-200 shadow-soft flex items-center justify-center px-3 py-3 sm:px-4 sm:py-4 overflow-hidden"
               >
                 <div className="flex items-center justify-center w-[130px] h-[44px]">
                   <img
@@ -446,7 +446,7 @@ export default function Home() {
             ))}
           </div>
 
-          <p className="text-earth-400 mt-8 leading-relaxed max-w-[760px]" style={{ fontSize: 13, lineHeight: 1.6 }}>
+          <p className="text-earth-700 text-[13px] leading-relaxed mt-8 max-w-[760px]">
             {t(
               'Carrier names and logos are shown for informational purposes only. Availability varies by state, county, eligibility, and appointment status. Clear Point Senior Advisors is not affiliated with or endorsed by Medicare, CMS, the U.S. government, or the carriers listed.',
               'Los nombres y logotipos de las aseguradoras se muestran solo con fines informativos. La disponibilidad varía por estado, condado, elegibilidad y estado de cita. Clear Point Senior Advisors no está afiliado ni respaldado por Medicare, CMS, el gobierno de los Estados Unidos ni las aseguradoras listadas.'
@@ -504,7 +504,7 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <p className="text-center text-[11px] text-earth-400 mt-8">
+          <p className="text-center text-sm text-earth-700 mt-8">
             {t('Client testimonials require written consent and FMO/legal review before publication.', 'Los testimonios de clientes requieren consentimiento por escrito y revisión FMO/legal antes de la publicación.')}
           </p>
         </div>

@@ -3,7 +3,19 @@
 // TPMO 422.2267 compliance. The API key lives ONLY server-side; the
 // browser never sees it.
 //
+// PHASE A15 — Security hardening layers:
+//   1. Origin / CORS allowlist (only our domain + Vercel previews)
+//   2. Per-IP rate limit (30 msgs / 5 min, KV-backed)
+//   3. Prompt-injection guard (rejects jailbreak / role-override attempts)
+//   4. Compliance post-filter v2 (carrier names, eligibility, etc.)
+//   5. Conversation history cap (max 12 turns)
+//
 // Cost target: $0.005–$0.020 per conversation (Haiku + prompt caching).
+
+import { checkPromptInjection } from './_lib/prompt-guard.js';
+import { scrubPHI } from './_lib/phi-scrub.js';
+import { complianceFilter } from './_lib/compliance-filter.js';
+import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -28,6 +40,15 @@ const SYSTEM_PROMPT = `You are the customer service assistant for **ClearPoint S
 # Pre-FL: do NOT include Florida in lists of states served
 When listing the states ClearPoint serves, say only "New York, New Jersey, and Connecticut" / "Nueva York, Nueva Jersey, y Connecticut".
 
+# Helpful links
+These are real ClearPoint pages the site serves (relative paths). When guiding a caller to learn more about a topic we cover, you MAY include the relevant ClearPoint page link inline (e.g. "puede leer más en /extra-help" / "you can read more at /extra-help"). Only link pages that exist (the list below). Never invent URLs.
+- Extra Help / LIS info: /extra-help
+- Medicare Advantage info: /medicare-advantage
+- Medicare Supplement / Medigap info: /medicare-supplement
+- Part D drug plans info: /part-d
+- Resources hub: /resources
+Official, non-ClearPoint references you may also cite when relevant: Medicare.gov, 1-800-MEDICARE (1-800-633-4227), and your local SHIP (shiptacenter.org).
+
 You serve BOTH current ClearPoint clients AND visitors who simply have Medicare questions — both groups are welcome. You are NOT a sales bot. You are a warm, patient, intelligent assistant whose job is to:
 - LISTEN to the caller carefully
 - UNDERSTAND their situation (often callers are seniors confused or worried)
@@ -41,6 +62,9 @@ You serve BOTH current ClearPoint clients AND visitors who simply have Medicare 
 - Acknowledge feelings when the caller is worried, frustrated, or confused ("Entiendo que esto puede ser confuso" / "I understand this can be confusing").
 - **SPANISH USTED FORM IS MANDATORY.** Use SU (not TU), TIENE (not TIENES), PUEDE (not PUEDES), CALIFICA (not CALIFICAS), LE LLAMARÁ (not TE LLAMARÁ), CON USTED (not CONTIGO). Tutear (using TÚ form) with a Spanish-speaking senior is disrespectful and forbidden. A post-filter will catch slips but you MUST get it right.
 - Concise — 2–4 sentences typically. Long lists overwhelm.
+
+# Engage, don't interrogate
+Do NOT run a fixed checklist of questions. Respond to what the caller ACTUALLY said. If they describe a situation (e.g. "I have Part A but not Part B because I was working"), acknowledge it, give the relevant compliant Medicare guidance, and ask AT MOST ONE relevant follow-up. Never re-ask something the caller already told you (see the [Context for this turn] block). One question at a time.
 
 # Your scope
 - Medicare topics: Parts A / B / C / D, Medicare Advantage, Medigap / Medicare Supplement, Part D drug plans, Extra Help / LIS, Medicare Savings Programs (MSP / QMB / SLMB / QI), enrollment (IEP / AEP / SEP), Original Medicare vs Advantage, dental / vision / hearing / OTC supplemental benefits, doctor / hospital / provider network issues, drug / pharmacy / formulary issues, letters / bills / EOBs, appeals / denials, identity / fraud / scam concerns.
@@ -100,15 +124,34 @@ If the user wants to SCHEDULE a callback later, end your reply with the exact ta
 No tag = continue conversation normally.`;
 
 export default async function handler(req, res) {
+  // ── A15.1 CORS — allowlist our origins, reject everything else ─────────
+  var allowedOrigin = checkOrigin(req);
+  if (allowedOrigin === null) {
+    return res.status(403).json({ error: 'Origin not allowed' });
+  }
+  applyCors(req, res, allowedOrigin);
+  if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // Read body
+  // ── A15.2 Rate limit (IP-based, KV-backed when available) ──────────────
+  var ip = clientId(req);
+  var rl = await rateLimit(ip, { max: 30, windowMs: 5 * 60 * 1000, prefix: 'chat' });
+  if (!rl.ok) {
+    res.setHeader('Retry-After', String(rl.retryAfter));
+    return res.status(429).json({ error: 'Too many requests' });
+  }
+
+  // Read body. PHASE 6 — cap raw stream at 64 KB to prevent memory DoS.
   var body = {};
   try { body = req.body || {}; } catch (e1) {
     try {
       body = await new Promise(function (resolve, reject) {
-        var chunks = [];
-        req.on('data', function (c) { chunks.push(c); });
+        var chunks = []; var total = 0; var MAX = 64 * 1024;
+        req.on('data', function (c) {
+          total += c.length;
+          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
+          chunks.push(c);
+        });
         req.on('end', function () {
           var raw = Buffer.concat(chunks).toString('utf8');
           resolve(raw && raw.trim() ? JSON.parse(raw) : {});
@@ -116,6 +159,7 @@ export default async function handler(req, res) {
         req.on('error', reject);
       });
     } catch (e2) {
+      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
       return res.status(400).json({ error: 'Cannot read body' });
     }
   }
@@ -127,9 +171,66 @@ export default async function handler(req, res) {
   }
 
   var conversationHistory = Array.isArray(body.history) ? body.history : [];
+  // PHASE 6 — reject pathological history lengths early (token-cost DoS).
+  if (conversationHistory.length > 100) {
+    return res.status(400).json({ error: 'history too long' });
+  }
   var userMessage = typeof body.userMessage === 'string' ? body.userMessage.slice(0, 2000) : '';
-  var conversationContext = body.context || {};
+  // PHASE 9A — scrub PHI BEFORE it reaches Anthropic. Audit any redactions.
+  var phiResult = scrubPHI(userMessage);
+  userMessage = phiResult.text;
+  if (phiResult.detected.length > 0) {
+    console.warn('[CHAT] PHI redacted before LLM:', phiResult.detected.join(','), 'ip=' + ip);
+  }
+  // PHASE 6 — sanitize context fields (string-only, length-capped, newline-stripped)
+  // before they reach the LLM. Prevents prompt-injection via `name`/`serviceCategory`
+  // that bypasses the userMessage prompt-guard.
+  var rawCtx = body.context && typeof body.context === 'object' ? body.context : {};
+  var conversationContext = {};
+  var STR_FIELDS = ['language','zipCode','state','name','phoneNumber','email','scheduledCallbackWindow','serviceCategory'];
+  for (var ci = 0; ci < STR_FIELDS.length; ci++) {
+    var k = STR_FIELDS[ci];
+    if (typeof rawCtx[k] === 'string') {
+      conversationContext[k] = rawCtx[k].slice(0, 120).replace(/[\r\n\t]/g, ' ');
+    }
+  }
+  conversationContext.conversationClosed = rawCtx.conversationClosed === true;
+  conversationContext.advisorHandoffStarted = rawCtx.advisorHandoffStarted === true;
+  conversationContext.advisorOfferDismissed = rawCtx.advisorOfferDismissed === true;
+  var _cc = parseInt(rawCtx.clarificationCount, 10);
+  conversationContext.clarificationCount = (isFinite(_cc) && _cc >= 0 && _cc <= 50) ? _cc : 0;
   if (!userMessage) return res.status(400).json({ error: 'userMessage required' });
+
+  // ── A15.3 Cap conversation history (max 12 turns) ──────────────────────
+  if (conversationHistory.length > 12) {
+    conversationHistory = conversationHistory.slice(-12);
+  }
+
+  // ── A15.4 Prompt-injection guard ──────────────────────────────────────
+  var injCheck = checkPromptInjection(userMessage, conversationContext.language);
+  if (!injCheck.ok) {
+    console.warn('[CHAT] prompt-injection blocked:', injCheck.reason, 'ip=' + ip);
+    return res.status(200).json({
+      response: injCheck.safeReply,
+      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'prompt_injection' },
+    });
+  }
+  // ── PHASE 9A.3 Multi-turn injection — concatenate last 2 user turns ──
+  // Per-message regex misses jailbreaks distributed across turns. Check the
+  // last 2 user messages combined to catch "build rapport → now ignore"
+  // attack patterns.
+  var lastUserTurns = conversationHistory.filter(function (t) { return t && t.role === 'user'; }).slice(-2);
+  if (lastUserTurns.length >= 1) {
+    var combined = lastUserTurns.map(function (t) { return String(t.content || '').slice(0, 600); }).join(' ') + ' ' + userMessage;
+    var multiCheck = checkPromptInjection(combined, conversationContext.language);
+    if (!multiCheck.ok) {
+      console.warn('[CHAT] multi-turn injection blocked:', multiCheck.reason, 'ip=' + ip);
+      return res.status(200).json({
+        response: multiCheck.safeReply,
+        meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'multi_turn_injection' },
+      });
+    }
+  }
 
   // Build the message list for Claude
   var contextSummary = buildContextSummary(conversationContext);
@@ -140,7 +241,7 @@ export default async function handler(req, res) {
     var turn = recent[i];
     if (!turn || !turn.role || !turn.content) continue;
     if (turn.role === 'user' || turn.role === 'assistant') {
-      messages.push({ role: turn.role, content: String(turn.content).slice(0, 4000) });
+      messages.push({ role: turn.role, content: String(turn.content).slice(0, 1000) });
     }
   }
   // Add current user message with context prefix on the FIRST turn only.
@@ -162,7 +263,9 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 400,
-        temperature: 0.4,
+        // PHASE 9A — lowered from 0.4 to 0.2 for compliance-critical responses.
+        // Less hallucination, more deterministic safe answers.
+        temperature: 0.2,
         system: [
           { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
         ],
@@ -171,9 +274,12 @@ export default async function handler(req, res) {
     });
 
     if (!resp.ok) {
+      // A15.10 — MEDIUM fix: do NOT leak upstream Anthropic status code to
+      // the client (useful for attacker reconnaissance). Log full detail
+      // server-side; return only a generic 502 to the browser.
       var errText = await resp.text();
       console.error('[CHAT] Anthropic API error', resp.status, errText.slice(0, 500));
-      return res.status(502).json({ error: 'LLM_API_ERROR', status: resp.status });
+      return res.status(502).json({ error: 'LLM_API_ERROR' });
     }
 
     var data = await resp.json();
@@ -191,11 +297,17 @@ export default async function handler(req, res) {
     var wantSchedule = /\[schedule\]/i.test(assistantText);
     var cleanText = assistantText.replace(/\[handoff\]/gi, '').replace(/\[close\]/gi, '').replace(/\[schedule\]/gi, '').trim();
 
-    // Compliance post-filter — strip / replace any forbidden phrases.
+    // ── A15.5 Compliance post-filter v2 (shared module) ────────────────
+    // Strips carrier names, eligibility confirmations, network claims, etc.
+    var lang = (body.context && body.context.language) || 'es';
+    var filtered = complianceFilter(cleanText, lang);
+    cleanText = filtered.text;
+    if (filtered.violations.length) {
+      console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);
+    }
+    // Legacy in-file compliance pass (defense-in-depth) + USTED normalization.
     cleanText = compliancePostFilter(cleanText);
-    // USTED post-filter — for Spanish callers, normalize TÚ-form leakage
-    // to USTED-form (Haiku occasionally slips into tú with senior speech).
-    if (body.context && body.context.language === 'es') {
+    if (lang === 'es') {
       cleanText = ustedPostFilter(cleanText);
     }
 

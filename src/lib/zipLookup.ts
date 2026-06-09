@@ -128,7 +128,13 @@ const ZIP3_MAP: Record<string, ZipInfo> = {
   '349': { city: 'Port St. Lucie', county: 'St. Lucie County', state: 'Florida', stateCode: 'FL' },
 };
 
-const SUPPORTED_STATE_CODES = ['NY', 'NJ', 'CT', 'FL'];
+// Sawil 2026-06 COMPLIANCE — Clear Point is licensed/authorized in NY, NJ and
+// CT ONLY. Florida is NOT an authorized service area, so it must NEVER surface
+// as "supported"/"included" in lead-capture surfaces (Smart Review, LeadForm).
+// FL ZIP data stays in ZIP3_MAP only so Zara's EDUCATIONAL (non-service)
+// Medicaid content can still recognize the state — but supported === false for
+// FL everywhere, which blocks it from every service-area / lead path.
+const SUPPORTED_STATE_CODES = ['NY', 'NJ', 'CT'];
 
 export function lookupZip(zip: string): ZipInfo | null {
   const clean = zip.replace(/\D/g, '').slice(0, 5);

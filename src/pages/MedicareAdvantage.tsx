@@ -95,33 +95,59 @@ export default function MedicareAdvantage() {
           <h2 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-8 text-center">
             {t('Medicare Advantage vs. Original Medicare', 'Medicare Advantage vs. Medicare Original')}
           </h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b-2 border-earth-800">
-                  <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Feature', 'Característica')}</th>
-                  <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Original Medicare', 'Medicare Original')}</th>
-                  <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Medicare Advantage', 'Medicare Advantage')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { feature: t('Coverage', 'Cobertura'), orig: t('Part A + Part B', 'Parte A + Parte B'), ma: t('Part A + Part B + often Part D + extras', 'Parte A + Parte B + frecuentemente Parte D + extras') },
-                  { feature: t('Monthly Premium', 'Prima Mensual'), orig: t('Part B premium required', 'Prima Parte B requerida'), ma: t('Varies; often $0 beyond Part B', 'Varía; frecuentemente $0 además de Parte B') },
-                  { feature: t('Out-of-Pocket Max', 'Gasto Máximo de Bolsillo'), orig: t('No limit', 'Sin límite'), ma: t('Annual limit applies', 'Aplica límite anual') },
-                  { feature: t('Network', 'Red'), orig: t('Any provider that accepts Medicare', 'Cualquier proveedor que acepte Medicare'), ma: t('Typically HMO or PPO network', 'Típicamente red HMO o PPO') },
-                  { feature: t('Extra Benefits', 'Beneficios Extra'), orig: t('Not included', 'No incluidos'), ma: t('Dental, vision, hearing, fitness, etc.', 'Dental, visión, audición, fitness, etc.') },
-                ].map((row, i) => (
-                  <tr key={i} className="border-b border-cream-200">
-                    <td className="py-3 px-4 font-semibold text-earth-800">{row.feature}</td>
-                    <td className="py-3 px-4 text-earth-600">{row.orig}</td>
-                    <td className="py-3 px-4 text-earth-600">{row.ma}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-[11px] text-earth-500 mt-4 text-center">
+          {(() => {
+            const rows = [
+              { feature: t('Coverage', 'Cobertura'), orig: t('Part A + Part B', 'Parte A + Parte B'), ma: t('Part A + Part B + often Part D + extras', 'Parte A + Parte B + frecuentemente Parte D + extras') },
+              { feature: t('Monthly Premium', 'Prima Mensual'), orig: t('Part B premium required', 'Prima Parte B requerida'), ma: t('Varies; often $0 beyond Part B', 'Varía; frecuentemente $0 además de Parte B') },
+              { feature: t('Out-of-Pocket Max', 'Gasto Máximo de Bolsillo'), orig: t('No limit', 'Sin límite'), ma: t('Annual limit applies', 'Aplica límite anual') },
+              { feature: t('Network', 'Red'), orig: t('Any provider that accepts Medicare', 'Cualquier proveedor que acepte Medicare'), ma: t('Typically HMO or PPO network', 'Típicamente red HMO o PPO') },
+              { feature: t('Extra Benefits', 'Beneficios Extra'), orig: t('Not included', 'No incluidos'), ma: t('Dental, vision, hearing, fitness, etc.', 'Dental, visión, audición, fitness, etc.') },
+            ];
+            return (
+              <>
+                {/* Mobile (<sm): stacked definition-list — no horizontal scroll */}
+                <div className="sm:hidden space-y-4">
+                  {rows.map((row, i) => (
+                    <div key={i} className="bg-white border border-cream-200 rounded-xl p-4">
+                      <div className="font-serif text-earth-900 font-semibold text-base mb-3">{row.feature}</div>
+                      <dl className="space-y-2 text-sm">
+                        <div>
+                          <dt className="text-[12px] uppercase tracking-wider text-earth-500 font-semibold">{t('Original Medicare', 'Medicare Original')}</dt>
+                          <dd className="text-earth-700 mt-0.5">{row.orig}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[12px] uppercase tracking-wider text-earth-500 font-semibold">{t('Medicare Advantage', 'Medicare Advantage')}</dt>
+                          <dd className="text-earth-700 mt-0.5">{row.ma}</dd>
+                        </div>
+                      </dl>
+                    </div>
+                  ))}
+                </div>
+                {/* Tablet/desktop: full table */}
+                <div className="hidden sm:block">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b-2 border-earth-800">
+                        <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Feature', 'Característica')}</th>
+                        <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Original Medicare', 'Medicare Original')}</th>
+                        <th className="text-left py-3 px-4 font-serif text-earth-900">{t('Medicare Advantage', 'Medicare Advantage')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => (
+                        <tr key={i} className="border-b border-cream-200">
+                          <td className="py-3 px-4 font-semibold text-earth-800">{row.feature}</td>
+                          <td className="py-3 px-4 text-earth-700">{row.orig}</td>
+                          <td className="py-3 px-4 text-earth-700">{row.ma}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            );
+          })()}
+          <p className="text-[13px] text-earth-700 mt-4 text-center">
             {t('This comparison is for educational reference only. Final plan availability and specific details require a completed Scope of Appointment (SOA).', 'Esta comparación es solo para referencia educativa. La disponibilidad final de planes y los detalles específicos requieren una Cita de Alcance (SOA) completada.')}
           </p>
         </div>

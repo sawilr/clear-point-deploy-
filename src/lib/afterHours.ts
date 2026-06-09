@@ -10,7 +10,8 @@
 
 export interface OfficeStatus {
   isOpen: boolean;
-  nextOpenLabel: string; // "tomorrow at 9am ET" / "Monday at 9am ET"
+  nextOpenLabel: string;   // EN: "tomorrow at 9am ET" / "Monday at 9am ET"
+  nextOpenLabelEs: string; // ES: "mañana a las 9am ET" / "el lunes a las 9am ET"
   greetingEn: string;    // "Good morning" / "Good afternoon" / "Good evening"
   greetingEs: string;
   ctaLabelEn: string;    // "Call now" or "Schedule callback"
@@ -43,19 +44,23 @@ export function getOfficeStatus(now: Date = getEtNow()): OfficeStatus {
   const isWeekday = dow >= 1 && dow <= 5;
   const isOpen = isWeekday && hour >= 9 && hour < 18;
 
+  // Sawil 2026-06 — localize the next-open label. Previously English-only,
+  // which produced the mixed-language chip "Llamar (devolución tomorrow at
+  // 9am ET)" in Spanish. EN + ES are now kept in lockstep.
   let nextOpenLabel: string;
+  let nextOpenLabelEs: string;
   if (isOpen) {
-    nextOpenLabel = 'now';
+    nextOpenLabel = 'now';            nextOpenLabelEs = 'ahora';
   } else if (isWeekday && hour < 9) {
-    nextOpenLabel = 'today at 9am ET';
+    nextOpenLabel = 'today at 9am ET'; nextOpenLabelEs = 'hoy a las 9am ET';
   } else if (dow === 5 && hour >= 18) {
-    nextOpenLabel = 'Monday at 9am ET';
+    nextOpenLabel = 'Monday at 9am ET'; nextOpenLabelEs = 'el lunes a las 9am ET';
   } else if (dow === 6) {
-    nextOpenLabel = 'Monday at 9am ET';
+    nextOpenLabel = 'Monday at 9am ET'; nextOpenLabelEs = 'el lunes a las 9am ET';
   } else if (dow === 0) {
-    nextOpenLabel = 'Monday at 9am ET';
+    nextOpenLabel = 'Monday at 9am ET'; nextOpenLabelEs = 'el lunes a las 9am ET';
   } else {
-    nextOpenLabel = 'tomorrow at 9am ET';
+    nextOpenLabel = 'tomorrow at 9am ET'; nextOpenLabelEs = 'mañana a las 9am ET';
   }
 
   const greetingEn =
@@ -70,6 +75,7 @@ export function getOfficeStatus(now: Date = getEtNow()): OfficeStatus {
   return {
     isOpen,
     nextOpenLabel,
+    nextOpenLabelEs,
     greetingEn,
     greetingEs,
     ctaLabelEn: isOpen ? 'Call now — 1-866-310-8702' : 'Schedule callback',

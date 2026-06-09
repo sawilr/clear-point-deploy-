@@ -3,7 +3,6 @@ import { Hero } from '../components/Hero';
 import { CTASection } from '../components/CTASection';
 import { useScrollReveal } from '../components/ScrollReveal';
 import { ShieldIcon, CheckIcon, UsersIcon, StarIcon } from '../components/icons';
-import { ShieldCheck, Headset, BookOpen } from 'lucide-react';
 import { LogoSvg } from '../components/LogoSvg';
 
 export default function About() {
@@ -81,11 +80,11 @@ export default function About() {
       <section ref={credReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${credReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="max-w-6xl mx-auto px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
-            <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Credentials', 'Credenciales')}</span>
-            <h2 className="font-serif text-4xl sm:text-5xl font-normal text-earth-900 leading-snug mb-4">
+            <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('Credentials', 'Credenciales')}</span>
+            <h2 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-normal text-earth-900 leading-snug mb-4">
               {t('Licensed. Experienced. Trusted.', 'Licenciado. Experimentado. De Confianza.')}
             </h2>
-            <p className="text-earth-600 text-sm text-gold-600 font-medium">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
+            <p className="text-earth-700 text-sm font-medium">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
           </div>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {[
@@ -102,53 +101,60 @@ export default function About() {
               </div>
             ))}
           </div>
-          {/* Team section */}
-          <div className="mt-10 bg-cream-50 rounded-xl p-6 border border-cream-200">
-            <h3 className="font-serif text-2xl font-semibold text-earth-900 mb-3 text-center">{t('Our Advisory Team', 'Nuestro Equipo Asesor')}</h3>
-            <p className="text-earth-600 text-base leading-relaxed text-center max-w-2xl mx-auto mb-6">
+          {/* Lead Advisor */}
+          <div className="mt-10 bg-cream-50 rounded-xl p-7 border border-cream-200">
+            <h3 className="font-serif text-2xl font-semibold text-earth-900 mb-2 text-center">{t('Meet Your Licensed Advisor', 'Conozca a Su Asesor Licenciado')}</h3>
+            <p className="text-earth-600 text-base leading-relaxed text-center max-w-2xl mx-auto mb-7">
               {t(
-                'Clear Point Senior Advisors is built around licensed Medicare guidance, bilingual education, and no-pressure support. As the agency grows, team profiles will be updated to reflect our expanding licensed advisory network.',
-                'Clear Point Senior Advisors se construye sobre orientación de Medicare con licencia, educación bilingüe y apoyo sin presión. A medida que la agencia crece, los perfiles del equipo se actualizarán para reflejar nuestra red asesora licenciada en expansión.'
+                'Clear Point Senior Advisors is built around licensed Medicare guidance, bilingual education, and no-pressure support.',
+                'Clear Point Senior Advisors se construye sobre orientación de Medicare con licencia, educación bilingüe y apoyo sin presión.'
               )}
             </p>
-            <div className="grid sm:grid-cols-3 gap-4">
-              {[
-                {
-                  roleEn: 'Licensed Medicare Guidance',
-                  roleEs: 'Orientación de Medicare con Licencia',
-                  textEn: 'Our agency works with licensed professionals to provide clear Medicare education and support. Individual advisor profiles will be added after internal review and approval.',
-                  textEs: 'Nuestra agencia trabaja con profesionales con licencia para ofrecer educación y apoyo claro sobre Medicare. Los perfiles individuales de asesores se agregarán después de revisión y aprobación interna.',
-                },
-                {
-                  roleEn: 'Client Support',
-                  roleEs: 'Apoyo al Cliente',
-                  textEn: 'Our support process is designed to help visitors schedule appointments, request information, and connect with the right licensed team member.',
-                  textEs: 'Nuestro proceso de apoyo está diseñado para ayudar a los visitantes a programar citas, solicitar información y conectarse con el miembro del equipo licenciado correspondiente.',
-                },
-                {
-                  roleEn: 'Medicare Education Support',
-                  roleEs: 'Apoyo Educativo sobre Medicare',
-                  textEn: 'We focus on plain-language Medicare education so visitors can better understand their next steps before speaking with a licensed agent.',
-                  textEs: 'Nos enfocamos en educación sobre Medicare en lenguaje claro para que los visitantes puedan entender mejor sus próximos pasos antes de hablar con un agente con licencia.',
-                },
-              ].map((m, i) => {
-                const icons = [
-                  <ShieldCheck key="sc" className="w-7 h-7 text-gold-500" strokeWidth={1.5} />,
-                  <Headset key="hs" className="w-7 h-7 text-sage-500" strokeWidth={1.5} />,
-                  <BookOpen key="bo" className="w-7 h-7 text-gold-500" strokeWidth={1.5} />,
-                ];
-                return (
-                  <div key={i} className="bg-white/50 rounded-lg p-5 text-center border border-dashed border-cream-300">
-                    <div className="w-14 h-14 rounded-full bg-cream-100 flex items-center justify-center mx-auto mb-3">
-                      {icons[i]}
+
+            <div className="max-w-2xl mx-auto bg-white rounded-xl p-6 sm:p-7 shadow-soft border border-cream-200">
+              <div className="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                <div className="w-16 h-16 rounded-full bg-gold-100 text-gold-700 flex items-center justify-center font-serif text-xl font-bold flex-shrink-0 border border-gold-300">
+                  SR
+                </div>
+                <div className="flex-1 text-center sm:text-left">
+                  <h4 className="font-serif text-2xl font-semibold text-earth-900 mb-1">Sawil Reyes</h4>
+                  <p className="text-sm font-semibold text-gold-700 uppercase tracking-wide mb-4">
+                    {t('Licensed Medicare Advisor · Founder', 'Asesor de Medicare Licenciado · Fundador')}
+                  </p>
+                  <dl className="space-y-2.5 text-sm text-earth-700 mb-4">
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <dt className="font-semibold text-earth-900 sm:min-w-[110px]">NPN</dt>
+                      <dd>17261494</dd>
                     </div>
-                    <div className="text-base font-semibold text-earth-900 mb-1">{t(m.roleEn, m.roleEs)}</div>
-                    <div className="text-sm text-earth-600 mt-2 leading-relaxed">{t(m.textEn, m.textEs)}</div>
-                  </div>
-                );
-              })}
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <dt className="font-semibold text-earth-900 sm:min-w-[110px]">{t('Licensed in', 'Licenciado en')}</dt>
+                      <dd>NY · NJ · CT</dd>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <dt className="font-semibold text-earth-900 sm:min-w-[110px]">{t('Languages', 'Idiomas')}</dt>
+                      <dd>{t('English · Spanish', 'Inglés · Español')}</dd>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <dt className="font-semibold text-earth-900 sm:min-w-[110px]">{t('Focus', 'Enfoque')}</dt>
+                      <dd>{t('Medicare Advantage · Part D', 'Medicare Advantage · Parte D')}</dd>
+                    </div>
+                  </dl>
+                  <p className="text-sm text-earth-700 leading-relaxed">
+                    {t(
+                      'Sawil leads Clear Point with a focus on bilingual, plain-language Medicare guidance for seniors in New York, New Jersey, and Connecticut. Every conversation starts with listening — never a sales pitch.',
+                      'Sawil dirige Clear Point con un enfoque en orientación de Medicare bilingüe y en lenguaje claro para adultos mayores en Nueva York, Nueva Jersey y Connecticut. Cada conversación comienza con escuchar — nunca con una venta.'
+                    )}
+                  </p>
+                </div>
+              </div>
             </div>
-            {/* Internal note: All advisors must be licensed in NY, FL, CT, NJ and approved by FMO before listing. */}
+
+            <p className="text-center text-sm text-earth-700 mt-5">
+              {t(
+                'Additional licensed advisors will be added as the practice grows. All advisors are licensed in NY, NJ, CT and reviewed by our FMO before listing.',
+                'Asesores licenciados adicionales se agregarán a medida que la agencia crezca. Todos los asesores están licenciados en NY, NJ, CT y son revisados por nuestro FMO antes de ser listados.'
+              )}
+            </p>
           </div>
 
           <div className="mt-8 bg-earth-800 rounded-xl p-6 text-center">

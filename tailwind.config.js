@@ -1,9 +1,28 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: ["class"],
+  // Sawil 2026-06 enterprise interaction fix — THE root cause of "el botón
+  // salta y se queda disparado al tocar". Without this flag every `hover:`
+  // utility (scale, -translate-y, shadow, bg) STICKS on touch devices: the
+  // tap triggers :hover and it stays applied until you tap elsewhere, so the
+  // button looks launched/broken. hoverOnlyWhenSupported wraps all hover
+  // styles in `@media (hover: hover)`, so they only fire for real pointers
+  // (mouse/trackpad). Phones, tablets and touch-TVs no longer get stuck
+  // hover. Desktop behavior is unchanged. One line, fixes it site-wide.
+  future: {
+    hoverOnlyWhenSupported: true,
+  },
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      // Sawil 2026-06 enterprise responsive: add a custom small breakpoint
+      // for 400+ px phones (Hero.tsx had `xs:` which Tailwind didn't define),
+      // and a `3xl` for 1920+ monitors / TVs so we can widen containers
+      // without leaving 700+ px dead margin on 2560 displays.
+      screens: {
+        xs: '400px',
+        '3xl': '1920px',
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

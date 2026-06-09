@@ -6,25 +6,32 @@ interface LanguageToggleProps {
   variant?: 'topbar' | 'nav';
 }
 
+// PHASE 6 — bumped to ≥44×44 px hit target (WCAG 2.5.5) and 12px text
+// for the senior audience while keeping the chip visually compact.
+const BTN_BASE =
+  'rounded-full text-[12px] font-bold tracking-wider transition-all inline-flex items-center justify-center min-h-[44px] min-w-[44px] px-3';
+
 export function LanguageToggle({ lang, setLang, variant = 'topbar' }: LanguageToggleProps) {
   if (variant === 'nav') {
     return (
       <div className="flex bg-cream-50/10 rounded-full p-0.5 gap-0.5" role="group" aria-label="Language selector">
         <button
           onClick={() => setLang('en')}
-          className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wider transition-all ${
+          className={`${BTN_BASE} ${
             lang === 'en' ? 'bg-gold-400 text-earth-900' : 'text-earth-700 hover:text-earth-900'
           }`}
           aria-pressed={lang === 'en'}
+          aria-label="Switch to English"
         >
           EN
         </button>
         <button
           onClick={() => setLang('es')}
-          className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wider transition-all ${
+          className={`${BTN_BASE} ${
             lang === 'es' ? 'bg-gold-400 text-earth-900' : 'text-earth-700 hover:text-earth-900'
           }`}
           aria-pressed={lang === 'es'}
+          aria-label="Cambiar a Español"
         >
           ES
         </button>
@@ -36,19 +43,21 @@ export function LanguageToggle({ lang, setLang, variant = 'topbar' }: LanguageTo
     <div className="flex bg-cream-50/10 rounded-full p-0.5 gap-0.5" role="group" aria-label="Language selector">
       <button
         onClick={() => setLang('en')}
-        className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wider transition-all ${
-          lang === 'en' ? 'bg-gold-400 text-earth-900' : 'text-cream-50/60 hover:text-cream-50'
+        className={`${BTN_BASE} ${
+          lang === 'en' ? 'bg-gold-400 text-earth-900' : 'text-cream-50/70 hover:text-cream-50'
         }`}
         aria-pressed={lang === 'en'}
+        aria-label="Switch to English"
       >
         EN
       </button>
       <button
         onClick={() => setLang('es')}
-        className={`px-3 py-1 rounded-full text-[11px] font-bold tracking-wider transition-all ${
-          lang === 'es' ? 'bg-gold-400 text-earth-900' : 'text-cream-50/60 hover:text-cream-50'
+        className={`${BTN_BASE} ${
+          lang === 'es' ? 'bg-gold-400 text-earth-900' : 'text-cream-50/70 hover:text-cream-50'
         }`}
         aria-pressed={lang === 'es'}
+        aria-label="Cambiar a Español"
       >
         ES
       </button>

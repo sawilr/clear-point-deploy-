@@ -1,3 +1,4 @@
+import { Link } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -58,13 +59,13 @@ export default function ExtraHelp() {
                   )}
                 </p>
                 <div className="bg-white rounded-lg p-4 mb-4">
-                  <h4 className="font-semibold text-earth-800 text-sm mb-2">{t('Rough Eligibility Guidelines (2025):', 'Pautas Aproximadas de Elegibilidad (2025):')}</h4>
+                  <h4 className="font-semibold text-earth-800 text-sm mb-2">{t('Rough Eligibility Guidelines (2026):', 'Pautas Aproximadas de Elegibilidad (2026):')}</h4>
                   <ul className="text-earth-600 text-sm space-y-1">
                     <li>{t('Individual: income below ~$22,000/year; resources below ~$17,000', 'Individual: ingresos menores a ~$22,000/año; recursos menores a ~$17,000')}</li>
                     <li>{t('Married: income below ~$30,000/year; resources below ~$34,000', 'Casado: ingresos menores a ~$30,000/año; recursos menores a ~$34,000')}</li>
                   </ul>
                 </div>
-                <p className="text-[11px] text-earth-500">
+                <p className="text-[13px] text-earth-700">
                   {t('These are approximate figures. Final eligibility is determined by the Social Security Administration. A licensed advisor can help you review your situation and the application process.', 'Estas cifras son aproximadas. La elegibilidad final la determina la Administración del Seguro Social. Un asesor licenciado puede ayudarle a revisar su situación y el proceso de solicitud.')}
                 </p>
               </div>
@@ -112,9 +113,9 @@ export default function ExtraHelp() {
                     'Looking for help beyond Medicare Part D drug costs? Medicare Savings Programs (MSP), Medicaid, and State Pharmaceutical Assistance Programs (SPAP) are covered on a separate page.',
                     '¿Busca ayuda más allá de costos de medicamentos de Medicare Parte D? Los Programas de Ahorro de Medicare (MSP), Medicaid y los Programas Estatales de Asistencia Farmacéutica (SPAP) se explican en una página separada.'
                   )}{' '}
-                  <a href="/#/help-paying-costs" className="font-semibold text-gold-600 hover:text-gold-700 underline">
+                  <Link to="/help-paying-costs" className="font-semibold text-gold-600 hover:text-gold-700 underline">
                     {t('See Programs That May Help You Save', 'Ver Programas que Pueden Ayudarle a Ahorrar')}
-                  </a>
+                  </Link>
                 </p>
               </div>
             </div>

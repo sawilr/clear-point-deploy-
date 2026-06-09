@@ -147,31 +147,33 @@ export function Header() {
 
   return (
     <>
-      {/* Top Bar */}
+      {/* Top Bar — uses nowrap on the whole row so LanguageToggle stays inline at 320px */}
       <div className="bg-earth-900 text-cream-50/80 text-xs py-2.5">
-        <div className="max-w-6xl mx-auto px-5 flex items-center justify-between gap-3 flex-wrap">
-          <span className="flex items-center gap-2 flex-wrap whitespace-nowrap">
+        <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5 flex items-center justify-between gap-2 flex-nowrap">
+          <span className="flex items-center gap-1.5 min-w-0 truncate">
             <PhoneIcon className="w-3.5 h-3.5 text-gold-400 flex-shrink-0" />
             <span className="hidden sm:inline whitespace-nowrap">{t('Call us free: ', 'Llámenos gratis: ')}</span>
             <a href="tel:18663108702" className="text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-866-310-8702</a>
             <span className="hidden md:inline whitespace-nowrap">&nbsp;|&nbsp; TTY: 711 &nbsp;|&nbsp; {t('Mon–Fri 9am–6pm ET', 'Lun–Vie 9am–6pm ET')}</span>
           </span>
-          <LanguageToggle lang={lang} setLang={setLang} variant="topbar" />
+          <div className="flex-shrink-0">
+            <LanguageToggle lang={lang} setLang={setLang} variant="topbar" />
+          </div>
         </div>
       </div>
 
       {/* Nav */}
       <nav className="sticky top-0 z-50 bg-cream-50/90 backdrop-blur-md border-b border-cream-200">
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
           <div className="flex items-center justify-between h-[70px]">
             {/* Logo */}
             <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <div className="transition-transform group-hover:scale-105 flex-shrink-0">
                 <LogoSvg size={40} />
               </div>
-              <div className="flex flex-col leading-none whitespace-nowrap">
-                <span className="font-serif text-lg font-bold text-earth-900 tracking-tight whitespace-nowrap">Clear Point</span>
-                <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-gold-500 mt-0.5 whitespace-nowrap">{t('Senior Advisors', 'Senior Advisors')}</span>
+              <div className="flex flex-col leading-tight whitespace-nowrap">
+                <span className="font-serif text-lg font-bold text-earth-900 tracking-tight whitespace-nowrap leading-[1.1]">Clear Point</span>
+                <span className="text-[10px] font-semibold tracking-[0.18em] uppercase text-gold-500 mt-1 whitespace-nowrap">{t('Senior Advisors', 'Senior Advisors')}</span>
               </div>
             </a>
 
@@ -261,7 +263,7 @@ export function Header() {
               </a>
               <button
                 onClick={handleFreeReview}
-                className="bg-earth-800 text-cream-50 text-sm font-semibold px-4 py-2.5 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft whitespace-nowrap"
+                className="bg-earth-800 text-cream-50 text-sm font-semibold px-4 py-2.5 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap"
               >
                 {t('Free Review', 'Revisión Gratis')}
               </button>
@@ -269,7 +271,7 @@ export function Header() {
 
             {/* Mobile Toggle */}
             <button
-              className="lg:hidden p-2 text-earth-800"
+              className="lg:hidden p-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-earth-800 transition-transform active:scale-90"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label={t('Toggle menu', 'Alternar menú')}
             >
@@ -280,7 +282,7 @@ export function Header() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-70px)] overflow-y-auto">
+          <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-98px)] overflow-y-auto overscroll-contain">
             <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
             <Link to="/medicare-advantage" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap moved to Education section below. Restore by uncommenting. */}

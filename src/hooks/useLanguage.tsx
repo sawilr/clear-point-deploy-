@@ -15,8 +15,11 @@ const LanguageContext = createContext<LanguageContextValue | null>(null);
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === 'es' || saved === 'en') return saved;
+      // PHASE 6 — Safari Private Browsing throws SecurityError on localStorage.
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved === 'es' || saved === 'en') return saved;
+      } catch { /* private mode — fall through to browser-lang */ }
       const browserLang = navigator.language || (navigator as any).userLanguage || '';
       if (browserLang.toLowerCase().startsWith('es')) return 'es';
     }
@@ -24,7 +27,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, lang);
+    try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* private mode */ }
   }, [lang]);
 
   const setLang = useCallback((l: Lang) => {

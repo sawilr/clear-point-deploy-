@@ -9,7 +9,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
 
   if (variant === 'compact') {
     return (
-      <div className="text-[11px] text-earth-500 leading-relaxed">
+      <div className="text-[13px] text-earth-700 leading-relaxed">
         <p>
           {t(
             'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, and costs vary by plan, location, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov or 1-800-MEDICARE for official information.',
@@ -22,7 +22,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
 
   if (variant === 'inline') {
     return (
-      <p className="text-[11px] text-earth-500 leading-relaxed">
+      <p className="text-[13px] text-earth-700 leading-relaxed">
         {t(
           'ClearPoint Senior Advisors is an independent insurance agency. Not connected with or endorsed by Medicare, CMS, or the U.S. government. Plan availability varies by location.',
           'ClearPoint Senior Advisors es una agencia de seguros independiente. No está conectada ni respaldada por Medicare, CMS ni el gobierno de EE. UU. La disponibilidad de planes varía por ubicación.'
@@ -58,7 +58,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
   }
 
   return (
-    <div className="text-[11px] text-cream-50/30 leading-relaxed space-y-2.5">
+    <div className="text-[12px] text-cream-50/70 leading-relaxed space-y-2.5">
       <p>
         {t(
           'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.',

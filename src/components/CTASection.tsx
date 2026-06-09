@@ -62,7 +62,7 @@ export function CTASection({
     requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
 
-  const primaryBtnClass = `inline-flex items-center gap-2 font-bold text-sm px-7 py-3.5 rounded-xl transition-all hover:shadow-soft ${
+  const primaryBtnClass = `inline-flex items-center justify-center gap-2 font-bold text-sm px-5 sm:px-7 py-3.5 min-h-[48px] rounded-xl transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap ${
     variant === 'gold'
       ? 'bg-earth-800 text-cream-50 hover:bg-earth-900'
       : 'bg-gold-400 text-earth-900 hover:bg-gold-300'
@@ -74,8 +74,8 @@ export function CTASection({
   const resolvedClick = onPrimaryClick ?? (primaryHref === '/contact' ? handleContactNav : undefined);
 
   return (
-    <section ref={ref} className={`py-20 lg:py-24 transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'} ${variant === 'gold' ? 'bg-gold-200' : 'bg-earth-800'}`}>
-      <div className="max-w-3xl mx-auto px-5 text-center">
+    <section ref={ref} className={`py-14 sm:py-16 lg:py-20 transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'} ${variant === 'gold' ? 'bg-gold-200' : 'bg-earth-800'}`}>
+      <div className="max-w-3xl lg:max-w-4xl 2xl:max-w-5xl 3xl:max-w-6xl mx-auto px-5 text-center">
         <h2 className={`font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal leading-snug mb-4 ${variant === 'gold' ? 'text-earth-900' : 'text-cream-50'}`}>
           {t(headline, headlineEs)}
         </h2>
@@ -96,7 +96,7 @@ export function CTASection({
           )}
           <a
             href="tel:18663108702"
-            className={`inline-flex items-center gap-2 font-bold text-sm px-7 py-3.5 rounded-xl border transition-all ${
+            className={`inline-flex items-center justify-center gap-2 font-bold text-sm px-5 sm:px-7 py-3.5 min-h-[48px] rounded-xl border transition-all active:scale-[0.98] whitespace-nowrap ${
               variant === 'gold'
                 ? 'bg-cream-50 text-earth-900 border-earth-800/15 hover:border-earth-800'
                 : 'border-cream-50/30 text-cream-50 hover:bg-cream-50/10'

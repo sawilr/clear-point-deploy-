@@ -97,14 +97,37 @@ export default function OtcBenefits() {
                 </div>
               </div>
 
+              {/* Sawil 2026-06 — prominent, premium callout: some plans include
+                  help for food, groceries, and utility bills. Compliance-safe:
+                  "some plans may", extra eligibility usually required, amounts
+                  vary, verify with a licensed advisor. No plan recommendation,
+                  no guarantee, no eligibility determination. */}
+              <div className="bg-gold-50 rounded-xl p-5 sm:p-6 border border-gold-200">
+                <h3 className="font-serif text-xl font-semibold text-earth-900 mb-2">
+                  {t('Some plans: food, groceries & help with bills', 'Algunos planes: comida, comestibles y ayuda con servicios públicos')}
+                </h3>
+                <p className="text-earth-700 text-[15px] leading-relaxed">
+                  {t(
+                    'Beyond regular OTC items, some Medicare Advantage plans may offer an expanded card that can help pay for healthy food, groceries, or certain utility bills (such as electric or gas). These expanded benefits are not in every plan and usually require additional eligibility — for example Medicaid, Extra Help/LIS, a qualifying chronic condition, or a Special Needs Plan (SNP). Amounts and rules vary by carrier, plan, county or service area, and plan year.',
+                    'Además de los artículos OTC regulares, algunos planes Medicare Advantage pueden ofrecer una tarjeta ampliada que puede ayudar a pagar comida saludable, comestibles o ciertos recibos de servicios públicos (como luz o gas). Estos beneficios ampliados no están en todos los planes y normalmente requieren elegibilidad adicional — por ejemplo Medicaid, Extra Help/LIS, una condición crónica que cualifique, o un Plan de Necesidades Especiales (SNP). Los montos y las reglas varían por aseguradora, plan, condado o área de servicio y año del plan.'
+                  )}
+                </p>
+                <p className="text-earth-500 text-[13px] leading-relaxed mt-3">
+                  {t(
+                    'This is general education, not a guarantee of benefits. A licensed advisor can verify what a specific plan in your county actually offers.',
+                    'Esto es educación general, no una garantía de beneficios. Un asesor licenciado puede verificar lo que un plan específico en su condado realmente ofrece.'
+                  )}
+                </p>
+              </div>
+
               {/* Body copy — exact wording provided by Sawil. Compliance-safe;
                   no plan recommendation, no eligibility promise, no specific
                   amount guarantee. */}
               <div className="space-y-5 text-earth-700 text-[15px] leading-relaxed">
                 <p>
                   {t(
-                    'OTC benefits are not the same in every plan. The amount, how often it renews, where it can be used, how items are ordered, and which products are allowed can vary by insurance company, plan, county or service area, state, eligibility, and plan year. In New York, New Jersey, Connecticut, and Florida, OTC benefits must still be checked by the exact plan available in the person’s county or service area.',
-                    'Los beneficios OTC no son iguales en todos los planes. El monto, la frecuencia, dónde se puede usar, cómo se ordenan los productos y cuáles artículos están permitidos pueden variar por aseguradora, plan, condado o área de servicio, estado, elegibilidad y año del plan. En New York, New Jersey, Connecticut y Florida, el beneficio OTC siempre debe verificarse según el plan exacto disponible en el condado o área de servicio de la persona.'
+                    'OTC benefits are not the same in every plan. The amount, how often it renews, where it can be used, how items are ordered, and which products are allowed can vary by insurance company, plan, county or service area, state, eligibility, and plan year. In New York, New Jersey, and Connecticut, OTC benefits must still be checked by the exact plan available in the person’s county or service area.',
+                    'Los beneficios OTC no son iguales en todos los planes. El monto, la frecuencia, dónde se puede usar, cómo se ordenan los productos y cuáles artículos están permitidos pueden variar por aseguradora, plan, condado o área de servicio, estado, elegibilidad y año del plan. En New York, New Jersey y Connecticut, el beneficio OTC siempre debe verificarse según el plan exacto disponible en el condado o área de servicio de la persona.'
                   )}
                 </p>
                 <p>
@@ -116,7 +139,7 @@ export default function OtcBenefits() {
                 <p>
                   {t(
                     'Some Medicare Advantage plans may also offer expanded card benefits for food, groceries, utilities, or other special supports. These benefits are different from regular OTC and may require additional eligibility, such as Medicaid, Extra Help/LIS, a qualifying chronic condition, SNP status, or other plan-specific rules.',
-                    'Algunos planes Medicare Advantage también pueden ofrecer beneficios ampliados para comida, groceries, utilidades u otros apoyos especiales. Estos beneficios son diferentes al OTC regular y pueden requerir elegibilidad adicional, como Medicaid, Extra Help/LIS, una condición crónica que cualifique, estatus SNP u otras reglas específicas del plan.'
+                    'Algunos planes Medicare Advantage también pueden ofrecer beneficios ampliados para comida, comestibles, servicios públicos u otros apoyos especiales. Estos beneficios son diferentes al OTC regular y pueden requerir elegibilidad adicional, como Medicaid, Extra Help/LIS, una condición crónica que cualifique, estatus SNP u otras reglas específicas del plan.'
                   )}
                 </p>
                 <p>

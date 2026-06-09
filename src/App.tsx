@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router'
+import { Routes, Route, useLocation } from 'react-router'
 import Home from './pages/Home'
 import About from './pages/About'
 import MedicareAdvantage from './pages/MedicareAdvantage'
@@ -13,18 +13,29 @@ import Contact from './pages/Contact'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import Accessibility from './pages/Accessibility'
 import Terms from './pages/Terms'
+import SignSOA from './pages/SignSOA'
+import NotFound from './pages/NotFound'
 import { Header } from './components/Header'
 import { Footer } from './components/Footer'
 import { MobileStickyBar } from './components/MobileStickyBar'
 import { ScrollToTop } from './components/ScrollToTop'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { ChatBot } from './components/ChatBot'
+import { BotLauncher } from './components/BotLauncher'
 import { LanguageProvider } from './hooks/useLanguage'
 
 export default function App() {
+  // Sawil 2026-06 — MobileStickyBar (the bottom CTA) is suppressed on
+  // /support. Clara's chat shell sits flush at bottom-0 on mobile, and
+  // a second fixed bar there would collide / cover the input. App is
+  // mounted inside <HashRouter> (see main.tsx), so useLocation() is safe.
+  const location = useLocation();
+  const isSupportPage = location.pathname === '/support';
   return (
+    <ErrorBoundary>
     <LanguageProvider>
-    <div className="min-h-screen bg-cream-50">
+    <div className={`min-h-screen bg-cream-50 ${isSupportPage ? '' : 'pb-[calc(env(safe-area-inset-bottom)+96px)] md:pb-0'}`}>
       {/* WCAG 2.4.1 Bypass Blocks — Skip link must be first focusable element on the page.
           Visually hidden until focused via Tab; then appears as a high-contrast pill at top-left. */}
       <a
@@ -35,7 +46,7 @@ export default function App() {
       </a>
       <ScrollToTop />
       <Header />
-      <main id="main-content" className="pb-20 md:pb-0">
+      <main id="main-content">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
@@ -51,12 +62,25 @@ export default function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/accessibility" element={<Accessibility />} />
           <Route path="/terms" element={<Terms />} />
+          {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
+          <Route path="/soa/:token" element={<SignSOA />} />
+          {/* PHASE 7 — Branded 404 fallback. */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
-      <Footer />
-      <MobileStickyBar />
-      <ChatBot />
+      {!isSupportPage && <Footer />}
+      {!isSupportPage && <MobileStickyBar />}
+      {/* PHASE A18 — BotLauncher renders the floating button. ChatBot is
+          still mounted (it holds Zara's logic); its own button is hidden
+          while the launcher is active. Launcher dispatches an event to
+          open Zara, or routes to /support for Customer Service. */}
+      {/* Sawil 2026-06 — Suppress Zara's floating launcher + chat on /support.
+          That page is Clara's surface in page-mode; a floating Zara pill
+          would collide and double-route the user. */}
+      {!isSupportPage && <BotLauncher />}
+      {!isSupportPage && <ChatBot />}
     </div>
     </LanguageProvider>
+    </ErrorBoundary>
   )
 }

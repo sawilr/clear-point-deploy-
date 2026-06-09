@@ -35,14 +35,26 @@
   }
 
   html {
-    scroll-behavior: auto; /* JS calls specify behavior explicitly — smooth/instant per call */
-    overflow-x: clip; /* Enterprise: kill horizontal overflow without breaking position:sticky descendants. Modern (Baseline 2024+); preferred over overflow-x:hidden which creates a scroll container. */
+    scroll-behavior: auto;
+    /* Sawil 2026-06: removed `overflow-x: hidden` from html — it broke
+       position:sticky on iOS Safari, which made the header detach and
+       jitter mid-scroll (root cause of "alignment jumps when tapping").
+       Body still has overflow-x: hidden, which is enough to prevent
+       horizontal page-scroll leaks from off-screen honeypots. */
+  }
+
+  /* Sawil 2026-06 enterprise mobile chat: prevent iOS rubber-band from
+     bubbling to the html element. Clara's body scroll container already
+     has overscroll-behavior: contain; this ensures the html itself does
+     not jiggle when the user reaches the top/bottom of the messages. */
+  html {
+    overscroll-behavior-y: none;
   }
 
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, sans-serif;
-    overflow-x: clip; /* Belt-and-suspenders alongside html. */
+    overflow-x: hidden; /* iOS 14/15 compat. */
   }
 
   /* Honor user accessibility preference — reduces motion sickness risk for senior users (vestibular sensitivity). */
@@ -58,6 +70,79 @@
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Playfair Display', Georgia, serif;
   }
+
+  /* Sawil 2026-06 enterprise interaction polish — site-wide, every page.
+     These three rules make taps feel instant and premium on phones, tablets
+     and touch-TVs, and add an accessible focus ring for keyboard users
+     (needed for an enterprise / accessibility audit). */
+
+  /* 1) Kill the grey/blue tap-flash iOS & Android paint on every control. */
+  a, button, [role="button"], input, textarea, select, summary, label {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* 2) Remove the legacy 300 ms tap delay and the accidental double-tap
+        zoom on interactive controls so a tap registers immediately. This
+        does NOT affect pinch-zoom or scrolling on page content. */
+  a, button, [role="button"],
+  input[type="button"], input[type="submit"], input[type="reset"], summary {
+    touch-action: manipulation;
+  }
+
+  /* 3) Accessible keyboard focus ring — shows ONLY for keyboard navigation
+        (:focus-visible), never on mouse/touch, so it stays clean visually
+        while passing WCAG 2.4.7 focus-visible. On-brand gold ring. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* 4) Sawil 2026-06 — PREMIUM TACTILE PRESS, every button, every device.
+        Researched standard: Apple HIG presses scale to 0.97 with a fast
+        ease-out (verified via HIG). This single base rule gives EVERY
+        <button> / role="button" / submit control an instant, consistent
+        "it responded" feel on tap or click — phones, tablets, laptops,
+        desktops, any browser — without editing 150 elements one by one.
+        Specificity is intentionally low (element + pseudo) so any component
+        that sets its own active: utility (e.g. active:scale-95 on the chat
+        send button) overrides this baseline. Disabled controls never fire
+        :active, so they're excluded automatically. */
+  button:active,
+  [role="button"]:active,
+  input[type="submit"]:active,
+  input[type="button"]:active,
+  input[type="reset"]:active {
+    transform: scale(0.97);
+  }
+
+  /* Ease the press so it glides instead of snapping (mouse + touch). */
+  button,
+  [role="button"],
+  input[type="submit"],
+  input[type="button"],
+  input[type="reset"] {
+    transition: transform 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Respect reduced-motion (vestibular sensitivity — many seniors enable it):
+     keep the controls perfectly still, no scale, no transition. */
+  @media (prefers-reduced-motion: reduce) {
+    button:active,
+    [role="button"]:active,
+    input[type="submit"]:active,
+    input[type="button"]:active,
+    input[type="reset"]:active {
+      transform: none;
+    }
+    button,
+    [role="button"],
+    input[type="submit"],
+    input[type="button"],
+    input[type="reset"] {
+      transition: none;
+    }
+  }
 }
 
 @layer utilities {
@@ -66,5 +151,28 @@
   }
   .font-sans {
     font-family: 'Inter', system-ui, sans-serif;
+  }
+  /* PHASE 9C — premium chat polish utilities. */
+  @keyframes message-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .animate-message-in {
+    animation: message-in 180ms ease-out;
+  }
+  @keyframes panel-open {
+    from { opacity: 0; transform: scale(0.96) translateY(8px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .animate-panel-open {
+    animation: panel-open 220ms ease-out;
+    transform-origin: bottom right;
+  }
+  @keyframes pulse-online {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.1); }
+  }
+  .animate-pulse-online {
+    animation: pulse-online 2.2s ease-in-out infinite;
   }
 }

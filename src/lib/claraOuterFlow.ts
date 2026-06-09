@@ -16,12 +16,29 @@
 //            deflection with public-resources referrals. NO lead capture
 //            unless user EXPLICITLY opts in.
 //
-// FL: BLOCKED as principal qualified lead until FMO authorization. Users
-// from FL get `out_of_service_area_interest` tag only if they opt in.
+// Out-of-service-area users are collapsed to `'other'` — no state-specific
+// branches, labels, or tags are emitted. Compliance: Clara must not surface
+// any state outside NY/NJ/CT in any visible or backend channel.
 //
 // Compliance: no plan recommendations, no eligibility confirmations, no
 // promises, no carrier names. Tone is suave informativo.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Type-only import — no runtime dependency, no circular import (the engine
+// does NOT import this file). Used by outerStateToEngine() to hydrate the
+// engine's ConversationState from the scripted outer flow.
+import type { ConversationState } from './customerServiceEngine';
+
+// Stage 1 (Sawil 2026-06) — RECONNECT to the strong, battle-tested validators
+// that already live in validation.ts (single source of truth, shared with
+// ChatBot/LeadForm/SmartMedicareReview). The outer flow MUST NOT reimplement
+// weaker detection. We delegate name/phone/email validation to these so Clara
+// gets bilingual profanity/fake/disposable rejection for free.
+import {
+  validatePersonName,
+  validatePhone as validateLibPhone,
+  validateEmail as validateLibEmail,
+} from './validation';
 
 export type ClaraOuterPath = 'A' | 'B' | 'C' | null;
 
@@ -32,6 +49,7 @@ export type ClaraOuterStep =
   // 'ambiguous' (i.e., user described a service issue without saying
   // whether they're a client).
   | 'path_select'
+  | 'awaiting_zip'
   | 'awaiting_client_check'
   // Path A — Existing client
   | 'A_collect_identity'
@@ -49,11 +67,10 @@ export type ClaraOuterStep =
   // Path C — Out of scope
   | 'C_resources_shown'
   | 'C_optin_capture'
-  | 'C_fl_offer'
   | 'C_done';
 
 export type MedicareStatus = 'AB_active' | 'near_65' | 'none';
-export type ClaraState = 'NY' | 'NJ' | 'CT' | 'FL' | 'other';
+export type ClaraState = 'NY' | 'NJ' | 'CT' | 'other';
 export type ClaraTopic = 'plan' | 'billing' | 'doctor' | 'medication' | 'other';
 
 export type OutOfScopeCategory =
@@ -81,7 +98,11 @@ export interface ClaraOuterState {
   // Path B qualification
   medicareStatus?: MedicareStatus;
   state?: ClaraState;
+  zip?: string;
   topic?: ClaraTopic;
+  // Stage 1 — graceful re-ask attempt counter for fake/invalid ZIP capture.
+  // After 2 fakes Clara stops re-asking and proceeds (never traps a senior).
+  zipAttempts?: number;
   // Path C
   outOfScopeCategory?: OutOfScopeCategory;
   // Summary (collected at end of A or before submit)
@@ -116,14 +137,78 @@ export function validateLast4Phone(text: string): { ok: boolean; digits?: string
   return { ok: false };
 }
 
-/** Basic full-name validation (≥2 words, alpha+space, length 4-80). */
+/**
+ * Full-name validation. Stage 1 — DELEGATES to validatePersonName() from
+ * validation.ts (single source of truth) so the outer flow inherits the
+ * bilingual EN+ES profanity list (PROFANE_NAME_WORDS), the fake/placeholder
+ * list (FAKE_NAME_WORDS), number/symbol rejection, and repeated-char detection
+ * — instead of the previous weak alpha+2-word regex. Export signature kept
+ * stable so existing callers (handleAIdentitySubmit etc.) don't break.
+ */
 export function validateFullName(text: string): { ok: boolean; cleaned?: string } {
   if (!text || typeof text !== 'string') return { ok: false };
-  const cleaned = text.trim().replace(/\s+/g, ' ');
-  if (cleaned.length < 4 || cleaned.length > 80) return { ok: false };
-  if (!/^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ' .-]+$/.test(cleaned)) return { ok: false };
-  if (cleaned.split(' ').length < 2) return { ok: false };
-  return { ok: true, cleaned };
+  const r = validatePersonName(text);
+  return r.valid ? { ok: true, cleaned: text.trim().replace(/\s+/g, ' ') } : { ok: false };
+}
+
+/**
+ * Phone validation. Stage 1 — DELEGATES to validatePhone() from validation.ts,
+ * which rejects the 555 fictional exchange, non-US country codes, sequential/
+ * repeated runs, invalid area/exchange codes, etc. Returns a stable shape for
+ * outer-flow callers: { ok, phone } where phone is the cleaned 10-digit string.
+ */
+export function validateUserPhone(text: string): { ok: boolean; phone?: string } {
+  if (!text || typeof text !== 'string') return { ok: false };
+  const r = validateLibPhone(text);
+  return r.valid ? { ok: true, phone: r.cleaned } : { ok: false };
+}
+
+/**
+ * Email validation. Stage 1 — DELEGATES to validateEmail() from validation.ts,
+ * which rejects malformed addresses, disposable/blocked domains, fake patterns,
+ * and profane local parts. Note: validateEmail treats an EMPTY string as valid
+ * (optional field), so this helper requires a non-empty value before delegating.
+ * Returns { ok, email } with the normalized (trimmed) address.
+ */
+export function validateUserEmail(text: string): { ok: boolean; email?: string } {
+  if (!text || typeof text !== 'string' || !text.trim()) return { ok: false };
+  const cleaned = text.trim();
+  const r = validateLibEmail(cleaned);
+  return r.valid ? { ok: true, email: cleaned } : { ok: false };
+}
+
+// ── Stage 1 — Fake-ZIP detection ────────────────────────────────────────────
+// ChatBot.tsx (line ~4382) and LeadForm.tsx (line ~16) both define an inline
+// FAKE_ZIPS list, but those files are do-not-touch. So we mirror the SAME 14
+// values here (the only approved place to add it) and expose isFakeZip().
+// extractZip()'s return is intentionally unchanged — callers run isFakeZip()
+// separately so they can decide whether to accept the parsed ZIP.
+const FAKE_ZIPS = new Set<string>([
+  '00000', '11111', '22222', '33333', '44444', '55555', '66666', '77777',
+  '88888', '99999', '12345', '54321', '11223', '00001',
+]);
+
+/**
+ * True when a 5-digit ZIP is an obvious fake: in the known FAKE_ZIPS list,
+ * all-same-digit (e.g. '00000'), or a strict ascending/descending sequence
+ * (e.g. '12345' / '54321'). Pure + bilingual-agnostic (digits only).
+ */
+export function isFakeZip(zip: string): boolean {
+  if (!zip || typeof zip !== 'string') return false;
+  const z = zip.trim();
+  if (!/^\d{5}$/.test(z)) return false;
+  if (FAKE_ZIPS.has(z)) return true;
+  // All-same-digit (00000, 11111, ...).
+  if (/^(\d)\1{4}$/.test(z)) return true;
+  // Strict ascending or descending run across all 5 digits (12345 / 54321).
+  let asc = true, desc = true;
+  for (let i = 1; i < z.length; i++) {
+    const a = Number(z[i]);
+    const b = Number(z[i - 1]);
+    if (a !== b + 1) asc = false;
+    if (a !== b - 1) desc = false;
+  }
+  return asc || desc;
 }
 
 // ── Out-of-scope categorization (when user picks "Different topic" or B fails) ──
@@ -151,6 +236,12 @@ export function categorizeOutOfScope(text: string): OutOfScopeCategory {
 // language so Clara can ask ONE natural follow-up at a time instead of
 // showing a robotic chip menu.
 
+// Sawil 2026-06 — Service-issue phrases. These only make sense for someone
+// who already has a plan, so they're a strong Path A signal (existing
+// client support). Covers card, billing, network, pharmacy, prescription,
+// referral, prior auth, doctor lookup, etc. Bilingual EN/ES.
+const SERVICE_KEYWORDS = /(tarjeta de miembro|tarjeta del plan|member card|insurance card|plan card|id card|lost.{0,10}card|perd[ií] .{0,15}tarjeta|no recib[ií] .{0,15}tarjeta|replacement card|reemplazo de tarjeta|missing card|card not arrived|nueva tarjeta|new card|factura|bill|copay|copago|premium|prima|cobertura|coverage|network|red|in.?network|out.?of.?network|red de|farmacia|pharmacy|medicamento|medication|prescription|receta|formulary|formulario|doctor|specialist|pcp|primary care|primary.?care|provider|m[eé]dico|especialista|referral|referido|prior auth|prior authorization|autorizaci[oó]n|appeal|apelaci[oó]n|denial|denegaci[oó]n|deductible|deducible|claim|reclamo)/i;
+
 const A_KEYWORDS = /(soy cliente|i am a client|i'?m a client|mi asesor|my advisor|client of|update my|tengo un caso|case number|mi caso|existing client|cliente actual)/i;
 const C_KEYWORDS_DENTAL = /\b(dental|dentist|dentista|braces|invisalign|implante)\b/i;
 const C_KEYWORDS_LIFE = /(life insurance|seguro de vida|funeral|burial|term life|whole life)/i;
@@ -161,6 +252,9 @@ const C_KEYWORDS_MEDICAID_ONLY = /(just have medicaid|tengo medicaid|solo medica
  *  'ambiguous' when more info is needed (Clara then asks one natural q). */
 export function inferInitialPath(text: string): 'A' | 'C' | 'ambiguous' {
   if (!text) return 'ambiguous';
+  // Service-issue keywords → Path A (existing client). These phrases only
+  // make sense for someone who already has a plan.
+  if (SERVICE_KEYWORDS.test(text)) return 'A';
   if (A_KEYWORDS.test(text)) return 'A';
   if (C_KEYWORDS_DENTAL.test(text) || C_KEYWORDS_LIFE.test(text) ||
       C_KEYWORDS_AUTO_HOME.test(text) || C_KEYWORDS_MEDICAID_ONLY.test(text)) return 'C';
@@ -183,13 +277,34 @@ export function inferMedicareStatus(text: string): MedicareStatus {
   return 'none';
 }
 
+// ZIP→state mapping using USPS first-3-digit prefixes. Returns null when no
+// 5-digit ZIP is found. Returns 'other' when ZIP is valid but outside the
+// NY/NJ/CT service area (compliance: do not surface any non-service state).
+export function extractZip(text: string): { zip: string; state: ClaraState } | null {
+  if (!text) return null;
+  // 5 contiguous digits not preceded/followed by another digit (so we don't
+  // match a phone-number chunk). Tolerates the user typing "10001" or
+  // "my zip is 10001".
+  const m = text.match(/(?<!\d)(\d{5})(?!\d)/);
+  if (!m) return null;
+  const zip = m[1];
+  const prefix = parseInt(zip.slice(0, 3), 10);
+  let state: ClaraState = 'other';
+  if (prefix >= 100 && prefix <= 149) state = 'NY';
+  else if (prefix >= 70 && prefix <= 89) state = 'NJ';
+  else if (prefix >= 60 && prefix <= 69) state = 'CT';
+  // Every other ZIP — including FL prefixes 320-349 — collapses to 'other'
+  // and is treated as out-of-service-area. No state-specific branch.
+  return { zip, state };
+}
+
 export function inferStateFromText(text: string): ClaraState {
   if (!text) return 'other';
   const t = text.toLowerCase();
   if (/\b(ny|new york|nueva york|n\.?y\.?)\b/.test(t)) return 'NY';
   if (/\b(nj|new jersey|nueva jersey|jersey|n\.?j\.?)\b/.test(t)) return 'NJ';
   if (/\b(ct|connecticut|conn\.?)\b/.test(t)) return 'CT';
-  if (/\b(fl|florida|fla\.?)\b/.test(t)) return 'FL';
+  // FL / out-of-service-area collapses silently to 'other' — no FL branch.
   return 'other';
 }
 
@@ -201,6 +316,132 @@ export function inferTopic(text: string): ClaraTopic {
   if (/(doctor|specialist|provider|red|network|in.?network|out.?of.?network|red de|médico|medico|especialista|primary care|pcp)/i.test(t)) return 'doctor';
   if (/(medication|prescription|drug|medicina|medicamento|receta|farmacia|pharmacy|formulary|formulario)/i.test(t)) return 'medication';
   return 'other';
+}
+
+// ── Phase 1 (Sawil 2026-06) — Shared-memory hydration ───────────────────────
+// Maps everything the scripted outer flow already captured into the engine's
+// ConversationState, so the engine does NOT restart intake (language / ZIP /
+// topic) from zero when the outer flow hands off. PURE + ADDITIVE:
+//   • copies a field only when it exists,
+//   • never overwrites valid data with empties,
+//   • never mutates the inputs,
+//   • never resets the conversation or erases messages.
+
+const TOPIC_TO_CATEGORY: Record<ClaraTopic, string> = {
+  plan: 'plan_review',
+  billing: 'billing',
+  doctor: 'doctor_provider_network',
+  medication: 'medication',
+  other: 'general',
+};
+
+/**
+ * Build a Partial<ConversationState> patch from the scripted outer state +
+ * the on-screen conversation history. Caller spreads this over the engine
+ * state at handoff. Returns ONLY the keys it can populate; missing fields
+ * stay undefined so the engine asks for them naturally.
+ */
+export function outerStateToEngine(
+  outer: ClaraOuterState,
+  messages: ReadonlyArray<{ sender: 'user' | 'bot'; text: string }> = [],
+): Partial<ConversationState> {
+  const patch: Partial<ConversationState> = {};
+
+  if (outer.language) patch.language = outer.language;
+  if (outer.zip) {
+    patch.zipCode = outer.zip;
+    patch.zipCodeIsValid = outer.state ? outer.state !== 'other' : true;
+  }
+  // Only surface in-service states (NY/NJ/CT). 'other' stays undefined so the
+  // engine treats it as out-of-area — compliance-safe.
+  if (outer.state && outer.state !== 'other') {
+    patch.state = outer.state;
+    patch.isValidState = true;
+  }
+  if (outer.topic) patch.serviceCategory = TOPIC_TO_CATEGORY[outer.topic];
+  if (outer.problemSummary) patch.currentProblem = outer.problemSummary;
+  if (outer.fullName) {
+    patch.name = outer.fullName;
+    patch.nameIsValid = true;
+  }
+  if (outer.phone) patch.phoneNumber = outer.phone;
+  if (outer.path) patch.routingLevel = outer.path;
+
+  // Preserve the real conversation thread so the LLM/engine sees everything
+  // the user already said (capped downstream by buildHistory to 20 turns).
+  const hist = messages
+    .filter((m) => m && typeof m.text === 'string' && m.text.length > 0)
+    .map((m) => ({
+      role: (m.sender === 'user' ? 'user' : 'bot') as 'user' | 'bot',
+      content: m.text,
+      timestamp: Date.now(),
+    }));
+  if (hist.length > 0) patch.messages = hist;
+
+  return patch;
+}
+
+// ── Phase A (Sawil 2026-06) — Direct-question priority ──────────────────────
+// When the user asks Clara a DIRECT META-QUESTION during the scripted intake
+// (e.g. "cuál es mi zona", "es gratis?", "quiénes son?"), Clara must ANSWER
+// the question first instead of bulldozing ahead with the next intake step.
+// This is a SMALL, compliance-safe whitelist — only questions Clara can
+// answer accurately. Everything else falls through to normal routing (the
+// LLM/engine handles open Q&A). No plan recommendations, no eligibility
+// claims, no fabricated facts. Pure function — returns the answer string, or
+// null when the message is not a recognized meta-question.
+
+const META_ZONE_Q = /(cu[aá]l\s+es\s+mi\s+(zona|[aá]rea)|qu[eé]\s+(zona|[aá]rea)\s+(es|tengo)|mi\s+(zona|[aá]rea)\b|what.{0,8}\bmy\s+(zone|area)|which\s+(zone|area)|what\s+(zone|area)\s+am\s+i)/i;
+const META_COST_Q = /(es\s+gratis|tiene\s+(alg[uú]n\s+)?costo|cu[aá]nto\s+(cuesta|cobran|vale)|is\s+(it|this)\s+free|how\s+much\s+(does|is)|any\s+cost|cost\s+anything|free\s*\?)/i;
+const META_WHO_Q = /(qui[eé]n(es)?\s+son|qu[eé]\s+es\s+clear\s*point|son\s+ustedes\s+medicare|who\s+are\s+you|what\s+is\s+clear\s*point|are\s+you\s+medicare)/i;
+const META_WHY_ZIP_Q = /(por\s+qu[eé].{0,25}(zip|c[oó]digo|postal)|para\s+qu[eé].{0,25}(zip|c[oó]digo|postal)|why.{0,25}(zip|postal|code))/i;
+
+export function answerMetaQuestion(
+  text: string,
+  outer: ClaraOuterState,
+  zipInfo: { city: string; county: string; state: string } | null,
+  isEs: boolean,
+): string | null {
+  if (!text) return null;
+
+  // Zone / area — only answerable once we have a ZIP on file.
+  if (META_ZONE_Q.test(text) && outer.zip) {
+    // COMPLIANCE (Sawil 2026-06): only NAME the city/county/state when the ZIP
+    // is inside the active service area (NY/NJ/CT). For ANY out-of-service ZIP
+    // — including Florida — we must NOT surface the place name (zipLookup still
+    // knows "Miami, Florida", but Clara must never say it). Confirm the ZIP as
+    // the service zone generically instead.
+    const inService = outer.state === 'NY' || outer.state === 'NJ' || outer.state === 'CT';
+    if (inService && zipInfo && zipInfo.city) {
+      const place = `${zipInfo.city}, ${zipInfo.county}, ${zipInfo.state}`;
+      return isEs
+        ? `Su código postal ${outer.zip} corresponde a ${place}. Para Medicare, usaré ${outer.zip} como su zona de servicio. La disponibilidad de planes puede variar por código postal, condado y red.`
+        : `Your ZIP code ${outer.zip} maps to ${place}. For Medicare, I'll use ${outer.zip} as your service area. Plan availability can vary by ZIP code, county, and network.`;
+    }
+    return isEs
+      ? `Usaré su código postal ${outer.zip} como su zona de servicio. La disponibilidad de planes de Medicare puede variar por código postal, condado y red.`
+      : `I'll use your ZIP code ${outer.zip} as your service area. Medicare plan availability can vary by ZIP code, county, and network.`;
+  }
+
+  if (META_COST_Q.test(text)) {
+    return isEs
+      ? 'Nuestro servicio no tiene ningún costo para usted. Clear Point es un broker de Medicare independiente y licenciado — sin presión.'
+      : 'Our service is at no cost to you. Clear Point is an independent, licensed Medicare broker — no pressure.';
+  }
+
+  if (META_WHO_Q.test(text)) {
+    return isEs
+      ? 'Clear Point Senior Advisors es una agencia independiente y licenciada de seguros de Medicare. No somos Medicare ni una agencia del gobierno; le orientamos sin costo y sin presión.'
+      : 'Clear Point Senior Advisors is an independent, licensed Medicare insurance agency. We are not Medicare or a government agency; we guide you at no cost and no pressure.';
+  }
+
+  if (META_WHY_ZIP_Q.test(text)) {
+    return isEs
+      ? 'Le pido el código postal solo para confirmar su área de servicio — la disponibilidad de planes depende de la zona. No es información sensible.'
+      : 'I ask for your ZIP only to confirm your service area — plan availability depends on the zone. It is not sensitive information.';
+  }
+
+  return null;
 }
 
 // ── Qualification check ──────────────────────────────────────────────────────
@@ -215,9 +456,9 @@ export function isQualifiedProspect(s: ClaraOuterState): boolean {
   return true;
 }
 
-/** True specifically for FL state (out-of-service-area special-case). */
-export function isFlInterest(s: ClaraOuterState): boolean {
-  return s.state === 'FL';
+/** Legacy stub kept for API stability — Florida no longer surfaces. */
+export function isFlInterest(_s: ClaraOuterState): boolean {
+  return false;
 }
 
 // ── GHL payload builder ──────────────────────────────────────────────────────
@@ -289,10 +530,10 @@ export function buildGhlPayload(
     if (s.state) tags.push(`state-${s.state}`);
     if (s.topic) tags.push(`category-${s.topic}`);
   } else if (s.path === 'C') {
-    if (s.state === 'FL') {
-      leadType = 'out_of_service_area_interest';
-      tags.push('out-of-service-area', 'future-area-interest', 'state-FL');
-    } else {
+    // Out-of-service-area (incl. legacy FL) collapses into the same Path C
+    // bucket as any other out-of-scope opt-in. No state-specific tag is
+    // emitted — compliance: do not identify out-of-service states.
+    {
       leadType = 'out_of_scope_optin_callback';
       tags.push('out-of-scope-callback');
       if (s.outOfScopeCategory) tags.push(`original-topic-${s.outOfScopeCategory}`);

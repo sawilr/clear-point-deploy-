@@ -5,6 +5,7 @@
 // Language is LOCKED at step 1 via chip click. Never auto-flips.
 // ============================================================================
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router';
 import {
   processMessageAsync,
   createInitialState,
@@ -13,6 +14,7 @@ import {
   type Language,
 } from '../lib/customerServiceEngine';
 import { useLanguage } from '../hooks/useLanguage';
+import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight';
 import { submitLeadToGHL } from '../lib/ghl';
 // PHASE F — advisor-readable lead-note builder. Pure helper, no network.
 import { buildLeadNote } from '../lib/orchestrator/leadNoteBuilder';
@@ -20,7 +22,6 @@ import { buildLeadNote } from '../lib/orchestrator/leadNoteBuilder';
 import {
   decideScrollAction,
   viewportTier,
-  containerHeightStyle,
   chipRowClass,
   safeAreaBottomStyle,
   shouldCollapseDisclosure,
@@ -36,8 +37,13 @@ import {
   type ClaraOuterState,
   createOuterState,
   validateFullName,
+  validateUserPhone,
+  isFakeZip,
   isQualifiedProspect,
   buildGhlPayload,
+  outerStateToEngine,
+  answerMetaQuestion,
+  extractZip,
   inferInitialPath,
   inferYesClient,
   inferMedicareStatus,
@@ -45,6 +51,9 @@ import {
   inferTopic,
 } from '../lib/claraOuterFlow';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
+// Phase A — ZIP → city/county lookup, used to answer "cuál es mi zona"
+// accurately (no fabricated neighborhoods). Read-only data utility.
+import { getZipInfo } from '../lib/zipLookup';
 
 interface Message {
   id: string;
@@ -99,10 +108,21 @@ function lookupChipHint(label: string): string | undefined {
 interface CustomerServiceBotProps {
   onEscalate?: (state: ConversationState, messages: Message[]) => void;
   initialLanguage?: 'en' | 'es';
+  // Sawil 2026-06 — page-mode renders Clara as the main panel surface
+  // (fills its parent, no fixed overlay). Widget mode preserves the
+  // legacy fixed-bottom overlay for backwards compatibility.
+  mode?: 'page' | 'widget';
 }
 
-export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServiceBotProps = {}) {
+export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget' }: CustomerServiceBotProps = {}) {
+  const navigate = useNavigate();
   const { lang: pageLang, setLang } = useLanguage();
+  // Sawil 2026-06 — enterprise viewport handling. Hook writes the real
+  // visible viewport height to CSS var `--svh` on :root (and `--kb-offset`
+  // for the soft keyboard), coalesced via rAF, reacting to keyboard
+  // open/close and orientation. The outer shell uses `--svh` for its
+  // height — no inline state needed.
+  useVisualViewportHeight();
   const [messages, setMessages] = useState<Message[]>([]);
   const [state, setState] = useState<ConversationState>(createInitialState);
   const [inputValue, setInputValue] = useState('');
@@ -132,10 +152,6 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   // ─── PHASE E: viewport tracking + new-message indicator + reset modal ───
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
     (typeof window !== 'undefined' ? window.innerWidth : 1280));
-  const [visualViewportHeight, setVisualViewportHeight] = useState<number | undefined>(
-    () => (typeof window !== 'undefined' && window.visualViewport
-      ? window.visualViewport.height : undefined),
-  );
   const [hasNewBotMessage, setHasNewBotMessage] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
   const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(false);
@@ -163,6 +179,20 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       requestAnimationFrame(() => {
         const cc = bodyRef.current;
         if (!cc) return;
+        // Sawil mobile fix — long bot messages + chips below them mean that
+        // pinning to scrollHeight hides the bot's text. Scroll instead so the
+        // LAST message's top sits ~8 px below the chat area top. Short
+        // messages still look clean (small gap below); long messages with
+        // options/chips become readable from the top.
+        const msgs = cc.querySelectorAll('[data-msg-id]');
+        const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
+        if (lastMsg) {
+          const cRect = cc.getBoundingClientRect();
+          const mRect = lastMsg.getBoundingClientRect();
+          const offsetTop = mRect.top - cRect.top + cc.scrollTop;
+          cc.scrollTo({ top: Math.max(0, offsetTop - 8), behavior: smooth ? 'smooth' : 'auto' });
+          return;
+        }
         cc.scrollTo({ top: cc.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
       });
     });
@@ -196,36 +226,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // PHASE E + Sawil bugfix — visualViewport listener for iOS / Android
-  // keyboard handling, BUT only react to LARGE viewport changes (keyboard
-  // open/close, > 200 px). iOS Safari fires `resize` on every URL-bar
-  // show/hide, which would otherwise cause a scroll-bouncing loop while the
-  // bot is responding. We trust CSS `dvh` for small changes.
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    const baseline = window.innerHeight;
-    let raf: number | null = null;
-    const update = () => {
-      if (raf !== null) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const diff = baseline - vv.height;
-        if (diff > 200) {
-          // Keyboard almost certainly open — switch to concrete px height.
-          setVisualViewportHeight(vv.height);
-        } else {
-          // Trivial viewport change (URL bar / pinch) — let CSS dvh handle it.
-          setVisualViewportHeight((cur) => (cur === undefined ? cur : undefined));
-        }
-      });
-    };
-    update();
-    vv.addEventListener('resize', update);
-    return () => {
-      vv.removeEventListener('resize', update);
-      if (raf !== null) cancelAnimationFrame(raf);
-    };
-  }, []);
+  // Sawil 2026-06 — visualViewport listener REMOVED. The new
+  // useVisualViewportHeight() hook above writes `--svh` and `--kb-offset`
+  // on :root continuously (coalesced via rAF). The outer shell consumes
+  // that CSS var directly; React does not need to re-render on keyboard
+  // open/close. This eliminates the bouncing-scroll loop entirely.
 
   // PHASE E + Sawil bugfix — scroll dispatch runs ONLY on `messages` change,
   // NOT on `isTyping` transitions. Typing indicator appearing/disappearing
@@ -249,7 +254,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     } else if (action === 'show_new_indicator') {
       setHasNewBotMessage(true);
     }
-  }, [messages, scrollToBottom]);
+    // Sawil 2026-06: chip blocks (B_pitch, C opt-in) are siblings AFTER
+    // the messages list, so toggling them via outerState.step changes the
+    // scroll content height. Re-trigger scroll on those transitions too,
+    // otherwise the last message ends up hidden behind chip rows.
+    // Keyboard open/close no longer needs a dep here — the outer shell
+    // resizes via the CSS var written by useVisualViewportHeight().
+  }, [messages, outerState.step, scrollToBottom]);
 
   // PHASE E — collapse the persistent disclosure band after the first user
   // turn. Senior can still expand by tapping. Lets messages take more
@@ -334,8 +345,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       const welcome = returning
         ? returning
         : (lang === 'es'
-            ? `${officeStatus.greetingEs}. ¿Prefiere español o inglés?`
-            : `${officeStatus.greetingEn}. Do you prefer English or Spanish?`);
+            ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle. ¿Prefiere español o inglés?'
+            : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help. Do you prefer English or Spanish?");
       setMessages([{
         id: 'welcome',
         text: welcome,
@@ -462,6 +473,127 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (outerInProgress) {
       const trimmed = text.trim();
       const isEs = outerState.language === 'es';
+
+      // Sawil 2026-06 — User recall guard. If the user objects ("ya te di mi
+      // zip", "I already gave you that") and we DO have the data, acknowledge
+      // and continue from the saved value instead of re-asking.
+      const ALREADY_GAVE_ZIP = /(ya (te |le |se )?(di|dije|pas[eé]|envi[eé]) (mi |el |un )?(zip|c[oó]digo|postal|codigo postal)|i (already )?gave .*(zip|postal)|told you .* zip)/i;
+      if (outerState.zip && ALREADY_GAVE_ZIP.test(trimmed)) {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        // Apology + continue from saved ZIP. Advance to path_select so
+        // subsequent inputs flow into normal Path A/B/C inference.
+        setOuterState((s) => ({ ...s, step: 'path_select' }));
+        setTimeout(() => pushBotMessageDirect(isEs
+          ? `Tiene razón, disculpe. Usaré el código postal que me compartió (${outerState.zip}). ¿En qué le puedo ayudar hoy?`
+          : `You are right, my apologies. I will use the ZIP code you shared (${outerState.zip}). How can I help you today?`), 300);
+        return;
+      }
+
+      // Phase A (Sawil 2026-06) — DIRECT-QUESTION PRIORITY. If the user asks
+      // a meta-question (zone/area, cost, who, why-ZIP) instead of answering
+      // the current intake prompt, ANSWER it first, then continue the intake
+      // with one natural follow-up. Scripted intake must NOT bulldoze the
+      // user's question. Runs on every outer step except the language picker.
+      {
+        const zipInfo = outerState.zip ? getZipInfo(outerState.zip) : null;
+        const metaAnswer = answerMetaQuestion(trimmed, outerState, zipInfo, isEs);
+        if (metaAnswer) {
+          pushUserMessageDirect(trimmed);
+          setInputValue('');
+          // After answering, advance the intake by exactly ONE natural
+          // question so the thread keeps moving (matches the approved flow:
+          // answer the zone → ask client-vs-exploring). For mid-Path-B steps
+          // we re-ask that step's own question instead of jumping.
+          let followUp: string;
+          if (outerState.step === 'awaiting_zip' || outerState.step === 'path_select') {
+            setOuterState((s) => ({ ...s, step: 'awaiting_client_check' }));
+            followUp = isEs
+              ? 'Ahora, para orientarle mejor, ¿es cliente actual de Clear Point o está explorando opciones?'
+              : 'Now, to guide you better, are you a current Clear Point client, or are you exploring options?';
+          } else if (outerState.step === 'awaiting_client_check') {
+            followUp = isEs
+              ? '¿Es cliente actual de Clear Point, o todavía está explorando sus opciones?'
+              : 'Are you a current Clear Point client, or are you still exploring your options?';
+          } else if (outerState.step === 'B_q_medicare') {
+            followUp = isEs
+              ? '¿Ya tiene Medicare Parte A y Parte B activos, o está cerca de cumplir 65?'
+              : 'Do you already have Medicare Parts A and B, or are you near turning 65?';
+          } else if (outerState.step === 'B_q_state') {
+            followUp = isEs ? '¿En qué estado vive?' : 'Which state do you live in?';
+          } else if (outerState.step === 'B_q_topic') {
+            followUp = isEs ? '¿Sobre qué tema le orientamos?' : 'What can we guide you on?';
+          } else {
+            followUp = isEs ? '¿En qué le puedo ayudar?' : 'How can I help?';
+          }
+          pushBotMessageDirect(`${metaAnswer}\n\n${followUp}`);
+          return;
+        }
+      }
+
+      // Stage 2a (Sawil 2026-06) — THE LLM NOW LEADS after language. The first
+      // turn after the welcome still tries to capture a ZIP (to identify the
+      // service zone), but it is NO LONGER the front gate to a scripted A/B/C
+      // gauntlet. Three outcomes, all of which END with the LLM in control:
+      //   (a) valid real ZIP → store zip+state, hydrate engine, hand off; the
+      //       user's NEXT message goes to the LLM.
+      //   (b) fake ZIP → graceful Stage-1 re-ask (max 2), then hand off.
+      //   (c) no ZIP (user described their situation) → hand off to the LLM
+      //       NOW and process THIS message through the engine so Clara engages
+      //       with the actual situation instead of running a checklist.
+      if (outerState.step === 'awaiting_zip') {
+        setInputValue('');
+        const zipResult = extractZip(trimmed);
+        if (zipResult) {
+          pushUserMessageDirect(trimmed);
+          const { zip, state } = zipResult;
+          // Stage 1 — reject obvious fake ZIPs (00000, 12345, 99999, …) using
+          // the shared isFakeZip() helper. Re-ask gracefully up to 2 times,
+          // then proceed without trapping the user (these are seniors).
+          if (isFakeZip(zip)) {
+            const attempts = (outerState.zipAttempts || 0) + 1;
+            if (attempts < 2) {
+              setOuterState((s) => ({ ...s, zipAttempts: attempts }));
+              setTimeout(() => pushBotMessageDirect(isEs
+                ? 'Ese código postal no parece válido. ¿Me podría confirmar su código postal real de 5 dígitos? Así puedo identificar su zona correctamente.'
+                : "That ZIP code doesn't look quite right. Could you confirm your real 5-digit ZIP code? That way I can identify your area correctly."), 300);
+              return;
+            }
+            // 2nd fake — stop asking and HAND OFF TO THE LLM so the user is
+            // never stuck. We DO NOT store the fake as a valid zone.
+            handOffToLLM({ problemSummary: outerState.problemSummary });
+            setTimeout(() => pushBotMessageDirect(isEs
+              ? 'No se preocupe, podemos continuar sin el código postal por ahora. ¿En qué le puedo ayudar hoy?'
+              : "No problem — we can continue without the ZIP for now. How can I help you today?"), 300);
+            return;
+          }
+          // Valid real ZIP — store zone, HAND OFF TO THE LLM. Acknowledge the
+          // county + state so the caller feels recognized — but ONLY for the
+          // active service area (NY/NJ/CT). For any out-of-service ZIP (incl.
+          // Florida) we never name the place — compliance.
+          handOffToLLM({ zip, state });
+          const zi = getZipInfo(zip);
+          const inService = state === 'NY' || state === 'NJ' || state === 'CT';
+          const zipBridge = (inService && zi && zi.county)
+            ? (isEs
+                ? `Perfecto — su código postal ${zip} corresponde a ${zi.county}, ${zi.state}. Usaré ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
+                : `Perfect — your ZIP ${zip} is in ${zi.county}, ${zi.state}. I'll use ${zip} as your service area. How can I help you today?`)
+            : (isEs
+                ? 'Perfecto, ya tengo su zona. ¿En qué le puedo ayudar hoy?'
+                : 'Perfect, I have your area. How can I help you today?');
+          setTimeout(() => pushBotMessageDirect(zipBridge), 300);
+          return;
+        }
+        // (c) No ZIP — the user described their situation instead of giving a
+        // ZIP (e.g. "tengo A pero no B porque trabajaba"). DO NOT route into
+        // the scripted A/B/C gauntlet. HAND OFF TO THE LLM NOW and process
+        // THIS message through the engine with the hydrated context so Clara
+        // engages with the actual situation. runEngineTurn() pushes the user
+        // message exactly once, so we must NOT pre-push it here.
+        const hydrated = handOffToLLM({ problemSummary: trimmed });
+        await runEngineTurn(trimmed, meta, hydrated);
+        return;
+      }
       // PHASE 11.1 — Natural-language path inference. User typed freely;
       // Clara silently classifies and asks ONE natural follow-up.
       if (outerState.step === 'path_select') {
@@ -471,28 +603,45 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         if (inferred === 'A') {
           setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity', problemSummary: trimmed }));
           setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Claro, puedo ayudarle con eso. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
-            : 'Of course, I can help. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?'), 350);
+            ? 'Entiendo, eso puede ser frustrante — déjeme ayudarle. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
+            : "I understand — that can be frustrating, and I'm here to help. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?"), 350);
           return;
         }
         if (inferred === 'C') {
           setOuterState((s) => ({ ...s, path: 'C', step: 'C_resources_shown', problemSummary: trimmed }));
           setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Ese tema no parece ser una especialidad de Clear Point. Si su pregunta es sobre Medicare, puedo orientarle; si no, le sugiero algunos recursos:\n\n• Medicare.gov o 1-800-MEDICARE\n• Su SHIP local (shiphelp.org)\n• Para Medicaid: HRA u oficina estatal\n\n¿Quiere que un asesor de Clear Point le contacte sobre Medicare?'
-            : 'That topic does not seem to be a Clear Point specialty. If your question is about Medicare, I can guide you; otherwise, here are some resources:\n\n• Medicare.gov or 1-800-MEDICARE\n• Your local SHIP (shiphelp.org)\n• For Medicaid: HRA or your state office\n\nWould you like a Clear Point advisor to contact you about Medicare?'), 350);
+            ? 'Entiendo, eso suena complicado. Ese tema en particular no es nuestra especialidad en Clear Point, pero no quiero dejarle sin opciones. Aquí tiene algunos recursos que pueden ayudarle:\n\n• Medicare.gov o 1-800-MEDICARE\n• Su SHIP local (shiphelp.org)\n• Para Medicaid: HRA u oficina estatal de su estado\n\nSi alguna parte de su pregunta tiene que ver con Medicare, con gusto le pongo en contacto con un asesor. ¿Le gustaría?'
+            : "I understand — that sounds like a lot. That specific topic isn't a Clear Point specialty, but I don't want to leave you without options. Here are some resources that may help:\n\n• Medicare.gov or 1-800-MEDICARE\n• Your local SHIP (shiphelp.org)\n• For Medicaid: HRA or your state office\n\nIf any part of your question touches Medicare, I'd be glad to connect you with an advisor. Would you like that?"), 350);
           return;
         }
         // Ambiguous — single natural follow-up
         setOuterState((s) => ({ ...s, step: 'awaiting_client_check', problemSummary: trimmed }));
         setTimeout(() => pushBotMessageDirect(isEs
-          ? 'Claro, puedo orientarle. Una pregunta breve: ¿es cliente actual de Clear Point, o todavía está explorando opciones?'
-          : 'I can help with that. Quick question: are you a current Clear Point client, or are you still exploring options?'), 350);
+          ? 'Con gusto le oriento. Para guiarle mejor, una pregunta rápida: ¿es cliente actual de Clear Point, o todavía está explorando sus opciones?'
+          : "I'd be glad to help. To guide you better, one quick question — are you already a Clear Point client, or are you still exploring your options?"), 350);
         return;
       }
       // After ambiguous question — infer A or B from yes/no
       if (outerState.step === 'awaiting_client_check') {
         pushUserMessageDirect(trimmed);
         setInputValue('');
+        // Sawil 2026-06 — If the user answered with their Medicare status
+        // ("tengo A y B" / "near 65" / "Parts A and B"), that is a Path B
+        // prospect signal, NOT a yes/no client answer. Skip the loose
+        // inferYesClient regex and route straight into Path B qualification
+        // with the Medicare status already captured.
+        const ms = inferMedicareStatus(trimmed);
+        if (ms !== 'none') {
+          // Skip B_q_state when ZIP already gave us the state.
+          if (outerState.state) {
+            setOuterState((s) => ({ ...s, path: 'B', medicareStatus: ms, step: 'B_q_topic' }));
+            setTimeout(() => pushBotMessageDirect(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
+          } else {
+            setOuterState((s) => ({ ...s, path: 'B', medicareStatus: ms, step: 'B_q_state' }));
+            setTimeout(() => pushBotMessageDirect(isEs ? '¿En qué estado vive?' : 'Which state do you live in?'), 350);
+          }
+          return;
+        }
         if (inferYesClient(trimmed)) {
           setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity' }));
           setTimeout(() => pushBotMessageDirect(isEs
@@ -501,8 +650,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         } else {
           setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_medicare' }));
           setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Con gusto le oriento. Para guiarle correctamente, ¿ya tiene Medicare Parte A y Parte B activos, o está cerca de cumplir 65?'
-            : 'Glad to help. To guide you correctly, do you already have Medicare Parts A and B, or are you near turning 65?'), 350);
+            ? 'Con gusto le oriento. Para asegurarme de darle la información correcta, ¿ya tiene Medicare Parte A y Parte B activos, o está cerca de cumplir 65?'
+            : "I'd be glad to help. So I can give you the right information, do you already have Medicare Parts A and B active, or are you near turning 65?"), 350);
         }
         return;
       }
@@ -511,10 +660,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         pushUserMessageDirect(trimmed);
         setInputValue('');
         const ms = inferMedicareStatus(trimmed);
+        // Sawil 2026-06 — Skip state question if ZIP already gave us the state.
+        if (outerState.state) {
+          setOuterState((s) => ({ ...s, medicareStatus: ms, step: 'B_q_topic' }));
+          setTimeout(() => pushBotMessageDirect(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
+          return;
+        }
         setOuterState((s) => ({ ...s, medicareStatus: ms, step: 'B_q_state' }));
         setTimeout(() => pushBotMessageDirect(isEs
-          ? '¿En qué estado vive?'
-          : 'Which state do you live in?'), 300);
+          ? 'Gracias. ¿Y en qué estado vive?'
+          : 'Thank you. And which state do you live in?'), 300);
         return;
       }
       if (outerState.step === 'B_q_state') {
@@ -522,24 +677,20 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         setInputValue('');
         const st = inferStateFromText(trimmed);
         setOuterState((s) => ({ ...s, state: st }));
-        if (st === 'FL') {
-          setOuterState((s) => ({ ...s, step: 'C_fl_offer', path: 'C' }));
-          setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Actualmente Clear Point está priorizando servicio en NY, NJ y CT. Para información oficial puede visitar Medicare.gov o contactar SHIP en su estado. ¿Desea que Clear Point le contacte cuando el servicio esté disponible en su área?'
-            : 'Clear Point is currently prioritizing service in NY, NJ, and CT. For official information you can visit Medicare.gov or contact SHIP in your state. Would you like Clear Point to contact you when service becomes available in your area?'), 350);
-          return;
-        }
+        // Sawil compliance 2026-06: Florida is HIDDEN. FL ZIPs / text now
+        // resolve to `state === 'other'` upstream, so the only out-of-area
+        // branch is the generic out-of-state Path-C message below.
         if (st === 'other') {
           setOuterState((s) => ({ ...s, step: 'C_resources_shown', path: 'C', outOfScopeCategory: 'outside_state' }));
           setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Actualmente Clear Point sirve NY, NJ y CT. Para Medicare en su estado, su SHIP local puede ayudarle (shiphelp.org). ¿Aun así desea que Clear Point le contacte?'
-            : 'Clear Point currently serves NY, NJ, and CT. For Medicare in your state, your local SHIP can help (shiphelp.org). Would you still like Clear Point to contact you?'), 350);
+            ? 'Actualmente Clear Point atiende NY, NJ y CT, así que no podría asesorarle sobre planes en su estado. Pero no quiero dejarle sin opciones. Para Medicare en su área puede usar:\n\n• Medicare.gov o 1-800-MEDICARE (1-800-633-4227), disponible 24/7\n• Su SHIP local para orientación gratuita e imparcial (shiphelp.org)\n• Un asesor licenciado de Medicare en su estado\n\n¿Aun así desea que Clear Point le contacte?'
+            : "Clear Point currently serves NY, NJ, and CT, so we wouldn't be able to advise on plans in your state. But I don't want to leave you without options. For Medicare in your area, you can use:\n\n• Medicare.gov or 1-800-MEDICARE (1-800-633-4227), available 24/7\n• Your local SHIP for free, unbiased guidance (shiphelp.org)\n• A licensed Medicare advisor in your state\n\nWould you still like Clear Point to contact you?"), 350);
           return;
         }
         setOuterState((s) => ({ ...s, step: 'B_q_topic' }));
         setTimeout(() => pushBotMessageDirect(isEs
-          ? '¿Sobre qué tema le orientamos? Por ejemplo: revisión de plan, factura, doctor o medicamentos.'
-          : 'What can we guide you on? For example: plan review, billing, doctor, or medications.'), 300);
+          ? 'Gracias. ¿Sobre qué tema le orientamos? Por ejemplo, una revisión de su plan, una factura que no entiende, su doctor o sus medicamentos.'
+          : "Thank you. What can we guide you on? For example, a plan review, a bill you don't understand, your doctor, or your medications."), 300);
         return;
       }
       if (outerState.step === 'B_q_topic') {
@@ -556,8 +707,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           return;
         }
         setTimeout(() => pushBotMessageDirect(isEs
-          ? 'Gracias. En Clear Point somos brokers de Medicare independientes y licenciados. Tres puntos breves: nuestro servicio no tiene costo para usted; un asesor licenciado revisa su situación; no le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte?'
-          : "Thank you. At Clear Point we are independent licensed Medicare brokers. Three quick points: our service is at no cost to you; a licensed advisor reviews your situation; you are not passed between call centers. Would it be alright to take your name and phone so an advisor can reach out?"), 400);
+          ? 'Gracias por compartir eso. Permítame contarle brevemente cómo trabajamos en Clear Point: somos brokers de Medicare independientes y licenciados. Esto significa tres cosas para usted — nuestro servicio no tiene costo, un asesor licenciado revisa su situación personalmente, y nunca le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte?'
+          : "Thank you for sharing that. Let me briefly tell you how we work at Clear Point — we are independent, licensed Medicare brokers. What this means for you is three things: our service is at no cost to you, a licensed advisor reviews your situation personally, and you are never passed between call centers. Would it be alright to take your name and phone so an advisor can reach out?"), 400);
         return;
       }
       // Path A — identity collection (name + last4)
@@ -582,12 +733,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         setInputValue('');
         // Heuristic: if text contains a phone-like sequence, treat as phone+summary combined.
         const phoneMatch = trimmed.match(/\+?[\d\s().-]{7,}/);
-        const phone = phoneMatch ? phoneMatch[0].replace(/\D+/g, '').slice(-10) : '';
         const summary = phoneMatch ? trimmed.replace(phoneMatch[0], '').trim() : trimmed;
-        if (!phone || phone.length < 10) {
+        // Stage 1 — validate the phone via the shared validateUserPhone()
+        // (delegates to validatePhone in validation.ts: rejects 555 exchange,
+        // non-US, sequential/repeated fakes, bad area/exchange codes).
+        const phoneCheck = phoneMatch ? validateUserPhone(phoneMatch[0]) : { ok: false };
+        const phone = phoneCheck.ok ? phoneCheck.phone! : '';
+        if (!phone) {
           pushBotMessageDirect(outerState.language === 'es'
-            ? 'Necesito un número de teléfono de 10 dígitos. Por ejemplo: "(917) 555-1234 — mi factura subió".'
-            : 'I need a 10-digit phone number. For example: "(917) 555-1234 — my bill went up".');
+            ? 'Disculpe, necesito un teléfono de EE. UU. válido de 10 dígitos para que el asesor pueda devolverle la llamada. Por ejemplo: "(917) 432-1098 — mi factura subió".'
+            : 'Apologies — I need a valid 10-digit U.S. phone number so an advisor can call you back. For example: "(917) 432-1098 — my bill went up".');
           return;
         }
         await submitOuterLead({ phone, summary });
@@ -599,17 +754,26 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         pushUserMessageDirect(trimmed);
         setInputValue('');
         const phoneMatch = trimmed.match(/\+?[\d\s().-]{7,}/);
-        const phone = phoneMatch ? phoneMatch[0].replace(/\D+/g, '').slice(-10) : '';
         const nameAndSummary = phoneMatch ? trimmed.replace(phoneMatch[0], '').trim() : trimmed;
-        if (!phone || phone.length < 10) {
+        // Stage 1 — validate the phone via the shared validateUserPhone()
+        // (delegates to validatePhone in validation.ts).
+        const phoneCheck = phoneMatch ? validateUserPhone(phoneMatch[0]) : { ok: false };
+        const phone = phoneCheck.ok ? phoneCheck.phone! : '';
+        if (!phone) {
           pushBotMessageDirect(outerState.language === 'es'
-            ? 'Necesito su nombre, un teléfono de 10 dígitos y un resumen breve.'
-            : 'I need your name, a 10-digit phone, and a brief summary.');
+            ? 'Disculpe, para que un asesor pueda contactarle necesito tres cosas: su nombre completo, un teléfono de EE. UU. válido de 10 dígitos, y un resumen breve del tema.'
+            : "Apologies — so an advisor can reach you, I need three things: your full name, a valid 10-digit U.S. phone number, and a brief summary of the topic.");
           return;
         }
         // Try to extract name as the first 2 capitalized tokens.
         const nameMatch = nameAndSummary.match(/^([A-Za-zÁÉÍÓÚÑáéíóúñ' .-]+?)(?:[,.\-—]|$)/);
-        const fullName = nameMatch ? nameMatch[1].trim() : nameAndSummary.split(/\s{2,}|[,.\-—]/)[0] || '';
+        const candidateName = nameMatch ? nameMatch[1].trim() : nameAndSummary.split(/\s{2,}|[,.\-—]/)[0] || '';
+        // Stage 1 — run the candidate name through validateFullName (now
+        // delegating to validatePersonName: bilingual profanity/fake rejection).
+        // If it fails, keep it out of the structured fullName field; the raw
+        // text is still preserved in problemSummary for the advisor.
+        const nameCheck = validateFullName(candidateName);
+        const fullName = nameCheck.ok ? nameCheck.cleaned! : '';
         setOuterState((s) => ({ ...s, fullName, phone, problemSummary: nameAndSummary }));
         await submitOuterLead({ phone, summary: nameAndSummary });
         setOuterState((s) => ({ ...s, step: 'C_done' }));
@@ -618,10 +782,31 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       // For other outer-flow steps, ignore free-text (chips drive these).
       return;
     }
+    // Stage 2a (Sawil 2026-06) — the LLM now leads after language. When the
+    // outer flow has handed off (outerInProgress=false, step='conversation'),
+    // every text turn flows through the engine/LLM via runEngineTurn().
+    await runEngineTurn(text, meta);
+  }
+
+  // ── Stage 2a — engine/LLM turn. Factored out of handleSendMessage so the
+  // orchestrator can invoke it for the CURRENT message at the moment it hands
+  // off to the LLM (e.g. the no-ZIP free-text bridge), not only on the NEXT
+  // turn. `baseStateOverride` lets a caller pass a freshly-hydrated engine
+  // state synchronously, because React's setState hasn't flushed `state` yet.
+  async function runEngineTurn(
+    text: string,
+    meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
+    baseStateOverride?: ConversationState,
+  ) {
     // WAVE 39 — synchronous re-entrancy guard. React state hasn't flushed
     // between two near-simultaneous clicks; the ref has.
     if (isSendingRef.current) return;
     isSendingRef.current = true;
+
+    // When a caller hydrates the engine synchronously (no-ZIP handoff), use
+    // that state as the basis for THIS turn so the LLM sees ZIP/topic/history
+    // even though React hasn't committed the setState yet.
+    const baseState = baseStateOverride || state;
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -638,32 +823,32 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       await new Promise((resolve) => setTimeout(resolve, typingDelay));
 
       let response = '';
-      let newState = state;
+      let newState = baseState;
       let needsHuman = false;
       try {
         // PHASE A7 — async LLM brain (Claude Haiku) + structural fallback.
         // The async wrapper handles ZIP / name+phone / crisis / closing
         // synchronously, then calls the LLM for topic conversation. If
         // the LLM call fails, it falls back to the legacy regex engine.
-        const result = await processMessageAsync(text, state, meta);
+        const result = await processMessageAsync(text, baseState, meta);
         response = result.response;
         newState = result.newState;
         needsHuman = result.needsHuman;
       } catch {
-        response = state.language === 'es'
+        response = baseState.language === 'es'
           ? 'Algo salió mal, pero sigo aquí. Por favor intente de nuevo.'
           : "Something went wrong, but I'm still here. Please try again.";
       }
       // Wave 21 — final safety guard. Never let "undefined" / "null" / "NaN"
       // reach the user, even if a template slipped through.
-      response = sanitizeResponse(response, (newState.language || state.language) === 'es');
+      response = sanitizeResponse(response, (newState.language || baseState.language) === 'es');
 
       // Sync page-level language when chip selection occurs.
       // PHASE 8 — capture the CS bot viewport position before the global
       // re-render (Header/Hero/Footer text lengths differ between EN/ES,
       // which would otherwise push the bot down the page visually) and
       // restore it via scrollBy after React commits.
-      if (newState.language && newState.language !== state.language) {
+      if (newState.language && newState.language !== baseState.language) {
         const botEl = typeof document !== 'undefined'
           ? document.getElementById('customer-service-bot')
           : null;
@@ -771,6 +956,45 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     }]);
   }
 
+  // ── Stage 2a (Sawil 2026-06) — HAND OFF THE CONVERSATION TO THE LLM ─────────
+  // Called right after language + (optional) ZIP, this retires the scripted
+  // A/B/C gauntlet for the rest of the session and lets the LLM lead. It
+  // hydrates the engine's ConversationState from everything the outer flow
+  // already captured (language, ZIP/zone, problem summary, full history),
+  // flips the engine to step 'conversation' (which _runStructuralFirst defers
+  // to the LLM), marks the outer flow as engine-engaged, and clears
+  // outerInProgress so every subsequent text turn flows through runEngineTurn.
+  // Returns the freshly-computed ConversationState so a caller can pass it as
+  // baseStateOverride to runEngineTurn for the CURRENT message (the no-ZIP
+  // bridge), since React has not flushed this setState yet.
+  function handOffToLLM(extras: {
+    zip?: string;
+    state?: ClaraOuterState['state'];
+    problemSummary?: string;
+  } = {}): ConversationState {
+    const isEs = outerState.language === 'es';
+    // Merge captured extras into a local outer-state copy for hydration
+    // (immutably — never mutate outerState).
+    const mergedOuter: ClaraOuterState = {
+      ...outerState,
+      ...(extras.zip ? { zip: extras.zip } : {}),
+      ...(extras.state ? { state: extras.state } : {}),
+      ...(extras.problemSummary ? { problemSummary: extras.problemSummary } : {}),
+      step: 'B_engine_engaged',
+    };
+    const enginePatch = outerStateToEngine(mergedOuter, messages);
+    const hydrated: ConversationState = {
+      ...state,
+      ...enginePatch,
+      language: enginePatch.language ?? state.language ?? (isEs ? 'es' : 'en'),
+      step: 'conversation',
+    };
+    setState(hydrated);
+    setOuterState(mergedOuter);
+    setOuterInProgress(false);
+    return hydrated;
+  }
+
   // Path B pitch confirm (Yes → engine takes over for capture; No → goodbye).
   function handleBPitchAccept(yes: boolean) {
     const isEs = outerState.language === 'es';
@@ -780,16 +1004,33 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (!yes) {
       setOuterState((s) => ({ ...s, step: 'B_done' }));
       setTimeout(() => pushBotMessageDirect(isEs
-        ? 'Entendido, sin presión. Si cambia de opinión, puede llamar al 1-866-310-8702 o regresar aquí.'
-        : 'Understood, no pressure. If you change your mind, you can call 1-866-310-8702 or come back anytime.'), 300);
+        ? 'Entendido, sin presión. Gracias por considerarnos. Si en algún momento cambia de opinión, puede llamarnos al 1-866-310-8702 o regresar aquí — siempre estaremos para ayudarle.'
+        : "Understood — no pressure at all. Thank you for considering us. If you ever change your mind, you can call us at 1-866-310-8702 or come back anytime. We'll always be here to help."), 300);
       return;
     }
-    // Qualified prospect accepted — delegate to existing engine for capture.
+    // Sawil 2026-06 (Phase 1) — HYDRATE the engine with everything the
+    // scripted outer flow already captured (language, ZIP, in-service state,
+    // topic, problem summary, full conversation history) instead of handing
+    // it an empty state + the literal word "español". The engine no longer
+    // restarts intake from zero.
+    //
+    // We set pendingAdvisorHandoff + step 'asking_name' so the engine asks
+    // ONLY for the one field Path B genuinely lacks (the name) and then
+    // finalizes the advisor handoff. ZIP / language / topic are NOT re-asked
+    // (see the asking_name ZIP-skip guard in customerServiceEngine.ts).
     setOuterState((s) => ({ ...s, step: 'B_engine_engaged' }));
+    const enginePatch = outerStateToEngine(outerState, messages);
+    setState((prev) => ({
+      ...prev,
+      ...enginePatch,
+      language: enginePatch.language ?? prev.language ?? (isEs ? 'es' : 'en'),
+      pendingAdvisorHandoff: true,
+      step: 'asking_name',
+    }));
     setOuterInProgress(false);
-    // Trigger the engine's language confirmation (which starts the existing
-    // name/ZIP/topic flow). Feed the language word the engine expects.
-    setTimeout(() => handleSendMessage(isEs ? 'español' : 'english'), 200);
+    setTimeout(() => pushBotMessageDirect(isEs
+      ? 'Perfecto. Para que un asesor licenciado de Clear Point le contacte, ¿cuál es su nombre completo?'
+      : 'Perfect. So a licensed Clear Point advisor can reach out, what is your full name?'), 300);
   }
 
   // Path C opt-in handler.
@@ -801,14 +1042,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     if (!optIn) {
       setOuterState((s) => ({ ...s, step: 'C_done' }));
       setTimeout(() => pushBotMessageDirect(isEs
-        ? 'Gracias por consultarnos. Espero que los recursos sean útiles.'
-        : 'Thank you for reaching out. I hope the resources are helpful.'), 300);
+        ? 'Gracias por consultarnos. Espero que los recursos le sean de ayuda. Si en algún momento tiene una pregunta de Medicare, estaremos aquí — que tenga un buen día.'
+        : "Thank you for reaching out. I hope the resources help. If a Medicare question ever comes up, we'll be here. Have a good day."), 300);
       return;
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
     setTimeout(() => pushBotMessageDirect(isEs
-      ? '¿Puede compartir su nombre completo, teléfono y un resumen breve del tema?'
-      : 'May I have your full name, phone, and a brief summary of the topic?'), 300);
+      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?'
+      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?"), 300);
   }
 
   // Path A identity capture: parses single text input "Name | last4" or split flow.
@@ -821,13 +1062,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     const nameCheck = validateFullName(nameText);
     if (!nameCheck.ok || !last4) {
       pushBotMessageDirect(isEs
-        ? 'Necesito su nombre completo y los últimos 4 dígitos del teléfono. Por ejemplo: "María García 5678".'
-        : 'I need your full name and the last 4 digits of your phone. For example: "John Smith 5678".');
+        ? 'Disculpe, necesito su nombre completo y los últimos 4 dígitos del teléfono para verificar su caso. Por ejemplo: "María García 5678".'
+        : 'Apologies — I need your full name and the last 4 digits of your phone to verify your case. For example: "John Smith 5678".');
       return;
     }
     const fullName = nameCheck.cleaned!;
     setOuterState((s) => ({ ...s, fullName, last4Phone: last4, step: 'A_verifying' }));
-    pushBotMessageDirect(isEs ? 'Verificando su caso, un momento…' : 'Verifying your case, one moment…');
+    pushBotMessageDirect(isEs ? 'Déjeme buscar su caso, un momento…' : 'Let me look up your case — one moment…');
     setIsTyping(true);
 
     // Call /api/lookup-client with timeout.
@@ -855,21 +1096,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
         }));
         const advBit = advisorName ? `, ${advisorName}` : '';
         pushBotMessageDirect(isEs
-          ? `Encontré su caso. La voy a conectar con su asesor asignado${advBit}. ¿En qué le puedo ayudar hoy?`
-          : `I found your case. I'll connect you with your assigned advisor${advBit}. How can I help you today?`);
+          ? `Perfecto, encontré su caso. Le voy a conectar con su asesor asignado${advBit}. ¿En qué le podemos ayudar hoy?`
+          : `Perfect — I found your case. I'll connect you with your assigned advisor${advBit}. How can we help you today?`);
       } else {
         setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
         pushBotMessageDirect(isEs
-          ? 'No pude verificar el caso automáticamente. Para proteger su privacidad, voy a pedir que un asesor de Clear Point revise su caso y le devuelva la llamada. ¿Puede compartir su número de teléfono y un resumen breve del tema?'
-          : 'I could not verify your case automatically. To protect your privacy, I will ask a Clear Point advisor to review your case and call you back. May I have your phone number and a brief summary of the topic?');
+          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe — esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?'
+          : "I couldn't find you automatically in our system — but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?");
       }
     } catch {
       clearTimeout(timer);
       setIsTyping(false);
       setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
       pushBotMessageDirect(isEs
-        ? 'No pude verificar el caso ahora mismo. Voy a pedir que un asesor revise su caso. ¿Su teléfono y un resumen breve del tema?'
-        : 'I could not verify the case right now. I will ask an advisor to review. Could I have your phone and a brief summary?');
+        ? 'No pude verificar su caso en este momento, pero no se preocupe — un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?'
+        : "I couldn't verify your case right now, but don't worry — a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?");
     }
   }
 
@@ -900,11 +1141,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       setSubmitState(ok ? 'submitted' : 'failed');
       if (ok) {
         const closingEs = officeStatus.isOpen
-          ? 'Gracias. Su información fue enviada. Si prefiere hablar ahora, puede llamar al 1-866-310-8702. De lo contrario, un asesor le contactará pronto.'
-          : 'Gracias. Su información fue enviada. Ahora estamos fuera de horario; un asesor le devolverá la llamada el próximo día laboral.';
+          ? 'Listo, gracias. Su información ya está con un asesor licenciado. Si prefiere hablar ahora mismo, puede llamarnos al 1-866-310-8702; de lo contrario, un asesor le contactará pronto.'
+          : 'Listo, gracias. Su información ya está con un asesor licenciado. En este momento estamos fuera de horario, así que un asesor le devolverá la llamada el próximo día laboral. Que tenga una buena noche.';
         const closingEn = officeStatus.isOpen
-          ? 'Thank you. Your information was sent. If you prefer to speak now, you can call 1-866-310-8702. Otherwise, an advisor will contact you soon.'
-          : 'Thank you. Your information was sent. We are currently after hours; an advisor will call you back on the next business day.';
+          ? "All set, thank you. Your information is now with a licensed advisor. If you'd rather speak right now, you can call us at 1-866-310-8702; otherwise, an advisor will reach out to you shortly."
+          : "All set, thank you. Your information is now with a licensed advisor. We're currently after hours, so an advisor will call you back on the next business day. Have a good evening.";
         setTimeout(() => pushBotMessageDirect(isEs ? closingEs : closingEn), 200);
       }
     } catch {
@@ -918,13 +1159,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     // we ask the path_select question. The engine is only engaged later for
     // Path B qualified prospects.
     setLang(lang);
-    setState((prev) => ({ ...prev, language: lang }));
-    setOuterState((s) => ({ ...s, language: lang, step: 'path_select' }));
+    // Advance engine step past 'asking_language' so the language chips hide and
+    // the text input unblocks. 'conversation' = free chat (outer flow drives now).
+    setState((prev) => ({ ...prev, language: lang, step: 'conversation' }));
+    // Sawil 2026-06: ask for ZIP right after the welcome to identify the
+    // client zone before continuing. Natural, single line, not a form.
+    setOuterState((s) => ({ ...s, language: lang, step: 'awaiting_zip' }));
     const isEs = lang === 'es';
     pushUserMessageDirect(isEs ? 'Español' : 'English');
     setTimeout(() => pushBotMessageDirect(isEs
-      ? 'Hola, soy Clara. Estoy aquí para ayudarle con preguntas de servicio, cobertura o seguimiento con Clear Point. ¿En qué puedo ayudarle hoy?'
-      : "Hi, I'm Clara. I'm here to help with service questions, coverage concerns, or follow-up with Clear Point. How can I help today?"), 300);
+      ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle con su Medicare — preguntas de servicio, su cobertura, su plan, o seguimiento con un asesor. Para orientarle mejor, ¿me comparte su código postal de 5 dígitos?'
+      : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help with your Medicare — service questions, your coverage, your plan, or follow-up with an advisor. So I can help you better, may I have your 5-digit ZIP code?"), 300);
   }
 
   function resetConversation() {
@@ -944,6 +1189,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   function performReset() {
     setShowResetConfirm(false);
     setState(createInitialState());
+    // Sawil 2026-06 — FULL reset. The LLM-led flow sets outerInProgress=false
+    // when the engine takes over; "Empezar de nuevo" must also reset the outer
+    // flow + re-enable it, otherwise the restarted conversation stays stuck in
+    // the old engine state and the language pick doesn't behave like a fresh
+    // start. Reset outerState + outerInProgress so reset == first load exactly.
+    setOuterState(createOuterState((pageLang === 'es' ? 'es' : 'en')));
+    setOuterInProgress(true);
     setSubmitState('idle');
     setHasNewBotMessage(false);
     setDisclosureCollapsed(false);
@@ -954,7 +1206,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
     askedFollowupRef.current = false;
     setMessages([{
       id: 'welcome-' + Date.now(),
-      text: "Hi, I'm the ClearPoint Support Guide. I can help organize questions about Medicare bills, letters, coverage, medications, doctors, enrollment, or cost help.\n\nHola, soy la Guía de Soporte de ClearPoint. Puedo ayudarle a organizar preguntas sobre facturas, cartas, cobertura, medicamentos, doctores, inscripción o ayudas de costo.\n\nWhich language do you prefer? ¿Qué idioma prefiere?",
+      text: "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help. Do you prefer English or Spanish?\n\nHola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle. ¿Prefiere español o inglés?",
       sender: 'bot',
       timestamp: new Date(),
     }]);
@@ -975,33 +1227,44 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
   const quickReplies = state.quickReplies || [];
   const showRecoveryChips = quickReplies.length > 0 && !isTyping;
 
-  // PHASE E — viewport tier + container height. Tier picks a dvh factor and
-  // pixel cap; visualViewportHeight (when present) overrides to a concrete
-  // pixel value so iOS / Android keyboards do not hide the input row.
+  // PHASE E — viewport tier still drives chip-row layout and desktop max-width.
+  // Mobile container height now comes from the CSS var `--svh`
+  // (written by useVisualViewportHeight) so the shell auto-shrinks when the
+  // soft keyboard opens. No inline JS math.
   const _vp = viewportTier(viewportWidth);
-  const _containerStyle = containerHeightStyle(viewportWidth, visualViewportHeight);
+  // _containerStyle removed — Clara now mirrors Zara's max-h pattern directly
+  // in the JSX, so the bespoke per-tier pixel cap from containerHeightStyle()
+  // is no longer needed. Kept the import for backwards compatibility in case
+  // other surfaces still use the helper.
   const _chipRowCls = chipRowClass(viewportWidth);
   const _safeBottom = safeAreaBottomStyle();
 
-  return (
-    // PHASE E — bound the outer chat container's height per viewport tier.
-    //   xs (320-374) : 70dvh / 540 px cap
-    //   sm (375-389) : 74dvh / 600 px cap
-    //   md (390-429) : 74dvh / 620 px cap
-    //   lg (430-767) : 76dvh / 660 px cap
-    //   tablet 768+  : 78dvh / 700 px
-    //   desktop 1024+: 78dvh / 720 px + max-width: 768 px
-    // Body inside uses flex-1 + min-h-0 + overflow-y-auto so only the
-    // message list scrolls internally.
-    <div
-      // PHASE E — `relative` anchors the new-message indicator + reset modal
-      // to the chat container, not the whole page.
-      className={`flex flex-col bg-cream-50 rounded-2xl shadow-lifted border border-cream-200 overflow-hidden mx-auto relative ${_vp.applyMaxWidth ? 'max-w-3xl' : 'max-w-full'}`}
-      style={_containerStyle}
-      aria-label={isSpanish ? 'Asistente de servicio al cliente' : 'Customer service assistant'}
-    >
+  // Sawil 2026-06 — enterprise overlay rewrite. Extract the chat chrome into
+  // a fragment so we can wrap it in either an overlay-backdrop (page mode)
+  // or the legacy widget-mode container without duplicating event handlers,
+  // refs, or scroll effects.
+  const innerContent = (
+    <>
       {/* Header */}
       <header className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0 gap-2">
+        {/* Sawil 2026-06 — Back button only rendered in page mode (when Clara is /support's main panel). */}
+        {mode === 'page' && (
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined' && window.history.length > 1) {
+                navigate(-1);
+              } else {
+                navigate('/');
+              }
+            }}
+            className="mr-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-cream-50/10 transition-colors flex-shrink-0"
+            aria-label={isSpanish ? 'Volver al sitio' : 'Back to site'}
+            title={isSpanish ? 'Volver' : 'Back'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          </button>
+        )}
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <div className="relative flex-shrink-0">
             <div className="w-9 h-9 rounded-full overflow-hidden bg-cream-100">
@@ -1019,8 +1282,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
             <span aria-hidden className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-earth-800 animate-pulse-online" />
           </div>
           <div className="leading-tight min-w-0 flex-1">
+            {/* Sawil 2026-06 — short title so it NEVER truncates to "Clara —
+                Sop…" on a phone. The site header above already carries the
+                "Clear Point" brand; the subtitle below carries the rest. */}
             <div className="text-[15px] font-semibold truncate">
-              {isSpanish ? 'Clara — Soporte Bilingüe de Clear Point' : 'Clara — Clear Point Bilingual Support'}
+              {isSpanish ? 'Clara · Soporte' : 'Clara · Support'}
             </div>
             <div className="text-[11px] text-cream-200 font-normal truncate">
               {state.name && state.zipCode
@@ -1075,7 +1341,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           <button
             type="button"
             onClick={() => setDisclosureCollapsed(true)}
-            className="block w-full text-left bg-gold-100 border-b border-gold-200 px-4 py-2.5 text-[14px] leading-[1.5] text-earth-700 hover:bg-gold-200/40 transition"
+            className="block w-full text-left bg-gold-100 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-[1.5] text-earth-700 hover:bg-gold-200/40 transition"
             aria-label={isSpanish ? 'Colapsar aviso' : 'Collapse notice'}
           >
             <p>
@@ -1097,11 +1363,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           </button>
         )}
 
-        <div className="px-4 py-4 pb-8 space-y-3.5">
+        <div
+          className="px-3 py-3 space-y-2.5"
+          style={{ paddingBottom: '12px' }}
+        >
           {messages.map((m) => (
-            <div key={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={m.id} data-msg-id={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div
-                className={`max-w-[85%] rounded-2xl px-4 py-3.5 text-[16px] sm:text-[16px] leading-[1.6] whitespace-pre-wrap ${
+                className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[16px] sm:text-[16px] leading-[1.6] whitespace-pre-wrap ${
                   m.sender === 'user'
                     ? 'bg-earth-800 text-cream-50 rounded-br-md'
                     : 'bg-white text-earth-800 shadow-xs border border-cream-200 rounded-bl-md'
@@ -1133,7 +1402,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           )}
 
           {/* Path C — opt-in offer */}
-          {outerInProgress && (outerState.step === 'C_resources_shown' || outerState.step === 'C_fl_offer') && !isTyping && (
+          {outerInProgress && outerState.step === 'C_resources_shown' && !isTyping && (
             <div className="flex flex-wrap gap-2 pt-1">
               <button onClick={() => handleCOptin(true)}
                 className="px-5 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition min-h-[44px]">
@@ -1206,23 +1475,23 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           {/* GHL submission state */}
           {submitState === 'submitting' && (
             <div className="bg-sage-100 border border-sage-300 rounded-xl p-4 text-earth-800 text-[14px]">
-              {isSpanish ? 'Enviando su caso a un asesor licenciado…' : 'Sending your case to a licensed advisor…'}
+              {isSpanish ? 'Pasándole su caso a un asesor licenciado…' : 'Handing your case to a licensed advisor…'}
             </div>
           )}
           {submitState === 'submitted' && (
             <div className="bg-sage-100 border border-sage-300 rounded-xl p-4 space-y-1">
               <div className="font-bold text-earth-900">
-                {isSpanish ? '✓ Listo. Un asesor licenciado se comunicará con usted.' : '✓ Got it. A licensed advisor will follow up.'}
+                {isSpanish ? '✓ Listo — su caso está con un asesor licenciado.' : '✓ All set — your case is with a licensed advisor.'}
               </div>
               <p className="text-earth-700 text-[13.5px]">
-                {isSpanish ? 'Un asesor bilingüe revisará su caso.' : 'A bilingual advisor will review your case.'}
+                {isSpanish ? 'Un asesor bilingüe revisará su situación y le contactará pronto.' : 'A bilingual advisor will review your situation and reach out to you shortly.'}
               </p>
             </div>
           )}
           {submitState === 'failed' && (
             <div className="bg-red-50 border border-red-300 rounded-xl p-4 space-y-3">
               <div className="font-bold text-red-900">
-                {isSpanish ? 'Su mensaje fue preparado, pero no pudimos confirmar el envío en este momento.' : 'Your message was prepared, but we could not confirm submission right now.'}
+                {isSpanish ? 'Disculpe, su mensaje quedó preparado pero no pude confirmar el envío en este momento. Por favor llámenos directamente y le atenderemos enseguida.' : "Apologies — your message was prepared but I couldn't confirm the submission right now. Please call us directly and we'll take care of you right away."}
               </div>
               <a href="tel:18663108702" className="inline-flex items-center gap-1.5 px-4 py-3 bg-earth-800 text-cream-50 rounded-lg text-[14px] font-semibold min-h-[44px]">
                 <Phone className="w-4 h-4" /> 1-866-310-8702
@@ -1235,22 +1504,35 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
       </div>
 
       {/* Footer chrome — PHASE 9E swaps "Call now" for callback messaging after hours. */}
-      <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white">
+      {/* Sawil 2026-06 — footer kept on ONE clean line at every width. The
+          callback label is now localized (no more "devolución tomorrow at
+          9am ET" mixed-language) and the call link truncates instead of
+          wrapping the row into a choppy two-line mess. min-w-0 lets the link
+          shrink; the status stays pinned (flex-shrink-0). */}
+      <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white min-w-0">
         <a
           href="tel:18663108702"
-          className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors"
+          className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors min-w-0"
         >
-          <Phone className="w-4 h-4" />
-          {officeStatus.isOpen
-            ? (isSpanish ? 'Llamar ahora' : 'Call now')
-            : (isSpanish ? `Llamar (devolución ${officeStatus.nextOpenLabel})` : `Call (callback ${officeStatus.nextOpenLabel})`)}
+          <Phone className="w-4 h-4 flex-shrink-0" />
+          <span className="truncate">
+            {officeStatus.isOpen
+              ? (isSpanish ? 'Llamar ahora' : 'Call now')
+              : (isSpanish ? `Devolución: ${officeStatus.nextOpenLabelEs}` : `Callback: ${officeStatus.nextOpenLabel}`)}
+          </span>
         </a>
-        <span className="text-earth-300 select-none" aria-hidden="true">·</span>
-        <span className="text-[12px] text-earth-700">
-          {officeStatus.isOpen
-            ? (isSpanish ? 'Soporte bilingüe' : 'Bilingual support')
-            : (isSpanish ? 'Fuera de horario' : 'After hours')}
-        </span>
+        {/* Open hours → show the "bilingual support" tag. After hours the
+            "Devolución: …" label already conveys the status, so we drop the
+            redundant tag and give the callback time the full width (no more
+            truncation). */}
+        {officeStatus.isOpen && (
+          <>
+            <span className="text-earth-300 select-none flex-shrink-0" aria-hidden="true">·</span>
+            <span className="text-[12px] text-earth-600 whitespace-nowrap flex-shrink-0">
+              {isSpanish ? 'Soporte bilingüe' : 'Bilingual support'}
+            </span>
+          </>
+        )}
       </div>
 
       {/* PHASE E — "New message ↓" floating chip. Appears when the user has
@@ -1330,6 +1612,24 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
             ref={inputRef}
             rows={1}
             value={inputValue}
+            onFocus={() => {
+              // Sawil 2026-06 — mobile scroll-sequence fix. On touch devices,
+              // focusing the input opens the soft keyboard, which shrinks the
+              // visible viewport (--svh). The last bot message (e.g. the
+              // post-language ZIP ask) then falls below the fold, exactly the
+              // "queda abajo" Sawil reported. The main scroll effect no longer
+              // depends on viewport height (that dep caused the old bounce),
+              // so nothing re-pins on keyboard open. Re-scroll the last message
+              // into view once the keyboard has settled. Coarse-pointer only,
+              // so desktop (no viewport shift on focus) is untouched. Two
+              // instant fires — one mid-animation, one after settle — converge
+              // on the same target with no visible jump and no listener loop.
+              if (typeof window === 'undefined') return;
+              if (!window.matchMedia?.('(pointer: coarse)')?.matches) return;
+              if (userPinnedUpRef.current) return;
+              window.setTimeout(() => scrollToBottom(false), 250);
+              window.setTimeout(() => scrollToBottom(false), 500);
+            }}
             onChange={(e) => {
               setInputValue(e.target.value);
               // Auto-grow up to 4 lines.
@@ -1403,6 +1703,54 @@ export function CustomerServiceBot({ onEscalate, initialLanguage }: CustomerServ
           </button>
         </div>
       </form>
+    </>
+  );
+
+  // Sawil 2026-06 — Dual-branch return.
+  //
+  // PAGE MODE: Clara is a true chat application overlay. Mobile fills the
+  // viewport (no rounding, fixed inset-0 at z-60). Desktop centers a card
+  // (880×760 cap) over a translucent earth-900/40 backdrop. Body-scroll
+  // lock is owned by Support.tsx (the only mount point for page mode).
+  //
+  // WIDGET MODE: Preserved unchanged — legacy fixed-bottom overlay for the
+  // floating BotLauncher pill on non-/support routes.
+  if (mode === 'page') {
+    // Sawil 2026-06 — PAGE MODE IS AN IN-FLOW PANEL, not a modal takeover.
+    // Previously this was `fixed inset z-[60] aria-modal` covering the whole
+    // viewport (including the site Header) and the document was scroll-locked,
+    // so the user was TRAPPED in Clara — could not reach the site nav or tap
+    // anything else. Now Clara renders in normal document flow under the
+    // sticky site Header: the menu stays usable, the page is not frozen, and
+    // the user can navigate away anytime.
+    //
+    // Height = visible viewport minus the sticky nav (~70px) so the composer
+    // stays on screen without forcing a page scroll. --svh (written by
+    // useVisualViewportHeight) shrinks when the mobile keyboard opens, so the
+    // input rides the keyboard natively — no fixed shell for iOS to drag,
+    // which is what caused every prior keyboard bug. Desktop caps the panel
+    // height (max-h) and centers it in a comfortable max-w-3xl column.
+    return (
+      <section
+        aria-label={isSpanish ? 'Asistente de servicio al cliente' : 'Customer service assistant'}
+        className="w-full md:max-w-3xl md:mx-auto md:px-4 md:py-6"
+      >
+        <div
+          className="flex flex-col bg-cream-50 overflow-hidden border-cream-200 md:border md:border-cream-300 md:rounded-2xl md:shadow-lifted md:max-h-[min(760px,calc(100dvh-140px))]"
+          style={{ height: 'calc(var(--svh, 100dvh) - 70px)' }}
+        >
+          {innerContent}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div
+      className={`flex flex-col bg-cream-50 border border-cream-200 overflow-hidden rounded-2xl shadow-lifted mx-auto fixed inset-x-0 bottom-0 z-40 rounded-b-none border-b-0 h-[var(--svh,100dvh)] md:relative md:inset-auto md:bottom-auto md:rounded-2xl md:border-b md:border-b-cream-200 md:rounded-b-2xl md:h-auto md:max-h-[85dvh] ${_vp.applyMaxWidth ? 'md:max-w-3xl' : 'md:max-w-full'}`}
+      aria-label={isSpanish ? 'Asistente de servicio al cliente' : 'Customer service assistant'}
+    >
+      {innerContent}
     </div>
   );
 }

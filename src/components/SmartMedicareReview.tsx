@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
@@ -93,13 +93,32 @@ export function SmartMedicareReview() {
   const [consent, setConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // PHASE A16 — SOA URL set after the lead submits successfully.
+  const [soaUrl, setSoaUrl] = useState<string>('');
   const [error, setError] = useState('');
   const [ssdiSubStep, setSsdiSubStep] = useState(0);
   const [ssdiAnswers, setSsdiAnswers] = useState<Record<string, string>>({});
+  // Sawil 2026-06: after every step transition, scroll the funnel card to
+  // the top of the viewport so the new question is visible. Covers chips,
+  // Continue, Back, sub-steps, and the final success state.
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    // Initial render (step 1, sub-step 0) does not scroll; only transitions.
+    if (step === 1 && ssdiSubStep === 0) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [step, ssdiSubStep]);
   // Honeypot anti-bot field — must stay empty. Real users never see this input;
   // bots that scrape and fill every form input will populate it. API discards
   // any submission where this is non-empty.
   const [websiteUrl, setWebsiteUrl] = useState('');
+  // PHASE A18 — qualifier fields (all optional, with "I don't know" option).
+  // These flow into the lead notes and Lead Intelligence (Fase 3) so the
+  // advisor has carrier/rx/doctor context before calling.
+  const [currentCarrier, setCurrentCarrier] = useState('');
+  const [rxCount, setRxCount] = useState('');
+  const [doctorPriority, setDoctorPriority] = useState('');
   // Step 1 progressive disclosure — 4 primary options first, "More options"
   // reveals the remaining 7. Resets if the user goes back to Step 1.
   const [showMoreOptions, setShowMoreOptions] = useState(false);
@@ -152,7 +171,10 @@ export function SmartMedicareReview() {
   const canAdvanceStep = (): boolean => {
     switch (step) {
       case 1: return !!concern;
-      case 2: return zip.length === 5 && !!zipInfo;
+      // Sawil 2026-06 COMPLIANCE — must be a SUPPORTED service-area ZIP
+      // (NY/NJ/CT). A Florida ZIP resolves but supported === false, so it can
+      // no longer advance past Step 2.
+      case 2: return zip.length === 5 && !!zipInfo && zipInfo.supported;
       case 3: return validateDOB(dob).valid;
       case 4: return validatePersonName(firstName).valid && validatePersonName(lastName).valid && validatePhone(phone).valid;
       case 5: return !!prefLang;
@@ -203,6 +225,9 @@ export function SmartMedicareReview() {
       lead_quality_flags: flags.join('; '),
       bot_transcript_summary: '',
       tags: ['Smart Review Lead', 'Medicare Lead'],
+      // PHASE A16 — Smart Review is an active-buyer signal → SOA required.
+      lead_source: 'smart_review',
+      soa_pending: true,
       created_at: new Date().toISOString(),
       // Honeypot value forwarded to API for anti-bot gate
       website_url: websiteUrl,
@@ -213,6 +238,36 @@ export function SmartMedicareReview() {
     if (success) {
       setSubmitted(true);
       setStep(TOTAL_STEPS + 1);
+      // PHASE A16 — Fetch SOA signing token so the success view can render
+      // the CMS-required Scope of Appointment link.
+      // PHASE 6 — 12s timeout so success view doesn't hang on bad networks.
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), 12_000);
+      try {
+        const r = await fetch('/api/soa-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'omit',
+          signal: controller.signal,
+          body: JSON.stringify({
+            fullName: `${firstName} ${lastName}`.trim(),
+            phone: phoneValid.cleaned,
+            email: email || '',
+            zip: zip || '',
+            language: isEs ? 'es' : 'en',
+            leadSource: 'smart_review',
+          }),
+        });
+        clearTimeout(t);
+        if (r.ok) {
+          const data = await r.json();
+          setSoaUrl(window.location.origin + (data.soaUrl || `/soa/${data.token}`));
+        }
+      } catch (e) {
+        clearTimeout(t);
+        // Non-fatal — user can still be reached by phone. Log only.
+        console.warn('[SmartReview] SOA token fetch failed', e);
+      }
     } else {
       setError(isEs ? 'Error al enviar. Intente de nuevo o llámenos.' : 'Submission failed. Please try again or call us.');
     }
@@ -241,6 +296,10 @@ export function SmartMedicareReview() {
       `- Consent to contact: Yes`,
       '',
       `Client Main Concern: ${concern}`,
+      // PHASE A18 — qualifier fields (optional).
+      ...(currentCarrier ? [`Current Carrier: ${currentCarrier}`] : []),
+      ...(rxCount ? [`Prescription medications: ${rxCount}`] : []),
+      ...(doctorPriority ? [`Doctor to keep: ${doctorPriority}`] : []),
       ...(Object.keys(ssdiAnswers).length > 0 ? [
         '',
         'Disability / SSI / SSDI Screening Answers:',
@@ -260,9 +319,37 @@ export function SmartMedicareReview() {
             <CheckIcon className="w-8 h-8 text-sage-500" />
           </div>
           <h2 className="font-serif text-2xl text-earth-900 mb-3">{t('Thank You!', '¡Gracias!')}</h2>
-          <p className="text-earth-600 text-base">
+          <p className="text-earth-600 text-base mb-6">
             {t('Your request was received. A licensed Medicare advisor will contact you during business hours.', 'Su solicitud fue recibida. Un asesor licenciado de Medicare le contactará durante horas laborables.')}
           </p>
+
+          {/* PHASE A16 — SOA signing CTA. CMS 422.2264 requires the SOA before
+              an advisor can discuss MA / Part D products. Without this step,
+              the advisor cannot call. */}
+          {soaUrl && (
+            <div className="bg-white rounded-2xl border border-cream-200 shadow-sm p-6 mt-6 text-left">
+              <div className="flex items-start gap-3 mb-4">
+                <span className="text-2xl">🔒</span>
+                <div>
+                  <h3 className="font-serif text-lg text-earth-900 mb-1">
+                    {t('One last step: Sign your Scope of Appointment', 'Último paso: Firme su Scope of Appointment')}
+                  </h3>
+                  <p className="text-earth-600 text-sm">
+                    {t('CMS requires us to confirm what topics you would like to discuss before the advisor calls. This takes 60 seconds. No obligation.', 'CMS requiere confirmar qué temas quiere discutir antes que el asesor le llame. Toma 60 segundos. Sin obligación.')}
+                  </p>
+                </div>
+              </div>
+              <a
+                href={soaUrl}
+                className="inline-block w-full sm:w-auto text-center px-6 py-3 bg-gold-500 text-white font-bold rounded-full hover:bg-gold-600 transition-colors min-h-[48px]"
+              >
+                {t('Sign Scope of Appointment', 'Firmar Scope of Appointment')} →
+              </a>
+              <p className="text-xs text-earth-400 mt-3">
+                {t('Secure link, expires in 24 hours. Required by CMS 422.2264 before advisor contact.', 'Enlace seguro, expira en 24 horas. Requerido por CMS 422.2264 antes del contacto del asesor.')}
+              </p>
+            </div>
+          )}
         </div>
       </section>
     );
@@ -317,7 +404,7 @@ export function SmartMedicareReview() {
         </div>
 
         {/* Step Content */}
-        <div className="bg-white rounded-2xl shadow-lifted p-6 sm:p-8 border border-cream-200">
+        <div ref={cardRef} className="bg-white rounded-2xl shadow-lifted p-6 sm:p-8 border border-cream-200 scroll-mt-28">
           {/* Back button — hidden on Step 1 */}
           {step > 1 && (
             <button
@@ -512,18 +599,21 @@ export function SmartMedicareReview() {
                 pattern="[0-9]*"
                 autoComplete="postal-code"
                 maxLength={5}
-                aria-describedby={zip.length === 5 && !zipInfo ? 'zip-error' : undefined}
+                aria-describedby={zip.length === 5 && (!zipInfo || !zipInfo.supported) ? 'zip-error' : undefined}
                 className="w-full px-4 py-4 sm:py-3.5 bg-cream-50 border border-cream-300 rounded-xl text-lg text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all"
               />
-              {zipInfo && (
+              {/* Sawil 2026-06 COMPLIANCE — only confirm a location for SUPPORTED
+                  service areas (NY/NJ/CT). A Florida ZIP has supported === false,
+                  so we never echo "…, Florida" back to the user. */}
+              {zipInfo && zipInfo.supported && (
                 <p className="text-sm text-sage-600 mt-3 font-medium">
                   {isEs
                     ? `Ubicación detectada: ${zipInfo.city}, ${zipInfo.county}, ${zipInfo.state}`
                     : `Location detected: ${zipInfo.city}, ${zipInfo.county}, ${zipInfo.state}`}
                 </p>
               )}
-              {zip.length === 5 && !zipInfo && (
-                <p id="zip-error" role="alert" className="text-sm text-red-500 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.')}</p>
+              {zip.length === 5 && (!zipInfo || !zipInfo.supported) && (
+                <p id="zip-error" role="alert" className="text-sm text-red-500 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, or CT.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ o CT.')}</p>
               )}
               <button
                 onClick={nextStep}
@@ -630,6 +720,76 @@ export function SmartMedicareReview() {
                 <p><strong>{t('Phone:', 'Tel.:')}</strong> {phone}</p>
                 {email && <p><strong>Email:</strong> {email}</p>}
                 <p><strong>{t('Language:', 'Idioma:')}</strong> {prefLang}</p>
+              </div>
+
+              {/* PHASE A18 — Optional qualifier questions. All have a
+                  "Don't know" option. These flow into lead notes + Lead
+                  Intelligence so the advisor has context BEFORE calling. */}
+              <div className="bg-white rounded-xl border border-cream-200 p-5 mb-5 space-y-4">
+                <p className="text-sm font-bold text-earth-700 uppercase tracking-wide">
+                  {t('A few quick questions (optional)', 'Unas preguntas rápidas (opcional)')}
+                </p>
+
+                {/* Current carrier */}
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">
+                    {t('Current plan / carrier', 'Plan / aseguradora actual')}
+                  </span>
+                  <select
+                    value={currentCarrier}
+                    onChange={(e) => setCurrentCarrier(e.target.value)}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
+                  >
+                    <option value="">{t('Select…', 'Seleccione…')}</option>
+                    <option value="UnitedHealth/AARP">UnitedHealth / AARP</option>
+                    <option value="Humana">Humana</option>
+                    <option value="Aetna">Aetna</option>
+                    <option value="WellCare">WellCare</option>
+                    <option value="Cigna">Cigna</option>
+                    <option value="Blue Cross / Blue Shield">Blue Cross / Blue Shield</option>
+                    <option value="EmblemHealth / HealthFirst / Fidelis">{t('Local NY/NJ/CT carrier', 'Aseguradora local NY/NJ/CT')}</option>
+                    <option value="Original Medicare only (no MA / no PDP)">{t('Original Medicare only', 'Solo Medicare Original')}</option>
+                    <option value="Other">{t('Other', 'Otro')}</option>
+                    <option value="Don't know">{t('I don’t know', 'No sé')}</option>
+                  </select>
+                </label>
+
+                {/* Prescription count */}
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">
+                    {t('Number of prescription medications you take', 'Cantidad de medicinas recetadas que toma')}
+                  </span>
+                  <select
+                    value={rxCount}
+                    onChange={(e) => setRxCount(e.target.value)}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
+                  >
+                    <option value="">{t('Select…', 'Seleccione…')}</option>
+                    <option value="0 (none)">{t('None', 'Ninguna')}</option>
+                    <option value="1-3">1–3</option>
+                    <option value="4-6">4–6</option>
+                    <option value="7+">7+</option>
+                    <option value="Don't know / not sure">{t('I don’t know', 'No sé')}</option>
+                  </select>
+                </label>
+
+                {/* Doctor priority */}
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">
+                    {t('Do you have a doctor you want to keep?', '¿Tiene un doctor que quiere mantener?')}
+                  </span>
+                  <select
+                    value={doctorPriority}
+                    onChange={(e) => setDoctorPriority(e.target.value)}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
+                  >
+                    <option value="">{t('Select…', 'Seleccione…')}</option>
+                    <option value="Yes — primary doctor + maybe specialist">{t('Yes — primary care doctor', 'Sí — doctor primario')}</option>
+                    <option value="Yes — specialist only">{t('Yes — specialist', 'Sí — especialista')}</option>
+                    <option value="No primary doctor right now">{t('No primary doctor', 'Sin doctor primario')}</option>
+                    <option value="Don't know / flexible">{t('I don’t know / flexible', 'No sé / flexible')}</option>
+                  </select>
+                </label>
               </div>
 
               {/* Consent */}

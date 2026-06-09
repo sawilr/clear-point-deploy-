@@ -3246,6 +3246,13 @@ function _runStructuralFirst(
   if (state.step === 'asking_zip' || state.step === 'asking_zip_natural') {
     return processMessage(userMessage, state);
   }
+  // Sawil 2026-06 (Phase 1) — Identity-collection steps must be captured
+  // deterministically by the sync engine (name parsing, ZIP-skip guard,
+  // advisor-handoff finalization), NOT by the free-form LLM. This is the
+  // post-handoff path when the scripted outer flow hydrated the engine.
+  if (state.step === 'asking_name' || state.step === 'collecting_identity') {
+    return processMessage(userMessage, state);
+  }
   // Active handoff / scheduling collection — sync engine captures name+phone,
   // optional email, and "anything else?" follow-up. LLM only resumes after
   // the user explicitly opts into another question (paused) or while LLM
@@ -4290,6 +4297,19 @@ function processMessageInner(
     }
     newState.name = nv.cleaned;
     newState.nameIsValid = true;
+    // Sawil 2026-06 (Phase 1) — If the ZIP was already captured upstream by
+    // the scripted outer flow (hydrated into state), do NOT re-ask it. When
+    // this is an advisor handoff, finalize directly — mirroring the
+    // pendingAdvisorHandoff completion in the asking_zip step below.
+    if (newState.zipCodeIsValid && newState.zipCode && newState.pendingAdvisorHandoff) {
+      newState.step = 'conversation';
+      newState.needsHuman = true;
+      const outA = isSpanish
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+      newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
+      return { response: outA, newState, needsHuman: true };
+    }
     newState.step = 'asking_zip';
     const out = isSpanish
       ? `Gracias${withName(newState.name)}. ¿Cuál es su código postal? Esto ayuda a confirmar el área de servicio. Si prefiere, puede decirme primero qué está pasando.`

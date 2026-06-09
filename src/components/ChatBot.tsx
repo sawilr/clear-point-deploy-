@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
-import { Calendar, ChevronRight, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
+import { Calendar, ChevronRight, Mic, MicOff, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
+import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
+import { getOfficeStatus } from '../lib/afterHours';
 
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
+import { callLLM, buildHistory } from '../lib/llmHandler';
+import { detectSafetyTrigger } from '../lib/safetyRouter';
 
 type ChatLanguage = 'en' | 'es';
 type MessageType = 'bot' | 'user';
@@ -543,6 +547,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: '• C-SNP (Chronic Condition SNP) — for people with certain chronic conditions like diabetes, heart disease, or chronic lung disorders.', pace: 'slow' },
       { text: '• I-SNP (Institutional SNP) — for people who live in a nursing home or require nursing care at home.', pace: 'slow' },
       { text: 'SNP availability depends on your county and plan availability. Not every county has every type of SNP. A licensed advisor can check what SNPs are available in your area.', pace: 'long' },
+      { text: 'Related to nursing-home-level care, there is also PACE — Programs of All-Inclusive Care for the Elderly. PACE is a separate program (not an SNP) that combines Medicare and Medicaid services to help certain people get care at home and in the community instead of a nursing home. It is generally for people 55 or older who need that level of care, can live safely at home with help, and live in a PACE service area. Availability depends on the area; a licensed advisor or your state agency can help check.', pace: 'slow' },
       {
         text: 'Would you like to learn about other topics or request a review?',
         options: [
@@ -828,9 +833,9 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: 'Medicare tiene dos partes principales que trabajan juntas.', pace: 'long' },
       { text: `La Parte A ayuda a cubrir estadías en el hospital, cuidado en centros de enfermería especializada y algo de cuidado en el hogar. En 2026, el deducible hospitalario de la Parte A es $${D.partA.deductible.toLocaleString()} por período de beneficio. La mayoría de las personas no pagan prima por la Parte A si ellos o su cónyuge trabajaron y pagaron impuestos de Medicare por al menos 10 años.`, pace: 'slow' },
       { text: `La Parte B ayuda a cubrir visitas al doctor, cuidado ambulatorio, suministros médicos y servicios preventivos. La prima mensual estándar de la Parte B es $${D.partB.standardPremium.toFixed(2)} en 2026, y el deducible anual es $${D.partB.annualDeductible}.`, pace: 'slow' },
-      { text: 'Juntas, las Partes A y B se llaman Medicare Original. Puedes ir a cualquier doctor u hospital en EE.UU. que acepte Medicare.', pace: 'long' },
+      { text: 'Juntas, las Partes A y B se llaman Medicare Original. Puede ir a cualquier doctor u hospital en EE.UU. que acepte Medicare.', pace: 'long' },
       {
-        text: '¿Quieres saber más sobre costos, o te explico Medicare Advantage (Parte C)?',
+        text: '¿Quiere saber más sobre costos, o le explico Medicare Advantage (Parte C)?',
         options: [
           { label: 'Explicar Parte C', value: 'edu_part_c' },
           { label: 'Parte D - recetas', value: 'edu_part_d' },
@@ -841,12 +846,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_part_c: [
-      { text: 'Medicare Advantage, también llamada Parte C, es otra forma de recibir tus beneficios de Medicare.', pace: 'long' },
+      { text: 'Medicare Advantage, también llamada Parte C, es otra forma de recibir sus beneficios de Medicare.', pace: 'long' },
       { text: 'Estos son planes ofrecidos por compañías de seguros privadas aprobadas por Medicare. Deben cubrir todo lo que Medicare Original cubre, y muchos incluyen beneficios adicionales como dental, visión, audición o programas de ejercicio.', pace: 'long' },
-      { text: `La disponibilidad y costos dependen de tu condado en ${stateLabel}. Cada plan tiene su propia red de doctores y hospitales.`, pace: 'long' },
-      { text: 'Puedo ayudarte a solicitar una revisión gratuita para ver qué planes hay en tu área. Un asesor licenciado revisaría tus doctores y medicamentos.', pace: 'long' },
+      { text: `La disponibilidad y costos dependen de su condado en ${stateLabel}. Cada plan tiene su propia red de doctores y hospitales.`, pace: 'long' },
+      { text: 'Puedo ayudarle a solicitar una revisión gratuita para ver qué planes hay en su área. Un asesor licenciado revisaría sus doctores y medicamentos.', pace: 'long' },
       {
-        text: '¿Qué te gustaría hacer?',
+        text: '¿Qué le gustaría hacer?',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Explicar Supplement', value: 'edu_supplement' },
@@ -860,10 +865,10 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       // PHASE A14: Medigap es solo educativo. ClearPoint no ofrece Medigap actualmente (autorización pendiente).
       // La línea de cierre se reescribió para quitar el "nuestro asesor puede revisar Medigap" pitch.
       { text: 'Medicare Supplement, también llamado Medigap, es una póliza separada que ayuda a pagar algunos costos que Medicare Original no cubre - como deducibles y coaseguros.', pace: 'long' },
-      { text: 'Debes tener Medicare Original (Partes A y B) para obtener una póliza Medigap. Los planes Medigap se identifican por letras (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
-      { text: 'En la mayoría de los estados, si solicitas durante tu Período de Inscripción Abierta de Medigap - los 6 meses que empiezan cuando cumples 65 y te inscribes en Parte B - las aseguradoras no pueden negarte ni cobrarte más por tu salud.', pace: 'slow' },
+      { text: 'Debe tener Medicare Original (Partes A y B) para obtener una póliza Medigap. Los planes Medigap se identifican por letras (A, B, C, D, F, G, K, L, M, N).', pace: 'long' },
+      { text: 'En la mayoría de los estados, si solicita durante su Período de Inscripción Abierta de Medigap - los 6 meses que empiezan cuando cumple 65 y se inscribe en Parte B - las aseguradoras no pueden negarle ni cobrarle más por su salud.', pace: 'slow' },
       {
-        text: 'Nota: ClearPoint actualmente no ofrece planes Medigap — esta información se comparte solo con fines educativos. Para inscribirte en una póliza Medigap, tendrías que trabajar con un corredor que se especialice en estas.',
+        text: 'Nota: ClearPoint actualmente no ofrece planes Medigap — esta información se comparte solo con fines educativos. Para inscribirse en una póliza Medigap, tendría que trabajar con un corredor que se especialice en estas.',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Explicar Parte D', value: 'edu_part_d' },
@@ -874,12 +879,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     ],
     edu_part_d: [
       { text: 'La Parte D ayuda a cubrir el costo de medicamentos recetados. Cada plan de Parte D tiene su propia lista de medicamentos cubiertos (llamada formulario) y red de farmacias.', pace: 'long' },
-      { text: 'Si no te inscribes cuando eres elegible por primera vez y no tienes otra cobertura de medicamentos acreditable, podrías pagar una penalidad por inscripción tardía - a menos que califiques para Ayuda Extra.', pace: 'long' },
-      { text: 'No puedo revisar medicamentos específicos aquí. Un asesor licenciado puede revisar tus medicinas para encontrar un plan que las cubra.', pace: 'long' },
+      { text: 'Si no se inscribe cuando es elegible por primera vez y no tiene otra cobertura de medicamentos acreditable, podría pagar una penalidad por inscripción tardía - a menos que califique para Ayuda Extra.', pace: 'long' },
+      { text: 'No puedo revisar medicamentos específicos aquí. Un asesor licenciado puede revisar sus medicinas para encontrar un plan que las cubra.', pace: 'long' },
       {
         text: isSupported
-          ? `En ${stateLabel}, también hay programas que pueden ayudar con costos de medicamentos. ¿Quieres aprender sobre ellos?`
-          : 'También hay programas nacionales que pueden ayudar con costos de medicamentos. ¿Quieres saber más?',
+          ? `En ${stateLabel}, también hay programas que pueden ayudar con costos de medicamentos. ¿Quiere aprender sobre ellos?`
+          : 'También hay programas nacionales que pueden ayudar con costos de medicamentos. ¿Quiere saber más?',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
@@ -890,7 +895,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     ],
     edu_cost_help: (() => {
       const msgs: QueuedBotMessage[] = [
-        { text: 'Varios programas pueden ayudar a reducir los costos de Medicare si tus ingresos y recursos son limitados. Déjame explicarte.', pace: 'long' },
+        { text: 'Varios programas pueden ayudar a reducir los costos de Medicare si sus ingresos y recursos son limitados. Déjeme explicarle.', pace: 'long' },
       ];
       if (state === 'NY') {
         msgs.push({ text: 'Programa de Ahorros de Medicare de New York — NY NO usa límite de assets/recursos. Dos categorías principales:', pace: 'long' });
@@ -919,8 +924,8 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       msgs.push({ text: 'Medicaid es un programa separado administrado por cada estado. Puede ofrecer ayuda adicional — desde pagar primas de Parte B hasta cubrir servicios que Medicare no cubre. Algunas personas califican para ambos, Medicare y Medicaid (elegibilidad dual).', pace: 'long' });
       msgs.push({
         text: isSupported
-          ? `${stateLabel} también tiene programas específicos. ¿Quieres saber sobre programas en ${stateLabel}?`
-          : 'Cada estado tiene sus propios programas. ¿Quieres que te conecte con un asesor?',
+          ? `${stateLabel} también tiene programas específicos. ¿Quiere saber sobre programas en ${stateLabel}?`
+          : 'Cada estado tiene sus propios programas. ¿Quiere que te conecte con un asesor?',
         options: [
           { label: isSupported ? `Sí, programas de ${stateLabel}` : 'Sí, conéctame', value: 'edu_state_programs' },
           { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
@@ -932,13 +937,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     })(),
     edu_extra_help: [
       { text: 'Ayuda Extra - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'long' },
-      { text: `En 2026, el límite de ingresos es aproximadamente $${D.extraHelp.incomeLimitSingle.toLocaleString()}/mes para una persona soltera y $${D.extraHelp.incomeLimitCouple.toLocaleString()}/mes para una pareja. El límite de recursos es aproximadamente $${D.extraHelp.assetLimitSingle.toLocaleString()} para soltero y $${D.extraHelp.assetLimitCouple.toLocaleString()} para pareja (no cuenta tu casa, un auto ni fondos funerarios).`, pace: 'slow' },
+      { text: `En 2026, el límite de ingresos es aproximadamente $${D.extraHelp.incomeLimitSingle.toLocaleString()}/mes para una persona soltera y $${D.extraHelp.incomeLimitCouple.toLocaleString()}/mes para una pareja. El límite de recursos es aproximadamente $${D.extraHelp.assetLimitSingle.toLocaleString()} para soltero y $${D.extraHelp.assetLimitCouple.toLocaleString()} para pareja (no cuenta su casa, un auto ni fondos funerarios).`, pace: 'slow' },
       { text: `Con Ayuda Extra, los copagos de medicamentos genéricos bajan hasta $${D.extraHelp.genericCopay.toFixed(2)} y los de marca hasta $${D.extraHelp.brandCopay.toFixed(2)} por receta en 2026.`, pace: 'slow' },
-      { text: 'Algunas personas califican automáticamente - por ejemplo, si tienes ambos Medicare y Medicaid completo, Seguridad de Ingreso Suplementario (SSI), o calificas a través de un Programa de Ahorros de Medicare.', pace: 'long' },
+      { text: 'Algunas personas califican automáticamente - por ejemplo, si tiene ambos Medicare y Medicaid completo, Seguridad de Ingreso Suplementario (SSI), o califica a través de un Programa de Ahorros de Medicare.', pace: 'long' },
       { text: 'Importante: Las personas que reciben Ayuda Extra no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
-      { text: 'Esto es solo una revisión preliminar. La elegibilidad final la determina el Seguro Social o tu estado.', pace: 'short' },
+      { text: 'Esto es solo una revisión preliminar. La elegibilidad final la determina el Seguro Social o su estado.', pace: 'short' },
       {
-        text: '¿Quieres que un asesor licenciado te ayude a verificar si podrías calificar?',
+        text: '¿Quiere que un asesor licenciado le ayude a verificar si podría calificar?',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Ayuda con costos de Medicare', value: 'edu_cost_help' },
@@ -949,13 +954,13 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     ],
     edu_penalties: [
       { text: 'Medicare tiene penalidades por inscripción tardía en la Parte B y Parte D si retrasas la inscripción sin tener otra cobertura acreditable.', pace: 'long' },
-      { text: 'Penalidad de Parte B: Generalmente se añade un 10% a tu prima mensual de Parte B por cada período completo de 12 meses que pudiste haber tenido Parte B pero no te inscribiste. Esta penalidad generalmente es permanente y continúa mientras tengas Parte B.', pace: 'slow' },
-      { text: 'Penalidad de Parte D: Puede aplicar si pasas 63 días o más seguidos sin Parte D u otra cobertura de medicamentos acreditable. El monto se calcula según cuántos meses estuviste sin cobertura y se suma a tu prima de Parte D.', pace: 'slow' },
+      { text: 'Penalidad de Parte B: Generalmente se añade un 10% a su prima mensual de Parte B por cada período completo de 12 meses que pudo haber tenido Parte B pero no se inscribió. Esta penalidad generalmente es permanente y continúa mientras tenga Parte B.', pace: 'slow' },
+      { text: 'Penalidad de Parte D: Puede aplicar si pasas 63 días o más seguidos sin Parte D u otra cobertura de medicamentos acreditable. El monto se calcula según cuántos meses estuviste sin cobertura y se suma a su prima de Parte D.', pace: 'slow' },
       { text: 'Importante: Las personas que reciben Ayuda Extra (LIS) no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
-      { text: 'Si tienes cobertura de empleador, sindicato, gobierno federal, estatal, plan de retiro, VA, TRICARE o FEHB: no canceles ninguna cobertura actual sin antes consultar con tu administrador de beneficios Y un asesor licenciado. Cancelar podría dejarte sin cobertura o generar penalidades.', pace: 'slow' },
-      { text: 'No puedo calcular una penalidad final sin saber las fechas exactas. Un asesor licenciado puede revisar tu cronograma.', pace: 'short' },
+      { text: 'Si tiene cobertura de empleador, sindicato, gobierno federal, estatal, plan de retiro, VA, TRICARE o FEHB: no cancele ninguna cobertura actual sin antes consultar con su administrador de beneficios Y un asesor licenciado. Cancelar podría dejarle sin cobertura o generar penalidades.', pace: 'slow' },
+      { text: 'No puedo calcular una penalidad final sin saber las fechas exactas. Un asesor licenciado puede revisar su cronograma.', pace: 'short' },
       {
-        text: '¿Quieres que un asesor revise tu situación?',
+        text: '¿Quiere que un asesor revise su situación?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -965,12 +970,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_employer: [
-      { text: 'Si tienes cobertura a través de un empleador, sindicato, trabajo federal, estatal, plan de retiro, VA, TRICARE o FEHB (Beneficios de Salud para Empleados Federales), es importante entender cómo funciona con Medicare.', pace: 'long' },
-      { text: 'Para muchas personas, la cobertura del empleador puede ser acreditable - lo que significa que cuenta como cobertura válida y puede ayudarte a evitar penalidades por inscripción tardía si retrasas la Parte B o Parte D.', pace: 'long' },
-      { text: '⚠️ Importante: Nunca canceles cobertura de empleador, sindicato, federal, estatal, de retiro, VA, TRICARE o FEHB sin antes hablar con tu administrador de beneficios Y un asesor licenciado. Cancelar podría dejarte sin cobertura o generar penalidades.', pace: 'slow' },
-      { text: 'Las reglas dependen del tamaño del empleador, si estás trabajando activamente o jubilado, y el tipo de cobertura que tienes. Un asesor licenciado puede revisar tu situación específica.', pace: 'long' },
+      { text: 'Si tiene cobertura a través de un empleador, sindicato, trabajo federal, estatal, plan de retiro, VA, TRICARE o FEHB (Beneficios de Salud para Empleados Federales), es importante entender cómo funciona con Medicare.', pace: 'long' },
+      { text: 'Para muchas personas, la cobertura del empleador puede ser acreditable - lo que significa que cuenta como cobertura válida y puede ayudarle a evitar penalidades por inscripción tardía si retrasas la Parte B o Parte D.', pace: 'long' },
+      { text: '⚠️ Importante: Nunca cancele cobertura de empleador, sindicato, federal, estatal, de retiro, VA, TRICARE o FEHB sin antes hablar con su administrador de beneficios Y un asesor licenciado. Cancelar podría dejarle sin cobertura o generar penalidades.', pace: 'slow' },
+      { text: 'Las reglas dependen del tamaño del empleador, si está trabajando activamente o jubilado, y el tipo de cobertura que tiene. Un asesor licenciado puede revisar su situación específica.', pace: 'long' },
       {
-        text: '¿Quieres que un asesor revise cómo funciona tu cobertura con Medicare?',
+        text: '¿Quiere que un asesor revise cómo funciona su cobertura con Medicare?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -980,12 +985,12 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_plan_loss: [
-      { text: 'Si perdiste tu plan de Medicare Advantage o Parte D - por ejemplo, porque el plan salió de tu área o te mudaste - podrías calificar para un Período Especial de Inscripción.', pace: 'long' },
-      { text: 'Un Período Especial de Inscripción te permite inscribirte en un nuevo plan fuera de los períodos regulares de inscripción.', pace: 'long' },
-      { text: 'El tiempo que tienes depende de la razón - por ejemplo, mudarte fuera del área de servicio del plan, perder otra cobertura, o que tu plan termine su contrato con Medicare.', pace: 'long' },
-      { text: 'Un asesor puede revisar tu situación y ayudarte a encontrar un nuevo plan que se ajuste a tus necesidades.', pace: 'short' },
+      { text: 'Si perdiste su plan de Medicare Advantage o Parte D - por ejemplo, porque el plan salió de su área o le mudaste - podría calificar para un Período Especial de Inscripción.', pace: 'long' },
+      { text: 'Un Período Especial de Inscripción le permite inscribirse en un nuevo plan fuera de los períodos regulares de inscripción.', pace: 'long' },
+      { text: 'El tiempo que tiene depende de la razón - por ejemplo, mudarse fuera del área de servicio del plan, perder otra cobertura, o que su plan termine su contrato con Medicare.', pace: 'long' },
+      { text: 'Un asesor puede revisar su situación y ayudarle a encontrar un nuevo plan que se ajuste a sus necesidades.', pace: 'short' },
       {
-        text: '¿Quieres ayuda para encontrar un nuevo plan?',
+        text: '¿Quiere ayuda para encontrar un nuevo plan?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -998,9 +1003,9 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: 'LI NET significa Transición para Recién Elegibles de Bajos Ingresos. Es un programa temporal de cobertura de medicamentos recetados de la Parte D de Medicare.', pace: 'long' },
       { text: 'LI NET proporciona cobertura temporal inmediata de Parte D para ciertos beneficiarios de Medicare de bajos ingresos que aún no están inscritos en un plan de medicamentos de Medicare. Ayuda a cubrir el vacío cuando alguien recién califica para Medicaid o Ayuda Extra y necesita sus medicamentos de inmediato.', pace: 'long' },
       { text: 'Este no es un plan permanente - brinda cobertura temporal hasta que un plan regular de Parte D o Medicare Advantage con cobertura de medicamentos entre en vigor.', pace: 'long' },
-      { text: 'No puedo prometer elegibilidad para LI NET, pero si esta situación se parece a la tuya, un asesor licenciado puede ayudar a verificar si LI NET aplica y conectarte.', pace: 'short' },
+      { text: 'No puedo prometer elegibilidad para LI NET, pero si esta situación se parece a la suya, un asesor licenciado puede ayudar a verificar si LI NET aplica y conectarte.', pace: 'short' },
       {
-        text: '¿Quieres que un asesor revise tu situación?',
+        text: '¿Quiere que un asesor revise su situación?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1012,9 +1017,9 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
     edu_medication: [
       { text: 'Para revisar medicamentos correctamente, necesitaría el nombre del medicamento, dosis, frecuencia, farmacia y código postal.', pace: 'long' },
       { text: 'La cobertura de medicamentos puede cambiar por plan, farmacia, nivel/tier, autorización previa, terapia escalonada y límites de cantidad. Incluso dentro de la misma compañía de seguros, diferentes planes pueden cubrir el mismo medicamento de forma distinta.', pace: 'slow' },
-      { text: 'No puedo confirmar si un medicamento específico está cubierto sin datos reales del formulario del plan. Un asesor licenciado puede revisar tus medicamentos contra los planes disponibles en tu área.', pace: 'long' },
+      { text: 'No puedo confirmar si un medicamento específico está cubierto sin datos reales del formulario del plan. Un asesor licenciado puede revisar sus medicamentos contra los planes disponibles en su área.', pace: 'long' },
       {
-        text: '¿Quieres que un asesor licenciado revise tus medicamentos?',
+        text: '¿Quiere que un asesor licenciado revise sus medicamentos?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1024,20 +1029,20 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_prequalify: [
-      { text: 'Puedo ayudarte con una pre-evaluación para ver qué programas valdría la pena revisar. Vamos paso a paso. Te haré una pregunta a la vez.', pace: 'long' },
+      { text: 'Puedo ayudarle con una pre-evaluación para ver qué programas valdría la pena revisar. Vamos paso a paso. Le haré una pregunta a la vez.', pace: 'long' },
       // HIDDEN per Sawil 2026-06: Florida chip removed from Medicaid state picker (ES). Original kept in comment.
-      { text: 'Primero: ¿En qué estado vives?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, /* { label: 'Florida', value: 'state_FL' }, */ { label: 'Otro', value: 'state_other' }], pace: 'short' },
+      { text: 'Primero: ¿En qué estado vive?', options: [{ label: 'New York', value: 'state_NY' }, { label: 'New Jersey', value: 'state_NJ' }, { label: 'Connecticut', value: 'state_CT' }, /* { label: 'Florida', value: 'state_FL' }, */ { label: 'Otro', value: 'state_other' }], pace: 'short' },
     ],
     edu_enrollment: [
-      { text: 'Medicare tiene momentos específicos en los que puedes inscribirte, cambiar o revisar tu cobertura. El período correcto depende de tu situación.', pace: 'long' },
-      { text: 'Inscripción Inicial: Normalmente comienza 3 meses antes del mes en que cumples 65 años, incluye el mes de tu cumpleaños y termina 3 meses después.', pace: 'slow' },
-      { text: 'Inscripción Anual: Del 15 de octubre al 7 de diciembre. Puedes revisar o cambiar tu cobertura de Medicare Advantage y Parte D para el año siguiente.', pace: 'slow' },
-      { text: 'Inscripción Abierta de Medicare Advantage: Del 1 de enero al 31 de marzo. Si ya tienes un plan Medicare Advantage, puedes cambiarte a otro o regresar a Medicare Original.', pace: 'slow' },
-      { text: 'Inscripción General: Del 1 de enero al 31 de marzo. Puede aplicar si no te inscribiste en la Parte A o B cuando eras elegible por primera vez y no calificas para un Período Especial. Pueden aplicar penalidades.', pace: 'slow' },
-      { text: 'Período Especial: Ciertos eventos de vida - como mudarte, perder cobertura, calificar para Medicaid u obtener Ayuda Extra - pueden permitirte inscribirte o cambiar planes fuera de los períodos normales.', pace: 'slow' },
-      { text: 'Las reglas de Medicare Supplement pueden ser diferentes a las de Advantage y Parte D. Pueden depender del estado, cuándo te inscribiste en Parte B y si aplican preguntas de salud.', pace: 'long' },
+      { text: 'Medicare tiene momentos específicos en los que puede inscribirse, cambiar o revisar su cobertura. El período correcto depende de su situación.', pace: 'long' },
+      { text: 'Inscripción Inicial: Normalmente comienza 3 meses antes del mes en que cumple 65 años, incluye el mes de su cumpleaños y termina 3 meses después.', pace: 'slow' },
+      { text: 'Inscripción Anual: Del 15 de octubre al 7 de diciembre. Puede revisar o cambiar su cobertura de Medicare Advantage y Parte D para el año siguiente.', pace: 'slow' },
+      { text: 'Inscripción Abierta de Medicare Advantage: Del 1 de enero al 31 de marzo. Si ya tiene un plan Medicare Advantage, puede cambiarte a otro o regresar a Medicare Original.', pace: 'slow' },
+      { text: 'Inscripción General: Del 1 de enero al 31 de marzo. Puede aplicar si no se inscribió en la Parte A o B cuando era elegible por primera vez y no califica para un Período Especial. Pueden aplicar penalidades.', pace: 'slow' },
+      { text: 'Período Especial: Ciertos eventos de vida - como mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Extra - pueden permitirle inscribirse o cambiar planes fuera de los períodos normales.', pace: 'slow' },
+      { text: 'Las reglas de Medicare Supplement pueden ser diferentes a las de Advantage y Parte D. Pueden depender del estado, cuándo se inscribió en Parte B y si aplican preguntas de salud.', pace: 'long' },
       {
-        text: '¿Quieres ayuda para verificar qué período de inscripción puede aplicar en tu caso?',
+        text: '¿Quiere ayuda para verificar qué período de inscripción puede aplicar en su caso?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1054,7 +1059,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: 'SNP (Plan de Necesidades Especiales): Diseñado para personas con necesidades específicas - como Medicare + Medicaid (D-SNP), ciertas condiciones crónicas (C-SNP), o cuidado institucional (I-SNP). La elegibilidad debe verificarla un agente licenciado.', pace: 'slow' },
       { text: 'MSA (Cuenta de Ahorros Médicos): Combina un plan con deducible alto con una cuenta de ahorros donde el plan deposita dinero. Normalmente no incluye Parte D. Requiere entender bien el deducible y la cobertura de medicamentos.', pace: 'slow' },
       {
-        text: 'El tipo correcto depende de tus médicos, medicamentos, condado y cómo prefieres recibir atención. ¿Quieres que un asesor revise tus opciones?',
+        text: 'El tipo correcto depende de sus médicos, medicamentos, condado y cómo prefiere recibir atención. ¿Quiere que un asesor revise sus opciones?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1064,14 +1069,14 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       },
     ],
     edu_comparison: [
-      { text: 'Aquí tienes una comparación simple de los principales tipos de cobertura de Medicare:', pace: 'short' },
-      { text: 'Medicare Original: Partes A y B administradas por el gobierno federal. Cubre servicios hospitalarios y médicos. Puedes ver a cualquier médico que acepte Medicare. No cubre todo - puedes tener deducibles y coseguros.', pace: 'long' },
-      { text: 'Medicare Advantage (Parte C): Ofrecido por compañías privadas aprobadas por Medicare. Cambia cómo recibes tus beneficios de Parte A y B. Puede incluir extras como dental, visión, audición y Parte D. Reglas, redes y costos varían.', pace: 'long' },
+      { text: 'Aquí tiene una comparación simple de los principales tipos de cobertura de Medicare:', pace: 'short' },
+      { text: 'Medicare Original: Partes A y B administradas por el gobierno federal. Cubre servicios hospitalarios y médicos. Puede ver a cualquier médico que acepte Medicare. No cubre todo - puede tener deducibles y coseguros.', pace: 'long' },
+      { text: 'Medicare Advantage (Parte C): Ofrecido por compañías privadas aprobadas por Medicare. Cambia cómo recibe sus beneficios de Parte A y B. Puede incluir extras como dental, visión, audición y Parte D. Reglas, redes y costos varían.', pace: 'long' },
       { text: 'Medicare Supplement (Medigap): Funciona con Medicare Original. Ayuda a pagar deducibles, coseguros y copagos. No reemplaza Medicare Original. Normalmente no incluye Parte D.', pace: 'long' },
       { text: 'Parte D: Planes independientes de medicamentos recetados o incluidos en algunos planes Medicare Advantage. Cada plan tiene su propio formulario y red de farmacias.', pace: 'long' },
-      { text: 'Qué combinación es adecuada para ti depende de tu salud, presupuesto, médicos, medicamentos y ubicación. Un asesor licenciado puede revisar tu situación específica.', pace: 'long' },
+      { text: 'Qué combinación es adecuada para usted depende de su salud, presupuesto, médicos, medicamentos y ubicación. Un asesor licenciado puede revisar su situación específica.', pace: 'long' },
       {
-        text: '¿Quieres que un asesor te ayude a comparar tus opciones?',
+        text: '¿Quiere que un asesor le ayude a comparar sus opciones?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1086,9 +1091,10 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       { text: '• D-SNP (SNP de Doble Elegibilidad) — para personas con Medicare y Medicaid. Estos planes coordinan beneficios de Medicare y Medicaid.', pace: 'slow' },
       { text: '• C-SNP (SNP de Condición Crónica) — para personas con ciertas condiciones crónicas como diabetes, enfermedad cardíaca o trastornos pulmonares crónicos.', pace: 'slow' },
       { text: '• I-SNP (SNP Institucional) — para personas que viven en un hogar de ancianos o requieren cuidado de enfermería en casa.', pace: 'slow' },
-      { text: 'La disponibilidad de SNP depende de tu condado y planes disponibles. No todos los condados tienen todos los tipos de SNP. Un asesor licenciado puede verificar qué SNP están disponibles en tu área.', pace: 'long' },
+      { text: 'La disponibilidad de SNP depende de su condado y planes disponibles. No todos los condados tienen todos los tipos de SNP. Un asesor licenciado puede verificar qué SNP están disponibles en su área.', pace: 'long' },
+      { text: 'Relacionado con el cuidado de nivel de hogar de ancianos, también existe PACE — Programa de Cuidado Integral para Personas Mayores. PACE es un programa aparte (no es un SNP) que combina servicios de Medicare y Medicaid para ayudar a ciertas personas a recibir cuidado en su hogar y comunidad en vez de un hogar de ancianos. Generalmente es para personas de 55 años o más que necesitan ese nivel de cuidado, pueden vivir con seguridad en casa con ayuda, y viven en un área de servicio de PACE. La disponibilidad depende del área; un asesor licenciado o la agencia de su estado puede ayudar a verificar.', pace: 'slow' },
       {
-        text: '¿Quieres aprender sobre otros temas o solicitar una revisión?',
+        text: '¿Quiere aprender sobre otros temas o solicitar una revisión?',
         options: [
           { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
           { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1369,7 +1375,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
 
   const messages = language === 'es' ? es[topic] : en[topic];
   return messages || (language === 'es'
-    ? [{ text: 'Vamos paso a paso. ¿Qué parte de Medicare te gustaría entender?', pace: 'long' }]
+    ? [{ text: 'Vamos paso a paso. ¿Qué parte de Medicare le gustaría entender?', pace: 'long' }]
     : [{ text: "Let's go step by step. What part of Medicare would you like to understand?", pace: 'long' }]);
 }
 
@@ -1501,7 +1507,7 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         { text: '• Medicaid de New York — puede ayudar a personas con ingresos y recursos limitados, pero la elegibilidad depende de categoría, ingresos, recursos, situación del hogar, edad, estatus de discapacidad, estatus migratorio y reglas estatales.', pace: 'long' },
         { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'short' },
         {
-          text: '¿Quieres una revisión gratuita?',
+          text: '¿Quiere una revisión gratuita?',
           options: [
             { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
             { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1543,7 +1549,7 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         { text: '• NJSave se usa comúnmente para aplicar a QMB, SLMB, QI, PAAD y Senior Gold. Línea de NJ Division of Aging Services: 1-800-792-9745.', pace: 'long' },
         { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o la agencia estatal puede ayudar a verificar su situación.', pace: 'short' },
         {
-          text: '¿Quieres una revisión gratuita?',
+          text: '¿Quiere una revisión gratuita?',
           options: [
             { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
             { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1583,7 +1589,7 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         { text: '• Importante: ConnPACE ya no es un plan de beneficios activo desde el 1 de enero de 2014. Para ayuda con medicamentos, las opciones principales son Extra Help/LIS, Medicaid si aplica, MSP, revisión de formulario de Parte D y red de farmacias.', pace: 'long' },
         { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Un asesor licenciado o DSS de Connecticut puede ayudar a verificar su situación.', pace: 'short' },
         {
-          text: '¿Quieres una revisión gratuita?',
+          text: '¿Quiere una revisión gratuita?',
           options: [
             { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
             { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1620,10 +1626,10 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         { text: '• Programas de Ahorros de Medicare — para 2026, use la base federal: QMB alrededor de $1,350/mes soltero / $1,824 pareja; SLMB alrededor de $1,616/mes soltero / $2,184 pareja; QI alrededor de $1,816/mes soltero / $2,455 pareja. Límites federales de recursos: $9,950 soltero / $14,910 casado para QMB/SLMB/QI. Las reglas exactas de Florida deben verificarse con la agencia estatal, SHINE, Medicaid o un asesor licenciado.', pace: 'long' },
         { text: '• Ayuda Extra / LIS — programa federal que puede ayudar con costos de medicamentos de Parte D.', pace: 'long' },
         { text: '• Medicaid de Florida — para beneficiarios con doble elegibilidad. La elegibilidad depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa.', pace: 'long' },
-        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Extra, MSP, y encontrar un plan de Parte D con un formulario que cubra tus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'long' },
+        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Extra, MSP, y encontrar un plan de Parte D con un formulario que cubra sus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'long' },
         { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Florida SHINE y un asesor licenciado pueden ayudar a verificar su situación.', pace: 'short' },
         {
-          text: '¿Quieres una revisión gratuita?',
+          text: '¿Quiere una revisión gratuita?',
           options: [
             { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
             { label: 'Más opciones', value: 'edu_back_to_topics' },
@@ -1650,7 +1656,7 @@ const CHATBOT_CONTEXT = {
   phone: '1-866-310-8702',
   phoneHref: 'tel:18663108702',
   hours: 'Monday-Friday, 9am-6pm ET',
-  statesServed: 'NY, FL, CT, and NJ',
+  statesServed: 'NY, NJ, and CT',
   identity: 'Independent Medicare insurance agency',
   services: [
     'Medicare Advantage',
@@ -1700,13 +1706,13 @@ const DISCLAIMERS = {
     general:
       'La elegibilidad final y disponibilidad de planes dependen de reglas oficiales, ubicación, doctores, medicinas y aprobación del carrier.',
     consent:
-      'Al proporcionar tu número de teléfono, aceptas que Clear Point Senior Advisors pueda contactarte por llamada o mensaje de texto sobre opciones de revisión de planes de Medicare. El consentimiento no es requerido para usar nuestros servicios. Pueden aplicar cargos por mensajes y datos. Puedes cancelar en cualquier momento.',
+      'Al proporcionar su número de teléfono, aceptas que Clear Point Senior Advisors pueda contactarle por llamada o mensaje de texto sobre opciones de revisión de planes de Medicare. El consentimiento no es requerido para usar nuestros servicios. Pueden aplicar cargos por mensajes y datos. Puede cancelar en cualquier momento.',
     eligibility:
       'Esto es solo una revisión preliminar. La elegibilidad final la determina el estado, Medicare o la Administración del Seguro Social.',
     consentContact:
-      'Si deseas ayuda personalizada, puedo pedir tu permiso para que un agente licenciado te contacte.',
+      'Si desea ayuda personalizada, puedo pedir su permiso para que un agente licenciado le contacte.',
     neverCancel:
-      'Importante: Nunca canceles cobertura de empleador, sindicato, federal, estatal, de retiro, VA, TRICARE, FEHB o COBRA sin antes consultar con tu administrador de beneficios y un asesor licenciado. Cancelar podría dejarte sin cobertura o generar penalidades.',
+      'Importante: Nunca cancele cobertura de empleador, sindicato, federal, estatal, de retiro, VA, TRICARE, FEHB o COBRA sin antes consultar con su administrador de beneficios y un asesor licenciado. Cancelar podría dejarle sin cobertura o generar penalidades.',
   },
 };
 
@@ -2081,7 +2087,9 @@ const LANGUAGE_SWITCH_ES_KEYWORDS = [
   'podemos hablar español','podemos hablar espanol',
   'ponlo en español','ponlo en espanol',
   'hablar español','hablar espanol','idioma español','spanish',
-  'hola','buenas','buenos días','buenas tardes','buenas noches',
+  // PHASE 9A — REMOVED bare greetings ('hola', 'buenas', 'buenos días'...)
+  // because they triggered language SWITCH mid-English session when a user
+  // happened to greet in Spanish. Require explicit switch phrases only.
   'necesito ayuda en español','necesito ayuda espanol',
 ];
 const LANGUAGE_SWITCH_EN_KEYWORDS = [
@@ -2632,8 +2640,8 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: [
         ...(language === 'es'
           ? [
-              { text: 'Claro. Medicare Advantage, también llamado Parte C, es otra forma de recibir tus beneficios de Medicare a través de una compañía privada aprobada por Medicare.', pace: 'long' as MessagePace },
-              { text: 'Puede incluir beneficios adicionales, pero depende de tu área y elegibilidad. ¿Quieres una explicación simple o ayuda revisando opciones en tu ZIP code?', options: reviewOptions, pace: 'long' as MessagePace },
+              { text: 'Claro. Medicare Advantage, también llamado Parte C, es otra forma de recibir sus beneficios de Medicare a través de una compañía privada aprobada por Medicare.', pace: 'long' as MessagePace },
+              { text: 'Puede incluir beneficios adicionales, pero depende de su área y elegibilidad. ¿Quiere una explicación simple o ayuda revisando opciones en su ZIP code?', options: reviewOptions, pace: 'long' as MessagePace },
             ]
           : [
               { text: 'Of course. Medicare Advantage, also called Part C, is another way to receive your Medicare benefits through a private insurance company approved by Medicare.', pace: 'long' as MessagePace },
@@ -2649,7 +2657,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: language === 'es'
         ? [
             { text: 'Claro. Medicare Supplement, también llamado Medigap, ayuda a pagar algunos costos que Medicare Original no cubre.', pace: 'long' },
-            { text: 'Los planes son diferentes a Medicare Advantage. ¿Quieres una explicación simple o prefieres solicitar una revisión?', options: reviewOptions, pace: 'long' },
+            { text: 'Los planes son diferentes a Medicare Advantage. ¿Quiere una explicación simple o prefiere solicitar una revisión?', options: reviewOptions, pace: 'long' },
           ]
         : [
             { text: 'Of course. Medicare Supplement, also called Medigap, helps pay some costs that Original Medicare does not cover.', pace: 'long' },
@@ -2664,7 +2672,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: language === 'es'
         ? [
             { text: 'La Parte D ayuda con medicamentos recetados.', pace: 'short' },
-            { text: 'Cada plan tiene su propia lista de medicamentos y farmacias. Para revisar medicinas específicas, un asesor licenciado debe ayudarte.', options: reviewOptions, pace: 'long' },
+            { text: 'Cada plan tiene su propia lista de medicamentos y farmacias. Para revisar medicinas específicas, un asesor licenciado debe ayudarle.', options: reviewOptions, pace: 'long' },
           ]
         : [
             { text: 'Part D helps with prescription drugs.', pace: 'short' },
@@ -2679,7 +2687,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: language === 'es'
         ? [
             { text: 'Ayuda Extra, también llamada LIS, puede ayudar con costos de medicamentos Parte D para personas que califican.', pace: 'long' },
-            { text: 'No puedo confirmar si calificas por chat. ¿Quieres información general o ayuda solicitando una revisión?', options: reviewOptions, pace: 'long' },
+            { text: 'No puedo confirmar si califica por chat. ¿Quiere información general o ayuda solicitando una revisión?', options: reviewOptions, pace: 'long' },
           ]
         : [
             { text: 'Extra Help, also called LIS, may help lower Part D prescription costs for people who qualify.', pace: 'long' },
@@ -2693,8 +2701,8 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       topic: 'Enrollment',
       messages: language === 'es'
         ? [
-            { text: 'Los períodos de inscripción dependen de tu situación.', pace: 'short' },
-            { text: 'Por ejemplo, hay períodos cuando cumples 65, durante la inscripción anual y después de ciertos cambios de vida. ¿Quieres que un asesor revise tu caso?', options: reviewOptions, pace: 'long' },
+            { text: 'Los períodos de inscripción dependen de su situación.', pace: 'short' },
+            { text: 'Por ejemplo, hay períodos cuando cumple 65, durante la inscripción anual y después de ciertos cambios de vida. ¿Quiere que un asesor revise su caso?', options: reviewOptions, pace: 'long' },
           ]
         : [
             { text: 'Enrollment periods depend on your situation.', pace: 'short' },
@@ -2708,8 +2716,8 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       topic: 'Contact',
       messages: language === 'es'
         ? [
-            { text: `Puedes llamar a ${CHATBOT_CONTEXT.phone}.`, pace: 'short' },
-            { text: `El horario indicado es ${CHATBOT_CONTEXT.hours}. ¿Quieres que te ayude a solicitar una llamada?`, options: reviewOptions, pace: 'short' },
+            { text: `Puede llamar a ${CHATBOT_CONTEXT.phone}.`, pace: 'short' },
+            { text: `El horario indicado es ${CHATBOT_CONTEXT.hours}. ¿Quiere que le ayude a solicitar una llamada?`, options: reviewOptions, pace: 'short' },
           ]
         : [
             { text: `You can call ${CHATBOT_CONTEXT.phone}.`, pace: 'short' },
@@ -2724,7 +2732,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: language === 'es'
         ? [
             { text: `${CHATBOT_CONTEXT.agencyName} es una agencia independiente de seguros Medicare.`, pace: 'short' },
-            { text: 'No somos Medicare, CMS ni el gobierno de los Estados Unidos. ¿Quieres hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'long' },
+            { text: 'No somos Medicare, CMS ni el gobierno de los Estados Unidos. ¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'long' },
           ]
         : [
             { text: `${CHATBOT_CONTEXT.agencyName} is an independent Medicare insurance agency.`, pace: 'short' },
@@ -2750,13 +2758,13 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
 
 function getSuccessMessage(language: ChatLanguage) {
   return language === 'es'
-    ? 'Gracias. Ya envié tu solicitud a Clear Point Senior Advisors. Un asesor licenciado puede revisar tus opciones contigo.'
+    ? 'Gracias. Ya envié su solicitud a Clear Point Senior Advisors. Un asesor licenciado puede revisar sus opciones con usted.'
     : "Thank you. I've sent your request to Clear Point Senior Advisors. A licensed advisor can review your options with you.";
 }
 
 function getFailMessage(language: ChatLanguage) {
   return language === 'es'
-    ? 'Lo siento, no pude enviar la solicitud en este momento. Puedes llamarnos directamente al 1-866-310-8702.'
+    ? 'Lo siento, no pude enviar la solicitud en este momento. Puede llamarnos directamente al 1-866-310-8702.'
     : "I'm sorry, I couldn't send the request right now. You can call us directly at 1-866-310-8702.";
 }
 
@@ -2766,6 +2774,85 @@ export function ChatBot() {
 
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  // Mobile keyboard handling. When the OS keyboard opens the visualViewport
+  // height shrinks; we use that to cap the chat surface and add space below
+  // the last message so it isn't hidden under the keyboard.
+  const [zVvHeight, setZVvHeight] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    // Recompute baseline on orientation/window resize so portrait→landscape
+    // rotation does not leave a stale baseline that falsely reports the
+    // keyboard as open. Pre-existing pattern mirrored from Clara; hardened
+    // here per code review.
+    let baseline = window.innerHeight;
+    let raf: number | null = null;
+    const update = () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const diff = baseline - vv.height;
+        if (diff > 100) setZVvHeight(vv.height);
+        else setZVvHeight((cur) => (cur === undefined ? cur : undefined));
+      });
+    };
+    const recomputeBaseline = () => {
+      baseline = window.innerHeight;
+      update();
+    };
+    update();
+    vv.addEventListener('resize', update);
+    window.addEventListener('orientationchange', recomputeBaseline);
+    window.addEventListener('resize', recomputeBaseline);
+    return () => {
+      vv.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', recomputeBaseline);
+      window.removeEventListener('resize', recomputeBaseline);
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, []);
+  // PHASE A18 — when BotLauncher is mounted at the App root, it hides
+  // this component's own floating button and uses a window event to
+  // open the bot programmatically. This avoids two buttons floating.
+  // PHASE 8 fix — make this reactive (was render-time race condition:
+  // ChatBot rendered before BotLauncher's useEffect set the dataset,
+  // so Zara's button briefly showed until any other re-render).
+  const [launcherActive, setLauncherActive] = useState<boolean>(() =>
+    typeof document !== 'undefined' && document.body.dataset.cpLauncherActive === '1'
+  );
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const check = () => setLauncherActive(document.body.dataset.cpLauncherActive === '1');
+    check();
+    const obs = new MutationObserver(check);
+    obs.observe(document.body, { attributes: true, attributeFilter: ['data-cp-launcher-active'] });
+    return () => obs.disconnect();
+  }, []);
+  useEffect(() => {
+    const handler = () => {
+      setIsOpen(true);
+      setIsMinimized(false);
+    };
+    window.addEventListener('clearpoint:open-zara', handler as EventListener);
+    // Cleanup wired below.
+    return () => window.removeEventListener('clearpoint:open-zara', handler as EventListener);
+  }, []);
+
+  // PHASE 9 fix — trigger welcome on first open, regardless of HOW chat
+  // was opened (Zara's own button OR BotLauncher event). Before this fix,
+  // opening via BotLauncher set isOpen=true but skipped startWelcome(),
+  // so Zara appeared mute until the user typed.
+  useEffect(() => {
+    if (isOpen && !hasOpened && messages.length === 0) {
+      setHasOpened(true);
+      const currentLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
+      if (memory.language !== currentLang) {
+        updateMemory({ language: currentLang });
+      }
+      startWelcome(false, currentLang);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [step, setStep] = useState<ChatStep>('language');
   const [memory, setMemory] = useState<ChatMemory>(() => getStoredMemory(initialLanguage));
@@ -2786,6 +2873,12 @@ export function ChatBot() {
   // Using a ref (not state) so focus/blur events never trigger re-renders.
   // The scroll useEffect checks this to skip scroll when keyboard is open.
   const chatInputFocusedRef = useRef(false);
+  // PHASE 9E — voice + after-hours awareness
+  const [zaraVoiceListening, setZaraVoiceListening] = useState(false);
+  const zaraVoiceSupported = isVoiceSupported();
+  const zaraVoiceRecognizerRef = useRef<ReturnType<typeof createVoiceRecognizer> | null>(null);
+  const zaraTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const zaraOfficeStatus = getOfficeStatus();
   // Tracks previous messages.length so we know when a brand-new message
   // arrived. New-message arrivals must always scroll (so the bot's next
   // question is visible — e.g. "What is your last name?" after the user
@@ -2824,6 +2917,21 @@ export function ChatBot() {
   function safeScrollToBottom(_reason: string) {
     const c = chatBodyRef.current;
     if (!c) return;
+    // Sawil fix — bot replies with options/chips can be tall: pinning to
+    // scrollHeight lands at the BOTTOM of the chips, hiding the message
+    // text above them. Instead, scroll so the LAST message's top sits near
+    // the top of the visible chat area. Short messages still look fine
+    // (small breathing space above); long messages with options/chips
+    // become readable from the top instead of bottom-clipped.
+    const msgs = c.querySelectorAll('[data-msg-id]');
+    const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
+    if (lastMsg) {
+      const cRect = c.getBoundingClientRect();
+      const mRect = lastMsg.getBoundingClientRect();
+      const offsetTop = mRect.top - cRect.top + c.scrollTop;
+      c.scrollTop = Math.max(0, offsetTop - 8);
+      return;
+    }
     c.scrollTop = c.scrollHeight;
   }
 
@@ -2909,7 +3017,8 @@ export function ChatBot() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(memory)));
+    // PHASE 6 — Safari Private Browsing throws on sessionStorage writes.
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(memory))); } catch { /* private mode */ }
   }, [memory]);
 
   function addMessage(type: MessageType, text: string, options?: Option[]) {
@@ -3036,7 +3145,7 @@ export function ChatBot() {
     const resetMemory = { ...DEFAULT_MEMORY, language: newLang };
     setMemory(resetMemory);
     if (typeof window !== 'undefined') {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(resetMemory)));
+      try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(resetMemory))); } catch { /* private mode */ }
     }
     window.setTimeout(() => startWelcome(true, newLang), 150);
   }
@@ -3197,6 +3306,11 @@ export function ChatBot() {
       lead_notes: conversationSummary,
       bot_transcript_summary: `Language: ${finalMemory.language}. State: ${finalMemory.state || 'not provided'}. ZIP: ${finalMemory.zip}. Coverage: ${finalMemory.currentCoverage || 'not provided'}. Topics: ${finalMemory.discussedTopics.join(', ') || 'none'}.`,
       tags: ['Website Lead', 'Medicare Lead', 'Chat Lead', 'Chatbot'],
+      // PHASE A16 — distinguish Zara leads from CS / Smart Review for advisor
+      // pipeline routing. Zara = cold/warm education funnel, NO SOA required
+      // (no specific product discussion has occurred — that happens on the
+      // advisor's first call when they obtain SOA before discussing products).
+      lead_source: 'zara_education',
       created_at: new Date().toISOString(),
       ...getUtms(),
     };
@@ -3234,14 +3348,14 @@ export function ChatBot() {
       {
         text:
           memory.language === 'es'
-            ? 'Puedo ayudarte a entender qué comparar, pero no debo escoger un plan final sin revisar tu situación completa.'
+            ? 'Puedo ayudarle a entender qué comparar, pero no debo escoger un plan final sin revisar su situación completa.'
             : 'I can help you understand what to compare, but I should not choose a final plan without reviewing your full situation.',
         pace: 'long',
       },
       {
         text:
           memory.language === 'es'
-            ? 'Un asesor licenciado puede revisar tus doctores, medicinas, ZIP code y cobertura actual contigo.'
+            ? 'Un asesor licenciado puede revisar sus doctores, medicinas, ZIP code y cobertura actual con usted.'
             : 'A licensed advisor can review your doctors, prescriptions, ZIP code, and current coverage with you.',
         options: [
           { label: memory.language === 'es' ? 'Solicitar revisión' : 'Request review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
@@ -3261,7 +3375,7 @@ export function ChatBot() {
       {
         text:
           memory.language === 'es'
-            ? 'Puedes seguir con una pregunta general o solicitar una revisión básica.'
+            ? 'Puede seguir con una pregunta general o solicitar una revisión básica.'
             : 'You can continue with a general question or request a basic review.',
         options: [
           { label: memory.language === 'es' ? 'Pregunta general' : 'General question', value: 'ask_question' },
@@ -3284,7 +3398,7 @@ export function ChatBot() {
       {
         text:
           memory.language === 'es'
-            ? 'Si es una emergencia médica, llama al 911 o a un profesional de salud.'
+            ? 'Si es una emergencia médica, llame al 911 o a un profesional de salud.'
             : 'If this is a medical emergency, please call 911 or a qualified health professional.',
         pace: 'short',
       },
@@ -3408,8 +3522,8 @@ export function ChatBot() {
     setView('state_select');
     enqueueBot([{
       text: memory.language === 'es'
-        ? 'Claro. ¿En qué estado vive ahora? (NY, NJ, CT o FL)'
-        : 'Of course. What state do you live in now? (NY, NJ, CT, or FL)',
+        ? 'Claro. ¿En qué estado vive ahora? (NY, NJ o CT)'
+        : 'Of course. What state do you live in now? (NY, NJ, or CT)',
       pace: 'short',
     }]);
   }
@@ -3854,7 +3968,7 @@ export function ChatBot() {
         {
           text:
             memory.language === 'es'
-              ? 'Claro. Te lo explico en términos sencillos.'
+              ? 'Claro. Le lo explico en términos sencillos.'
               : "Of course. I'll explain it in simple terms.",
           pace: 'short',
         },
@@ -3868,7 +3982,7 @@ export function ChatBot() {
         {
           text:
             memory.language === 'es'
-              ? '¿Qué parte quieres ver primero?'
+              ? '¿Qué parte quiere ver primero?'
               : 'Which part would you like to look at first?',
           pace: 'short',
         },
@@ -3899,8 +4013,8 @@ export function ChatBot() {
       updateMemory({ consentGiven: false });
       setStepSync('choice');
       enqueueBot([
-        { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
-        { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: memory.language === 'es' ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: memory.language === 'es' ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
+        { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar su número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
+        { text: memory.language === 'es' ? `También puede llamar a ${CHATBOT_CONTEXT.phone} si prefiere.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: memory.language === 'es' ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: memory.language === 'es' ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
       ]);
       return;
     }
@@ -4072,19 +4186,19 @@ export function ChatBot() {
         break;
       case 'currentCoverage':
         setStepSync('lead_coverage');
-        enqueueBot([{ text: mem.language === 'es' ? 'Ahora dime, ¿tienes Medicare Original, Medicare Advantage o no estás seguro?' : 'Now, do you currently have Original Medicare, Medicare Advantage, or are you not sure?', options: [{ label: 'Original Medicare', value: 'coverage_original' }, { label: 'Medicare Advantage', value: 'coverage_advantage' }, { label: mem.language === 'es' ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' }], pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es' ? 'Ahora dime, ¿tiene Medicare Original, Medicare Advantage o no está seguro?' : 'Now, do you currently have Original Medicare, Medicare Advantage, or are you not sure?', options: [{ label: 'Original Medicare', value: 'coverage_original' }, { label: 'Medicare Advantage', value: 'coverage_advantage' }, { label: mem.language === 'es' ? 'No estoy seguro' : 'Not sure', value: 'coverage_unsure' }], pace: 'short' }]);
         break;
       case 'preferredLanguage':
         setStepSync('lead_preferred_language');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Prefieres que te contacten en inglés o español?' : 'Do you prefer to be contacted in English or Spanish?', options: [{ label: 'English', value: 'preferred_en' }, { label: 'Español', value: 'preferred_es' }, { label: mem.language === 'es' ? 'Cualquiera' : 'Either', value: 'preferred_either' }], pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es' ? '¿Prefiere que le contacten en inglés o español?' : 'Do you prefer to be contacted in English or Spanish?', options: [{ label: 'English', value: 'preferred_en' }, { label: 'Español', value: 'preferred_es' }, { label: mem.language === 'es' ? 'Cualquiera' : 'Either', value: 'preferred_either' }], pace: 'short' }]);
         break;
       case 'bestTime':
         setStepSync('lead_time');
-        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor horario para contactarte?' : 'What is the best time to contact you?', options: [{ label: mem.language === 'es' ? 'Mañana' : 'Morning', value: 'time_morning' }, { label: mem.language === 'es' ? 'Tarde' : 'Afternoon', value: 'time_afternoon' }, { label: mem.language === 'es' ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' }, { label: mem.language === 'es' ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' }], pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es' ? '¿Cuál es el mejor horario para contactarle?' : 'What is the best time to contact you?', options: [{ label: mem.language === 'es' ? 'Mañana' : 'Morning', value: 'time_morning' }, { label: mem.language === 'es' ? 'Tarde' : 'Afternoon', value: 'time_afternoon' }, { label: mem.language === 'es' ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' }, { label: mem.language === 'es' ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' }], pace: 'short' }]);
         break;
       case 'emailOptional':
         setStepSync('lead_email');
-        enqueueBot([{ text: mem.language === 'es' ? 'Si quieres, puedes compartir un correo electrónico. También puedes escribir "saltar".' : 'If you would like, you can share an email address. You can also type "skip".', options: [{ label: mem.language === 'es' ? 'Saltar' : 'Skip', value: 'skip_email' }], pace: 'short' }]);
+        enqueueBot([{ text: mem.language === 'es' ? 'Si quiere, puede compartir un correo electrónico. También puede escribir "saltar".' : 'If you would like, you can share an email address. You can also type "skip".', options: [{ label: mem.language === 'es' ? 'Saltar' : 'Skip', value: 'skip_email' }], pace: 'short' }]);
         break;
       case 'consent':
         setStepSync('lead_consent');
@@ -4252,10 +4366,10 @@ export function ChatBot() {
       const rejectZip = () => {
         const msgEn = expectedStateName
           ? `I could not identify that area. Please enter a valid ${expectedStateName} ZIP code.`
-          : 'Please enter a valid 5-digit ZIP code from NY, NJ, CT, or FL.';
+          : 'Please enter a valid 5-digit ZIP code from NY, NJ, or CT.';
         const msgEs = expectedStateName
           ? `No pude identificar esa área. Por favor ingrese un código postal válido de ${expectedStateName}.`
-          : 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ, CT o FL.';
+          : 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ o CT.';
         enqueueBot([{ text: memory.language === 'es' ? msgEs : msgEn, pace: 'short' }]);
       };
 
@@ -4371,7 +4485,16 @@ export function ChatBot() {
       return true;
     }
     if (currentStep === 'lead_consent') {
-      const yes = text.toLowerCase().includes('yes') || text.toLowerCase().includes('sí') || text.toLowerCase().includes('si');
+      // PHASE 9A — TCPA consent matcher must be STRICT. Substring "si"
+      // would log false consent for "siempre", "siento", "considere", etc.
+      // Class-action liability exposure. Require explicit yes/no word.
+      // Use whitespace/punctuation/end-of-string instead of \b because
+      // JS \b is ASCII-only and fails on "sí" (Unicode í).
+      const norm = text.toLowerCase().trim().replace(/[.,!?;:]+$/, '');
+      const TAIL = '(?:\\s|$|[.,;!?])';
+      const yes = new RegExp('^(?:yes|y|yeah|yep|sure|absolutely|of course|please|por favor|ok|okay|s[ií]|claro|por supuesto|adelante|acepto|estoy de acuerdo|i agree|i consent)' + TAIL).test(norm + ' ')
+               || /(?:^|\s)(i (?:agree|consent|accept)|yes please|yes i (?:do|will|agree|consent))(?:\s|$|[.,;!?])/.test(norm + ' ')
+               || /(?:^|\s)(s[ií] acepto|s[ií] estoy de acuerdo|claro que s[ií])(?:\s|$|[.,;!?])/.test(norm + ' ');
       if (yes) {
         updateMemory({ consentGiven: true });
         askNextQuestion({ ...memory, consentGiven: true });
@@ -4379,8 +4502,8 @@ export function ChatBot() {
         updateMemory({ consentGiven: false });
         setStepSync('choice');
         enqueueBot([
-          { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar tu número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
-          { text: memory.language === 'es' ? `También puedes llamar a ${CHATBOT_CONTEXT.phone} si prefieres.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, pace: 'short' },
+          { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar su número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
+          { text: memory.language === 'es' ? `También puede llamar a ${CHATBOT_CONTEXT.phone} si prefiere.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, pace: 'short' },
         ]);
       }
       return true;
@@ -4396,6 +4519,17 @@ export function ChatBot() {
     input.value = '';
     addUserMessage(text);
     cancelBotQueue();
+
+    // ── PHASE 9A SAFETY ROUTER — runs BEFORE intent classification ──────────
+    // Federal liability table-stakes: any sign of self-harm/suicide → 988;
+    // any sign of medical emergency → 911. Short-circuits the entire bot
+    // before SENSITIVE, language switch, or any other intent.
+    const safety = detectSafetyTrigger(text);
+    if (safety.action !== 'none') {
+      const reply = memory.language === 'es' ? safety.responseEs : safety.responseEn;
+      enqueueBot([{ text: reply, pace: 'slow' }], true);
+      return;
+    }
 
     // ── GLOBAL 13-STEP INTENT CLASSIFICATION ─────────────────────────────────
     // Step 1: normalize (trim + lowercase handled inside classifyGlobalIntent)
@@ -4486,8 +4620,8 @@ export function ChatBot() {
       }
       enqueueBot([{
         text: memory.language === 'es'
-          ? 'Disculpa, no pude identificar el estado. ¿En qué estado vive? (NY, NJ, CT o FL)'
-          : "I'm sorry, I couldn't identify the state. What state do you live in? (NY, NJ, CT, or FL)",
+          ? 'Disculpa, no pude identificar el estado. ¿En qué estado vive? (NY, NJ o CT)'
+          : "I'm sorry, I couldn't identify the state. What state do you live in? (NY, NJ, or CT)",
         pace: 'slow',
       }]);
       return;
@@ -4566,8 +4700,47 @@ export function ChatBot() {
       return;
     }
 
-    // Fallback: general education
-    const education = getEducationMessages(text, memory.language);
+    // Fallback: try LLM first, then canned education.
+    // PHASE 5 — Zara LLM fallback. When nothing in the scripted state machine
+    // matches the user's input, ask /api/chat to generate an educational reply.
+    // /api/chat already enforces TPMO compliance, prompt-guard, rate-limit
+    // (Phase A15). If LLM is unavailable for any reason (no key, network,
+    // timeout, parse), fall back to the existing canned education.
+    void tryLLMFallback(text);
+  }
+
+  async function tryLLMFallback(text: string) {
+    const lang = memory.language;
+    setIsTyping(true);
+    try {
+      const history = buildHistory(
+        messages.map((m) => ({
+          role: m.type === 'user' ? 'user' : 'bot',
+          content: m.text,
+        })),
+      );
+      const fullName = [memory.firstName, memory.lastName].filter(Boolean).join(' ').trim();
+      const result = await callLLM(text, history, {
+        language: lang,
+        zipCode: memory.zip || undefined,
+        state: memory.state || undefined,
+        name: fullName || undefined,
+        phoneNumber: memory.phone || undefined,
+        email: memory.email || undefined,
+      });
+      setIsTyping(false);
+      if (result.ok && result.response && result.response.trim()) {
+        updateMemory({ lastTopic: 'LLM_FREEFORM', interestType: 'LLM_FREEFORM' });
+        setMode('education');
+        setStepSync('question');
+        enqueueBot([{ text: result.response, pace: 'long' }]);
+        return;
+      }
+    } catch {
+      setIsTyping(false);
+    }
+    // Fallback path — canned education preserves Zara's original behavior.
+    const education = getEducationMessages(text, lang);
     updateMemory({ lastTopic: education.topic, interestType: education.topic, lastEducationTopic: education.topic });
     setMode('education');
     setStepSync('question');
@@ -4602,8 +4775,9 @@ export function ChatBot() {
 
   return (
     <>
-      {/* Launcher — shown only when chat is fully closed */}
-      {!isOpen && (
+      {/* Launcher — shown only when chat is fully closed AND no external
+          launcher (PHASE A18 BotLauncher) is active. */}
+      {!isOpen && !launcherActive && (
         <button
           onClick={openChat}
           className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
@@ -4643,18 +4817,28 @@ export function ChatBot() {
 
       {/* Full chat window */}
       {isOpen && !isMinimized && (
-        <div className="fixed bottom-[max(82px,calc(env(safe-area-inset-bottom)+76px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200">
+        <div
+          role="dialog"
+          aria-modal="false"
+          aria-labelledby="zara-chat-title"
+          className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
+          style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px` } : undefined}
+        >
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
-                <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+              <div className="relative flex-shrink-0">
+                <div className="w-9 h-9 rounded-full overflow-hidden bg-cream-100">
+                  <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+                </div>
+                {/* PHASE 9C — online status dot */}
+                <span aria-hidden className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-earth-800 animate-pulse-online" />
               </div>
               <div>
-                <div className="text-[15px] font-semibold leading-tight">
-                  {displayLanguage === 'es' ? 'Zara – Asistente Virtual de Clear Point' : 'Zara – Clear Point Virtual Assistant'}
+                <div id="zara-chat-title" className="text-[15px] font-semibold leading-tight">
+                  {displayLanguage === 'es' ? 'Zara — Asistente Virtual de Clear Point' : 'Zara — Clear Point Virtual Assistant'}
                 </div>
                 <div className="text-[11px] text-cream-200 font-normal leading-tight">
-                  {displayLanguage === 'es' ? 'Educación sobre Medicare y revisión de planes' : 'Medicare education and plan review support'}
+                  {displayLanguage === 'es' ? 'Educación general sobre Medicare' : 'General Medicare education'}
                 </div>
               </div>
             </div>
@@ -4671,14 +4855,17 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div ref={chatBodyRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+          <div ref={chatBodyRef} onScroll={handleChatScroll} role="log" aria-live="polite" aria-atomic="false" className="flex-1 overflow-y-auto overscroll-contain min-h-0">
             {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
                 as conversation progresses; does not permanently consume chat height */}
             <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
               <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
               <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
             </div>
-            <div className="px-3 py-3 space-y-3">
+            <div
+              className="px-3 py-3 space-y-3"
+              style={{ paddingBottom: zVvHeight ? '70px' : '12px' }}
+            >
             {messages.map((message, msgIdx) => (
               <div
                 key={message.id}
@@ -4760,29 +4947,73 @@ export function ChatBot() {
           </div>
 
           <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
-            <div className="flex gap-2 min-w-0">
-              <input
+            <div className="flex gap-2 min-w-0 items-end">
+              <textarea
+                ref={zaraTextareaRef}
                 name="chatInput"
-                type="text"
+                rows={1}
                 autoComplete="off"
                 autoCorrect="off"
                 autoCapitalize="sentences"
                 spellCheck="true"
                 placeholder={inputPlaceholder}
-                className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px]"
+                className="flex-1 min-w-0 px-4 py-3 bg-white border border-cream-300 rounded-lg text-base text-earth-900 placeholder:text-earth-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 min-h-[48px] resize-none leading-relaxed"
                 onFocus={() => { chatInputFocusedRef.current = true; }}
                 onBlur={() => { chatInputFocusedRef.current = false; }}
+                onInput={(event) => {
+                  const el = event.currentTarget as HTMLTextAreaElement;
+                  el.style.height = 'auto';
+                  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
+                  // Enter sends, Shift+Enter newline (premium chat convention).
+                  if (event.key === 'Enter' && !event.shiftKey) {
                     event.preventDefault();
                     event.currentTarget.form?.requestSubmit();
                   }
                 }}
               />
-              <button type="submit" className="px-4 py-3 bg-earth-800 text-cream-50 rounded-lg hover:bg-earth-900 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center" aria-label={displayLanguage === 'es' ? 'Enviar' : 'Send'}>
+              {zaraVoiceSupported && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (zaraVoiceListening) {
+                      zaraVoiceRecognizerRef.current?.stop();
+                      setZaraVoiceListening(false);
+                      return;
+                    }
+                    zaraVoiceRecognizerRef.current = createVoiceRecognizer(displayLanguage === 'es' ? 'es' : 'en', {
+                      onInterim: (t) => { if (zaraTextareaRef.current) zaraTextareaRef.current.value = t; },
+                      onFinal: (t) => { if (zaraTextareaRef.current) zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + t; },
+                      onEnd: () => setZaraVoiceListening(false),
+                      onError: () => setZaraVoiceListening(false),
+                    });
+                    zaraVoiceRecognizerRef.current?.start();
+                    setZaraVoiceListening(true);
+                  }}
+                  className={`px-3 py-3 rounded-lg transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center ${
+                    zaraVoiceListening
+                      ? 'bg-red-500 text-cream-50 hover:bg-red-600 animate-pulse-online'
+                      : 'bg-cream-100 text-earth-700 hover:bg-cream-200 border border-cream-300'
+                  }`}
+                  aria-label={displayLanguage === 'es' ? (zaraVoiceListening ? 'Detener voz' : 'Hablar') : (zaraVoiceListening ? 'Stop voice' : 'Speak')}
+                  title={displayLanguage === 'es' ? (zaraVoiceListening ? 'Detener' : 'Hablar (dictar mensaje)') : (zaraVoiceListening ? 'Stop' : 'Speak (dictate message)')}
+                >
+                  {zaraVoiceListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                </button>
+              )}
+              <button type="submit" className="px-4 py-3 bg-earth-800 text-cream-50 rounded-lg hover:bg-earth-900 transition-colors min-h-[48px] min-w-[48px] flex items-center justify-center active:scale-95" aria-label={displayLanguage === 'es' ? 'Enviar' : 'Send'}>
                 <Send className="w-5 h-5" />
               </button>
             </div>
+            {/* PHASE 9E — after-hours hint to set expectation */}
+            {!zaraOfficeStatus.isOpen && (
+              <p className="mt-2 text-[11px] text-earth-600 text-center">
+                {displayLanguage === 'es'
+                  ? `Fuera de horario. Llamada de regreso ${zaraOfficeStatus.nextOpenLabel}.`
+                  : `After hours. Callback available ${zaraOfficeStatus.nextOpenLabel}.`}
+              </p>
+            )}
           </form>
         </div>
       )}

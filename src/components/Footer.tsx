@@ -66,7 +66,7 @@ export function Footer() {
 
   return (
     <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
-      <div className="max-w-6xl mx-auto px-5">
+      <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
         {/* lg+ rebalances the column widths so:
             • Contact stays wide enough for the full email on one line
             • Services is wide enough for the longest Spanish label
@@ -80,9 +80,9 @@ export function Footer() {
             md (tablet) keeps the original 5-col split because narrower
             tablets don't have room to widen Services without squeezing
             the link columns past readable. */}
-        <div className="grid grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-8 md:gap-8 mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-8 md:gap-8 mb-10">
           {/* Brand */}
-          <div className="col-span-2 md:col-span-1">
+          <div className="col-span-1 sm:col-span-2 md:col-span-1">
             <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
@@ -92,8 +92,14 @@ export function Footer() {
             </a>
             <p className="text-sm leading-relaxed max-w-xs">
               {t(
-                'Independent, licensed Medicare insurance agency. We help seniors across the United States understand and navigate their Medicare options — clearly, honestly, and at no cost.',
-                'Agencia independiente y licenciada de seguros Medicare. Ayudamos a adultos mayores en Estados Unidos a entender sus opciones de Medicare — de forma clara, honesta y sin costo.'
+                'Trusted Medicare Guidance, Clear Answers, Human Support.',
+                'Orientación Medicare confiable, respuestas claras y apoyo humano.'
+              )}
+            </p>
+            <p className="text-sm text-cream-50/70 mt-2 max-w-xs">
+              {t(
+                'Serving NY • NJ • CT',
+                'Sirviendo NY • NJ • CT'
               )}
             </p>
           </div>
@@ -140,7 +146,7 @@ export function Footer() {
           </div>
 
           {/* Contact */}
-          <div className="col-span-2 md:col-span-1">
+          <div className="col-span-1 sm:col-span-2 md:col-span-1">
             <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h4>
             <ul className="space-y-1 text-sm">
               <li><a href="tel:18663108702" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
@@ -155,10 +161,10 @@ export function Footer() {
                     forces the email onto a single continuous line.
                   mailto href stays a single string so the email client opens
                   the address correctly. <wbr> is silent for screen readers. */}
-              <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors break-words lg:whitespace-nowrap">info@clearpoint<wbr />senioradvisors<wbr />.com</a></li>
-              <li className="text-cream-50/40 text-xs">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
+              <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-1.5 min-h-[28px] hover:text-cream-50 transition-colors break-all">info@clearpointsenioradvisors.com</a></li>
+              <li className="text-cream-50/70 text-xs">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
               {/* HIDDEN per Sawil 2026-06: FL not yet licensed. Restore once authorization confirmed. Keeping file/text intact for easy re-enable. */}
-              <li className="text-cream-50/40 text-xs mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
+              <li className="text-cream-50/70 text-xs mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
             </ul>
           </div>
         </div>
@@ -168,26 +174,25 @@ export function Footer() {
           <DisclaimerBlock variant="full" />
         </div>
 
+        {/* Licensing disclosure — CMS-required for MA marketing. */}
+        <div className="border-t border-cream-50/10 pt-4 pb-3 text-center sm:text-left text-xs text-cream-50/80 leading-relaxed">
+          <span className="font-semibold">NPN: 17261494</span>
+          <span className="mx-2 text-cream-50/40">|</span>
+          <span>{t('Licensed in NY · NJ · CT', 'Licenciado en NY · NJ · CT')}</span>
+          <span className="mx-2 text-cream-50/40">|</span>
+          <span>{t('Agent of Record: Sawil Reyes', 'Agente de Registro: Sawil Reyes')}</span>
+        </div>
+
         {/* Bottom */}
-        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-cream-50/30">
-          {/*
-            TODO OWNER — LICENSING DISCLOSURE (required before scaled Medicare marketing):
-            Add verified NPN (National Producer Number) and state license numbers here.
-            CMS requires NPN display for Medicare Advantage marketing materials.
-            Most states require license numbers in insurance marketing.
-            Do NOT publish placeholder or invented numbers.
-            Once verified, replace this comment with:
-              NPN: [VERIFIED NPN] | Licensed in NY · NJ · CT · FL
-            Example: <span>NPN: 12345678 | Licensed in NY · NJ · CT · FL</span>
-          */}
+        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-cream-50/70">
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center gap-3 flex-wrap">
-            <Link to="/privacy-policy" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
-            <span>|</span>
-            <Link to="/accessibility" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Accessibility', 'Accesibilidad')}</Link>
-            <span>|</span>
-            <Link to="/terms" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50/60 transition-colors">{t('Terms', 'Términos')}</Link>
-            <span>|</span>
+            <Link to="/privacy-policy" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
+            <span aria-hidden className="text-cream-50/30">·</span>
+            <Link to="/accessibility" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Accessibility', 'Accesibilidad')}</Link>
+            <span aria-hidden className="text-cream-50/30">·</span>
+            <Link to="/terms" className="inline-flex items-center py-1.5 min-h-[28px] hover:text-cream-50 transition-colors">{t('Terms', 'Términos')}</Link>
+            <span aria-hidden className="text-cream-50/30">·</span>
             <span>TTY: 711</span>
           </div>
         </div>

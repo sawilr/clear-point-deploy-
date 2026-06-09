@@ -68,11 +68,11 @@ export default function Contact() {
                     <div className="w-10 h-10 rounded-lg bg-gold-100 text-gold-500 flex items-center justify-center mb-3">{item.icon}</div>
                     <h3 className="font-serif text-sm font-semibold text-earth-900 mb-1">{t(item.title, item.titleEs)}</h3>
                     {item.href ? (
-                      <a href={item.href} className="text-earth-700 text-sm font-medium hover:text-gold-500 transition-colors focus-visible:outline-2 focus-visible:outline-gold-400 focus-visible:outline-offset-2 rounded-sm">{item.value}</a>
+                      <a href={item.href} className="text-earth-700 text-sm font-medium hover:text-gold-500 transition-colors focus-visible:outline-2 focus-visible:outline-gold-400 focus-visible:outline-offset-2 rounded-sm break-all">{item.value}</a>
                     ) : (
-                      <p className="text-earth-700 text-sm font-medium">{item.value}</p>
+                      <p className="text-earth-700 text-sm font-medium break-words">{item.value}</p>
                     )}
-                    <p className="text-earth-500 text-xs mt-1">{t(item.sub, item.subEs)}</p>
+                    <p className="text-earth-700 text-xs mt-1">{t(item.sub, item.subEs)}</p>
                   </div>
                 ))}
               </div>
@@ -87,7 +87,7 @@ export default function Contact() {
                 </p>
                 <div className="flex items-center gap-3">
                   <CalendarIcon className="w-5 h-5 text-gold-400" />
-                  <span className="text-gold-300 font-semibold text-sm">{t('Online scheduling coming soon. Call or fill out the form to book your appointment.', 'Programación en línea próximamente. Llame o complete el formulario para reservar su cita.')}</span>
+                  <span className="text-gold-300 font-semibold text-sm">{t('Call or complete the form to book your appointment — a licensed advisor will confirm a time within one business day.', 'Llame o complete el formulario para reservar su cita — un asesor con licencia confirmará una hora dentro de un día hábil.')}</span>
                 </div>
               </div>
             </div>

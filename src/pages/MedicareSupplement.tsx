@@ -134,7 +134,7 @@ export default function MedicareSupplement() {
               { plan: 'Plan A', limited: false, summaryEn: 'The basic foundation. Every Medigap plan includes at least these core benefits.', summaryEs: 'La base fundamental. Todos los planes Medigap incluyen al menos estos beneficios básicos.', pointsEn: ['Part A coinsurance & hospital costs', 'Part B coinsurance', 'First 3 pints of blood', 'Part A hospice coinsurance'], pointsEs: ['Coseguro de Parte A y costos hospitalarios', 'Coseguro de Parte B', 'Primeras 3 pintas de sangre', 'Coseguro de cuidados paliativos de Parte A'] },
               { plan: 'Plan B', limited: false, summaryEn: 'Adds Part A hospital deductible coverage to Plan A basic benefits.', summaryEs: 'Agrega cobertura del deducible hospitalario de Parte A a los beneficios básicos del Plan A.', pointsEn: ['All Plan A benefits', 'Part A deductible ($1,736 in 2026)', 'Does not cover Part B deductible or excess charges'], pointsEs: ['Todos los beneficios del Plan A', 'Deducible de Parte A ($1,736 en 2026)', 'No cubre deducible ni cargos en exceso de Parte B'] },
               { plan: 'Plan C', limited: true, limitedNoteEn: 'Not available to people newly eligible for Medicare on or after January 1, 2020.', limitedNoteEs: 'No disponible para personas recién elegibles para Medicare a partir del 1 de enero de 2020.', summaryEn: 'Broad coverage. Not available to new Medicare beneficiaries after 2020.', summaryEs: 'Cobertura amplia. No disponible para nuevos beneficiarios de Medicare después de 2020.', pointsEn: ['Covers Part A deductible', 'Covers Part B deductible', 'Skilled nursing facility coinsurance', 'Foreign travel emergency care'], pointsEs: ['Cubre deducible de Parte A', 'Cubre deducible de Parte B', 'Coseguro de centro de enfermería', 'Atención de emergencia en viajes al extranjero'] },
-              { plan: 'Plan D', limited: false, summaryEn: 'Broad supplement without Part B deductible coverage. Not prescription drug coverage.', summaryEs: 'Suplemento amplio sin cobertura del deducible de Parte B. No es cobertura de medicamentos recetados.', pointsEn: ['Covers Part A deductible', 'Skilled nursing facility coinsurance', 'Foreign travel emergency care', '⚠ Medigap Plan D ≠ Medicare Part D'], pointsEs: ['Cubre deducible de Parte A', 'Coseguro de centro de enfermería', 'Atención de emergencia en viajes al extranjero', '⚠ Medigap Plan D ≠ Medicare Parte D'] },
+              { plan: 'Plan D', limited: false, summaryEn: 'Broad supplement without Part B deductible coverage. Not prescription drug coverage.', summaryEs: 'Suplemento amplio sin cobertura del deducible de Parte B. No es cobertura de medicamentos recetados.', pointsEn: ['Covers Part A deductible', 'Skilled nursing facility coinsurance', 'Foreign travel emergency care', 'Note: Medigap Plan D is not Medicare Part D'], pointsEs: ['Cubre deducible de Parte A', 'Coseguro de centro de enfermería', 'Atención de emergencia en viajes al extranjero', 'Nota: Medigap Plan D no es Medicare Parte D'] },
               { plan: 'Plan F', limited: true, limitedNoteEn: 'Not available to people newly eligible for Medicare on or after January 1, 2020.', limitedNoteEs: 'No disponible para personas recién elegibles para Medicare a partir del 1 de enero de 2020.', summaryEn: 'Most comprehensive. Not available to new Medicare beneficiaries after 2020.', summaryEs: 'El más completo. No disponible para nuevos beneficiarios de Medicare después de 2020.', pointsEn: ['Covers all gaps including Part B deductible', 'Part B excess charges', 'Foreign travel emergency care', 'High-deductible option in some states'], pointsEs: ['Cubre todos los vacíos incluyendo deducible de Parte B', 'Cargos en exceso de Parte B', 'Atención de emergencia en viajes al extranjero', 'Opción de deducible alto en algunos estados'] },
               { plan: 'Plan G', limited: false, summaryEn: 'Broadest option for new enrollees. Covers nearly everything except the Part B deductible.', summaryEs: 'Opción más amplia para nuevos inscritos. Cubre casi todo excepto el deducible de Parte B.', pointsEn: ['Covers Part A deductible', 'Part B excess charges', 'Foreign travel emergency care', 'High-deductible option in some states'], pointsEs: ['Cubre deducible de Parte A', 'Cargos en exceso de Parte B', 'Atención de emergencia en viajes al extranjero', 'Opción de deducible alto en algunos estados'] },
               { plan: 'Plan K', limited: false, summaryEn: 'Lower-premium cost-sharing plan. Covers 50% of many benefits with an annual out-of-pocket limit.', summaryEs: 'Plan de costo compartido con prima más baja. Cubre 50% de muchos beneficios con límite anual de gastos.', pointsEn: ['50% Part A deductible & coinsurance', 'Annual out-of-pocket limit ($7,060 in 2026)', 'After limit, plan pays 100% rest of year', 'Lower premiums, higher cost-sharing'], pointsEs: ['50% deducible y coseguro de Parte A', 'Límite anual de gastos ($7,060 en 2026)', 'Después del límite, el plan paga 100%', 'Primas más bajas, mayor costo compartido'] },
@@ -146,7 +146,7 @@ export default function MedicareSupplement() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="font-serif text-xl font-bold text-earth-900">{p.plan}</div>
                   {p.limited && (
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full">
+                    <span className="text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full">
                       {t('Limited Availability', 'Disponibilidad Limitada')}
                     </span>
                   )}
@@ -154,7 +154,7 @@ export default function MedicareSupplement() {
                 <p className="text-earth-600 text-sm leading-relaxed mb-3">
                   {t(p.summaryEn, p.summaryEs)}
                 </p>
-                <ul className="space-y-1.5 text-xs text-earth-500 mb-3 flex-1">
+                <ul className="space-y-1.5 text-[13px] text-earth-700 mb-3 flex-1">
                   {p.pointsEn.map((pt, j) => (
                     <li key={j} className="flex items-start gap-2">
                       <span className="text-gold-400 mt-0.5 flex-shrink-0">•</span>
@@ -163,7 +163,7 @@ export default function MedicareSupplement() {
                   ))}
                 </ul>
                 {p.limited && p.limitedNoteEn && (
-                  <p className="text-[11px] text-amber-700 bg-amber-50 rounded-lg p-2.5 leading-snug">
+                  <p className="text-[12px] text-amber-800 bg-amber-50 rounded-lg p-2.5 leading-snug">
                     {t(p.limitedNoteEn, p.limitedNoteEs)}
                   </p>
                 )}
@@ -200,7 +200,7 @@ export default function MedicareSupplement() {
             </p>
             <button
               onClick={handleFreeReview}
-              className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-7 py-3.5 rounded-xl hover:bg-earth-900 transition-all hover:shadow-soft"
+              className="inline-flex items-center justify-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-5 sm:px-7 py-3.5 min-h-[48px] rounded-xl hover:bg-earth-900 transition-all hover:shadow-soft text-center"
             >
               {t('Request a Free Review', 'Solicitar una Revisión Gratuita')}
             </button>
