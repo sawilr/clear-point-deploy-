@@ -2591,8 +2591,15 @@ export function processMessage(
       };
       const isSequential = hasSequentialRun(phoneDigits, 7);
       const badAreaCode = /^[01]/.test(phoneDigits);
+      // Sawil 2026-06 — NANP: the EXCHANGE (4th digit / first digit of the
+      // central-office code) also cannot be 0 or 1. Caught a live fake that
+      // slipped through: 1-202-012-0022 ("012" exchange). Without this the
+      // structural collector accepted it as a real phone.
+      const badExchange = /^\d{3}[01]/.test(phoneDigits);
       const fakePrefix = /^555555/.test(phoneDigits);
-      if (isAllSame || isSequential || badAreaCode || fakePrefix) {
+      // 555 reserved exchange (XXX-555-XXXX) is fictional — reject it too.
+      const reserved555 = /^\d{3}555/.test(phoneDigits);
+      if (isAllSame || isSequential || badAreaCode || badExchange || fakePrefix || reserved555) {
         phoneDigits = '';
       }
     }
@@ -3330,18 +3337,36 @@ export async function processMessageAsync(
     newState.advisorHandoffStarted = true;
     newState.advisorHandoffReason = newState.advisorHandoffReason || 'llm_decided_handoff';
     needsHuman = true;
-    // If LLM didn't already ask for the name, append the structured prompt.
-    if (!/nombre|name/i.test(llmRes.response)) {
-      const ask = isEs
-        ? '\n\nPara conectarle con un asesor licenciado de ClearPoint, ¿cuál es su nombre, por favor?'
-        : '\n\nTo connect you with a licensed ClearPoint advisor, what\'s your name, please?';
-      response = llmRes.response + ask;
-      // replace the last bot message
-      newState.messages[newState.messages.length - 1] = { role: 'bot', content: response, timestamp: Date.now() };
+    // Sawil 2026-06 — ROUTE contact collection to the DETERMINISTIC structural
+    // collector instead of letting the LLM freelance it. Root cause of three
+    // live bugs: every LLM turn sets lastBotIntent='llm_response', and
+    // _runStructuralFirst explicitly skips the structural collector while
+    // lastBotIntent==='llm_response'. So after a handoff the LLM kept doing
+    // name/phone/ZIP itself — re-asking the ZIP it already had, accepting fake
+    // phones, and looping the close. Setting lastBotIntent to a handoff intent
+    // hands the NEXT turn to the structural collector, which validates the
+    // phone, never re-asks the known ZIP, and terminates cleanly.
+    if (newState.name && newState.phoneNumber) {
+      // Everything already captured — handoff is complete; do NOT re-ask.
+    } else {
+      newState.lastBotIntent = newState.name ? 'handoff_asking_phone' : 'handoff_asking_name';
+      // If the LLM didn't already ask for the name, append the structured prompt.
+      if (!newState.name && !/nombre|name/i.test(llmRes.response)) {
+        const ask = isEs
+          ? '\n\nPara conectarle con un asesor licenciado de ClearPoint, ¿cuál es su nombre, por favor?'
+          : '\n\nTo connect you with a licensed ClearPoint advisor, what\'s your name, please?';
+        response = llmRes.response + ask;
+        // replace the last bot message
+        newState.messages[newState.messages.length - 1] = { role: 'bot', content: response, timestamp: Date.now() };
+      }
     }
   } else if (llmRes.meta.wantSchedule) {
     newState.schedulingCallback = true;
     newState.advisorOfferDismissed = true;
+    // Same routing as handoff — hand collection to the structural collector.
+    if (!(newState.name && newState.phoneNumber)) {
+      newState.lastBotIntent = newState.name ? 'handoff_asking_phone' : 'handoff_asking_name';
+    }
   } else if (llmRes.meta.wantClose) {
     newState.conversationClosed = true;
   }
