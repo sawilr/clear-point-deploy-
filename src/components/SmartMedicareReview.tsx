@@ -416,7 +416,7 @@ export function SmartMedicareReview() {
               }`}
             />
           ))}
-          <span className="text-xs text-earth-500 ml-3">{stepLabel(step)}</span>
+          <span className="text-xs text-earth-700 ml-3">{stepLabel(step)}</span>
         </div>
 
         {/* Step Content */}

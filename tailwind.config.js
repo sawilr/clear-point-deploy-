@@ -62,7 +62,13 @@ module.exports = {
           200: '#E0CBA5',
           300: '#D0B27A',
           400: '#B8956A',
-          500: '#9A7A52',
+          // Sawil 2026-06 — darkened from #9A7A52 to clear WCAG AA (4.5:1) on
+          // the cream/white backgrounds where gold-500 is used for eyebrow
+          // labels and "Learn more" links. Old value was ~3.8:1 (fail) on
+          // cream-100. #806538 measures ~4.8:1 on cream, ~5.5:1 on white, and
+          // still reads as a premium deep gold. gold-300/400 (used on dark
+          // backgrounds) are unchanged.
+          500: '#806538',
         },
         primary: {
           DEFAULT: "hsl(var(--primary))",

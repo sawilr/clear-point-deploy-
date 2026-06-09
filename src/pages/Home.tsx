@@ -308,7 +308,7 @@ export default function Home() {
                 <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">
                   {t('Not sure which enrollment period applies to you?', '¿No está seguro de qué período de inscripción aplica?')}
                 </h3>
-                <p className="text-earth-600 text-sm mb-5">
+                <p className="text-earth-700 text-sm mb-5">
                   {t('A licensed Medicare advisor can help you review your situation and understand your next steps.', 'Un asesor licenciado de Medicare puede ayudarle a revisar su situación y entender sus próximos pasos.')}
                 </p>
                 <div className="flex flex-wrap gap-3">
@@ -463,7 +463,7 @@ export default function Home() {
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
               {t('Client Experience Standards', 'Estándares de Experiencia del Cliente')}
             </h2>
-            <p className="text-earth-600 text-base leading-relaxed">
+            <p className="text-earth-700 text-base leading-relaxed">
               {t('Every interaction with Clear Point is guided by these three principles — no exceptions.', 'Cada interacción con Clear Point se guía por estos tres principios — sin excepciones.')}
             </p>
           </div>

@@ -238,7 +238,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         <p className="text-earth-600 text-sm mb-4">
           {lang === 'es' ? FREE_REVIEW_SUCCESS_ES : FREE_REVIEW_SUCCESS_EN}
         </p>
-        <p className="text-earth-500 text-xs">{t('Reply STOP to unsubscribe from SMS.', 'Responda STOP para cancelar suscripción de SMS.')}</p>
+        <p className="text-earth-700 text-xs">{t('Reply STOP to unsubscribe from SMS.', 'Responda STOP para cancelar suscripción de SMS.')}</p>
       </div>
     );
   }
@@ -249,9 +249,9 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         <div className="absolute -top-11 left-1/2 -translate-x-1/2 bg-gold-400 text-earth-900 text-[11px] font-extrabold tracking-wider uppercase px-5 py-2 rounded-full whitespace-nowrap shadow-soft">
           {t('Free Medicare Review', 'Revisión Medicare Gratis')}
         </div>
-        <h3 id="lead-form-heading" className="font-serif text-xl text-earth-900 text-center mt-2 mb-1 scroll-mt-[100px]">
+        <h2 id="lead-form-heading" className="font-serif text-xl text-earth-900 text-center mt-2 mb-1 scroll-mt-[100px]">
           {t('Get Your Free Plan Review', 'Obtenga Su Revisión Gratis')}
-        </h3>
+        </h2>
         <p className="text-earth-600 text-xs text-center mb-6">
           {t('Takes 2 minutes · No pressure · 100% confidential', 'Toma 2 minutos · Sin presión · 100% confidencial')}
         </p>
@@ -395,7 +395,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <LockIcon className="w-3 h-3" />
           {t('Your information is secure and never sold.', 'Su información es segura y nunca se vende.')}
         </p>
-        <p className="text-center text-[10px] text-earth-400 mt-1">
+        <p className="text-center text-[12px] text-earth-700 mt-1">
           {t('Reply STOP to unsubscribe. Message frequency may vary.', 'Responda STOP para cancelar. La frecuencia de mensajes puede variar.')}
         </p>
       </div>

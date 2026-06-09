@@ -87,7 +87,7 @@ export function Footer() {
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
                 <span className="font-serif text-base font-bold text-cream-50 tracking-tight">Clear Point</span>
-                <span className="text-[9px] font-semibold tracking-[0.15em] uppercase text-gold-400 mt-0.5">{t('Senior Advisors', 'Senior Advisors')}</span>
+                <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-gold-400 mt-0.5">{t('Senior Advisors', 'Senior Advisors')}</span>
               </div>
             </a>
             <p className="text-sm leading-relaxed max-w-xs">
@@ -108,7 +108,7 @@ export function Footer() {
               broker. Medicare Supplement MOVED to Education per Sawil 2026-06
               (pending broker authorization). */}
           <div>
-            <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h4>
+            <h3 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h3>
             <ul className="space-y-1 text-sm">
               <li><Link to="/medicare-advantage" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
               {/* HIDDEN per Sawil 2026-06 — Medicare Supplement moved to Education column. Restore by uncommenting. */}
@@ -120,7 +120,7 @@ export function Footer() {
           {/* Education — learning / assistance topics. Mirrors Header Education dropdown.
               Includes Medicare Supplement (educational reference until authorization). */}
           <div>
-            <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h4>
+            <h3 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h3>
             <ul className="space-y-1 text-sm">
               <li><Link to="/resources" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
               <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
@@ -134,7 +134,7 @@ export function Footer() {
 
           {/* External Resources */}
           <div>
-            <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h4>
+            <h3 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h3>
             <ul className="space-y-1 text-sm">
               <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[40px] hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[40px] hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
@@ -147,7 +147,7 @@ export function Footer() {
 
           {/* Contact */}
           <div className="col-span-1 sm:col-span-2 md:col-span-1">
-            <h4 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h4>
+            <h3 className="text-[11px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h3>
             <ul className="space-y-1 text-sm">
               <li><a href="tel:18663108702" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
               {/* Email layout per viewport:
