@@ -306,7 +306,7 @@ export default async function handler(req, res) {
       console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);
     }
     // Legacy in-file compliance pass (defense-in-depth) + USTED normalization.
-    cleanText = compliancePostFilter(cleanText);
+    cleanText = compliancePostFilter(cleanText, lang);
     if (lang === 'es') {
       cleanText = ustedPostFilter(cleanText);
     }
@@ -346,23 +346,35 @@ function buildContextSummary(ctx) {
 
 // Strip / reformulate any phrasing that violates CMS TPMO 422.2267.
 // Conservative — favors the user-safe alternative.
-function compliancePostFilter(text) {
+// Sawil 2026-06 — the safe replacement is now LANGUAGE-AWARE. Previously the
+// disclaimers were hardcoded in English, so a Spanish reply that tripped a
+// guard got an English sentence injected mid-paragraph ("...Connecticut. I
+// can't recommend a specific plan from here..."). Now ES callers get the
+// Spanish disclaimer, so the reply stays in one language.
+function compliancePostFilter(text, language) {
   if (!text) return text;
+  var es = language === 'es';
   var out = text;
   // Block "I recommend [plan name]" style — generic guard.
   out = out.replace(
     /\b(i (highly )?recommend|le (recomiendo|recomendar[ií]a)|deber[ií]a (escoger|elegir|tomar)|the best plan (is|would be)|el mejor plan (es|ser[ií]a))\b[^.!?]+/gi,
-    function () { return 'I can\'t recommend a specific plan from here — a licensed advisor can review your options with you, at no cost'; }
+    function () { return es
+      ? 'no puedo recomendar un plan específico desde aquí — un asesor licenciado puede revisar sus opciones con usted, sin costo'
+      : 'I can\'t recommend a specific plan from here — a licensed advisor can review your options with you, at no cost'; }
   );
   // Block "you qualify / you are eligible" style — must be advisor-confirmed.
   out = out.replace(
     /\b(you (qualify|are eligible)|usted (califica|es elegible|cumple))\b[^.!?]+/gi,
-    function () { return 'eligibility depends on your income, assets, and state — a licensed advisor or the agency can confirm whether it applies to you'; }
+    function () { return es
+      ? 'la elegibilidad depende de sus ingresos, recursos y estado — un asesor licenciado o la agencia puede confirmar si aplica en su caso'
+      : 'eligibility depends on your income, assets, and state — a licensed advisor or the agency can confirm whether it applies to you'; }
   );
   // Block "your doctor is in network / is covered" / "está en la red"
   out = out.replace(
     /\b(your (doctor|provider|hospital) is (in|in[- ]network|covered)|su (doctor|m[eé]dico|hospital|proveedor) (est[aá] (en la red|cubierto)|si est[aá]))\b[^.!?]*/gi,
-    function () { return 'I can\'t confirm whether a specific doctor is in network — only the plan\'s directory or a licensed advisor can verify that'; }
+    function () { return es
+      ? 'no puedo confirmar si un doctor específico está en la red — solo el directorio del plan o un asesor licenciado puede verificarlo'
+      : 'I can\'t confirm whether a specific doctor is in network — only the plan\'s directory or a licensed advisor can verify that'; }
   );
   return out;
 }
