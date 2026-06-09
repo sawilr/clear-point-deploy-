@@ -28,6 +28,12 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* private mode */ }
+    // Sawil 2026-06 — keep <html lang> in sync with the chosen language so
+    // screen readers pronounce the page correctly (index.html hardcodes "en";
+    // without this, Spanish content is read with an English accent).
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = lang;
+    }
   }, [lang]);
 
   const setLang = useCallback((l: Lang) => {

@@ -119,9 +119,24 @@ export function SmartMedicareReview() {
   const [currentCarrier, setCurrentCarrier] = useState('');
   const [rxCount, setRxCount] = useState('');
   const [doctorPriority, setDoctorPriority] = useState('');
+  // Sawil 2026-06 — dual-eligible qualifier. Standard across Medicare brokers
+  // (eHealth, Medicare.gov Plan Finder, SelectQuote, etc.): people with
+  // Medicaid or Extra Help qualify for D-SNP plans with very different options,
+  // so the advisor needs to know up front. Program status ONLY — compliance-safe
+  // (no income, health, or SSN collected).
+  const [medicaidExtraHelp, setMedicaidExtraHelp] = useState('');
   // Step 1 progressive disclosure — 4 primary options first, "More options"
   // reveals the remaining 7. Resets if the user goes back to Step 1.
   const [showMoreOptions, setShowMoreOptions] = useState(false);
+  // Sawil 2026-06 — when "More options" expands, gently scroll the new options
+  // into view ("bajar un chin") so on mobile the user sees that more choices
+  // appeared instead of them sitting below the fold.
+  const moreOptionsEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showMoreOptions && moreOptionsEndRef.current) {
+      moreOptionsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  }, [showMoreOptions]);
 
   const concerns = lang === 'es' ? concernsES : concernsEN;
   const isEs = lang === 'es';
@@ -300,6 +315,7 @@ export function SmartMedicareReview() {
       ...(currentCarrier ? [`Current Carrier: ${currentCarrier}`] : []),
       ...(rxCount ? [`Prescription medications: ${rxCount}`] : []),
       ...(doctorPriority ? [`Doctor to keep: ${doctorPriority}`] : []),
+      ...(medicaidExtraHelp ? [`Medicaid / Extra Help: ${medicaidExtraHelp}`] : []),
       ...(Object.keys(ssdiAnswers).length > 0 ? [
         '',
         'Disability / SSI / SSDI Screening Answers:',
@@ -473,6 +489,8 @@ export function SmartMedicareReview() {
                     </button>
                   );
                 })}
+                {/* Sawil 2026-06 — scroll anchor for the "bajar un chin" nudge */}
+                {showMoreOptions && <div ref={moreOptionsEndRef} aria-hidden="true" className="h-px w-full" />}
               </div>
 
               {/* "More options" toggle — only shown when expanded list hidden */}
@@ -788,6 +806,26 @@ export function SmartMedicareReview() {
                     <option value="Yes — specialist only">{t('Yes — specialist', 'Sí — especialista')}</option>
                     <option value="No primary doctor right now">{t('No primary doctor', 'Sin doctor primario')}</option>
                     <option value="Don't know / flexible">{t('I don’t know / flexible', 'No sé / flexible')}</option>
+                  </select>
+                </label>
+
+                {/* Medicaid / Extra Help — dual-eligible qualifier (program status
+                    only; compliance-safe). Lets the advisor flag D-SNP options. */}
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">
+                    {t('Do you have Medicaid or Extra Help (LIS)?', '¿Tiene Medicaid o Extra Help (Ayuda Extra)?')}
+                  </span>
+                  <select
+                    value={medicaidExtraHelp}
+                    onChange={(e) => setMedicaidExtraHelp(e.target.value)}
+                    className="w-full px-3 py-2.5 min-h-[44px] rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
+                  >
+                    <option value="">{t('Select…', 'Seleccione…')}</option>
+                    <option value="Yes — Medicaid">{t('Yes — Medicaid', 'Sí — Medicaid')}</option>
+                    <option value="Yes — Extra Help / LIS">{t('Yes — Extra Help / LIS', 'Sí — Extra Help / LIS')}</option>
+                    <option value="Yes — both Medicaid and Extra Help">{t('Yes — both', 'Sí — ambos')}</option>
+                    <option value="No">{t('No', 'No')}</option>
+                    <option value="Don't know / not sure">{t('I don’t know', 'No sé')}</option>
                   </select>
                 </label>
               </div>

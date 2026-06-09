@@ -19,6 +19,7 @@ import { Header } from './components/Header'
 import { Footer } from './components/Footer'
 import { MobileStickyBar } from './components/MobileStickyBar'
 import { ScrollToTop } from './components/ScrollToTop'
+import { RouteMeta } from './components/RouteMeta'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 import { ChatBot } from './components/ChatBot'
@@ -45,6 +46,7 @@ export default function App() {
         Skip to main content
       </a>
       <ScrollToTop />
+      <RouteMeta />
       <Header />
       <main id="main-content" className={isSupportPage ? 'support-main' : undefined}>
         <Routes>

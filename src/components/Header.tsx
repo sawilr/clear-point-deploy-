@@ -59,6 +59,15 @@ export function Header() {
     setEducationOpen(false);
   }, [location.pathname]);
 
+  /* Sawil 2026-06 — while the mobile menu is open, hide the floating Zara
+     "Ayuda" launcher so it does not overlap the menu items. Toggles a class
+     on <html>; index.css hides .cp-zara-fab when .cp-menu-open is present. */
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle('cp-menu-open', mobileMenuOpen);
+    return () => { document.documentElement.classList.remove('cp-menu-open'); };
+  }, [mobileMenuOpen]);
+
   const scrollTo = (id: string) => {
     const el = document.querySelector(id);
     if (el) {
@@ -284,28 +293,28 @@ export function Header() {
         {mobileMenuOpen && (
           <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-98px)] overflow-y-auto overscroll-contain">
             <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
-            <Link to="/medicare-advantage" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
+            <Link to="/medicare-advantage" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap moved to Education section below. Restore by uncommenting. */}
-            {/* <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
-            <Link to="/part-d" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
+            {/* <Link to="/medicare-supplement" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
+            <Link to="/part-d" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Education', 'Educación')}</p>
-              <Link to="/resources" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
-              <button onClick={() => handleScrollNav('/#annual-review')} className="block text-base font-medium text-earth-800 w-full text-left">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
-              <Link to="/medicare-supplement" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
-              <Link to="/extra-help" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
-              <Link to="/help-paying-costs" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
-              <Link to="/otc-benefits" className="block text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
+              <Link to="/resources" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
+              <button onClick={() => handleScrollNav('/#annual-review')} className="block py-2.5 text-base font-medium text-earth-800 w-full text-left">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
+              <Link to="/medicare-supplement" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link>
+              <Link to="/extra-help" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
+              <Link to="/help-paying-costs" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
+              <Link to="/otc-benefits" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
             </div>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Explore', 'Explorar')}</p>
               {navLinks.map((link) => (
                 link.scroll ? (
-                  <button key={link.href} onClick={() => handleScrollNav(link.href)} className="block text-base font-medium text-earth-800 w-full text-left">
+                  <button key={link.href} onClick={() => handleScrollNav(link.href)} className="block py-2.5 text-base font-medium text-earth-800 w-full text-left">
                     {t(link.label, link.labelEs)}
                   </button>
                 ) : (
-                  <Link key={link.href} to={link.href} className="block text-base font-medium text-earth-800" onClick={closeNav}>
+                  <Link key={link.href} to={link.href} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>
                     {t(link.label, link.labelEs)}
                   </Link>
                 )

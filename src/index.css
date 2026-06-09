@@ -186,6 +186,11 @@
 @media (min-width: 1536px) { .cp-section { max-width: 1400px; } }
 @media (min-width: 1920px) { .cp-section { max-width: 1600px; } }
 
+/* Sawil 2026-06 — hide the floating Zara "Ayuda" launcher while the mobile
+   menu is open (Header.tsx toggles .cp-menu-open on <html>) so the pill never
+   overlaps the menu items. */
+.cp-menu-open .cp-zara-fab { opacity: 0; pointer-events: none; }
+
 @layer utilities {
   .font-serif {
     font-family: 'Playfair Display', Georgia, serif;
