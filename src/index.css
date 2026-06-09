@@ -145,6 +145,47 @@
   }
 }
 
+/* Sawil 2026-06 — /support viewport shell (THE mobile-keyboard fix).
+   On phones, /support becomes a fixed-height column equal to the visible
+   viewport (--svh) with overflow hidden, so the DOCUMENT cannot scroll.
+   When iOS focuses the ZIP input it has nothing to scroll, so the
+   conversation context never slides out of view. The site header stays at
+   the top (tappable — not a trap) and Clara fills the rest. On desktop
+   (md+) there is no virtual keyboard, so the shell reverts to a normal
+   scrollable page with the centered chat card. */
+.support-shell {
+  display: flex;
+  flex-direction: column;
+  height: var(--svh, 100dvh);
+  overflow: hidden;
+}
+.support-main {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+}
+@media (min-width: 768px) {
+  .support-shell { display: block; height: auto; min-height: 100vh; overflow: visible; }
+  .support-main { flex: none; min-height: 0; overflow: visible; }
+}
+
+/* Sawil 2026-06 — PREMIUM CONTENT WIDTH (the "4K/TV layer").
+   ONE control point for how wide page sections sit. On phones, tablets and
+   laptops it behaves EXACTLY like the old max-w-6xl (1152px) — readable line
+   lengths, zero change. Only at very large screens does it widen so a 4K
+   monitor / big TV is filled instead of leaving big empty margins. Gated to
+   ≥1536px and ≥1920px, so mobile/laptop are untouched. Matches the width the
+   hero, header and carriers already use. To tune the 4K feel later, change
+   these two numbers in one place. */
+.cp-section {
+  width: 100%;
+  max-width: 72rem; /* 1152px — same as Tailwind max-w-6xl */
+  margin-left: auto;
+  margin-right: auto;
+}
+@media (min-width: 1536px) { .cp-section { max-width: 1400px; } }
+@media (min-width: 1920px) { .cp-section { max-width: 1600px; } }
+
 @layer utilities {
   .font-serif {
     font-family: 'Playfair Display', Georgia, serif;

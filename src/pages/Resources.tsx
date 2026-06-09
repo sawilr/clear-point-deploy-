@@ -448,7 +448,7 @@ export default function Resources() {
       />
 
       <section ref={gridReveal.ref} className={`py-20 lg:py-28 bg-white transition-all duration-700 ${gridReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Free Educational Guides', 'Guías Educativas Gratuitas')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">

@@ -2778,6 +2778,11 @@ export function ChatBot() {
   // height shrinks; we use that to cap the chat surface and add space below
   // the last message so it isn't hidden under the keyboard.
   const [zVvHeight, setZVvHeight] = useState<number | undefined>(undefined);
+  // Sawil 2026-06 — keyboard offset for Zara: how many px the on-screen
+  // keyboard covers. Used to lift the bottom-anchored floating panel ABOVE
+  // the keyboard so the composer is never hidden behind it (capping the
+  // height alone left the input under the keyboard — the "desorganizada" bug).
+  const [zKbBottom, setZKbBottom] = useState<number | undefined>(undefined);
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -2791,8 +2796,13 @@ export function ChatBot() {
       if (raf !== null) cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const diff = baseline - vv.height;
-        if (diff > 100) setZVvHeight(vv.height);
-        else setZVvHeight((cur) => (cur === undefined ? cur : undefined));
+        if (diff > 100) {
+          setZVvHeight(vv.height);
+          setZKbBottom(diff);
+        } else {
+          setZVvHeight((cur) => (cur === undefined ? cur : undefined));
+          setZKbBottom((cur) => (cur === undefined ? cur : undefined));
+        }
       });
     };
     const recomputeBaseline = () => {
@@ -4822,7 +4832,7 @@ export function ChatBot() {
           aria-modal="false"
           aria-labelledby="zara-chat-title"
           className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
-          style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px` } : undefined}
+          style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px`, bottom: `${(zKbBottom || 0) + 8}px` } : undefined}
         >
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
@@ -5010,7 +5020,7 @@ export function ChatBot() {
             {!zaraOfficeStatus.isOpen && (
               <p className="mt-2 text-[11px] text-earth-600 text-center">
                 {displayLanguage === 'es'
-                  ? `Fuera de horario. Llamada de regreso ${zaraOfficeStatus.nextOpenLabel}.`
+                  ? `Fuera de horario. Llamada de regreso ${zaraOfficeStatus.nextOpenLabelEs}.`
                   : `After hours. Callback available ${zaraOfficeStatus.nextOpenLabel}.`}
               </p>
             )}

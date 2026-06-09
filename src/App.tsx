@@ -35,7 +35,7 @@ export default function App() {
   return (
     <ErrorBoundary>
     <LanguageProvider>
-    <div className={`min-h-screen bg-cream-50 ${isSupportPage ? '' : 'pb-[calc(env(safe-area-inset-bottom)+96px)] md:pb-0'}`}>
+    <div className={`bg-cream-50 ${isSupportPage ? 'support-shell' : 'min-h-screen pb-[calc(env(safe-area-inset-bottom)+96px)] md:pb-0'}`}>
       {/* WCAG 2.4.1 Bypass Blocks — Skip link must be first focusable element on the page.
           Visually hidden until focused via Tab; then appears as a high-contrast pill at top-left. */}
       <a
@@ -46,7 +46,7 @@ export default function App() {
       </a>
       <ScrollToTop />
       <Header />
-      <main id="main-content">
+      <main id="main-content" className={isSupportPage ? 'support-main' : undefined}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />

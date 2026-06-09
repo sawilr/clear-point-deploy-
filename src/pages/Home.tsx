@@ -170,7 +170,7 @@ export default function Home() {
 
       {/* TPMO disclosure — persistent in-page band (CMS §422.2267(e)(41)) */}
       <div className="bg-cream-100 border-y border-cream-200">
-        <div className="max-w-6xl mx-auto px-5 py-3">
+        <div className="cp-section px-5 py-3">
           <DisclaimerBlock variant="inline" />
         </div>
       </div>
@@ -238,7 +238,7 @@ export default function Home() {
 
       {/* Services */}
       <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
@@ -268,7 +268,7 @@ export default function Home() {
 
       {/* Enrollment Periods — anchor for Annual Review nav link */}
       <section id="annual-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <div>
               <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Enrollment Guide', 'Guía de Inscripción')}</span>
@@ -337,7 +337,7 @@ export default function Home() {
 
       {/* How It Works */}
       <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-28 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
               <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Simple Process', 'Proceso Simple')}</span>
@@ -382,7 +382,7 @@ export default function Home() {
 
       {/* Why Independent */}
       <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
@@ -457,7 +457,7 @@ export default function Home() {
 
       {/* Client Experience Standards */}
       <section ref={testimonialsReveal.ref} className={`py-20 lg:py-28 bg-cream-100 transition-all duration-700 ${testimonialsReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Our Commitment', 'Nuestro Compromiso')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
@@ -512,7 +512,7 @@ export default function Home() {
 
       {/* FAQ */}
       <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
-        <div className="max-w-6xl mx-auto px-5">
+        <div className="cp-section px-5">
           <FAQ items={faqItems} title="Common Questions" titleEs="Preguntas Frecuentes" />
         </div>
       </section>

@@ -262,6 +262,34 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // resizes via the CSS var written by useVisualViewportHeight().
   }, [messages, outerState.step, scrollToBottom]);
 
+  // Sawil 2026-06 — keyboard-open auto-scroll (layer 2 of the mobile fix).
+  // When the mobile keyboard opens or closes, the visual viewport resizes.
+  // If our input has focus (the user is typing), keep the latest message +
+  // composer in view by scrolling Clara's OWN body to the bottom. The
+  // .support-shell already stops the DOCUMENT from scrolling, so this is the
+  // only scroll that moves — the conversation context never disappears.
+  // Coalesced via rAF; gated to a focused input + not-pinned-up so it never
+  // fights a user who deliberately scrolled up to re-read.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    let raf: number | null = null;
+    const onResize = () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        raf = null;
+        if (document.activeElement === inputRef.current && !userPinnedUpRef.current) {
+          scrollToBottom(false);
+        }
+      });
+    };
+    vv.addEventListener('resize', onResize);
+    return () => {
+      vv.removeEventListener('resize', onResize);
+      if (raf !== null) cancelAnimationFrame(raf);
+    };
+  }, [scrollToBottom]);
+
   // PHASE E — collapse the persistent disclosure band after the first user
   // turn. Senior can still expand by tapping. Lets messages take more
   // vertical real estate after they've started typing.
@@ -1733,12 +1761,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     return (
       <section
         aria-label={isSpanish ? 'Asistente de servicio al cliente' : 'Customer service assistant'}
-        className="w-full md:max-w-3xl md:mx-auto md:px-4 md:py-6"
+        className="w-full h-full md:h-auto md:max-w-3xl md:mx-auto md:px-4 md:py-6"
       >
-        <div
-          className="flex flex-col bg-cream-50 overflow-hidden border-cream-200 md:border md:border-cream-300 md:rounded-2xl md:shadow-lifted md:max-h-[min(760px,calc(100dvh-140px))]"
-          style={{ height: 'calc(var(--svh, 100dvh) - 70px)' }}
-        >
+        {/* Mobile: fill the .support-main flex slot (no magic px, no inline
+            height) — the shell already equals --svh, so this panel is exactly
+            the visible area below the header and CANNOT push the page taller.
+            Desktop: a fixed-height centered card. */}
+        <div className="flex flex-col bg-cream-50 overflow-hidden h-full border-cream-200 md:h-[min(760px,calc(100dvh-140px))] md:border md:border-cream-300 md:rounded-2xl md:shadow-lifted">
           {innerContent}
         </div>
       </section>
