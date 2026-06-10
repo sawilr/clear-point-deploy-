@@ -1245,6 +1245,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
 
   function performReset() {
     setShowResetConfirm(false);
+    // Sawil 2026-06 — remember the chosen language so the restart greets in it
+    // (not the bilingual "English or Spanish?" screen).
+    const prevLang = state.language;
     setState(createInitialState());
     // Sawil 2026-06 — FULL reset. The LLM-led flow sets outerInProgress=false
     // when the engine takes over; "Empezar de nuevo" must also reset the outer
@@ -1267,9 +1270,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // next conversation can submit again and ask the follow-up question.
     hasSubmittedRef.current = false;
     askedFollowupRef.current = false;
+    // Sawil 2026-06 — greet in the PREVIOUSLY chosen language (not bilingual).
+    // The language chips stay visible (step is still asking_language) so the
+    // user can keep their language or switch with one tap.
     setMessages([{
       id: 'welcome-' + Date.now(),
-      text: "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help. Do you prefer English or Spanish?\n\nHola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle. ¿Prefiere español o inglés?",
+      text: prevLang === 'en'
+        ? "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help. Do you prefer English or Spanish?"
+        : prevLang === 'es'
+          ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle. ¿Prefiere español o inglés?'
+          : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help. Do you prefer English or Spanish?\n\nHola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle. ¿Prefiere español o inglés?",
       sender: 'bot',
       timestamp: new Date(),
     }]);

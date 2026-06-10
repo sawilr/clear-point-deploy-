@@ -2656,7 +2656,11 @@ export function processMessage(
     // Determine what we already have + what's still missing
     const haveName = !!(state.name || titled);
     const havePhone = !!(state.phoneNumber || phoneDigits);
-    const finalName = state.name || titled;
+    // Sawil 2026-06 — when we JUST asked for the last name, append this turn's
+    // word(s) to the stored first name instead of overwriting it.
+    const finalName = (state.lastBotIntent === 'handoff_asking_lastname' && state.name && titled)
+      ? `${state.name} ${titled}`.replace(/\s+/g, ' ').trim()
+      : (state.name || titled);
     const finalPhone = state.phoneNumber || phoneDigits;
     if (haveName && havePhone) {
       // BOTH captured. PHASE A8 — progressive next steps:
@@ -2811,6 +2815,30 @@ export function processMessage(
       return { response: out, newState, needsHuman: true };
     }
     if (haveName && !havePhone) {
+      // Sawil 2026-06 — REQUIRE a last name so the advisor has the full name.
+      // If we only have a single word (first name) and haven't asked for the
+      // surname yet, ask once. If they don't give one, we proceed with what we
+      // have (the check ignores the asking_lastname turn → no loop).
+      const _nameWords = (finalName || '').trim().split(/\s+/).filter(Boolean);
+      if (_nameWords.length < 2 && state.lastBotIntent !== 'handoff_asking_lastname') {
+        const outLn = isEs
+          ? `Gracias, ${finalName}. ¿Y su apellido, por favor?`
+          : `Thanks, ${finalName}. And your last name, please?`;
+        const newStateLn: ConversationState = {
+          ...state,
+          turnCount: _currentTurnIdx,
+          name: finalName,
+          nameIsValid: true,
+          lastBotIntent: 'handoff_asking_lastname',
+          quickReplies: [],
+          messages: [
+            ...(state.messages || []),
+            { role: 'user', content: userMessage, timestamp: Date.now() },
+            { role: 'bot', content: outLn, timestamp: Date.now() },
+          ],
+        };
+        return { response: outLn, newState: newStateLn, needsHuman: false };
+      }
       // PHASE A9 — was the user attempting to give a phone that failed
       // validation? If so, gently re-ask with explicit reason.
       const _userAttemptedPhone = /\d{5,}/.test(_msg.replace(/[\s\-().]/g, ''));
