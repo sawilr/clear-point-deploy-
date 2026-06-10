@@ -4637,46 +4637,24 @@ export function ChatBot() {
       return;
     }
 
-    // Step 11: MEDICARE EDUCATION — now safe to route (not form step)
+    // Step 11: MEDICARE EDUCATION — Sawil 2026-06 BUG 1: a TYPED question is now
+    // answered by the backend LLM (/api/chat), NOT the canned tree, and is NEVER
+    // blocked by the state gate. We still TRACK the topic for context, but the
+    // answer comes from the model (which uses the 2026 ground-truth figures and
+    // stays TPMO-compliant). The topic CHIPS (handleOption) are unchanged — they
+    // remain shortcuts to the curated education content.
+    //   • BUG 3 is also resolved here: tryLLMFallback passes state-or-undefined,
+    //     so an unknown state yields a general answer instead of losing the
+    //     question behind showMedicareIntake().
     if (intent === 'MEDICARE_EDUCATION') {
       const medicareTopic = detectMedicareTopic(text, memory.language);
       if (medicareTopic) {
         updateMemory({ lastTopic: medicareTopic, interestType: medicareTopic, lastEducationTopic: medicareTopic });
         trackTopic(medicareTopic);
         setMode('education');
-        setView('education_topic');
-        if (!memory.state) {
-          showMedicareIntake();
-          return;
-        }
-        const topicMap: Record<string, string> = {
-          'Medicare Parts A & B': 'edu_parts_ab',
-          'Medicare Advantage': 'edu_part_c',
-          'Medicare Supplement': 'edu_supplement',
-          'Part D': 'edu_part_d',
-          'Extra Help / LIS': 'edu_extra_help',
-          'Medicaid': 'edu_medicaid',
-          'Medicare Savings Programs': 'edu_msp',
-          'MSP': 'edu_msp',
-          'Penalties': 'edu_penalties',
-          'Plan Loss': 'edu_plan_loss',
-          'State Programs': 'edu_spap',
-          'Employer Coverage': 'edu_employer',
-          'LI NET': 'edu_linet',
-          'Medication': 'edu_medication',
-          'Extra Benefits': 'edu_part_c',
-          'Prequalify': 'edu_prequalify',
-          'Advantage Types': 'edu_advantage_types',
-          'Comparison': 'edu_comparison',
-          'Enrollment': 'edu_enrollment',
-        };
-        const eduKey = topicMap[medicareTopic] || 'edu_parts_ab';
-        setStepSync('medicare_education');
-        updateMemory({ educationTopic: eduKey, educationStep: 1 });
-        const education = getMedicareEducation(eduKey, memory.language, memory.state);
-        enqueueBot(education);
-        return;
       }
+      void tryLLMFallback(text);
+      return;
     }
 
     // ── FUZZY INTENT LAYER ─────────────────────────────────────────────────────
