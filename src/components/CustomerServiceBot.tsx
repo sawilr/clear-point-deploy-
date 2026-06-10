@@ -389,10 +389,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       }]);
       if (initialLanguage) {
         setTimeout(() => handleLanguageSelect(initialLanguage), 50);
-      } else if (mem?.language) {
-        // Returning visitor — skip language chip step.
-        setTimeout(() => handleLanguageSelect(mem.language as 'en' | 'es'), 80);
       }
+      // Sawil 2026-06 — REMOVED the returning-visitor language auto-select.
+      // It made Clara "contestar sola": it picked the language from saved
+      // memory and advanced PAST the chip step without the user choosing
+      // anything. The language is now ALWAYS an explicit tap. Only an explicit
+      // initialLanguage prop (page/URL-driven, not memory) may pre-select.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
