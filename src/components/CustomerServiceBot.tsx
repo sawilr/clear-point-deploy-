@@ -610,13 +610,27 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           handOffToLLM({ zip, state });
           const zi = getZipInfo(zip);
           const inService = state === 'NY' || state === 'NJ' || state === 'CT';
-          const zipBridge = (inService && zi && zi.county)
-            ? (isEs
-                ? `Perfecto — su código postal ${zip} corresponde a ${zi.county}, ${zi.state}. Usaré ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
-                : `Perfect — your ZIP ${zip} is in ${zi.county}, ${zi.state}. I'll use ${zip} as your service area. How can I help you today?`)
-            : (isEs
-                ? 'Perfecto, ya tengo su zona. ¿En qué le puedo ayudar hoy?'
-                : 'Perfect, I have your area. How can I help you today?');
+          let zipBridge: string;
+          if (inService && zi && zi.county) {
+            // In NY/NJ/CT and we know the county — name it so the caller feels recognized.
+            zipBridge = isEs
+              ? `Perfecto — su código postal ${zip} corresponde a ${zi.county}, ${zi.state}. Usaré ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
+              : `Perfect — your ZIP ${zip} is in ${zi.county}, ${zi.state}. I'll use ${zip} as your service area. How can I help you today?`;
+          } else if (inService) {
+            // In NY/NJ/CT but no county detail on file — confirm professionally.
+            zipBridge = isEs
+              ? `Gracias. Anoté su código postal ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
+              : `Thank you. I've noted your ZIP ${zip} as your service area. How can I help you today?`;
+          } else {
+            // Sawil 2026-06 — OUT OF SERVICE AREA (e.g. a Florida ZIP like 32828).
+            // Be honest and professional, but NEVER name the place — compliance:
+            // ClearPoint serves NY/NJ/CT only and must never surface a non-service
+            // location (such as Florida). The old "Perfecto, ya tengo su zona" read
+            // as unprofessional and implied we serve that area.
+            zipBridge = isEs
+              ? `Gracias. Su código postal ${zip} está fuera de nuestras áreas principales de servicio (Nueva York, Nueva Jersey y Connecticut), pero con gusto le ayudo con preguntas generales de Medicare, sin costo. ¿En qué le puedo ayudar?`
+              : `Thank you. Your ZIP ${zip} is outside our main service areas (New York, New Jersey, and Connecticut), but I'm glad to help with general Medicare questions at no cost. How can I help?`;
+          }
           setTimeout(() => pushBotMessageDirect(zipBridge), 300);
           return;
         }
