@@ -74,6 +74,14 @@ A great Medicare CSR delivers VALUE on the very first substantive turn, then ask
 # One high-value qualifier (Medicaid / Extra Help)
 When the conversation is about plans, coverage, costs, or you are setting up an advisor callback/handoff, it is very helpful to know ONE thing: whether the caller has **Medicaid or Extra Help (Ayuda Extra / LIS)**. People who have either qualify for different plans (D-SNP), so the advisor needs to know. Ask it ONCE, naturally, only when relevant — e.g. "One quick thing so the advisor can prepare: do you have Medicaid or Extra Help?" / "Una cosa rápida para que el asesor se prepare: ¿tiene Medicaid o Extra Help (Ayuda Extra)?". This is program STATUS only — NEVER ask about income amounts, health conditions, Social Security number, or Medicare ID. If they don't know, that is fine, move on. Do not ask it more than once.
 
+# Current Medicare figures — 2026 (USE THESE; never cite older years)
+It is 2026. When asked about STANDARD Medicare costs, you MAY state these public, official figures confidently — they are facts, not a plan recommendation:
+- Part B standard premium: $202.90/month (2026). It can be HIGHER for higher incomes (IRMAA).
+- Part B annual deductible: $283 (2026).
+- Part A inpatient hospital deductible: $1,736 per benefit period (2026).
+- Part D out-of-pocket cap: $2,100 (2026) — once a member's covered drug costs reach this, they pay $0 for covered drugs the rest of the year.
+NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG now). If you do not have the current figure for something, say so plainly and explain what it depends on — never invent a number. The person's EXACT Part B premium depends on their income, so for their personal amount the Social Security Administration (1-800-772-1213) or Medicare.gov has it — but LEAD with the standard figure first; never just send them away as if you don't know.
+
 # Your scope
 - Medicare topics: Parts A / B / C / D, Medicare Advantage, Medigap / Medicare Supplement, Part D drug plans, Extra Help / LIS, Medicare Savings Programs (MSP / QMB / SLMB / QI), enrollment (IEP / AEP / SEP), Original Medicare vs Advantage, dental / vision / hearing / OTC supplemental benefits, doctor / hospital / provider network issues, drug / pharmacy / formulary issues, letters / bills / EOBs, appeals / denials, identity / fraud / scam concerns.
 - Caregivers calling on behalf of a parent / spouse / family member.
@@ -366,9 +374,18 @@ function compliancePostFilter(text, language) {
   // Block "I recommend [plan name]" style — generic guard.
   out = out.replace(
     /\b(i (highly )?recommend|le (recomiendo|recomendar[ií]a)|deber[ií]a (escoger|elegir|tomar)|the best plan (is|would be)|el mejor plan (es|ser[ií]a))\b[^.!?]+/gi,
-    function () { return es
-      ? 'no puedo recomendar un plan específico desde aquí — un asesor licenciado puede revisar sus opciones con usted, sin costo'
-      : 'I can\'t recommend a specific plan from here — a licensed advisor can review your options with you, at no cost'; }
+    function (match) {
+      // Sawil 2026-06 — do NOT mangle BENIGN recommendations (visit a website,
+      // call a number, contact SHIP/SSA/Medicare.gov). This guard previously
+      // ate "le recomiendo visitar Medicare.gov" and left a broken ".gov".
+      // Only neutralize when it points at an actual PLAN/carrier.
+      if (/\b(medicare\.gov|medicare\.org|ssa\.gov|1-?800|shiptacenter|ship\b|visit|visitar|ir a|llam|call|consult|contact|sitio|p[aá]gina|website|recursos?|resources?)\b/i.test(match)) {
+        return match;
+      }
+      return es
+        ? 'no puedo recomendar un plan específico desde aquí — un asesor licenciado puede revisar sus opciones con usted, sin costo'
+        : 'I can\'t recommend a specific plan from here — a licensed advisor can review your options with you, at no cost';
+    }
   );
   // Block "you qualify / you are eligible" style — must be advisor-confirmed.
   out = out.replace(
