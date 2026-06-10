@@ -34,3 +34,14 @@ dist-ssr
 
 *.BACKUP_*
 backups/
+.env*.local
+
+# Local tooling / scratch — never in repo (Sawil 2026-06)
+ruvector.db
+.swarm/
+.claude-flow/
+.claude/
+.imp.json
+.backups/
+scripts/.*.bundle.mjs
+scripts/.*.cjs
