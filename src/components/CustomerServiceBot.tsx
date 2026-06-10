@@ -130,6 +130,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Sawil 2026-06 — idempotency guard for language selection. The mount effect
+  // can auto-pick the language from returning-visitor memory AND the user can
+  // tap a language chip; without this guard BOTH fire handleLanguageSelect and
+  // the "Español" + welcome/ZIP message get pushed twice (the duplicate Sawil
+  // saw on entry). One-and-done.
+  const langSelectedRef = useRef(false);
   // PHASE 9E — voice recognizer (Web Speech API, optional)
   const [voiceListening, setVoiceListening] = useState(false);
   const voiceSupported = isVoiceSupported();
@@ -1183,6 +1189,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
 
   function handleLanguageSelect(lang: Language) {
     if (!lang) return;
+    // Idempotent: ignore a second call (auto-from-memory + manual chip tap, or
+    // a React StrictMode double-invoke). Prevents the duplicated welcome/ZIP.
+    if (langSelectedRef.current) return;
+    langSelectedRef.current = true;
     // PHASE 10 — instead of feeding 'english/español' straight into the engine,
     // we ask the path_select question. The engine is only engaged later for
     // Path B qualified prospects.
