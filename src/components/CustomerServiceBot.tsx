@@ -128,6 +128,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
+  // Sawil 2026-06 — true when the chat is intentionally closed (e.g. an
+  // out-of-service-area ZIP). Disables the input so we don't engage the LLM
+  // (no wasted tokens). Reset by "Empezar de nuevo".
+  const [chatClosed, setChatClosed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Sawil 2026-06 — idempotency guard for language selection. The mount effect
@@ -607,30 +611,29 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           // county + state so the caller feels recognized — but ONLY for the
           // active service area (NY/NJ/CT). For any out-of-service ZIP (incl.
           // Florida) we never name the place — compliance.
-          handOffToLLM({ zip, state });
           const zi = getZipInfo(zip);
           const inService = state === 'NY' || state === 'NJ' || state === 'CT';
-          let zipBridge: string;
-          if (inService && zi && zi.county) {
-            // In NY/NJ/CT and we know the county — name it so the caller feels recognized.
-            zipBridge = isEs
-              ? `Perfecto — su código postal ${zip} corresponde a ${zi.county}, ${zi.state}. Usaré ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
-              : `Perfect — your ZIP ${zip} is in ${zi.county}, ${zi.state}. I'll use ${zip} as your service area. How can I help you today?`;
-          } else if (inService) {
-            // In NY/NJ/CT but no county detail on file — confirm professionally.
-            zipBridge = isEs
-              ? `Gracias. Anoté su código postal ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
-              : `Thank you. I've noted your ZIP ${zip} as your service area. How can I help you today?`;
-          } else {
+          if (!inService) {
             // Sawil 2026-06 — OUT OF SERVICE AREA (e.g. a Florida ZIP like 32828).
-            // Be honest and professional, but NEVER name the place — compliance:
-            // ClearPoint serves NY/NJ/CT only and must never surface a non-service
-            // location (such as Florida). The old "Perfecto, ya tengo su zona" read
-            // as unprofessional and implied we serve that area.
-            zipBridge = isEs
-              ? `Gracias. Su código postal ${zip} está fuera de nuestras áreas principales de servicio (Nueva York, Nueva Jersey y Connecticut), pero con gusto le ayudo con preguntas generales de Medicare, sin costo. ¿En qué le puedo ayudar?`
-              : `Thank you. Your ZIP ${zip} is outside our main service areas (New York, New Jersey, and Connecticut), but I'm glad to help with general Medicare questions at no cost. How can I help?`;
+            // Keep it BRIEF, tell them ClearPoint doesn't serve their area, and
+            // STOP: do NOT hand off to the LLM (no wasted tokens) and close the
+            // input. NEVER name the non-service place (compliance).
+            const out = isEs
+              ? `Gracias. ClearPoint solo atiende Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con su área. Le deseamos lo mejor.`
+              : `Thank you. ClearPoint serves only New York, New Jersey, and Connecticut, so we're not able to help in your area. We wish you the best.`;
+            setChatClosed(true);
+            setTimeout(() => pushBotMessageDirect(out), 300);
+            return;
           }
+          // In NY/NJ/CT — store zone, hand off to the LLM, confirm the area.
+          handOffToLLM({ zip, state });
+          const zipBridge = (zi && zi.county)
+            ? (isEs
+                ? `Perfecto — su código postal ${zip} corresponde a ${zi.county}, ${zi.state}. Usaré ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
+                : `Perfect — your ZIP ${zip} is in ${zi.county}, ${zi.state}. I'll use ${zip} as your service area. How can I help you today?`)
+            : (isEs
+                ? `Gracias. Anoté su código postal ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
+                : `Thank you. I've noted your ZIP ${zip} as your service area. How can I help you today?`);
           setTimeout(() => pushBotMessageDirect(zipBridge), 300);
           return;
         }
@@ -1254,6 +1257,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     setHasNewBotMessage(false);
     setDisclosureCollapsed(false);
     userPinnedUpRef.current = false;
+    // Sawil 2026-06 — CRITICAL: reset the language-select idempotency guard.
+    // Without this, after "Empezar de nuevo" the guard stays true and the
+    // language chips do NOTHING (handleLanguageSelect returns early), so the
+    // whole chat is dead from there on. Resetting it makes reset == fresh load.
+    langSelectedRef.current = false;
+    setChatClosed(false);
     // Sawil bugfix — clear the single-fire submit + follow-up guards so the
     // next conversation can submit again and ask the follow-up question.
     hasSubmittedRef.current = false;
@@ -1271,7 +1280,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   }
 
   const showLanguageChips = state.step === 'asking_language' && !isTyping;
-  const inputDisabled = state.step === 'asking_language' || isTyping;
+  const inputDisabled = state.step === 'asking_language' || isTyping || chatClosed;
   const lang = state.language;
   // V30 — chrome elements follow page language until user picks bot language.
   const effectiveLang = lang || pageLang;
