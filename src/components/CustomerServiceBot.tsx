@@ -760,7 +760,6 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         return;
       }
       if (outerState.step === 'B_q_state') {
-        pushUserMessageDirect(trimmed);
         setInputValue('');
         // Accept either a 5-digit ZIP (resolved to NY/NJ/CT) or a state name.
         const zipMatch = trimmed.match(/\b(\d{5})\b/);
@@ -771,33 +770,23 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           else if (zi.stateCode === 'NJ') st = 'NJ';
           else if (zi.stateCode === 'CT') st = 'CT';
         }
-        setOuterState((s) => ({ ...s, state: st }));
-        // Sawil compliance 2026-06: Florida is HIDDEN. FL ZIPs / text now
-        // resolve to `state === 'other'` upstream, so the only out-of-area
-        // branch is the generic out-of-state Path-C message below.
+        // Out of service area -> neutral Path-C resources (Florida stays hidden:
+        // FL ZIPs/text resolve to 'other' upstream, so no FL branch is reachable).
         if (st === 'other') {
-          setOuterState((s) => ({ ...s, step: 'C_resources_shown', path: 'C', outOfScopeCategory: 'outside_state' }));
+          pushUserMessageDirect(trimmed);
+          setOuterState((s) => ({ ...s, state: st, step: 'C_resources_shown', path: 'C', outOfScopeCategory: 'outside_state' }));
           setTimeout(() => pushBotMessageDirect(isEs
             ? 'Actualmente Clear Point atiende NY, NJ y CT, así que no podría asesorarle sobre planes en su estado. Pero no quiero dejarle sin opciones. Para Medicare en su área puede usar:\n\n• Medicare.gov o 1-800-MEDICARE (1-800-633-4227), disponible 24/7\n• Su SHIP local para orientación gratuita e imparcial (shiphelp.org)\n• Un asesor licenciado de Medicare en su estado\n\n¿Aun así desea que Clear Point le contacte?'
             : "Clear Point currently serves NY, NJ, and CT, so we wouldn't be able to advise on plans in your state. But I don't want to leave you without options. For Medicare in your area, you can use:\n\n• Medicare.gov or 1-800-MEDICARE (1-800-633-4227), available 24/7\n• Your local SHIP for free, unbiased guidance (shiphelp.org)\n• A licensed Medicare advisor in your state\n\nWould you still like Clear Point to contact you?"), 350);
           return;
         }
-        // The problem was already captured in problemSummary at path_select.
-        // Infer the topic from it instead of re-asking. Only fall back to the
-        // "what topic?" question if we still cannot tell what they need.
-        const knownTopic = inferTopic(outerState.problemSummary || '');
-        const pitchState: ClaraOuterState = { ...outerState, state: st, topic: knownTopic, step: 'B_pitch' };
-        if (knownTopic && isQualifiedProspect(pitchState)) {
-          setOuterState(pitchState);
-          setTimeout(() => pushBotMessageDirect(isEs
-            ? 'Gracias. Permítame contarle brevemente cómo trabajamos en Clear Point: somos brokers de Medicare independientes y licenciados. Esto significa tres cosas para usted — nuestro servicio no tiene costo, un asesor licenciado revisa su situación personalmente, y nunca le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte sobre esto?'
-            : "Thank you. Let me briefly tell you how we work at Clear Point — we are independent, licensed Medicare brokers. What this means for you is three things: our service is at no cost to you, a licensed advisor reviews your situation personally, and you are never passed between call centers. Would it be alright to take your name and phone so an advisor can reach out about this?"), 350);
-          return;
-        }
-        setOuterState((s) => ({ ...s, step: 'B_q_topic' }));
-        setTimeout(() => pushBotMessageDirect(isEs
-          ? 'Gracias. ¿Sobre qué tema le orientamos? Por ejemplo, una revisión de su plan, una factura que no entiende, su doctor o sus medicamentos.'
-          : "Thank you. What can we guide you on? For example, a plan review, a bill you don't understand, your doctor, or your medications."), 300);
+        // In service area (NY/NJ/CT) -> HAND OFF TO THE CONVERSATIONAL LLM so Clara
+        // engages with the actual problem like a human (Sawil 2026-06). No scripted
+        // pitch and no Yes/No buttons; the advisor hand-off happens naturally in the
+        // conversation. handOffToLLM hydrates the engine with the problem + area;
+        // runEngineTurn pushes the user's location answer once and the LLM replies.
+        const hydrated = handOffToLLM({ state: st });
+        await runEngineTurn(trimmed, meta, hydrated);
         return;
       }
       if (outerState.step === 'B_q_topic') {
