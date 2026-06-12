@@ -103,6 +103,12 @@ export default function PrivacyPolicy() {
                 'Utilizamos medidas de seguridad estándar de la industria para proteger su información personal, incluyendo encriptación, servidores seguros y controles de acceso. Sin embargo, ningún método de transmisión por internet es 100% seguro.'
               )}
             </p>
+            <p className="mt-3">
+              {t(
+                'We handle health-related information using administrative, technical, and physical safeguards designed to support HIPAA-aligned privacy and security practices where applicable. We do not make certification claims beyond these practices.',
+                'Manejamos la información relacionada con la salud usando salvaguardas administrativas, técnicas y físicas diseñadas para apoyar prácticas de privacidad y seguridad alineadas con HIPAA cuando corresponda. No hacemos declaraciones de certificación más allá de estas prácticas.'
+              )}
+            </p>
           </section>
 
           <section>
