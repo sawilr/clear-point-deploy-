@@ -244,10 +244,14 @@ export function categorizeOutOfScope(text: string): OutOfScopeCategory {
 // Path A. Existing-client routing now requires an explicit A_KEYWORDS statement.
 
 const A_KEYWORDS = /(soy cliente|i am a client|i'?m a client|mi asesor|my advisor|client of|update my|tengo un caso|case number|mi caso|existing client|cliente actual)/i;
-const C_KEYWORDS_DENTAL = /\b(dental|dentist|dentista|braces|invisalign|implante)\b/i;
+// Only STANDALONE dental routes out of scope. A Medicare-plan dental BENEFIT
+// ("does my plan cover dental", "quiero un plan con dental") is in scope (MA
+// plans include dental) and must reach the helpful path — do NOT match bare
+// "dental"/"dentist" here or we lose real Medicare Advantage prospects.
+const C_KEYWORDS_DENTAL = /\b(dental insurance|seguro dental|braces|invisalign|dental implant|implante dental|dentures|dentadura)\b/i;
 const C_KEYWORDS_LIFE = /(life insurance|seguro de vida|funeral|burial|term life|whole life)/i;
 const C_KEYWORDS_AUTO_HOME = /\b(auto insurance|car insurance|home insurance|homeowner|renter|seguro de auto|seguro de hogar)\b/i;
-const C_KEYWORDS_MEDICAID_ONLY = /(just have medicaid|tengo medicaid|solo medicaid|medicaid only|just medicaid|food stamps|snap benefits)/i;
+const C_KEYWORDS_MEDICAID_ONLY = /(just have medicaid|only have medicaid|i have only medicaid|tengo medicaid|solo medicaid|medicaid only|just medicaid|food stamps|snap benefits)/i;
 
 /** First-message intent inference. Returns 'A' / 'C' for clear signals,
  *  'ambiguous' when more info is needed (Clara then asks one natural q). */
