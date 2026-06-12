@@ -2,7 +2,6 @@ import { Routes, Route, useLocation } from 'react-router'
 import Home from './pages/Home'
 import About from './pages/About'
 import MedicareAdvantage from './pages/MedicareAdvantage'
-import MedicareSupplement from './pages/MedicareSupplement'
 import PartD from './pages/PartD'
 import ExtraHelp from './pages/ExtraHelp'
 import HelpPayingCosts from './pages/HelpPayingCosts'
@@ -53,7 +52,6 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/about" element={<About />} />
           <Route path="/medicare-advantage" element={<MedicareAdvantage />} />
-          <Route path="/medicare-supplement" element={<MedicareSupplement />} />
           <Route path="/part-d" element={<PartD />} />
           <Route path="/extra-help" element={<ExtraHelp />} />
           <Route path="/help-paying-costs" element={<HelpPayingCosts />} />

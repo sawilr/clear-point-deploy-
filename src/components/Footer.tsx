@@ -124,7 +124,6 @@ export function Footer() {
             <ul className="space-y-1 text-sm">
               <li><Link to="/resources" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
               <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
-              <li><Link to="/medicare-supplement" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li>
               <li><Link to="/extra-help" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
               <li><Link to="/help-paying-costs" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
               <li><Link to="/otc-benefits" className="block py-2 min-h-[40px] hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>

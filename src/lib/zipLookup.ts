@@ -99,33 +99,6 @@ const ZIP3_MAP: Record<string, ZipInfo> = {
   '068': { city: 'Stamford', county: 'Fairfield County', state: 'Connecticut', stateCode: 'CT' },
   '069': { city: 'Stamford', county: 'Fairfield County', state: 'Connecticut', stateCode: 'CT' },
 
-  // Florida
-  '320': { city: 'St. Augustine', county: 'St. Johns County', state: 'Florida', stateCode: 'FL' },
-  '321': { city: 'Daytona Beach', county: 'Volusia County', state: 'Florida', stateCode: 'FL' },
-  '322': { city: 'Jacksonville', county: 'Duval County', state: 'Florida', stateCode: 'FL' },
-  '323': { city: 'Tallahassee', county: 'Leon County', state: 'Florida', stateCode: 'FL' },
-  '324': { city: 'Panama City', county: 'Bay County', state: 'Florida', stateCode: 'FL' },
-  '325': { city: 'Pensacola', county: 'Escambia County', state: 'Florida', stateCode: 'FL' },
-  '326': { city: 'Gainesville', county: 'Alachua County', state: 'Florida', stateCode: 'FL' },
-  '327': { city: 'Orlando', county: 'Seminole County', state: 'Florida', stateCode: 'FL' },
-  '328': { city: 'Orlando', county: 'Orange County', state: 'Florida', stateCode: 'FL' },
-  '329': { city: 'Melbourne', county: 'Brevard County', state: 'Florida', stateCode: 'FL' },
-  '330': { city: 'Hialeah', county: 'Miami-Dade County', state: 'Florida', stateCode: 'FL' },
-  '331': { city: 'Miami', county: 'Miami-Dade County', state: 'Florida', stateCode: 'FL' },
-  '332': { city: 'Miami', county: 'Miami-Dade County', state: 'Florida', stateCode: 'FL' },
-  '333': { city: 'Fort Lauderdale', county: 'Broward County', state: 'Florida', stateCode: 'FL' },
-  '334': { city: 'West Palm Beach', county: 'Palm Beach County', state: 'Florida', stateCode: 'FL' },
-  '335': { city: 'Tampa', county: 'Hillsborough County', state: 'Florida', stateCode: 'FL' },
-  '336': { city: 'Tampa', county: 'Hillsborough County', state: 'Florida', stateCode: 'FL' },
-  '337': { city: 'St. Petersburg', county: 'Pinellas County', state: 'Florida', stateCode: 'FL' },
-  '338': { city: 'Lakeland', county: 'Polk County', state: 'Florida', stateCode: 'FL' },
-  '339': { city: 'Fort Myers', county: 'Lee County', state: 'Florida', stateCode: 'FL' },
-  '341': { city: 'Naples', county: 'Collier County', state: 'Florida', stateCode: 'FL' },
-  '342': { city: 'Sarasota', county: 'Sarasota County', state: 'Florida', stateCode: 'FL' },
-  '344': { city: 'Ocala', county: 'Marion County', state: 'Florida', stateCode: 'FL' },
-  '346': { city: 'Spring Hill', county: 'Hernando County', state: 'Florida', stateCode: 'FL' },
-  '347': { city: 'Kissimmee', county: 'Osceola County', state: 'Florida', stateCode: 'FL' },
-  '349': { city: 'Port St. Lucie', county: 'St. Lucie County', state: 'Florida', stateCode: 'FL' },
 };
 
 // Sawil 2026-06 COMPLIANCE — Clear Point is licensed/authorized in NY, NJ and
