@@ -6201,8 +6201,8 @@ function processMessageInner(
       newState.routingLevel = 'B';
       newState.serviceCategory = 'medigap';
       const out = isSpanish
-        ? 'Medigap (Medicare Supplement) son planes que ayudan a cubrir lo que Medicare Original no paga (deducibles, coseguro). Funcionan junto a Medicare Original, no con Advantage.\n\nLos planes tienen letras (G, N, etc.). Un asesor licenciado puede comparar opciones para que usted decida.'
-        : "Medigap (Medicare Supplement) plans help cover what Original Medicare doesn't pay (deductibles, coinsurance). They work alongside Original Medicare, not with Advantage.\n\nPlans are lettered (G, N, etc.). A licensed advisor can compare options so you can decide.";
+        ? 'Nota: ClearPoint actualmente no ofrece planes Medigap; esta información es solo educativa.\n\nMedigap (Medicare Supplement) son planes que ayudan a cubrir lo que Medicare Original no paga (deducibles, coseguro). Funcionan junto a Medicare Original, no con Advantage. Los planes tienen letras (G, N, etc.). Para inscribirse en una póliza Medigap, tendría que trabajar con un corredor que se especialice en ellas.'
+        : "Note: ClearPoint does not currently offer Medigap plans; this information is for general education only.\n\nMedigap (Medicare Supplement) plans help cover what Original Medicare doesn't pay (deductibles, coinsurance). They work alongside Original Medicare, not with Advantage. Plans are lettered (G, N, etc.). To enroll in a Medigap policy, you'd work with a broker who specializes in those.";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
