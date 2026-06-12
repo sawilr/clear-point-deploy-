@@ -1267,17 +1267,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // Advance engine step past 'asking_language' so the language chips hide and
     // the text input unblocks. 'conversation' = free chat (outer flow drives now).
     setState((prev) => ({ ...prev, language: lang, step: 'conversation' }));
-    // FASE 2 audit G — problem FIRST, data later. After the language choice,
-    // Clara asks what's going on (NOT the ZIP). The path_select handler infers
-    // the path from the problem; ZIP / contact are collected later, only when
-    // needed to route correctly. This is the original PHASE 10 problem-first
-    // design (the 2026-06 ZIP-first change is reverted per the audit).
-    setOuterState((s) => ({ ...s, language: lang, step: 'path_select' }));
+    // Sawil 2026-06-12 — ZIP FIRST. Right after the language choice, Clara asks
+    // for the 5-digit ZIP so she knows the caller's service area BEFORE the
+    // conversation. The awaiting_zip handler validates it, confirms the area,
+    // and hands off to the LLM ("how can I help?"). If the user types a problem
+    // instead of a ZIP, awaiting_zip hands off to the LLM anyway.
+    setOuterState((s) => ({ ...s, language: lang, step: 'awaiting_zip' }));
     const isEs = lang === 'es';
     pushUserMessageDirect(isEs ? 'Español' : 'English');
     setTimeout(() => pushBotMessageDirect(isEs
-      ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle con su Medicare. Cuénteme qué está pasando y le guío paso a paso.'
-      : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help with your Medicare. Tell me what's going on, and I'll guide you step by step."), 300);
+      ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Para darle información correcta de su área, primero dígame su código postal de 5 dígitos.'
+      : "Hi, I'm Clara, your bilingual assistant at Clear Point. So I can give you accurate information for your area, first tell me your 5-digit ZIP code."), 300);
   }
 
   function resetConversation() {
