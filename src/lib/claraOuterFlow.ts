@@ -240,7 +240,8 @@ export function categorizeOutOfScope(text: string): OutOfScopeCategory {
 // who already has a plan, so they're a strong Path A signal (existing
 // client support). Covers card, billing, network, pharmacy, prescription,
 // referral, prior auth, doctor lookup, etc. Bilingual EN/ES.
-const SERVICE_KEYWORDS = /(tarjeta de miembro|tarjeta del plan|member card|insurance card|plan card|id card|lost.{0,10}card|perd[ií] .{0,15}tarjeta|no recib[ií] .{0,15}tarjeta|replacement card|reemplazo de tarjeta|missing card|card not arrived|nueva tarjeta|new card|factura|bill|copay|copago|premium|prima|cobertura|coverage|network|red|in.?network|out.?of.?network|red de|farmacia|pharmacy|medicamento|medication|prescription|receta|formulary|formulario|doctor|specialist|pcp|primary care|primary.?care|provider|m[eé]dico|especialista|referral|referido|prior auth|prior authorization|autorizaci[oó]n|appeal|apelaci[oó]n|denial|denegaci[oó]n|deductible|deducible|claim|reclamo)/i;
+// SERVICE_KEYWORDS removed (Sawil 2026-06): described problems no longer route to
+// Path A. Existing-client routing now requires an explicit A_KEYWORDS statement.
 
 const A_KEYWORDS = /(soy cliente|i am a client|i'?m a client|mi asesor|my advisor|client of|update my|tengo un caso|case number|mi caso|existing client|cliente actual)/i;
 const C_KEYWORDS_DENTAL = /\b(dental|dentist|dentista|braces|invisalign|implante)\b/i;
@@ -252,9 +253,11 @@ const C_KEYWORDS_MEDICAID_ONLY = /(just have medicaid|tengo medicaid|solo medica
  *  'ambiguous' when more info is needed (Clara then asks one natural q). */
 export function inferInitialPath(text: string): 'A' | 'C' | 'ambiguous' {
   if (!text) return 'ambiguous';
-  // Service-issue keywords → Path A (existing client). These phrases only
-  // make sense for someone who already has a plan.
-  if (SERVICE_KEYWORDS.test(text)) return 'A';
+  // Premium flow (Sawil 2026-06): a described problem (bill, doctor, medication,
+  // coverage, etc.) NO LONGER routes to existing-client verification. Only an
+  // EXPLICIT "I'm a client" statement goes to Path A; every other problem flows
+  // to the helpful Path B (problem → ZIP → help/capture). This stops new
+  // prospects from being asked for "the last 4 digits we have on file".
   if (A_KEYWORDS.test(text)) return 'A';
   if (C_KEYWORDS_DENTAL.test(text) || C_KEYWORDS_LIFE.test(text) ||
       C_KEYWORDS_AUTO_HOME.test(text) || C_KEYWORDS_MEDICAID_ONLY.test(text)) return 'C';
