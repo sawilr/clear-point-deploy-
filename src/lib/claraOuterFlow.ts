@@ -308,9 +308,40 @@ export function inferStateFromText(text: string): ClaraState {
   return 'other';
 }
 
+// FASE 2 (audit bug I) — Medicare abbreviation dictionary. Expands standalone
+// abbreviations to full terms so a short reply like "ma", "PDP", "MSP" is
+// recognized as a real Medicare term instead of "didn't understand". Applied
+// before topic classification in the outer flow. PA/QI are intentionally
+// omitted (too ambiguous with common words / state codes).
+const MEDICARE_ABBREVIATIONS: Array<[RegExp, string]> = [
+  [/\bmapd\b/gi, 'medicare advantage prescription drug plan'],
+  [/\bma\b/gi, 'medicare advantage'],
+  [/\bpdp\b/gi, 'part d prescription drug plan'],
+  [/\bd[-\s]?snp\b/gi, 'dual special needs plan medicaid'],
+  [/\bc[-\s]?snp\b/gi, 'chronic special needs plan'],
+  [/\bi[-\s]?snp\b/gi, 'institutional special needs plan'],
+  [/\bsnp\b/gi, 'special needs plan'],
+  [/\blis\b/gi, 'extra help low income subsidy'],
+  [/\bmsp\b/gi, 'medicare savings program'],
+  [/\bqmb\b/gi, 'qualified medicare beneficiary'],
+  [/\bslmb\b/gi, 'specified low income medicare beneficiary'],
+  [/\birmaa\b/gi, 'income related monthly adjustment premium'],
+  [/\bpcp\b/gi, 'primary care provider doctor'],
+  [/\beob\b/gi, 'explanation of benefits bill'],
+  [/\bmoop\b/gi, 'maximum out of pocket cost'],
+];
+
+/** Expand standalone Medicare abbreviations to full terms (case-insensitive). */
+export function expandMedicareAbbreviations(text: string): string {
+  if (!text) return text;
+  let out = text;
+  for (const [re, full] of MEDICARE_ABBREVIATIONS) out = out.replace(re, full);
+  return out;
+}
+
 export function inferTopic(text: string): ClaraTopic {
   if (!text) return 'other';
-  const t = text.toLowerCase();
+  const t = expandMedicareAbbreviations(text).toLowerCase();
   if (/(plan review|revisar mi plan|revisión de plan|coverage|cobertura|review my plan|change plan|cambiar plan|otro plan)/i.test(t)) return 'plan';
   if (/(bill|factura|charge|cobro|copay|copago|premium|prima|cost|costo|deducible|deductible|owe|me cobraron)/i.test(t)) return 'billing';
   if (/(doctor|specialist|provider|red|network|in.?network|out.?of.?network|red de|médico|medico|especialista|primary care|pcp)/i.test(t)) return 'doctor';
@@ -470,6 +501,8 @@ export interface BuildPayloadOpts {
   ip?: string;
   userAgent?: string;
   problemSummary?: string;
+  /** FASE 2 audit J — true ONLY when the user explicitly accepted TCPA consent. */
+  consentGiven?: boolean;
 }
 
 export interface ClaraGhlPayload {
@@ -564,7 +597,12 @@ export function buildGhlPayload(
     medicare_status: s.medicareStatus || '',
     interest_type: s.topic || '',
     best_time_to_contact: '',
-    consent_to_contact: leadType !== 'existing_client_unverified',
+    // FASE 2 audit J (TCPA) — NEVER claim a consent the bot did not explicitly
+    // collect from the user. There is no visible in-chat consent step yet, so
+    // consent_to_contact is FALSE: every Clara lead queues for a manual licensed
+    // advisor callback (NO auto-dial), matching the other lead path. Once a
+    // visible consent confirmation is added, set this from that explicit accept.
+    consent_to_contact: opts.consentGiven === true,
     consent_text: opts.consentText || '',
     lead_notes: noteParts.join(' · '),
     bot_transcript_summary: `${s.language.toUpperCase()} · Clara · ${leadType} · path=${s.path || '?'}`,

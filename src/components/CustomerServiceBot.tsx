@@ -642,6 +642,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // clearly a botched ZIP, NOT a problem description, so re-ask for 5
         // digits instead of routing it to the engine (which wrongly replied
         // "Entiendo que está molesto" + a topic menu).
+        // (b1.5) Bug H — a bare affirmation/filler at awaiting_zip ("ok", "si",
+        // "yes", "dale", "claro"...) is NOT a problem description. Re-prompt for
+        // the 5-digit ZIP; never hand "ok" to the LLM as a problem or lose context.
+        if (/^(ok(ay)?|oka|k|dale|s[ií]|yes|yeah|yep|yup|claro|correcto|bueno|bien|vale|perfecto|listo|de acuerdo|entendido|aj[aá]|sure|got it|sip|simon)\.?$/i.test(trimmed)) {
+          pushUserMessageDirect(trimmed);
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Perfecto. Escriba su código postal de 5 dígitos.'
+            : 'Perfect. Please enter your 5-digit ZIP code.'), 300);
+          return;
+        }
         const zipDigitsOnly = trimmed.replace(/[\s-]/g, '');
         if (/^\d+$/.test(zipDigitsOnly) && zipDigitsOnly.length !== 5) {
           pushUserMessageDirect(trimmed);
