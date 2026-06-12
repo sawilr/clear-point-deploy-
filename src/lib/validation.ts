@@ -197,14 +197,12 @@ const FAKE_NAME_WORDS = new Set([
   // Short keyboard patterns / letter runs
   'abc','abcd','abcde','xyz','xyx','xxx','yyy','zzz','aaa','bbb','ccc','ddd',
   'aab','ab','ba','xy','yx',
-  // Repeated syllable fakes (common in Latin American fake entries)
-  // NOTE: 'pepe', 'coco', 'lola', 'nena' are real Hispanic names — NOT blocked
-  'toto','tata','tete','titi','tutu','toco','tuca','tuco',
-  'taca','lala','lolo','nene','bebe','kaka','jaja','jeje',
-  'gaga','mama','papa','mimi','dodo','bobo',
-  // Common nonsense/syllable fake names used in Spanish-speaking markets
-  'creta','creto','popo','lulu','bubu','fifi','gugu','kiki',
-  'nono','nini','pipi','riri','sisi','wawa','zuzu',
+  // Conversational words that are never real first/last names
+  'thanks','thankyou','please','okay','hola','adios',
+  // NOTE: syllable-style entries (toto, lulu, nene, bebe, mimi, kiki, fifi,
+  // creta, etc.) were REMOVED here. They are real Hispanic names/nicknames and
+  // the blocklist was rejecting real customers. The all-same-character regex
+  // below still catches aaa/zzz; keyboard patterns stay blocked above.
   // Spanish placeholder words
   'nada','nadie','noname','nope','ninguno','ninguna','alguien',
   // Other obvious fakes
@@ -232,6 +230,21 @@ const PROFANE_NAME_WORDS = new Set([
   'nigger','nigga','retard','twat','wanker','bollocks','bugger',
   'dipshit','jackass','dumbass','shithead','scumbag','dirtbag',
 ]);
+
+// Long, unambiguous profanity SAFE to match as a substring because it never
+// appears inside a real name. Short words (ass, dick, cock) are intentionally
+// NOT here: they stay in PROFANE_NAME_WORDS and match whole-token only, so
+// Cassandra, Dickson, Hancock are not wrongly rejected.
+const SUBSTRING_PROFANITY = [
+  'fuck','shit','bitch','asshole','motherfucker','cunt','pussy','whore',
+  'faggot','nigger','nigga','pendejo','pendeja','cabron','cabrón','mamaguevo',
+  'mamahuevo','gilipollas','chingado','chingada','maricon','maricón','mierda',
+];
+
+// Real first names/nicknames that exactly equal a profanity token. Checked
+// before the profanity pass so a real customer (e.g. Dick = Richard, common in
+// the Medicare-age population) is never rejected.
+const NAME_ALLOWLIST = new Set(['dick']);
 
 /**
  * Validates a person's first or last name.
@@ -285,9 +298,21 @@ export function validatePersonName(value: string): { valid: boolean; flags: stri
     }
   }
 
-  // Profanity check: substring match across full lowercased name
+  // Profanity check, two passes.
+  // 1) Whole-token match: rejects "fuck you", "puta", "shit", "pendejo" without
+  //    false-flagging real names that merely CONTAIN a short profane substring
+  //    (Cassandra/Hassan have 'ass', Dick/Dickson have 'dick', Hancock has 'cock').
+  for (const word of words) {
+    const strippedWord = word.replace(/['\-.]/g, '');
+    if (NAME_ALLOWLIST.has(strippedWord)) continue;
+    if (PROFANE_NAME_WORDS.has(strippedWord)) {
+      return { valid: false, flags: ['Name contains inappropriate content'] };
+    }
+  }
+  // 2) Substring match for long, unambiguous profanity only (catches concatenated
+  //    abuse like "fuckface" the whole-token pass would miss).
   const fullLower = raw.toLowerCase();
-  for (const profane of PROFANE_NAME_WORDS) {
+  for (const profane of SUBSTRING_PROFANITY) {
     if (fullLower.includes(profane)) {
       return { valid: false, flags: ['Name contains inappropriate content'] };
     }

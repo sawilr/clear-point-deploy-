@@ -2521,7 +2521,10 @@ function detectState(text: string): string {
   if (normalized.match(/\bNY\b|\bNEW YORK\b|\bNEW\s?YORK\b/i)) return 'NY';
   if (normalized.match(/\bNJ\b|\bNEW JERSEY\b|\bNEW\s?JERSEY\b/i)) return 'NJ';
   if (normalized.match(/\bCT\b|\bCONNECTICUT\b/i)) return 'CT';
-  if (normalized.match(/\bFL\b|\bFLORIDA\b/i)) return 'FL';
+  // Florida intentionally NOT detected (audit rule #4: FL is out of service area).
+  // Returning '' routes "florida"/"fl" to the neutral out-of-area path and keeps
+  // memory.state from ever becoming 'FL', so every `state === 'FL'` branch below
+  // is unreachable dead code that can never surface Florida content to a user.
   return '';
 }
 
@@ -2831,6 +2834,11 @@ export function ChatBot() {
   // handleLeadText reads stepRef.current instead of the closure `step` to avoid
   // stale-closure bugs caused by React batching of state updates.
   const stepRef = useRef<ChatStep>('language');
+
+  // Name-entry attempt counters. After two invalid tries we stop looping and
+  // accept a cleaned value (or placeholder) so a real customer is never trapped.
+  const nameAttemptsRef = useRef(0);
+  const lastNameAttemptsRef = useRef(0);
 
   // BUG 7 — clear any pending timers when the chat unmounts.
   useEffect(() => () => {
@@ -4263,40 +4271,70 @@ export function ChatBot() {
 
     // Process by current step — use currentStep (from stepRef) not closure `step`
     if (currentStep === 'lead_name') {
+      const es = memory.language === 'es';
       const firstName = text.trim();
       const nameCheck = validatePersonName(firstName);
       if (!nameCheck.valid) {
-        enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor ingrese un primer nombre válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid first name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
+        nameAttemptsRef.current += 1;
+        // After a second rejection, stop looping: accept a cleaned value (or a
+        // neutral placeholder) so a real customer is never stuck on the name step.
+        if (nameAttemptsRef.current >= 2) {
+          nameAttemptsRef.current = 0;
+          const cleaned = firstName.replace(/[^a-zA-ZÀ-ɏ\s'\-.]/g, '').trim();
+          const safe = validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
+          updateMemory({ firstName: safe });
+          enqueueBot([{ text: es
+            ? 'Gracias. Un asesor licenciado confirmará su nombre cuando le llame.'
+            : 'Thank you. A licensed advisor will confirm your name when they call.', pace: 'short' }]);
+          askNextQuestion({ ...memory, firstName: safe });
+          return true;
+        }
+        enqueueBot([{ text: es
+          ? 'Por favor ingrese solo su primer nombre, sin números ni símbolos. Por ejemplo: María.'
+          : 'Please enter just your first name, without numbers or symbols. For example: Maria.', pace: 'short' }]);
         return true;
       }
+      nameAttemptsRef.current = 0;
       updateMemory({ firstName });
       askNextQuestion({ ...memory, firstName });
       return true;
     }
     if (currentStep === 'lead_last_name') {
+      const es = memory.language === 'es';
       const lastName = text.trim();
       const lastNameCheck = validatePersonName(lastName);
       if (!lastNameCheck.valid) {
-        enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor ingrese un apellido válido sin números, símbolos ni palabras inapropiadas.'
-          : 'Please enter a valid last name without numbers, symbols, or inappropriate words.', pace: 'short' }]);
+        lastNameAttemptsRef.current += 1;
+        if (lastNameAttemptsRef.current >= 2) {
+          lastNameAttemptsRef.current = 0;
+          const cleaned = lastName.replace(/[^a-zA-ZÀ-ɏ\s'\-.]/g, '').trim();
+          const safe = validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
+          updateMemory({ lastName: safe });
+          enqueueBot([{ text: es
+            ? 'Gracias. Un asesor licenciado confirmará su apellido cuando le llame.'
+            : 'Thank you. A licensed advisor will confirm your last name when they call.', pace: 'short' }]);
+          askNextQuestion({ ...memory, lastName: safe });
+          return true;
+        }
+        enqueueBot([{ text: es
+          ? 'Por favor ingrese solo su apellido, sin números ni símbolos. Por ejemplo: García.'
+          : 'Please enter just your last name, without numbers or symbols. For example: Garcia.', pace: 'short' }]);
         return true;
       }
+      lastNameAttemptsRef.current = 0;
       updateMemory({ lastName });
       askNextQuestion({ ...memory, lastName });
       return true;
     }
     if (currentStep === 'lead_state') {
       const detectedState = detectState(text);
-      if (detectedState && ['NY','NJ','CT','FL'].includes(detectedState)) {
+      if (detectedState && ['NY','NJ','CT'].includes(detectedState)) {
         updateMemory({ state: detectedState });
         askNextQuestion({ ...memory, state: detectedState });
       } else {
         enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor seleccione New York, New Jersey, Connecticut o Florida.'
-          : 'Please select New York, New Jersey, Connecticut, or Florida.', pace: 'short' }]);
+          ? 'Por favor seleccione New York, New Jersey o Connecticut.'
+          : 'Please select New York, New Jersey, or Connecticut.', pace: 'short' }]);
       }
       return true;
     }
