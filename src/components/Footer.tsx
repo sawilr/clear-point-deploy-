@@ -83,7 +83,7 @@ export function Footer() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-8 md:gap-8 mb-10">
           {/* Brand */}
           <div className="col-span-1 sm:col-span-2 md:col-span-1">
-            <a href="#/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
+            <a href="/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
                 <span className="font-serif text-base font-bold text-cream-50 tracking-tight">Clear Point</span>

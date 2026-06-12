@@ -16,10 +16,9 @@ export function ScrollToTop() {
   // position on route transitions. useEffect (after-paint) loses the race against
   // the browser's scroll-anchor adjustment; useLayoutEffect wins it.
   //
-  // NOTE: App uses HashRouter — every URL is /#/route so window.location.hash is
-  // ALWAYS non-empty. A hash guard would permanently block scrollTo(0). We never
-  // place real #anchor fragments in URLs; anchor scrolling is done via
-  // scrollIntoView() in handleScrollNav/handleHowItWorks after navigate('/').
+  // NOTE: App uses BrowserRouter — routes are real paths (/medicare-advantage).
+  // We never place real #anchor fragments in route URLs; anchor scrolling is done
+  // via scrollIntoView() in handleScrollNav/handleHowItWorks after navigate('/').
   useLayoutEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [pathname]);
@@ -50,9 +49,8 @@ export function ScrollToTop() {
       // Skip external / mail / tel / pure anchor
       if (/^(https?:|mailto:|tel:)/.test(href)) return;
       if (href.startsWith('#') && !href.startsWith('#/')) return;
-      // Parse HashRouter href format: react-router renders Link "/otc-benefits"
-      // as <a href="#/otc-benefits">. Strip the leading "#" so we can compare
-      // to the current pathname.
+      // BrowserRouter renders Link "/otc-benefits" as <a href="/otc-benefits">.
+      // (Any legacy "#/path" href is still tolerated by the strip below.)
       let targetPath = href;
       if (targetPath.startsWith('#')) targetPath = targetPath.slice(1);
       // Drop any in-path hash fragment ("/about#section" -> "/about")

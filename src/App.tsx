@@ -29,7 +29,7 @@ export default function App() {
   // Sawil 2026-06 — MobileStickyBar (the bottom CTA) is suppressed on
   // /support. Clara's chat shell sits flush at bottom-0 on mobile, and
   // a second fixed bar there would collide / cover the input. App is
-  // mounted inside <HashRouter> (see main.tsx), so useLocation() is safe.
+  // mounted inside <BrowserRouter> (see main.tsx), so useLocation() is safe.
   const location = useLocation();
   const isSupportPage = location.pathname === '/support';
   return (
