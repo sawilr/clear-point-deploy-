@@ -481,7 +481,9 @@ const QUALIFYING_STATES: ClaraState[] = ['NY', 'NJ', 'CT'];
 
 /** True if (Medicare A+B OR near 65) AND state in NY/NJ/CT AND topic is Medicare-related. */
 export function isQualifiedProspect(s: ClaraOuterState): boolean {
-  if (!s.medicareStatus || s.medicareStatus === 'none') return false;
+  // medicareStatus is no longer required — Clara stopped asking "do you have
+  // Medicare A/B?" (Sawil 2026-06). An in-service prospect with a real topic
+  // qualifies; the licensed advisor confirms Medicare status on the call.
   if (!s.state || !QUALIFYING_STATES.includes(s.state)) return false;
   if (!s.topic) return false;
   return true;

@@ -782,6 +782,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             : "Clear Point currently serves NY, NJ, and CT, so we wouldn't be able to advise on plans in your state. But I don't want to leave you without options. For Medicare in your area, you can use:\n\n• Medicare.gov or 1-800-MEDICARE (1-800-633-4227), available 24/7\n• Your local SHIP for free, unbiased guidance (shiphelp.org)\n• A licensed Medicare advisor in your state\n\nWould you still like Clear Point to contact you?"), 350);
           return;
         }
+        // The problem was already captured in problemSummary at path_select.
+        // Infer the topic from it instead of re-asking. Only fall back to the
+        // "what topic?" question if we still cannot tell what they need.
+        const knownTopic = inferTopic(outerState.problemSummary || '');
+        const pitchState: ClaraOuterState = { ...outerState, state: st, topic: knownTopic, step: 'B_pitch' };
+        if (knownTopic && isQualifiedProspect(pitchState)) {
+          setOuterState(pitchState);
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'Gracias. Permítame contarle brevemente cómo trabajamos en Clear Point: somos brokers de Medicare independientes y licenciados. Esto significa tres cosas para usted — nuestro servicio no tiene costo, un asesor licenciado revisa su situación personalmente, y nunca le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte sobre esto?'
+            : "Thank you. Let me briefly tell you how we work at Clear Point — we are independent, licensed Medicare brokers. What this means for you is three things: our service is at no cost to you, a licensed advisor reviews your situation personally, and you are never passed between call centers. Would it be alright to take your name and phone so an advisor can reach out about this?"), 350);
+          return;
+        }
         setOuterState((s) => ({ ...s, step: 'B_q_topic' }));
         setTimeout(() => pushBotMessageDirect(isEs
           ? 'Gracias. ¿Sobre qué tema le orientamos? Por ejemplo, una revisión de su plan, una factura que no entiende, su doctor o sus medicamentos.'
