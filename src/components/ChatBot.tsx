@@ -308,7 +308,6 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         text: 'What would you like to do?',
         options: [
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Tell me about Supplement', value: 'edu_supplement' },
           { label: 'Part D prescriptions', value: 'edu_part_d' },
           { label: 'Go back', value: 'edu_parts_ab' },
         ],
@@ -853,7 +852,6 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         text: '¿Qué le gustaría hacer?',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Explicar Supplement', value: 'edu_supplement' },
           { label: 'Parte D - recetas', value: 'edu_part_d' },
           { label: 'Volver', value: 'edu_parts_ab' },
         ],
@@ -1574,7 +1572,7 @@ const CHATBOT_CONTEXT = {
   identity: 'Independent Medicare insurance agency',
   services: [
     'Medicare Advantage',
-    'Medicare Supplement',
+    // Medigap removed (audit): ClearPoint does not currently broker Medicare Supplement. Education-only elsewhere.
     'Part D prescription drug plans',
     'Annual plan reviews',
     'Extra Help / LIS basic guidance',
