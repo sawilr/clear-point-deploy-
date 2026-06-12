@@ -547,10 +547,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           // we re-ask that step's own question instead of jumping.
           let followUp: string;
           if (outerState.step === 'awaiting_zip' || outerState.step === 'path_select') {
-            setOuterState((s) => ({ ...s, step: 'awaiting_client_check' }));
+            setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_state' }));
             followUp = isEs
-              ? 'Ahora, para orientarle mejor, ¿es cliente actual de Clear Point o está explorando opciones?'
-              : 'Now, to guide you better, are you a current Clear Point client, or are you exploring options?';
+              ? 'Para darle información correcta de su área, ¿cuál es su código postal? (O su estado: NY, NJ o CT.)'
+              : 'So I can give you accurate information for your area, what is your ZIP code? (Or your state: NY, NJ, or CT.)';
           } else if (outerState.step === 'awaiting_client_check') {
             followUp = isEs
               ? '¿Es cliente actual de Clear Point, o todavía está explorando sus opciones?'
@@ -699,11 +699,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             : "I understand — that sounds like a lot. That specific topic isn't a Clear Point specialty, but I don't want to leave you without options. Here are some resources that may help:\n\n• Medicare.gov or 1-800-MEDICARE\n• Your local SHIP (shiphelp.org)\n• For Medicaid: HRA or your state office\n\nIf any part of your question touches Medicare, I'd be glad to connect you with an advisor. Would you like that?"), 350);
           return;
         }
-        // Ambiguous — single natural follow-up
-        setOuterState((s) => ({ ...s, step: 'awaiting_client_check', problemSummary: trimmed }));
+        // Ambiguous — Sawil 2026-06: the "are you a client?" and "do you have
+        // Medicare A/B?" qualification questions were removed. Go straight to
+        // Path B and ask the service area (ZIP or state) so Clara can help.
+        setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_state', problemSummary: trimmed }));
         setTimeout(() => pushBotMessageDirect(isEs
-          ? 'Con gusto le oriento. Para guiarle mejor, una pregunta rápida: ¿es cliente actual de Clear Point, o todavía está explorando sus opciones?'
-          : "I'd be glad to help. To guide you better, one quick question — are you already a Clear Point client, or are you still exploring your options?"), 350);
+          ? 'Con gusto le ayudo con eso. Para darle información correcta de su área, ¿cuál es su código postal? (O dígame su estado: NY, NJ o CT.)'
+          : "I'd be glad to help with that. So I can give you accurate information for your area, what is your ZIP code? (Or tell me your state: NY, NJ, or CT.)"), 350);
         return;
       }
       // After ambiguous question — infer A or B from yes/no
@@ -760,7 +762,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       if (outerState.step === 'B_q_state') {
         pushUserMessageDirect(trimmed);
         setInputValue('');
-        const st = inferStateFromText(trimmed);
+        // Accept either a 5-digit ZIP (resolved to NY/NJ/CT) or a state name.
+        const zipMatch = trimmed.match(/\b(\d{5})\b/);
+        const zi = zipMatch ? getZipInfo(zipMatch[1]) : null;
+        let st = inferStateFromText(trimmed);
+        if (zi && zi.supported) {
+          if (zi.stateCode === 'NY') st = 'NY';
+          else if (zi.stateCode === 'NJ') st = 'NJ';
+          else if (zi.stateCode === 'CT') st = 'CT';
+        }
         setOuterState((s) => ({ ...s, state: st }));
         // Sawil compliance 2026-06: Florida is HIDDEN. FL ZIPs / text now
         // resolve to `state === 'other'` upstream, so the only out-of-area
