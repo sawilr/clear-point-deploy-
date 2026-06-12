@@ -45,3 +45,4 @@ ruvector.db
 .backups/
 scripts/.*.bundle.mjs
 scripts/.*.cjs
+.gstack/

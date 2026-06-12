@@ -1133,8 +1133,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
     setTimeout(() => pushBotMessageDirect(isEs
-      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?'
-      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?"), 300);
+      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
+      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time."), 300);
   }
 
   // Path A identity capture: parses single text input "Name | last4" or split flow.
@@ -1186,16 +1186,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       } else {
         setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
         pushBotMessageDirect(isEs
-          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe — esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?'
-          : "I couldn't find you automatically in our system — but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?");
+          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
+          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time.");
       }
     } catch {
       clearTimeout(timer);
       setIsTyping(false);
       setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
       pushBotMessageDirect(isEs
-        ? 'No pude verificar su caso en este momento, pero no se preocupe — un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?'
-        : "I couldn't verify your case right now, but don't worry — a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?");
+        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
+        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time.");
     }
   }
 
@@ -1211,6 +1211,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         problemSummary: extras.summary || outerState.problemSummary || '',
       };
       const payload = buildGhlPayload(merged, {
+        // FASE 2 audit J — the caller reached lead submission by EXPLICITLY
+        // providing their phone for an advisor callback, AFTER the TCPA consent
+        // disclosure was shown in the phone-ask message. That affirmative act is
+        // the consent, and the receipt (text + hash + version + UA) documents it.
+        consentGiven: true,
         consentText: receipt.consentText,
         consentReceiptHash: receipt.consentTextHash,
         disclaimerVersion: receipt.disclaimerVersion,
@@ -1251,14 +1256,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // Advance engine step past 'asking_language' so the language chips hide and
     // the text input unblocks. 'conversation' = free chat (outer flow drives now).
     setState((prev) => ({ ...prev, language: lang, step: 'conversation' }));
-    // Sawil 2026-06: ask for ZIP right after the welcome to identify the
-    // client zone before continuing. Natural, single line, not a form.
-    setOuterState((s) => ({ ...s, language: lang, step: 'awaiting_zip' }));
+    // FASE 2 audit G — problem FIRST, data later. After the language choice,
+    // Clara asks what's going on (NOT the ZIP). The path_select handler infers
+    // the path from the problem; ZIP / contact are collected later, only when
+    // needed to route correctly. This is the original PHASE 10 problem-first
+    // design (the 2026-06 ZIP-first change is reverted per the audit).
+    setOuterState((s) => ({ ...s, language: lang, step: 'path_select' }));
     const isEs = lang === 'es';
     pushUserMessageDirect(isEs ? 'Español' : 'English');
     setTimeout(() => pushBotMessageDirect(isEs
-      ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle con su Medicare — preguntas de servicio, su cobertura, su plan, o seguimiento con un asesor. Para orientarle mejor, ¿me comparte su código postal de 5 dígitos?'
-      : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help with your Medicare — service questions, your coverage, your plan, or follow-up with an advisor. So I can help you better, may I have your 5-digit ZIP code?"), 300);
+      ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Estoy aquí para ayudarle con su Medicare. Cuénteme qué está pasando y le guío paso a paso.'
+      : "Hi, I'm Clara, your bilingual assistant at Clear Point. I'm here to help with your Medicare. Tell me what's going on, and I'll guide you step by step."), 300);
   }
 
   function resetConversation() {
