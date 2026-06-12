@@ -13,6 +13,7 @@ import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
 // PHASE A7 — LLM bridge (Claude Haiku via /api/chat). Optional, fails gracefully.
 import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler.ts';
+import { getZipInfo } from './zipLookup.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -3355,18 +3356,39 @@ export async function processMessageAsync(
 
   // 4) Apply LLM meta tags.
   const isEs = (state.language || 'es') === 'es';
+
+  // Sawil 2026-06-12 — DETERMINISTIC ZIP/state anti-re-ask guard. The prompt
+  // tells the LLM never to re-ask the ZIP, but it slips ~1 in 5. When a valid
+  // ZIP is already resolved to NY/NJ/CT AND the user did NOT mention a move /
+  // address change, intercept any reply that re-asks the ZIP/state and replace
+  // it with a natural continuation using known context. No GHL/flow/UI changes.
+  let _resp = llmRes.response;
+  const _zipKnown = !!state.zipCode && ['NY', 'NJ', 'CT'].includes(state.state || '');
+  const _moved = /(me mud[eé]|me cambi[eé]|cambi[eé] de direcci[oó]n|vivo ahora|ahora vivo|nuevo (zip|c[oó]digo postal)|otra direcci[oó]n|\bmoved\b|new (address|zip)|i live now|now i live|different (address|zip))/i;
+  // "vive en ..." requires the MULTI-STATE list (NJ/CT) so it only fires on the
+  // re-ask question ("¿vive en NY, NJ o CT?"), never on a single-state statement
+  // ("como vive en NY"). The other patterns are inherently question-phrased.
+  const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip)/i;
+  if (_zipKnown && !_moved.test(userMessage) && _reAsksZip.test(_resp)) {
+    const _zi = getZipInfo(state.zipCode);
+    const _place = _zi && _zi.county ? `${_zi.county}, ${_zi.state}` : (state.state === 'NY' ? 'New York' : state.state === 'NJ' ? 'New Jersey' : 'Connecticut');
+    _resp = isEs
+      ? `Gracias. Como ya tengo su código postal ${state.zipCode} en ${_place}, seguimos con su caso. Para orientarle mejor, cuénteme un poco más sobre lo que necesita.`
+      : `Thanks. Since I already have your ZIP ${state.zipCode} in ${_place}, let's continue with your case. To guide you better, tell me a bit more about what you need.`;
+  }
+
   let newState: ConversationState = {
     ...state,
     turnCount: (state.turnCount || 0) + 1,
     messages: [
       ...(state.messages || []),
       { role: 'user', content: userMessage, timestamp: Date.now() },
-      { role: 'bot', content: llmRes.response, timestamp: Date.now() },
+      { role: 'bot', content: _resp, timestamp: Date.now() },
     ],
     lastBotIntent: 'llm_response',
   };
 
-  let response = llmRes.response;
+  let response = _resp;
   let needsHuman = false;
 
   if (llmRes.meta.wantHandoff) {
