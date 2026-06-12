@@ -3370,7 +3370,7 @@ export async function processMessageAsync(
   // ("como vive en NY"). The other patterns are inherently question-phrased.
   const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip)/i;
   if (_zipKnown && !_moved.test(userMessage) && _reAsksZip.test(_resp)) {
-    const _zi = getZipInfo(state.zipCode);
+    const _zi = getZipInfo(state.zipCode || '');
     const _place = _zi && _zi.county ? `${_zi.county}, ${_zi.state}` : (state.state === 'NY' ? 'New York' : state.state === 'NJ' ? 'New Jersey' : 'Connecticut');
     _resp = isEs
       ? `Gracias. Como ya tengo su código postal ${state.zipCode} en ${_place}, seguimos con su caso. Para orientarle mejor, cuénteme un poco más sobre lo que necesita.`
