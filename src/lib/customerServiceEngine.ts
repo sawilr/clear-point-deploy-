@@ -2740,7 +2740,8 @@ export function processMessage(
           email: finalEmail || state.email,
           anythingElseAsked: true,
           lastBotIntent: 'handoff_anything_else',
-          quickReplies: isEs ? ['No, gracias', 'Sí, tengo otra pregunta'] : ['No thanks', 'Yes, another question'],
+          // Sawil 2026-06-12 — human close: no chips at "anything else?". The user
+          // types freely; the typed-"no" regex below still closes the conversation.
           messages: [
             ...(state.messages || []),
             { role: 'user', content: userMessage, timestamp: Date.now() },
