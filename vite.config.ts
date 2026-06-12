@@ -14,7 +14,20 @@ export default defineConfig({
     target: 'es2020',
   },
   server: {
-    port: 3000,
+    port: 5173,
+    // DEV ONLY — forward the bot's LLM call to the live API so LOCAL shows the
+    // real conversational Clara/Zara with NO button fallback. Origin is spoofed
+    // to the prod host so the production allowlist accepts the dev request.
+    // NOTE: this uses PRODUCTION's brain (currently old figures, e.g. 2025)
+    // until our fixes are deployed. /api/submit-lead is NOT proxied.
+    proxy: {
+      '/api/chat': {
+        target: 'https://clearpointsenioradvisors.com',
+        changeOrigin: true,
+        secure: true,
+        headers: { Origin: 'https://clearpointsenioradvisors.com' },
+      },
+    },
   },
   resolve: {
     alias: {

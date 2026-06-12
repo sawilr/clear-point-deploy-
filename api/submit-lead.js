@@ -94,6 +94,27 @@ export default async function handler(req, res) {
     conversation_summary = _cap(conversation_summary, 8000);
     lead_quality_flags = _cap(lead_quality_flags, 1000);
 
+    // ── 3.6 — input hardening (Grupo B) ─────────────────────────────────────
+    // Reuse the existing _cap() helper — do NOT duplicate the phone validation,
+    // honeypot, CORS, rate-limit, body cap or tag sanitization that already run
+    // above/below. Valid inputs pass through unchanged. Invalid email/zip are
+    // DROPPED (the lead is still captured — phone is the primary contact, and
+    // the required-field + phone checks below still apply). Logs stay PII-free.
+    first_name = _cap(first_name, 100).replace(/[\r\n\t]+/g, ' ').trim();
+    last_name = _cap(last_name, 100).replace(/[\r\n\t]+/g, ' ').trim();
+    city = _cap(city, 80).replace(/[\r\n\t]+/g, ' ').trim();
+    county = _cap(county, 80).replace(/[\r\n\t]+/g, ' ').trim();
+    email = _cap(email, 254).trim();
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      // Invalid format — drop the email (never log its value). consent_email
+      // below then naturally resolves to 'false' for an absent email.
+      console.warn('[VALIDATION] Email dropped: invalid format');
+      email = '';
+    }
+    // ZIP — normalize to a 5-digit US ZIP; drop anything else (US country only).
+    var _zipDigits = typeof zip === 'string' ? zip.replace(/\D/g, '').slice(0, 5) : '';
+    zip = (_zipDigits.length === 5) ? _zipDigits : '';
+
     // ── PHASE 11 — Clara Phase 10 audit/identity fields ─────────────────────
     // lead_type identifies which Clara path produced this lead.
     // ghl_contact_id (Path A matched): switch from POST create to PUT update.

@@ -20,6 +20,37 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
 
+// ── Web search allowlist (Anthropic web_search server tool) ──────────────
+// Clara may use Anthropic's server-side web_search ONLY to CONFIRM a current
+// official figure/rule when she is unsure or the caller asks something the
+// injected KB does not cover. Results are HARD-LOCKED to official government
+// and state Medicaid/SHIP domains via the tool's `allowed_domains` so the model
+// can never surface an arbitrary marketing/forum page. Federal: medicare.gov,
+// cms.gov, ssa.gov. State (NY/NJ/CT — the states ClearPoint serves): Medicaid /
+// SHIP / pharmaceutical-assistance program sites. `max_uses` is kept low (2) so
+// a turn stays fast and cheap. We use the broadly-supported web_search_20250305
+// tool version (the newer _20260209 dynamic-filtering version is not listed as
+// supported on Haiku 4.5 and additionally requires the code-execution tool).
+const WEB_SEARCH_ALLOWED_DOMAINS = [
+  // Federal — authoritative for standard Medicare figures/rules
+  'medicare.gov',
+  'cms.gov',
+  'ssa.gov',
+  // New York
+  'health.ny.gov',          // NY State Dept of Health / Medicaid
+  'nystateofhealth.ny.gov', // NY marketplace
+  'aging.ny.gov',           // NY State Office for the Aging (EPIC / HIICAP/SHIP)
+  // New Jersey
+  'nj.gov',                 // NJ state (incl. PAAD / Senior Gold / NJ FamilyCare / SHIP)
+  'state.nj.us',
+  // Connecticut
+  'ct.gov',                 // CT Dept of Social Services / CHOICES (SHIP) / MSP
+];
+const WEB_SEARCH_MAX_USES = 1; // minimal: KB-first; search is a rare last resort
+// Cap server-side tool (pause_turn) continuations so a single request can never
+// loop unbounded on the server search loop.
+const MAX_PAUSE_CONTINUATIONS = 3;
+
 // ── System prompt — ClearPoint identity, CMS TPMO compliance, behavior ──
 // Cached on Anthropic's side so it only costs the full price on the FIRST
 // turn of each conversation. Subsequent turns pay ~10% of the system prompt.
@@ -71,6 +102,32 @@ A great Medicare CSR delivers VALUE on the very first substantive turn, then ask
 - HARD LIMIT: never ask more than TWO clarifying questions about the same issue. By the second exchange, either give concrete help or offer the licensed advisor. Never loop, never re-list a menu.
 - Never re-ask anything already in the [Context for this turn] block (ZIP, name, phone, language).
 
+# MEMORY & ANTI-LOOP (this is the #1 thing that makes you feel premium vs broken)
+Treat EVERYTHING the caller already told you (in [Context for this turn] AND earlier in this conversation) as KNOWN, and NEVER ask for it again:
+- ZIP and STATE are the same fact: if you have the ZIP, you HAVE the state (a New York ZIP means New York). NEVER ask "which state do you live in" when a ZIP/state is already known. Same for name, phone, email, language, and the topic they already described.
+- If the caller says "I already told you" / "ya le di mi ZIP" / "te dije eso", that means YOU failed to use what they gave you. Apologize ONCE, briefly, and immediately USE the information. Asking again after that is a hard failure.
+- Never ask the SAME question twice in one conversation, and never re-list a menu you already showed. Act on what you have, or offer the advisor.
+
+# SCENARIO PLAYBOOK (handle each cleanly, every time, never get stuck)
+- MEDICAID question/problem, state already known: answer USING that state (e.g. "In New York, Medicaid is run by the state through NY State of Health / your local Department of Social Services. ClearPoint is a Medicare broker, so we do not manage Medicaid directly, but a licensed advisor can point you the right way and help with your Medicare side."). NEVER ask which state when you already have the ZIP. Only if NO ZIP was ever given do you ask for the ZIP once (not "which state").
+- "I have Medicaid / Extra Help / a D-SNP / I qualify": UNVERIFIED. Use conditional language ("IF you have Medicaid, then..."), never confirm their status as fact.
+- OUT-OF-AREA ZIP (not NY/NJ/CT): be brief, say ClearPoint serves only New York, New Jersey, and Connecticut, do NOT name the other state, and do not loop.
+- "Which plan is best / recommend me a plan": never recommend a specific plan or carrier. Explain it depends on their doctors, drugs, and budget, and a licensed advisor reviews it at no cost.
+- "Is my doctor / drug / hospital covered": never confirm coverage or network; only the plan directory/formulary or an advisor can. Offer the advisor.
+- STANDARD FIGURE question (Part B premium, deductibles, Part D cap, enrollment dates): state it confidently from your data above. Only refer out (SSA/Medicare.gov) for their PERSONALIZED amount.
+- FRUSTRATED / ANGRY / cursing / "esto no sirve": acknowledge calmly in ONE line, never get defensive or argue, give the best help you can, and offer a real licensed advisor.
+- CONFUSED / VAGUE / a one-word or number-only message: ask ONE simple clarifying question in plain language. Never dump a menu and never assume the caller is angry just because a message is short.
+- WANTS A HUMAN / "hable con un asesor": move toward the advisor handoff; do not interrogate first.
+- SAFETY / crisis (self-harm, medical emergency): you are not a clinician. Gently urge calling 911 (emergency) or 988 (mental-health crisis), and offer the advisor for Medicare matters.
+- SENSITIVE DATA: if the caller types an SSN, Medicare ID (MBI), or bank/card info, kindly tell them NOT to share that here; you do not need it.
+- OFF-TOPIC (not Medicare / Medicaid / ClearPoint): politely steer back in one line.
+In EVERY scenario: warm, brief (2-4 sentences), compliant, and never leave the caller stuck. Always either give real help or offer the licensed advisor.
+
+# COMPREHENSION & FLOW (these are the junior-bot mistakes the caller WILL notice)
+- NEVER collect the caller's NAME or PHONE up front. Once you have the ZIP, your NEXT message ASKS HOW YOU CAN HELP - never "what is your name" or "what is your phone number". Only collect name/phone when BOTH (a) the caller has described their actual need AND (b) they have agreed to an advisor callback. Asking for contact info before you have helped is forbidden and feels like a sales bot.
+- RECOGNIZE shorthand, abbreviations, and typos, ESPECIALLY in a short reply right after you offered choices. "MA" / "ma" / "mA" / "advantage" = Medicare Advantage. "original" / "OG" = Original Medicare. "Part B" / "parte b" / "parte be" / "la b" = Part B. "Part D" / "parte d" = the drug plan. A short or misspelled reply that matches an option you JUST offered IS the answer - accept it and move on. NEVER respond to a one or two letter answer with "the connection is not clear" or by re-asking the exact same question; interpret it.
+- HONOR CORRECTIONS instantly. If the caller corrects you ("no, es la Parte B", "te dije X", "estas perdido", "you are wrong"), accept it immediately and pivot - do NOT repeat your previous (now-corrected) framing. Example: if the caller says the high monthly charge is the Part B premium, talk about the Part B premium ($202.90/month in 2026 standard), NOT a Medicare Advantage premium. Re-stating the thing they just corrected is a hard failure.
+
 # One high-value qualifier (Medicaid / Extra Help)
 When the conversation is about plans, coverage, costs, or you are setting up an advisor callback/handoff, it is very helpful to know ONE thing: whether the caller has **Medicaid or Extra Help (Ayuda Extra / LIS)**. People who have either qualify for different plans (D-SNP), so the advisor needs to know. Ask it ONCE, naturally, only when relevant — e.g. "One quick thing so the advisor can prepare: do you have Medicaid or Extra Help?" / "Una cosa rápida para que el asesor se prepare: ¿tiene Medicaid o Extra Help (Ayuda Extra)?". This is program STATUS only — NEVER ask about income amounts, health conditions, Social Security number, or Medicare ID. If they don't know, that is fine, move on. Do not ask it more than once.
 
@@ -80,7 +137,35 @@ It is 2026. When asked about STANDARD Medicare costs, you MAY state these public
 - Part B annual deductible: $283 (2026).
 - Part A inpatient hospital deductible: $1,736 per benefit period (2026).
 - Part D out-of-pocket cap: $2,100 (2026) — once a member's covered drug costs reach this, they pay $0 for covered drugs the rest of the year.
-NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG now). If you do not have the current figure for something, say so plainly and explain what it depends on — never invent a number. The person's EXACT Part B premium depends on their income, so for their personal amount the Social Security Administration (1-800-772-1213) or Medicare.gov has it — but LEAD with the standard figure first; never just send them away as if you don't know.
+NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG now).
+More 2026 standard figures (state these confidently when asked; public facts):
+- Part A premium: most people pay $0 (40+ work quarters). $311/month with 30-39 quarters; $565/month with fewer than 30 quarters.
+- Part A hospital coinsurance: days 61-90 $434/day; lifetime-reserve days $868/day. Skilled nursing (SNF) days 21-100: $217/day.
+- Part D maximum deductible: $615 (2026). The $2,100 out-of-pocket cap (above) is the yearly drug-cost ceiling.
+- Extra Help / LIS 2026 income guidelines: roughly $1,995/month single, $2,705/month married (resource limits about $17,220 single / $34,360 married). These are GUIDELINES; the agency confirms actual eligibility.
+
+# Enrollment periods (stable rules; state from memory, do NOT search for these)
+- IEP (Initial Enrollment Period): the 7-month window around the 65th birthday (3 months before, the birth month, 3 months after).
+- AEP / Fall Open Enrollment: October 15 to December 7 every year; changes take effect January 1.
+- Medicare Advantage Open Enrollment (MA-OEP): January 1 to March 31 (one switch for people already in a Medicare Advantage plan).
+- GEP (General Enrollment Period): January 1 to March 31, for people who missed their IEP.
+- SEP (Special Enrollment Periods): triggered by life events (moving, losing other coverage, etc.); the exact window depends on the event, and a licensed advisor can confirm which SEP applies.
+
+# AUTHORITATIVE-FIRST RULE (do NOT punt callers for STANDARD figures)
+The verified figures above and the state-program figures in [Context for this turn] are your AUTHORITATIVE first source. When a caller asks about a STANDARD, published Medicare figure or rule that you were given (e.g. the standard Part B premium, deductibles, the Part D out-of-pocket cap, an MSP/EPIC/PAAD income guideline shown to you), you MUST state that figure plainly and confidently. NEVER respond to a STANDARD-figure question with "I don't know — check Medicare.gov" or "call SSA to find out." You DO know the standard figure; state it.
+- Only refer the caller OUT (to SSA 1-800-772-1213 or Medicare.gov) for their PERSONALIZED amount — the number that depends on THEIR income, assets, or situation (e.g. their exact Part B premium with IRMAA, whether they personally qualify). Lead with the standard figure, THEN note the personal amount depends on income and where to confirm it.
+- If you genuinely were NOT given the current figure for something and cannot confirm it from search, say so plainly and explain what it depends on — never invent a number. But never fake ignorance of a standard figure you were handed.
+
+# Web search — CONFIRM-ONLY, official sources, never fabricate
+You have a web_search tool, but it is RESTRICTED to official government and state sources (Medicare.gov, CMS.gov, SSA.gov, and the NY/NJ/CT state Medicaid / SHIP / pharmaceutical-assistance sites). Use it sparingly and only to:
+1. CONFIRM a current standard figure or rule when you are genuinely unsure it is still current, OR
+2. Answer a factual Medicare/program question the injected knowledge above does NOT cover.
+Rules for search:
+- DEFAULT IS DO NOT SEARCH. You already have the standard 2026 figures, the state-program figures, AND the enrollment periods above. For the vast majority of questions you already have the answer, so ANSWER DIRECTLY without searching. Only consider a single search when the caller asks for a SPECIFIC current figure, date, or rule that is genuinely NOT in your provided data above. Searching costs money and time, so treat it as a last resort, not a habit.
+- The injected figures above are already verified and current — do NOT search to re-confirm a figure you were clearly given (e.g. the standard Part B premium). Answer from the KB first; search is for gaps and genuine uncertainty.
+- NEVER fabricate a figure or rule. If you cannot find it on an official source, say plainly that you don't have the current number and point the caller to the official source — do NOT guess.
+- Search results are background research for YOU. Still answer in your normal warm, brief (2-4 sentence) voice in the caller's language. Do NOT paste raw search text, URLs, or citations into your reply, and do NOT mention that you searched.
+- Search NEVER overrides compliance: even with a search result, you still cannot recommend a specific plan, confirm the caller's eligibility, confirm a network, or confirm a drug is covered.
 
 # Your scope
 - Medicare topics: Parts A / B / C / D, Medicare Advantage, Medigap / Medicare Supplement, Part D drug plans, Extra Help / LIS, Medicare Savings Programs (MSP / QMB / SLMB / QI), enrollment (IEP / AEP / SEP), Original Medicare vs Advantage, dental / vision / hearing / OTC supplemental benefits, doctor / hospital / provider network issues, drug / pharmacy / formulary issues, letters / bills / EOBs, appeals / denials, identity / fraud / scam concerns.
@@ -92,6 +177,7 @@ NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG n
 You MUST NEVER:
 1. **Recommend a specific Medicare plan, carrier, or product.** Not by name, not by hint. ("UnitedHealth has a great plan" — FORBIDDEN.)
 2. **Confirm a beneficiary's eligibility for anything** (Medicare, Medicaid, Extra Help, MSP, SEP, etc.). You can describe what programs exist; you can NEVER say "you qualify" / "you are eligible." Only Medicare, the state Medicaid agency, or a licensed advisor can confirm eligibility.
+   - **TREAT EVERY CALLER CLAIM AS UNVERIFIED.** If a caller SAYS they have Medicaid, Medicare, Extra Help, a D-SNP, a specific plan, or that they "qualify" for something, do NOT accept it as fact and do NOT build a confirmed answer on top of it. You have no way to verify their status. Use CONDITIONAL language: "IF you have Medicaid, then there are special D-SNP plans that..." / "Si usted tiene Medicaid, entonces hay planes D-SNP que..." — NEVER "Con Medicaid, usted YA tiene acceso a..." or "Since you have Medicaid, you get..." as if confirmed. A licensed advisor or the agency verifies actual status; you speak only in conditionals about what WOULD apply.
 3. **Confirm whether a specific doctor / hospital / specialist is in network** for any plan. Networks change daily. Only the carrier's provider directory or a licensed advisor can confirm.
 4. **Confirm whether a specific drug is covered** by any plan. Formularies change. Only the plan's formulary lookup or a licensed advisor can confirm.
 5. **Ask for or accept**: Medicare ID / MBI, SSN, banking info, full date of birth, diagnosis details, prescription names, or any PHI. If a caller starts to share PHI, gently stop them ("please don't share that here — for your safety").
@@ -231,15 +317,36 @@ export default async function handler(req, res) {
       meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'prompt_injection' },
     });
   }
-  // ── PHASE 9A.3 Multi-turn injection — concatenate last 2 user turns ──
-  // Per-message regex misses jailbreaks distributed across turns. Check the
-  // last 2 user messages combined to catch "build rapport → now ignore"
-  // attack patterns.
-  var lastUserTurns = conversationHistory.filter(function (t) { return t && t.role === 'user'; }).slice(-2);
-  if (lastUserTurns.length >= 1) {
-    var combined = lastUserTurns.map(function (t) { return String(t.content || '').slice(0, 600); }).join(' ') + ' ' + userMessage;
+  // ── PHASE 9A.3 Multi-turn injection — split-jailbreak guard (NARROWED) ──
+  // Per-message regex can miss a jailbreak split across two turns ("build
+  // rapport → now ignore your rules"). We still catch that, but the previous
+  // 2-prior-turn window was too aggressive: after ONE injection attempt it kept
+  // that flagged turn alive in the window and stonewalled the NEXT legitimate
+  // question. Fixes:
+  //   1. Window shrunk to the SINGLE immediately-preceding user turn (not 2),
+  //      so an older attempt cannot poison a later, unrelated follow-up.
+  //   2. We only block when the COMBINED pair trips AND the current message is
+  //      actually contributing — i.e. the current message is NOT a benign
+  //      follow-up. We approximate this by re-checking the prior turn ALONE: if
+  //      the prior turn already trips on its own, this turn is a clean
+  //      follow-up to an already-handled attempt and must get a real answer
+  //      (the offending turn was blocked when it arrived). We only block when
+  //      the pair trips but the prior turn alone does NOT — meaning the
+  //      jailbreak genuinely spans into the CURRENT message.
+  var priorUserTurns = conversationHistory.filter(function (t) { return t && t.role === 'user'; });
+  var prevUserTurn = priorUserTurns.length ? String(priorUserTurns[priorUserTurns.length - 1].content || '').slice(0, 600) : '';
+  if (prevUserTurn) {
+    var combined = prevUserTurn + ' ' + userMessage;
     var multiCheck = checkPromptInjection(combined, conversationContext.language);
     if (!multiCheck.ok) {
+      // Did the prior turn already trip on its own? If so, it was the offending
+      // turn (already blocked when sent); this is a legit follow-up — let it
+      // through to a real answer. Only block when the pair trips but the prior
+      // turn alone is clean (the attack spans into the CURRENT message).
+      // SECURITY: block whenever the combined window trips. Do NOT exempt the
+      // case where the prior turn trips on its own — conversationHistory is
+      // CLIENT-SUPPLIED and never re-screened, so an attacker could plant a
+      // prior injection turn + a clean current turn to finish the jailbreak.
       console.warn('[CHAT] multi-turn injection blocked:', multiCheck.reason, 'ip=' + ip);
       return res.status(200).json({
         response: multiCheck.safeReply,
@@ -260,47 +367,98 @@ export default async function handler(req, res) {
       messages.push({ role: turn.role, content: String(turn.content).slice(0, 1000) });
     }
   }
-  // Add current user message with context prefix on the FIRST turn only.
-  var currentUserContent = userMessage;
-  if (recent.length === 0 && contextSummary) {
-    currentUserContent = contextSummary + '\n\n' + userMessage;
-  }
-  messages.push({ role: 'user', content: currentUserContent });
+  // Context (ZIP / state / state-specific programs / already-captured details)
+  // now travels in a dedicated system block every turn (see the Anthropic call
+  // below) so it reaches the LLM even after there's conversation history.
+  // Previously it was prepended to the FIRST user turn only and was lost once
+  // history existed — which meant state-appropriate answers stopped working.
+  messages.push({ role: 'user', content: userMessage });
 
   // Anthropic API call
   try {
-    var resp = await fetch(ANTHROPIC_API, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 400,
-        // PHASE 9A — lowered from 0.4 to 0.2 for compliance-critical responses.
-        // Less hallucination, more deterministic safe answers.
-        temperature: 0.2,
-        system: [
-          { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
-        ],
-        messages: messages,
-      }),
-    });
+    // Reusable request body. `messages` is the only field we mutate across
+    // pause_turn continuations (we append the assistant's partial content and
+    // re-send so the server-side search loop can resume — the documented way to
+    // continue after stop_reason === 'pause_turn').
+    var requestBody = {
+      model: MODEL,
+      max_tokens: 1024,
+      // PHASE 9A — lowered from 0.4 to 0.2 for compliance-critical responses.
+      // Less hallucination, more deterministic safe answers.
+      temperature: 0.2,
+      // First block = static prompt (cached). Second block = per-conversation
+      // context (ZIP/state/state programs/captured details) sent EVERY turn so
+      // the LLM stays state-aware throughout, not just on turn 1. The cache
+      // breakpoint is on block 1, so the small dynamic block doesn't bust it.
+      system: contextSummary
+        ? [
+            { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+            { type: 'text', text: contextSummary },
+          ]
+        : [
+            { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+          ],
+      // Anthropic server-side web search, HARD-LOCKED to official + NY/NJ/CT
+      // state domains. The model is instructed (see SYSTEM_PROMPT) to use it
+      // ONLY to confirm a current figure/rule when unsure or when the caller
+      // asks something the injected KB does not cover — never to fabricate, and
+      // never as the first resort when the KB already has the figure. If the
+      // org/plan does not have web search enabled, the API still returns 200
+      // (the search surfaces as an in-body web_search_tool_result_error and the
+      // model just answers from the KB) — so adding the tool is safe and
+      // degrades gracefully; it cannot break the existing answer path.
+      tools: [
+        {
+          type: 'web_search_20250305',
+          name: 'web_search',
+          max_uses: WEB_SEARCH_MAX_USES,
+          allowed_domains: WEB_SEARCH_ALLOWED_DOMAINS,
+        },
+      ],
+      messages: messages,
+    };
 
-    if (!resp.ok) {
-      // A15.10 — MEDIUM fix: do NOT leak upstream Anthropic status code to
-      // the client (useful for attacker reconnaissance). Log full detail
-      // server-side; return only a generic 502 to the browser.
-      var errText = await resp.text();
-      console.error('[CHAT] Anthropic API error', resp.status, errText.slice(0, 500));
-      return res.status(502).json({ error: 'LLM_API_ERROR' });
+    var data = null;
+    var continuations = 0;
+    // Loop only to resume the server-side search loop on pause_turn.
+    while (true) {
+      var resp = await fetch(ANTHROPIC_API, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!resp.ok) {
+        // A15.10 — MEDIUM fix: do NOT leak upstream Anthropic status code to
+        // the client (useful for attacker reconnaissance). Log full detail
+        // server-side; return only a generic 502 to the browser.
+        var errText = await resp.text();
+        console.error('[CHAT] Anthropic API error', resp.status, errText.slice(0, 500));
+        return res.status(502).json({ error: 'LLM_API_ERROR' });
+      }
+
+      data = await resp.json();
+
+      // Server-side tool loop paused (hit its internal iteration cap mid-search).
+      // Re-send with the assistant's partial content appended so it resumes.
+      // Do NOT add an extra user turn — the API detects the trailing
+      // server_tool_use block and continues automatically.
+      if (data && data.stop_reason === 'pause_turn' && continuations < MAX_PAUSE_CONTINUATIONS && Array.isArray(data.content)) {
+        requestBody.messages = requestBody.messages.concat([
+          { role: 'assistant', content: data.content },
+        ]);
+        continuations++;
+        continue;
+      }
+      break;
     }
 
-    var data = await resp.json();
     var assistantText = '';
-    if (Array.isArray(data.content)) {
+    if (data && Array.isArray(data.content)) {
       for (var j = 0; j < data.content.length; j++) {
         if (data.content[j].type === 'text') assistantText += data.content[j].text;
       }
@@ -347,6 +505,8 @@ function buildContextSummary(ctx) {
   var lines = [];
   if (ctx.language) lines.push('Caller language: ' + (ctx.language === 'es' ? 'Spanish — RESPOND IN SPANISH USING USTED FORM ONLY (su / tiene / puede — NEVER tu / tienes / puedes)' : 'English'));
   if (ctx.zipCode) lines.push('Caller ZIP: ' + ctx.zipCode + (ctx.state ? ' (' + ctx.state + ')' : '') + ' — ALREADY CAPTURED. Use it as the service ZIP. NEVER ask the caller for their ZIP again.');
+  if (ctx.zipCode && ctx.state) lines.push('You ALREADY KNOW the caller lives in ' + ctx.state + ' (derived from their ZIP above). NEVER ask which state they live in (NY/NJ/CT) and NEVER ask for the ZIP again. You already have both. Use the state directly: for a Medicaid/Medicaid-program question, answer using ' + ctx.state + ' specifics (e.g. "In New York, Medicaid is handled through the state Medicaid agency...") rather than asking which state. Re-asking something the caller already gave is a failure.');
+  if (ctx.state) { var sp = buildStatePrograms(ctx.state); if (sp) lines.push(sp); }
   if (ctx.name) lines.push('Caller name: ' + ctx.name + ' (already captured — DO NOT ask for it again)');
   if (ctx.phoneNumber) lines.push('Caller phone: ' + ctx.phoneNumber + ' (already captured — DO NOT ask again)');
   if (ctx.email) lines.push('Caller email: ' + ctx.email + ' (already captured — DO NOT ask again)');
@@ -358,6 +518,34 @@ function buildContextSummary(ctx) {
   if (ctx.clarificationCount && ctx.clarificationCount >= 2) lines.push('NOTE: Caller has asked for clarification ' + ctx.clarificationCount + ' times — offer advisor instead of more re-explanation.');
   if (!lines.length) return '';
   return '[Context for this turn]\n' + lines.join('\n');
+}
+
+// 2026 state programs — keep in sync with src/data/medicare-figures-2026.ts.
+// Only NY / NJ / CT (states ClearPoint serves). DESCRIBE only — never confirm
+// the caller is eligible; only the state agency or a licensed advisor can.
+function buildStatePrograms(state) {
+  var st = (state || '').toUpperCase();
+  var head = 'State programs for ' + st + ' — you MAY name and describe these (current for 2026), but NEVER tell the caller they qualify; eligibility is confirmed only by the state agency or a licensed advisor. To apply, the caller goes through the state agency, not ClearPoint.';
+  var body;
+  if (st === 'NY') {
+    body = [
+      '- Prescription help: EPIC (NY Elderly Pharmaceutical Insurance Coverage), age 65+, income guidelines around $75,000 single / $100,000 married. Works WITH a Part D plan; separate from federal Extra Help (some people have both).',
+      '- Premium help (MSP): QMB and QI-1. NY has NO asset/resource limit for MSP. QMB income guideline around $1,856 single / $2,509 couple; QI-1 around $2,494 / $3,375. Apply through NY State Medicaid (1-800-541-2831).',
+    ].join('\n');
+  } else if (st === 'NJ') {
+    body = [
+      '- Prescription help: PAAD (income guideline around $54,943 single / $62,390 married; small copays, must have a Part D plan) and Senior Gold (income just above PAAD, up to about $64,943 single / $72,390 married; no resource limit).',
+      '- Premium help (MSP): QMB / SLMB / QI, with federal asset limits around $9,950 single / $14,910 couple. Apply through NJ (MED-NJ 1-800-356-1561).',
+    ].join('\n');
+  } else if (st === 'CT') {
+    body = [
+      '- Prescription help: ConnPACE is no longer active (ended January 1, 2014). For drug costs, review federal Extra Help / LIS, Medicaid if applicable, MSP, and the Part D formulary.',
+      '- Premium help (MSP): QMB / SLMB / ALMB. CT has NO asset/resource limit for MSP; income limits effective March 1, 2026 (QMB around $2,807 single / $3,806 couple). Apply through CT Dept. of Social Services (1-855-626-6632).',
+    ].join('\n');
+  } else {
+    return '';
+  }
+  return head + '\n' + body;
 }
 
 // Strip / reformulate any phrasing that violates CMS TPMO 422.2267.

@@ -637,6 +637,28 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           setTimeout(() => pushBotMessageDirect(zipBridge), 300);
           return;
         }
+        // (b2) Malformed ZIP attempt — a pure number that is NOT a clean 5-digit
+        // ZIP (e.g. "156161", "1055"). extractZip() returned null, but this is
+        // clearly a botched ZIP, NOT a problem description, so re-ask for 5
+        // digits instead of routing it to the engine (which wrongly replied
+        // "Entiendo que está molesto" + a topic menu).
+        const zipDigitsOnly = trimmed.replace(/[\s-]/g, '');
+        if (/^\d+$/.test(zipDigitsOnly) && zipDigitsOnly.length !== 5) {
+          pushUserMessageDirect(trimmed);
+          const zipTries = (outerState.zipAttempts || 0) + 1;
+          if (zipTries < 2) {
+            setOuterState((s) => ({ ...s, zipAttempts: zipTries }));
+            setTimeout(() => pushBotMessageDirect(isEs
+              ? 'Un código postal tiene 5 dígitos — ese tiene otra cantidad. ¿Me lo confirma? (por ejemplo, 11354). O si prefiere, dígame en qué le puedo ayudar.'
+              : "A ZIP code has 5 digits — that one has a different count. Could you confirm it? (for example, 11354). Or just tell me how I can help."), 300);
+            return;
+          }
+          handOffToLLM({ problemSummary: outerState.problemSummary });
+          setTimeout(() => pushBotMessageDirect(isEs
+            ? 'No se preocupe, sigamos sin el código postal. ¿En qué le puedo ayudar hoy?'
+            : "No problem, let's continue without the ZIP. How can I help you today?"), 300);
+          return;
+        }
         // (c) No ZIP — the user described their situation instead of giving a
         // ZIP (e.g. "tengo A pero no B porque trabajaba"). DO NOT route into
         // the scripted A/B/C gauntlet. HAND OFF TO THE LLM NOW and process

@@ -130,7 +130,9 @@ export function clientId(req) {
 const PROD_HOST = 'clearpointsenioradvisors.com';
 const VERCEL_PROJECT_SLUG_PREFIX = 'clearpoint-deploy';
 const ALLOWED_ORIGIN_RE = new RegExp(
-  '^https://(' + PROD_HOST.replace(/\./g, '\\.') + '|' +
+  // BUG 4 — accept both the apex host and the www. subdomain of PROD_HOST
+  // (a www visitor was previously blocked → 403 → Zara fell back to offline).
+  '^https://((www\\.)?' + PROD_HOST.replace(/\./g, '\\.') + '|' +
   VERCEL_PROJECT_SLUG_PREFIX + '[a-z0-9-]*\\.vercel\\.app)$',
   'i'
 );
