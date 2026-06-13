@@ -376,13 +376,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       }
       msgs.push({ text: `Medicaid is a separate program administered by each state. It can provide additional help — from paying Part B premiums to covering services Medicare does not. Some people qualify for both Medicare and Medicaid (dual eligible).`, pace: 'long' });
       msgs.push({
-        text: isSupported
-          ? `${stateLabel} also has state-specific programs. Would you like to know about programs in ${stateLabel}?`
-          : 'Each state has its own programs. Would you like me to connect you with an advisor?',
+        text: 'Would you like me to explain any of these programs in more detail?',
         options: [
-          { label: isSupported ? `Yes, ${stateLabel} programs` : 'Yes, connect me', value: 'edu_state_programs' },
-          { label: 'Tell me about Extra Help', value: 'edu_extra_help' },
+          { label: 'Extra Help', value: 'edu_extra_help' },
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Ask another question', value: 'edu_back_to_topics' },
         ],
         pace: 'short',
       });
@@ -920,13 +918,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
       }
       msgs.push({ text: 'Medicaid es un programa separado administrado por cada estado. Puede ofrecer ayuda adicional — desde pagar primas de Parte B hasta cubrir servicios que Medicare no cubre. Algunas personas califican para ambos, Medicare y Medicaid (elegibilidad dual).', pace: 'long' });
       msgs.push({
-        text: isSupported
-          ? `${stateLabel} también tiene programas específicos. ¿Quiere saber sobre programas en ${stateLabel}?`
-          : 'Cada estado tiene sus propios programas. ¿Quiere que te conecte con un asesor?',
+        text: '¿Quiere que le explique alguno de estos programas en más detalle?',
         options: [
-          { label: isSupported ? `Sí, programas de ${stateLabel}` : 'Sí, conéctame', value: 'edu_state_programs' },
-          { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
+          { label: 'Ayuda Extra', value: 'edu_extra_help' },
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
         ],
         pace: 'short',
       });
@@ -3897,6 +3893,30 @@ export function ChatBot() {
       if (topicLabels[value]) trackTopic(topicLabels[value]);
 
       if (value === 'edu_state_programs') {
+        // Sawil 2026-06-12 — anti-repetición: si ya se explicó "Ayuda con costos"
+        // (que ya lista los programas estatales inline), NO re-volcar el bloque
+        // completo de QMB/QI-1/EPIC/Medicaid/Extra Help. Ofrecer detalle puntual.
+        if (memory.discussedTopics.includes('Help with Costs')) {
+          const sLabel = SUPPORTED_STATES_LABELS[memory.state] || memory.state;
+          enqueueBot([{
+            text: memory.language === 'es'
+              ? `Ya cubrimos los programas principales de ayuda en ${sLabel}, como MSP/QMB, QI-1, EPIC, Medicaid y Extra Help. Para no repetirle lo mismo, puedo explicarle uno en detalle o conectarlo con una revisión educativa.`
+              : `We already covered the main help programs in ${sLabel}, like MSP/QMB, QI-1, EPIC, Medicaid, and Extra Help. So I don't repeat myself, I can explain one in detail or connect you with an educational review.`,
+            options: memory.language === 'es'
+              ? [
+                  { label: 'Ayuda Extra', value: 'edu_extra_help' },
+                  { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+                  { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
+                ]
+              : [
+                  { label: 'Extra Help', value: 'edu_extra_help' },
+                  { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+                  { label: 'Ask another question', value: 'edu_back_to_topics' },
+                ],
+            pace: 'short',
+          }]);
+          return;
+        }
         const programs = getStatePrograms(memory.state, memory.language);
         enqueueBot(programs);
         return;

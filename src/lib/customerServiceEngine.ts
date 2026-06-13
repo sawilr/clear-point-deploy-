@@ -1584,11 +1584,19 @@ export function detectCrisisLanguage(text: string): boolean {
   // Spanish crisis phrases. Corpus fix: include verb-conjugation variants
   // (suicidarme/suicidarse), bare "quitar la vida" (no "me" attached),
   // "matarme", and additional self-harm signals.
-  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|matarme|quiero matarme|pensar en suicid|suicid\w*|me voy a (quitar|quitarme) la vida|quitar(me|se)? la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo|no quiero vivir m[aá]s|estoy pensando en hacerme da[nñ]o|hacerme da[nñ]o)\b/i.test(t)) return true;
+  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|matarme|quiero matarme|pensar en suicid|suicid\w*|me voy a (quitar|quitarme) la vida|quitar(me|se)? la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo|no quiero vivir m[aá]s|estoy pensando en hacerme da[nñ]o|hacer(me|te|se)? da[nñ]o|quiero hacer(me)? da[nñ]o)\b/i.test(t)) return true;
   // English crisis phrases (Wave 40 — added "i cannot take this anymore",
   // "can't take this", "can't do this anymore", "no point").
   if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t go on|can'?t take it anymore|i cannot take this anymore|can'?t take this anymore|can'?t do this anymore|no point in living|nothing to live for|better off dead|thinking about (suicide|ending it))\b/i.test(t)) return true;
   return false;
+}
+
+/** Returns true if the message describes an immediate MEDICAL emergency
+ *  (chest pain, heart attack, stroke, trouble breathing). These route to 911,
+ *  NOT 988 — 988 is for self-harm/suicide. Keep the two paths separate. */
+export function detectMedicalEmergency(text: string): boolean {
+  const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /\b(me duele el pecho|dolor (en |de )?(el )?pecho|opresi[oó]n en el pecho|chest pain|chest pressure|infarto|ataque al coraz[oó]n|heart attack|derrame( cerebral)?|stroke|no puedo respirar|cannot breathe|can'?t breathe|dificultad para respirar|me estoy ahogando)\b/i.test(t);
 }
 
 /** Returns true if message contains Medicare ID (MBI), SSN, or 16-digit card. */
@@ -2549,6 +2557,46 @@ export function processMessage(
     return { response: out, newState, needsHuman: !!state.advisorHandoffStarted };
   }
 
+  // Sawil 2026-06-12 — CONTACT CORRECTION. During/after handoff collection, if
+  // the caller says a captured field is wrong ("el email está mal", "no tienes
+  // mi nombre completo", "corrija mi teléfono"), re-ask ONLY that field. Never a
+  // topic menu, never close, never invent an email. Runs BEFORE the collection
+  // block so it wins over the "anything else / antes de cerrar" path.
+  if ((state.advisorHandoffStarted || state.schedulingCallback) && !state.conversationClosed) {
+    const _c = userMessage.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _wrong = /(mal escrit|esta mal|incorrect|equivocad|no es correct|corrij|corrige|falta|no tien(es|e)).{0,20}(correo|email|nombre|apellido|telefono|numero)|(correo|email|nombre|apellido|telefono|numero).{0,20}(mal|incorrect|equivocad|falta)/i.test(_c);
+    if (_wrong) {
+      const isEs = (state.language || 'es') === 'es';
+      const wantsName = /nombre|apellido/.test(_c);
+      const wantsPhone = /telefono|numero/.test(_c);
+      // default to email when ambiguous + an email/field was captured
+      const field = wantsName ? 'name' : wantsPhone ? 'phone' : 'email';
+      const reAsk = field === 'name'
+        ? (isEs ? 'Claro, disculpe. ¿Cuál es su nombre completo (nombre y apellido)?' : 'Of course, sorry. What is your full name (first and last)?')
+        : field === 'phone'
+        ? (isEs ? 'Claro, disculpe. ¿Cuál es el número de teléfono correcto (10 dígitos)?' : 'Of course, sorry. What is the correct 10-digit phone number?')
+        : (isEs ? 'Claro, disculpe. ¿Cuál es el correo correcto? (escríbalo sin espacios, ej: nombre@correo.com)' : 'Of course, sorry. What is the correct email? (no spaces, e.g. name@email.com)');
+      const cleared: ConversationState = {
+        ...state,
+        name: field === 'name' ? '' : state.name,
+        phoneNumber: field === 'phone' ? '' : state.phoneNumber,
+        email: field === 'email' ? '' : state.email,
+        lastBotIntent: field === 'name' ? 'handoff_asking_name' : field === 'phone' ? 'handoff_asking_phone' : 'handoff_asking_email_retry',
+        emailAsked: field === 'email' ? true : state.emailAsked,
+        turnCount: _currentTurnIdx,
+        quickReplies: [],
+        conversationClosed: false,
+        advisorHandoffStarted: true,
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: reAsk, timestamp: Date.now() },
+        ],
+      };
+      return { response: reAsk, newState: cleared, needsHuman: false };
+    }
+  }
+
   // PHASE A5 — PROGRESSIVE HANDOFF / SCHEDULE CONTACT CAPTURE.
   // Real assistants ask one thing at a time. Flow:
   //   step 1 — bot asks NAME only
@@ -2690,7 +2738,8 @@ export function processMessage(
           phoneNumber: finalPhone,
           emailAsked: true,
           lastBotIntent: 'handoff_asking_email',
-          quickReplies: isEs ? ['Saltar', 'Sí, le doy mi correo'] : ['Skip', 'Sure, my email'],
+          // Sawil 2026-06-12 — no chips during contact collection (conversación humana).
+          quickReplies: [],
           messages: [
             ...(state.messages || []),
             { role: 'user', content: userMessage, timestamp: Date.now() },
@@ -2717,7 +2766,8 @@ export function processMessage(
           ...state,
           turnCount: _currentTurnIdx,
           lastBotIntent: 'handoff_asking_email_retry',
-          quickReplies: isEs ? ['Saltar'] : ['Skip'],
+          // Sawil 2026-06-12 — no chips during contact collection (conversación humana).
+          quickReplies: [],
           messages: [
             ...(state.messages || []),
             { role: 'user', content: userMessage, timestamp: Date.now() },
@@ -3309,10 +3359,10 @@ function _runStructuralFirst(
       && state.lastBotIntent !== 'llm_response') {
     return processMessage(userMessage, state);
   }
-  // Crisis (suicide / 911) MUST short-circuit any LLM call for safety.
-  // Run sync engine and check if crisis fired; if so, return immediately.
-  const lower = userMessage.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  if (/\b(suicid\w*|matarme|quitar(me|se)? la vida|kill myself|end my life|me duele el pecho|dolor (en )?el pecho|chest pain|heart attack|stroke|derrame|no puedo respirar|can'?t breathe|infarto)\b/i.test(lower)) {
+  // Crisis (self-harm → 988) and medical emergency (chest pain/infarto → 911)
+  // MUST short-circuit any LLM call for safety. Use the shared detectors so
+  // both deterministic paths fire before the LLM is ever reached.
+  if (detectCrisisLanguage(userMessage) || detectMedicalEmergency(userMessage)) {
     return processMessage(userMessage, state);
   }
   // Closing intent — sync engine handles warmly.
@@ -3427,6 +3477,18 @@ export async function processMessageAsync(
     }
   } else if (llmRes.meta.wantClose) {
     newState.conversationClosed = true;
+  }
+
+  // Sawil 2026-06-12 — DETERMINISTIC HANDOFF. If the LLM started collecting
+  // contact (asked for the name) but did NOT emit the handoff tag, force the
+  // robust structural collector to take the NEXT turn, so name/lastname/phone/
+  // email + corrections are handled deterministically — never freelanced by the
+  // LLM. The advisor SUBMIT stays consent-gated (consent_to_contact defaults
+  // false), so this does NOT bypass explicit consent.
+  if (!newState.name && newState.lastBotIntent === 'llm_response'
+      && /\b(su nombre|cu[aá]l es su nombre|nombre completo|your name|your full name|what'?s your name)\b/i.test(_resp)) {
+    newState.advisorHandoffStarted = true;
+    newState.lastBotIntent = 'handoff_asking_name';
   }
 
   return { response, newState, needsHuman };
@@ -3862,6 +3924,20 @@ function processMessageInner(
 
   // WAVE 24 — ABSOLUTE TOP PRIORITY: SAFETY ESCALATION
   // ─────────────────────────────────────────────────────────────────────────
+  // MEDICAL EMERGENCY — chest pain / heart attack / stroke / can't breathe →
+  // 911 (NOT 988). Checked BEFORE self-harm so "infarto" never gets a suicide
+  // response. Sawil 2026-06-12.
+  if (newState.step !== 'asking_language' && detectMedicalEmergency(userMessage)) {
+    const isEs = newState.language === 'es';
+    const out = isEs
+      ? 'Esto suena como una posible **emergencia médica**. Por favor llame al **911** ahora mismo, o vaya a la sala de emergencias más cercana. No espere. Yo aquí no puedo atender una emergencia médica — su salud es lo primero.'
+      : "This sounds like a possible **medical emergency**. Please call **911** right now, or go to the nearest emergency room. Do not wait. I can't handle a medical emergency here — your health comes first.";
+    newState.emotionalState = 'crisis';
+    newState.needsHuman = true;
+    newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+    return { response: out, newState, needsHuman: true };
+  }
+
   // CRISIS — suicide / self-harm. Stops the bot, routes to 988 + 911.
   if (newState.step !== 'asking_language' && detectCrisisLanguage(userMessage)) {
     const isEs = newState.language === 'es';

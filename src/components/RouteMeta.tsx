@@ -96,6 +96,18 @@ const PAGE_META: Record<string, Meta> = {
 };
 
 const FALLBACK = PAGE_META['/'];
+const SITE = 'https://clearpointsenioradvisors.com';
+
+// upsert sin duplicar: busca el tag; si no existe lo crea; set content.
+function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
+  let tag = document.head.querySelector(`meta[${attr}="${key}"]`);
+  if (!tag) {
+    tag = document.createElement('meta');
+    tag.setAttribute(attr, key);
+    document.head.appendChild(tag);
+  }
+  tag.setAttribute('content', content);
+}
 
 export function RouteMeta() {
   const { lang } = useLanguage();
@@ -103,14 +115,34 @@ export function RouteMeta() {
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const m = PAGE_META[pathname] || FALLBACK;
-    document.title = lang === 'es' ? m.titleEs : m.title;
+    const title = lang === 'es' ? m.titleEs : m.title;
+    const desc = lang === 'es' ? m.descriptionEs : m.description;
+    const url = SITE + pathname;
+    document.title = title;
     let el = document.head.querySelector('meta[name="description"]');
     if (!el) {
       el = document.createElement('meta');
       el.setAttribute('name', 'description');
       document.head.appendChild(el);
     }
-    el.setAttribute('content', lang === 'es' ? m.descriptionEs : m.description);
+    el.setAttribute('content', desc);
+
+    // canonical POR RUTA (nunca global al home)
+    let link = document.head.querySelector('link[rel="canonical"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      document.head.appendChild(link);
+    }
+    link.setAttribute('href', url);
+
+    // OG / Twitter por ruta (reusa el title/description únicos que ya existen).
+    // og:image / twitter:image quedan como base en index.html (misma imagen).
+    upsertMeta('property', 'og:title', title);
+    upsertMeta('property', 'og:description', desc);
+    upsertMeta('property', 'og:url', url);
+    upsertMeta('name', 'twitter:title', title);
+    upsertMeta('name', 'twitter:description', desc);
   }, [pathname, lang]);
   return null;
 }
