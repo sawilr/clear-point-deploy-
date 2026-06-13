@@ -915,7 +915,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     setIsTyping(true);
 
     try {
-      const typingDelay = Math.min(300 + text.length * 10, 800);
+      // Sawil 2026-06-13 — slower, more human pacing (was 300+len*10 cap 800ms,
+      // felt "too fast"). Harmonizes Clara's LLM-turn typing with Zara's range.
+      const typingDelay = Math.min(600 + text.length * 12, 2000);
       await new Promise((resolve) => setTimeout(resolve, typingDelay));
 
       let response = '';
