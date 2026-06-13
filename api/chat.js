@@ -176,7 +176,7 @@ More 2026 standard figures (state these confidently when asked; public facts):
 - Part A premium: most people pay $0 (40+ work quarters). $311/month with 30-39 quarters; $565/month with fewer than 30 quarters.
 - Part A hospital coinsurance: days 61-90 $434/day; lifetime-reserve days $868/day. Skilled nursing (SNF) days 21-100: $217/day.
 - Part D maximum deductible: $615 (2026). The $2,100 out-of-pocket cap (above) is the yearly drug-cost ceiling.
-- Extra Help / LIS 2026 income guidelines: roughly $1,995/month single, $2,705/month married (resource limits about $17,220 single / $34,360 married). These are GUIDELINES; the agency confirms actual eligibility.
+- Extra Help / LIS 2026 income guidelines: roughly $1,995/month single, $2,705/month married (resource limits about $18,090 single / $36,100 married). These are GUIDELINES; the agency confirms actual eligibility.
 
 # Enrollment periods (stable rules; state from memory, do NOT search for these)
 - IEP (Initial Enrollment Period): the 7-month window around the 65th birthday (3 months before, the birth month, 3 months after).

@@ -6241,8 +6241,8 @@ function processMessageInner(
       newState.routingLevel = 'B';
       newState.serviceCategory = 'medicaid_mention';
       const out = isSpanish
-        ? 'Anotado — usted tiene Medicaid. Tener Medicare y Medicaid (doble elegible) puede abrir beneficios extra como Extra Help para medicinas y planes especiales (D-SNP) que coordinan ambos. Las reglas varían por estado.\n\nNo puedo confirmar elegibilidad aquí. Un asesor licenciado puede verificar las opciones en su estado. ¿Le contactamos?'
-        : "Noted — you have Medicaid. Having Medicare and Medicaid (dual eligible) can open extra benefits like Extra Help for drugs and special plans (D-SNP) that coordinate both. Rules vary by state.\n\nI can't confirm eligibility here. A licensed advisor can verify options in your state. Want them to follow up?";
+        ? 'Anotado — usted mencionó que tiene Medicaid. SI tiene Medicare y Medicaid (doble elegible), eso puede abrir beneficios extra como Extra Help para medicinas y planes especiales (D-SNP) que coordinan ambos. Las reglas varían por estado.\n\nNo puedo confirmar elegibilidad aquí. Un asesor licenciado puede verificar las opciones en su estado. ¿Le contactamos?'
+        : "Noted — you mentioned you have Medicaid. IF you have both Medicare and Medicaid (dual eligible), that can open extra benefits like Extra Help for drugs and special plans (D-SNP) that coordinate both. Rules vary by state.\n\nI can't confirm eligibility here. A licensed advisor can verify options in your state. Want them to follow up?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

@@ -42,8 +42,8 @@ export const MEDICARE_2026 = {
   extraHelp: {
     incomeLimitSingle: 1995,
     incomeLimitCouple: 2705,
-    assetLimitSingle: 17220,
-    assetLimitCouple: 34360,
+    assetLimitSingle: 18090,
+    assetLimitCouple: 36100,
     genericCopay: 5.10,
     brandCopay: 12.65,
     autoEnroll: ['Medicaid', 'QMB', 'SLMB', 'QI', 'SSI'],

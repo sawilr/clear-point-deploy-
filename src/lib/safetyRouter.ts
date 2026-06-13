@@ -29,7 +29,7 @@ const NO_HIT: SafetyResult = {
 const CRISIS_EN = [
   'kill myself', 'killing myself', 'suicide', 'suicidal', 'end my life', 'end it all',
   'want to die', 'wish i was dead', 'wish i were dead', 'no reason to live',
-  'self harm', 'self-harm', 'hurt myself', 'cut myself', 'overdose on purpose',
+  'self harm', 'self-harm', 'hurt myself', 'harm myself', 'harming myself', 'cut myself', 'cutting myself', 'overdose on purpose',
   'give up on life', 'no longer want to live', "can't go on", 'cant go on',
 ];
 const CRISIS_ES = [
