@@ -127,6 +127,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   const [state, setState] = useState<ConversationState>(createInitialState);
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  // Sawil 2026-06-13 — serializes the paced outer-flow bot messages (pushBotTyped)
+  // so back-to-back scripted replies never overlap.
+  const typedChainRef = useRef<Promise<void>>(Promise.resolve());
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
   // Sawil 2026-06 — true when the chat is intentionally closed (e.g. an
   // out-of-service-area ZIP). Disables the input so we don't engage the LLM
@@ -524,7 +527,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // Apology + continue from saved ZIP. Advance to path_select so
         // subsequent inputs flow into normal Path A/B/C inference.
         setOuterState((s) => ({ ...s, step: 'path_select' }));
-        setTimeout(() => pushBotMessageDirect(isEs
+        setTimeout(() => pushBotTyped(isEs
           ? `Tiene razón, disculpe. Usaré el código postal que me compartió (${outerState.zip}). ¿En qué le puedo ayudar hoy?`
           : `You are right, my apologies. I will use the ZIP code you shared (${outerState.zip}). How can I help you today?`), 300);
         return;
@@ -594,7 +597,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             const attempts = (outerState.zipAttempts || 0) + 1;
             if (attempts < 2) {
               setOuterState((s) => ({ ...s, zipAttempts: attempts }));
-              setTimeout(() => pushBotMessageDirect(isEs
+              setTimeout(() => pushBotTyped(isEs
                 ? 'Ese código postal no parece válido. ¿Me podría confirmar su código postal real de 5 dígitos? Así puedo identificar su zona correctamente.'
                 : "That ZIP code doesn't look quite right. Could you confirm your real 5-digit ZIP code? That way I can identify your area correctly."), 300);
               return;
@@ -602,7 +605,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             // 2nd fake — stop asking and HAND OFF TO THE LLM so the user is
             // never stuck. We DO NOT store the fake as a valid zone.
             handOffToLLM({ problemSummary: outerState.problemSummary });
-            setTimeout(() => pushBotMessageDirect(isEs
+            setTimeout(() => pushBotTyped(isEs
               ? 'No se preocupe, podemos continuar sin el código postal por ahora. ¿En qué le puedo ayudar hoy?'
               : "No problem — we can continue without the ZIP for now. How can I help you today?"), 300);
             return;
@@ -622,7 +625,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               ? `Gracias. ClearPoint solo atiende Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con su área. Le deseamos lo mejor.`
               : `Thank you. ClearPoint serves only New York, New Jersey, and Connecticut, so we're not able to help in your area. We wish you the best.`;
             setChatClosed(true);
-            setTimeout(() => pushBotMessageDirect(out), 300);
+            setTimeout(() => pushBotTyped(out), 300);
             return;
           }
           // In NY/NJ/CT — store zone, hand off to the LLM, confirm the area.
@@ -634,7 +637,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             : (isEs
                 ? `Gracias. Anoté su código postal ${zip} como su zona de servicio. ¿En qué le puedo ayudar hoy?`
                 : `Thank you. I've noted your ZIP ${zip} as your service area. How can I help you today?`);
-          setTimeout(() => pushBotMessageDirect(zipBridge), 300);
+          setTimeout(() => pushBotTyped(zipBridge), 300);
           return;
         }
         // (b2) Malformed ZIP attempt — a pure number that is NOT a clean 5-digit
@@ -647,7 +650,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // the 5-digit ZIP; never hand "ok" to the LLM as a problem or lose context.
         if (/^(ok(ay)?|oka|k|dale|s[ií]|yes|yeah|yep|yup|claro|correcto|bueno|bien|vale|perfecto|listo|de acuerdo|entendido|aj[aá]|sure|got it|sip|simon)\.?$/i.test(trimmed)) {
           pushUserMessageDirect(trimmed);
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Perfecto. Escriba su código postal de 5 dígitos.'
             : 'Perfect. Please enter your 5-digit ZIP code.'), 300);
           return;
@@ -658,13 +661,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           const zipTries = (outerState.zipAttempts || 0) + 1;
           if (zipTries < 2) {
             setOuterState((s) => ({ ...s, zipAttempts: zipTries }));
-            setTimeout(() => pushBotMessageDirect(isEs
+            setTimeout(() => pushBotTyped(isEs
               ? 'Un código postal tiene 5 dígitos — ese tiene otra cantidad. ¿Me lo confirma? (por ejemplo, 11354). O si prefiere, dígame en qué le puedo ayudar.'
               : "A ZIP code has 5 digits — that one has a different count. Could you confirm it? (for example, 11354). Or just tell me how I can help."), 300);
             return;
           }
           handOffToLLM({ problemSummary: outerState.problemSummary });
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'No se preocupe, sigamos sin el código postal. ¿En qué le puedo ayudar hoy?'
             : "No problem, let's continue without the ZIP. How can I help you today?"), 300);
           return;
@@ -687,14 +690,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         const inferred = inferInitialPath(trimmed);
         if (inferred === 'A') {
           setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity', problemSummary: trimmed }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Entiendo, eso puede ser frustrante — déjeme ayudarle. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
             : "I understand — that can be frustrating, and I'm here to help. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?"), 350);
           return;
         }
         if (inferred === 'C') {
           setOuterState((s) => ({ ...s, path: 'C', step: 'C_resources_shown', problemSummary: trimmed }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Entiendo, eso suena complicado. Ese tema en particular no es nuestra especialidad en Clear Point, pero no quiero dejarle sin opciones. Aquí tiene algunos recursos que pueden ayudarle:\n\n• Medicare.gov o 1-800-MEDICARE\n• Su SHIP local (shiphelp.org)\n• Para Medicaid: HRA u oficina estatal de su estado\n\nSi alguna parte de su pregunta tiene que ver con Medicare, con gusto le pongo en contacto con un asesor. ¿Le gustaría?'
             : "I understand — that sounds like a lot. That specific topic isn't a Clear Point specialty, but I don't want to leave you without options. Here are some resources that may help:\n\n• Medicare.gov or 1-800-MEDICARE\n• Your local SHIP (shiphelp.org)\n• For Medicaid: HRA or your state office\n\nIf any part of your question touches Medicare, I'd be glad to connect you with an advisor. Would you like that?"), 350);
           return;
@@ -703,7 +706,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // Medicare A/B?" qualification questions were removed. Go straight to
         // Path B and ask the service area (ZIP or state) so Clara can help.
         setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_state', problemSummary: trimmed }));
-        setTimeout(() => pushBotMessageDirect(isEs
+        setTimeout(() => pushBotTyped(isEs
           ? 'Con gusto le ayudo con eso. Para darle información correcta de su área, ¿cuál es su código postal? (O dígame su estado: NY, NJ o CT.)'
           : "I'd be glad to help with that. So I can give you accurate information for your area, what is your ZIP code? (Or tell me your state: NY, NJ, or CT.)"), 350);
         return;
@@ -722,21 +725,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           // Skip B_q_state when ZIP already gave us the state.
           if (outerState.state) {
             setOuterState((s) => ({ ...s, path: 'B', medicareStatus: ms, step: 'B_q_topic' }));
-            setTimeout(() => pushBotMessageDirect(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
+            setTimeout(() => pushBotTyped(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
           } else {
             setOuterState((s) => ({ ...s, path: 'B', medicareStatus: ms, step: 'B_q_state' }));
-            setTimeout(() => pushBotMessageDirect(isEs ? '¿En qué estado vive?' : 'Which state do you live in?'), 350);
+            setTimeout(() => pushBotTyped(isEs ? '¿En qué estado vive?' : 'Which state do you live in?'), 350);
           }
           return;
         }
         if (inferYesClient(trimmed)) {
           setOuterState((s) => ({ ...s, path: 'A', step: 'A_collect_identity' }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Perfecto. Para proteger su privacidad, ¿me comparte su nombre completo y los últimos 4 dígitos del teléfono que tenemos registrado?'
             : 'Got it. To protect your privacy, may I have your full name and the last 4 digits of the phone we have on file?'), 350);
         } else {
           setOuterState((s) => ({ ...s, path: 'B', step: 'B_q_medicare' }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Con gusto le oriento. Para asegurarme de darle la información correcta, ¿ya tiene Medicare Parte A y Parte B activos, o está cerca de cumplir 65?'
             : "I'd be glad to help. So I can give you the right information, do you already have Medicare Parts A and B active, or are you near turning 65?"), 350);
         }
@@ -750,11 +753,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // Sawil 2026-06 — Skip state question if ZIP already gave us the state.
         if (outerState.state) {
           setOuterState((s) => ({ ...s, medicareStatus: ms, step: 'B_q_topic' }));
-          setTimeout(() => pushBotMessageDirect(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
+          setTimeout(() => pushBotTyped(isEs ? 'Gracias. ¿Sobre qué tema le orientamos?' : 'Thank you. What can we guide you on?'), 350);
           return;
         }
         setOuterState((s) => ({ ...s, medicareStatus: ms, step: 'B_q_state' }));
-        setTimeout(() => pushBotMessageDirect(isEs
+        setTimeout(() => pushBotTyped(isEs
           ? 'Gracias. ¿Y en qué estado vive?'
           : 'Thank you. And which state do you live in?'), 300);
         return;
@@ -775,7 +778,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         if (st === 'other') {
           pushUserMessageDirect(trimmed);
           setOuterState((s) => ({ ...s, state: st, step: 'C_resources_shown', path: 'C', outOfScopeCategory: 'outside_state' }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Actualmente Clear Point atiende NY, NJ y CT, así que no podría asesorarle sobre planes en su estado. Pero no quiero dejarle sin opciones. Para Medicare en su área puede usar:\n\n• Medicare.gov o 1-800-MEDICARE (1-800-633-4227), disponible 24/7\n• Su SHIP local para orientación gratuita e imparcial (shiphelp.org)\n• Un asesor licenciado de Medicare en su estado\n\n¿Aun así desea que Clear Point le contacte?'
             : "Clear Point currently serves NY, NJ, and CT, so we wouldn't be able to advise on plans in your state. But I don't want to leave you without options. For Medicare in your area, you can use:\n\n• Medicare.gov or 1-800-MEDICARE (1-800-633-4227), available 24/7\n• Your local SHIP for free, unbiased guidance (shiphelp.org)\n• A licensed Medicare advisor in your state\n\nWould you still like Clear Point to contact you?"), 350);
           return;
@@ -797,12 +800,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         setOuterState(newState);
         if (!isQualifiedProspect(newState)) {
           setOuterState((s) => ({ ...s, step: 'C_resources_shown', path: 'C' }));
-          setTimeout(() => pushBotMessageDirect(isEs
+          setTimeout(() => pushBotTyped(isEs
             ? 'Gracias. Para esta situación específica, le sugiero Medicare.gov o su SHIP local. ¿Aun así desea que Clear Point le contacte?'
             : 'Thank you. For this specific situation, I suggest Medicare.gov or your local SHIP. Would you still like Clear Point to contact you?'), 350);
           return;
         }
-        setTimeout(() => pushBotMessageDirect(isEs
+        setTimeout(() => pushBotTyped(isEs
           ? 'Gracias por compartir eso. Permítame contarle brevemente cómo trabajamos en Clear Point: somos brokers de Medicare independientes y licenciados. Esto significa tres cosas para usted — nuestro servicio no tiene costo, un asesor licenciado revisa su situación personalmente, y nunca le pasamos entre call centers. ¿Le parece bien que le tome su nombre y teléfono para que un asesor le contacte?'
           : "Thank you for sharing that. Let me briefly tell you how we work at Clear Point — we are independent, licensed Medicare brokers. What this means for you is three things: our service is at no cost to you, a licensed advisor reviews your situation personally, and you are never passed between call centers. Would it be alright to take your name and phone so an advisor can reach out?"), 400);
         return;
@@ -1045,6 +1048,28 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }]);
   }
 
+  // Sawil 2026-06-13 — human-paced delivery for the scripted outer-flow messages.
+  // Before this, the intake popped in instantly after a flat ~300ms (felt "too
+  // fast"). pushBotTyped shows the "Clara está escribiendo…" indicator for a
+  // content-scaled beat, then appends via pushBotMessageDirect. A ref-chained
+  // promise serializes back-to-back calls so messages never overlap. ONLY the
+  // setTimeout-wrapped outer-flow sites use this; the engine/LLM path and the
+  // direct lookup messages keep using pushBotMessageDirect and are unaffected.
+  function pushBotTyped(text: string) {
+    typedChainRef.current = typedChainRef.current.then(
+      () =>
+        new Promise<void>((resolve) => {
+          setIsTyping(true);
+          const delay = Math.min(600 + text.length * 12, 2000);
+          window.setTimeout(() => {
+            pushBotMessageDirect(text);
+            setIsTyping(false);
+            window.setTimeout(resolve, 120);
+          }, delay);
+        }),
+    );
+  }
+
   function pushUserMessageDirect(text: string) {
     setMessages((prev) => [...prev, {
       id: 'usr-' + Date.now() + '-' + Math.floor(Math.random() * 9999),
@@ -1101,7 +1126,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       : (isEs ? 'No, gracias' : 'No, thanks'));
     if (!yes) {
       setOuterState((s) => ({ ...s, step: 'B_done' }));
-      setTimeout(() => pushBotMessageDirect(isEs
+      setTimeout(() => pushBotTyped(isEs
         ? 'Entendido, sin presión. Gracias por considerarnos. Si en algún momento cambia de opinión, puede llamarnos al 1-866-310-8702 o regresar aquí — siempre estaremos para ayudarle.'
         : "Understood — no pressure at all. Thank you for considering us. If you ever change your mind, you can call us at 1-866-310-8702 or come back anytime. We'll always be here to help."), 300);
       return;
@@ -1126,7 +1151,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       step: 'asking_name',
     }));
     setOuterInProgress(false);
-    setTimeout(() => pushBotMessageDirect(isEs
+    setTimeout(() => pushBotTyped(isEs
       ? 'Perfecto. Para que un asesor licenciado de Clear Point le contacte, ¿cuál es su nombre completo?'
       : 'Perfect. So a licensed Clear Point advisor can reach out, what is your full name?'), 300);
   }
@@ -1139,13 +1164,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       : (isEs ? 'No, gracias' : 'No, thanks'));
     if (!optIn) {
       setOuterState((s) => ({ ...s, step: 'C_done' }));
-      setTimeout(() => pushBotMessageDirect(isEs
+      setTimeout(() => pushBotTyped(isEs
         ? 'Gracias por consultarnos. Espero que los recursos le sean de ayuda. Si en algún momento tiene una pregunta de Medicare, estaremos aquí — que tenga un buen día.'
         : "Thank you for reaching out. I hope the resources help. If a Medicare question ever comes up, we'll be here. Have a good day."), 300);
       return;
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
-    setTimeout(() => pushBotMessageDirect(isEs
+    setTimeout(() => pushBotTyped(isEs
       ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
       : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time."), 300);
   }
@@ -1249,7 +1274,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         const closingEn = officeStatus.isOpen
           ? "All set, thank you. Your information is now with a licensed advisor. If you'd rather speak right now, you can call us at 1-866-310-8702; otherwise, an advisor will reach out to you shortly."
           : "All set, thank you. Your information is now with a licensed advisor. We're currently after hours, so an advisor will call you back on the next business day. Have a good evening.";
-        setTimeout(() => pushBotMessageDirect(isEs ? closingEs : closingEn), 200);
+        setTimeout(() => pushBotTyped(isEs ? closingEs : closingEn), 200);
       }
     } catch {
       setSubmitState('failed');
@@ -1277,7 +1302,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     setOuterState((s) => ({ ...s, language: lang, step: 'awaiting_zip' }));
     const isEs = lang === 'es';
     pushUserMessageDirect(isEs ? 'Español' : 'English');
-    setTimeout(() => pushBotMessageDirect(isEs
+    setTimeout(() => pushBotTyped(isEs
       ? 'Hola, soy Clara, su asistente bilingüe de Clear Point. Para darle información correcta de su área, primero dígame su código postal de 5 dígitos.'
       : "Hi, I'm Clara, your bilingual assistant at Clear Point. So I can give you accurate information for your area, first tell me your 5-digit ZIP code."), 300);
   }
