@@ -2721,7 +2721,19 @@ export function processMessage(
       // Step 1 — try to parse email from THIS message if email step is active
       const emailMatch = _msg.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
       const emailCandidate = emailMatch?.[0] || '';
-      const userSaidSkip = /^(no|nope|nada|saltar|skip|next|siguiente|ninguno|ningun|no gracias|no thanks)\.?$/i.test(_msg);
+      // Sawil 2026-06-13 — robust skip on the OPTIONAL email step. Catch "salta"
+      // (missing r), "saltar/saltarlo/saltear", "no tengo email", "sin correo",
+      // etc.; AND auto-skip after one re-prompt so a stuck/typo input can NEVER
+      // loop forever (Mario Reyes "salta" loop). A real email (has @) never
+      // matches these anchored patterns, so it is still captured normally.
+      const _yesToEmail = /^(s[ií]|yes|yeah|yep|claro|sure|ok|okay|por favor|please|le doy|si por favor|s[ií] por favor|s[ií]?,? le doy.*correo|yes.*email)/i.test(_msg);
+      const _explicitSkip = /^(no|nope|nada|salt\w*|skip|skp|next|siguiente|ninguno|ningun|paso|m[aá]s tarde|later|prefiero no|no quiero|no gracias|no thanks|no tengo( (correo|email|uno|ninguno))?|no (correo|email)|sin (correo|email)|no uso (correo|email))\.?$/i.test(_msg);
+      // Auto-skip fires ONLY for short, non-email-looking input, so an invalid
+      // email TYPO like "mariogmail.com" still re-prompts instead of skipping.
+      const _looksLikeEmailAttempt = /@|\.[a-z]{2,}/i.test(_msg);
+      const userSaidSkip = _explicitSkip
+        || (state.lastBotIntent === 'handoff_asking_email_retry'
+            && !emailCandidate && !_yesToEmail && !_looksLikeEmailAttempt && _msg.length <= 20);
       const haveEmail = !!(state.email || emailCandidate);
       const finalEmail = state.email || emailCandidate;
 

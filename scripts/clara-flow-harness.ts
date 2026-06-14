@@ -80,6 +80,15 @@ lines.push('C. Email opcional');
   const w2 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
   const sk2 = processMessage('saltar', w2.st);
   check('C3 "saltar" continúa', !!sk2.response, sk2.response.slice(0, 60));
+  // C4 — "salta" (typo, missing r) must be treated as skip, not loop
+  const w4 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const sk4 = processMessage('salta', w4.st);
+  check('C4 "salta" (typo) NO re-pregunta email', !/escribe un correo v[aá]lido|puede decir "saltar"|type a valid email/i.test(sk4.response), sk4.response.slice(0, 70));
+  // C5 — unrecognized input on the 2nd email attempt auto-skips (no infinite loop)
+  const w5 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const r5a = processMessage('xyz', w5.st);
+  const r5b = processMessage('xyz', (r5a as Any).newState);
+  check('C5 input raro repetido -> auto-skip (no loop)', !/escribe un correo v[aá]lido|type a valid email/i.test(r5b.response), r5b.response.slice(0, 70));
 }
 
 // ---- D. Consentimiento: el collector no auto-marca consentimiento
