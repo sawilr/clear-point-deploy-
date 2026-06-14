@@ -3418,7 +3418,7 @@ export async function processMessageAsync(
   // "vive en ..." requires the MULTI-STATE list (NJ/CT) so it only fires on the
   // re-ask question ("¿vive en NY, NJ o CT?"), never on a single-state statement
   // ("como vive en NY"). The other patterns are inherently question-phrased.
-  const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip)/i;
+  const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|necesito[^.?!]{0,30}(zip|c[oó]digo postal)|me (d[ií]ga|da|puede dar|proporcione|indique)[^.?!]{0,20}(zip|c[oó]digo postal)|(zip|c[oó]digo postal) de 5 d[ií]gitos|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip|(need|provide|share)[^.?!]{0,20}(zip|postal code))/i;
   if (_zipKnown && !_moved.test(userMessage) && _reAsksZip.test(_resp)) {
     const _zi = getZipInfo(state.zipCode || '');
     const _place = _zi && _zi.county ? `${_zi.county}, ${_zi.state}` : (state.state === 'NY' ? 'New York' : state.state === 'NJ' ? 'New Jersey' : 'Connecticut');
