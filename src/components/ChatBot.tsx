@@ -309,7 +309,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         options: [
           { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Part D prescriptions', value: 'edu_part_d' },
-          { label: 'Go back', value: 'edu_parts_ab' },
+          { label: 'Go back to topics', value: 'edu_back_to_topics' },
         ],
         pace: 'short',
       },
@@ -851,7 +851,7 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Parte D - recetas', value: 'edu_part_d' },
-          { label: 'Volver', value: 'edu_parts_ab' },
+          { label: 'Volver a temas', value: 'edu_back_to_topics' },
         ],
         pace: 'short',
       },
