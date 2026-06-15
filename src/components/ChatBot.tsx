@@ -2763,6 +2763,26 @@ export function ChatBot() {
     return () => window.removeEventListener('clearpoint:open-zara', handler as EventListener);
   }, []);
 
+  // Sawil 2026-06-15 — Zara modal polish: while the panel is open, (1) close on
+  // Escape and (2) lock background scroll. Paired with the backdrop overlay so the
+  // page behind Zara is not clickable/scrollable. Listener + scroll lock are torn
+  // down on close/minimize/unmount (no duplicate listeners). Active ONLY when
+  // Zara's own panel is open, so it never affects Clara or other components.
+  useEffect(() => {
+    if (!(isOpen && !isMinimized)) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setIsOpen(false); setIsMinimized(false); resetChat(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isMinimized]);
+
   // PHASE 9 fix — trigger welcome on first open, regardless of HOW chat
   // was opened (Zara's own button OR BotLauncher event). Before this fix,
   // opening via BotLauncher set isOpen=true but skipped startWelcome(),
@@ -4817,11 +4837,22 @@ export function ChatBot() {
         </button>
       )}
 
+      {/* Sawil 2026-06-15 — modal backdrop: subtle on-brand tint behind Zara that
+          blocks clicks to the page and closes Zara on tap. z-40 sits BELOW the
+          panel (z-50) so Zara itself stays fully interactive. */}
+      {isOpen && !isMinimized && (
+        <div
+          aria-hidden="true"
+          onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }}
+          className="fixed inset-0 z-40 bg-earth-900/30 animate-fade-in"
+        />
+      )}
+
       {/* Full chat window */}
       {isOpen && !isMinimized && (
         <div
           role="dialog"
-          aria-modal="false"
+          aria-modal="true"
           aria-labelledby="zara-chat-title"
           className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
           style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px`, bottom: `${(zKbBottom || 0) + 8}px` } : undefined}
@@ -4934,14 +4965,14 @@ export function ChatBot() {
           </div>
 
           <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center justify-between gap-2">
-            <a href={CHATBOT_CONTEXT.phoneHref} className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors">
+            <a href={CHATBOT_CONTEXT.phoneHref} className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 hover:bg-cream-200 transition-colors">
               <Phone className="w-4 h-4" />
               {displayLanguage === 'es' ? 'Llamar' : 'Call'}
             </a>
             <button
               type="button"
               onClick={() => startPlanReview(memory.interestType || 'Plan review')}
-              className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors"
+              className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 hover:bg-cream-200 transition-colors"
             >
               <User className="w-4 h-4" />
               {displayLanguage === 'es' ? 'Asesor' : 'Advisor'}
