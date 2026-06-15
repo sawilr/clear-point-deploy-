@@ -5,7 +5,16 @@ import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './',
+  // Sawil 2026-06-15 — ABSOLUTE asset base. With the old relative base ('./'),
+  // the JS bundle was referenced as "./assets/…", which resolves correctly on
+  // no-slash deep links (/about → /assets/…) but BREAKS on trailing-slash URLs
+  // (/about/ → /about/assets/… → Vercel's SPA rewrite returns index.html as
+  // text/html → the module fails to execute → blank page, no React, no Clara/
+  // Zara). The v2 audit's "CRITICAL SSR failure" + "no chatbot deployed" were
+  // both this one bug (their crawler hit trailing-slash URLs). Absolute '/'
+  // makes /assets/… resolve correctly at ANY URL depth. Site is served at the
+  // domain root, so this is the correct, lower-risk base.
+  base: '/',
   plugins: [inspectAttr(), react()],
   // PHASE A15 — strip console.* and debugger from production bundles.
   esbuild: {
