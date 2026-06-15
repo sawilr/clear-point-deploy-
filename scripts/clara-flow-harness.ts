@@ -2,7 +2,7 @@
 // Sawil 2026-06-12 — Contact-flow regression harness (3 bugs).
 // Drives the pure deterministic collector (processMessage) offline.
 // Run: npx tsx _flowharness.ts
-import { processMessage, _isMedicareCostComplaint, _looksLikeStatedProblem, _buildPostZipReaskReplacement } from '../src/lib/customerServiceEngine';
+import { processMessage, createInitialState, _isMedicareCostComplaint, _looksLikeStatedProblem, _buildPostZipReaskReplacement } from '../src/lib/customerServiceEngine';
 
 type Any = any;
 let PASS = 0, FAIL = 0;
@@ -89,6 +89,10 @@ lines.push('C. Email opcional');
   const r5a = processMessage('xyz', w5.st);
   const r5b = processMessage('xyz', (r5a as Any).newState);
   check('C5 input raro repetido -> auto-skip (no loop)', !/escribe un correo v[aá]lido|type a valid email/i.test(r5b.response), r5b.response.slice(0, 70));
+  // C6 — "saltart'" (typo + trailing apostrophe, live case) must skip, not re-ask
+  const w6 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const sk6 = processMessage("saltart'", w6.st);
+  check('C6 "saltart\'" (typo+apóstrofo) NO re-pregunta email', !/escribe un correo v[aá]lido|type a valid email|puede decir "saltar"/i.test(sk6.response), sk6.response.slice(0, 70));
 }
 
 // ---- D. Consentimiento: el collector no auto-marca consentimiento
@@ -178,10 +182,10 @@ lines.push('G. Post-ZIP topic preservation');
   check('G2 cost EN → asks the source (Social Security/pharmacy/doctor/bill)',
     /social security/i.test(g2) && /pharmacy/i.test(g2) && /doctor/i.test(g2) && /bill/i.test(g2), g2.slice(0, 80));
   check('G2b cost EN → does NOT repeat "ZIP"', !/\bzip\b/i.test(g2), g2.slice(0, 80));
-  // G3 — non-cost statement: concrete clarifier with options, never the ZIP parrot
+  // G3 — non-cost statement: helper returns null so the guard DELEGATES to the
+  // deterministic engine (topic-aware) instead of handing back a generic menu.
   const g3 = _buildPostZipReaskReplacement('necesito ayuda con una carta que recibí', true);
-  check('G3 no-costo ES → clarificador concreto con opciones', /factura|medicamento|doctor|carta|costo/i.test(g3), g3.slice(0, 80));
-  check('G3b no-costo ES → NO repite "código postal"', !/c[oó]digo postal/i.test(g3), g3.slice(0, 80));
+  check('G3 no-costo → null (delegar al motor, no menú genérico)', g3 === null, String(g3).slice(0, 80));
   // G4 — cost-complaint classifier matches every mission example
   const costExamples = [
     'me están cobrando mucho de medicare', 'me sacan mucho', 'me llegó una factura',
@@ -200,6 +204,51 @@ lines.push('G. Post-ZIP topic preservation');
   check('G6 recuerda problema sustantivo', _looksLikeStatedProblem('me están cobrando mucho de medicare'));
   check('G6b NO guarda pushback/yes-no como problema',
     !_looksLikeStatedProblem('ya te dije') && !_looksLikeStatedProblem('si') && !_looksLikeStatedProblem('no'));
+  // G7 — DOCTOR/PLAN problem after ZIP (the live "mi doctor te dije" bug): the
+  // helper returns null so the guard DELEGATES, and the deterministic engine it
+  // delegates to classifies a real doctor topic + asks on-topic — NOT the old
+  // generic "factura/medicamento/doctor/carta/costo" menu.
+  const docMsg = 'tengo problemas con mi doctor primario me pide cambiar de plan';
+  check('G7 doctor → helper null (guard delega, no menú)', _buildPostZipReaskReplacement(docMsg, true) === null);
+  {
+    let s: any = createInitialState();
+    for (const t of ['Español', '10033']) { s = processMessage(t, s).newState; }
+    const rd = processMessage(docMsg, s);
+    check('G7b doctor → motor clasifica tema doctor (no menú)',
+      (rd.newState as any).serviceCategory === 'doctor_provider_network'
+        && !/una carta que recibió, o un costo de Medicare/i.test(rd.response),
+      `cat=${(rd.newState as any).serviceCategory} | ${rd.response.slice(0, 60)}`);
+  }
+}
+
+// ---- H. Profanity / slurs rejected AS a name (EN + ES); real surnames kept
+lines.push('H. Groserías como nombre');
+{
+  const r1 = processMessage('pendejo', seedAskName());
+  check('H1 ES grosería → re-pide nombre real, no la guarda', /nombre real|real name/i.test(r1.response) && (r1.newState as Any).name !== 'Pendejo', `name=${(r1.newState as Any).name}`);
+  const r2 = processMessage('cabrón', seedAskName());
+  check('H2 acento ("cabrón") detectado', /nombre real|real name/i.test(r2.response) && !(r2.newState as Any).name, r2.response.slice(0, 50));
+  const seedEn = { ...seedAskName(), language: 'en' } as Any;
+  const r3 = processMessage('fuck', seedEn);
+  check('H3 EN grosería → re-pide (inglés)', /real name/i.test(r3.response), r3.response.slice(0, 50));
+  const r4 = processMessage('hijo de puta', seedAskName());
+  check('H4 multi-palabra con grosería → re-pide', /nombre real/i.test(r4.response));
+  // legit names must NOT be rejected (no substring false positives)
+  const g1 = processMessage('Toto', seedAskName());
+  check('H5 nombre legítimo "Toto" aceptado', /apellido|last name/i.test(g1.response));
+  const g2 = processMessage('Dickson', seedAskName());
+  check('H6 apellido "Dickson" (contiene "dick") NO rechazado', /apellido|last name/i.test(g2.response) && /Dickson/i.test(String((g2.newState as Any).name)), `name=${(g2.newState as Any).name}`);
+  const g3 = processMessage('Cassidy', seedAskName());
+  check('H7 "Cassidy" (contiene "ass") NO rechazado', /apellido|last name/i.test(g3.response), g3.response.slice(0, 50));
+  // H8 — broad profanity batch (EN + ES + Spanglish) ALL rejected
+  const moreProfanity = ['puto', 'verga', 'maricon', 'chinga', 'huevon', 'bitch', 'nigga', 'slut', 'gilipollas',
+    'cabrona', 'mamon', 'culero', 'pussy', 'asshole', 'zorra', 'baboso', 'jodete', 'fokin', 'singao', 'pendeja'];
+  const missedProf = moreProfanity.filter((w) => !/nombre real|real name/i.test(processMessage(w, seedAskName()).response));
+  check(`H8 batch de groserías (${moreProfanity.length}) todas rechazadas`, missedProf.length === 0, 'NO rechazadas: ' + missedProf.join(', '));
+  // H9 — real names/surnames with risky substrings must NOT be rejected
+  const legit = ['Dickson', 'Cassidy', 'Bass', 'Cockburn', 'Hancock', 'Concha', 'Negron', 'Pena', 'Garcia', 'Sassoon', 'Cummings'];
+  const wrongReject = legit.filter((n) => /nombre real|real name/i.test(processMessage(n, seedAskName()).response));
+  check('H9 nombres reales NO rechazados (cero falsos positivos)', wrongReject.length === 0, 'rechazados por error: ' + wrongReject.join(', '));
 }
 
 console.log(lines.join('\n'));

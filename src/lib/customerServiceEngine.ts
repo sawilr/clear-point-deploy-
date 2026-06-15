@@ -65,6 +65,14 @@ export interface ConversationState {
    *  like "ya te dije". (serviceZip == zipCode; supportStage == step.) */
   activeCaseTopic?: string;
   lastUserProblem?: string;
+  /** Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7, LLM-free).
+   *  source → Part B confirm → income → net/gross → MSP/QMB/SLMB/QI education. */
+  costFlowStage?: 'ask_source' | 'confirm_part_b' | 'ask_income' | 'ask_net_gross' | 'offered_advisor' | 'done';
+  costChargeSource?: 'social_security' | 'pharmacy' | 'provider' | 'bill' | 'unknown';
+  costMonthlyAmount?: string;
+  incomeMonthly?: string;
+  incomeIsNet?: boolean;
+  costFlowAttempts?: number;
   intent: string;
   emotionalState: string;
   turnCount: number;
@@ -541,6 +549,79 @@ export function validateEmail(raw: string): { isValid: boolean; cleaned: string;
   return { isValid: true, cleaned };
 }
 
+// Sawil 2026-06-15 — profanity / slur blocklist for the NAME field (EN + ES),
+// accent- and ñ-normalized so "cabrón", "coño", "maricón" are caught. EXACT
+// whole-word match only (never substring) so real surnames like "Dickson" or
+// "Cassidy" are never rejected. Used by validateName, looksLikeNonName, and the
+// structural name collector to keep troll/junk names out of the GHL lead.
+const PROFANITY_NAMES = new Set<string>([
+  // ── EN — fuck family + Spanglish/leetspeak ──
+  'fuck', 'fucks', 'fucked', 'fucking', 'fuckin', 'fucker', 'fuckers', 'fuckface', 'fuckhead', 'fuckwit',
+  'fuckoff', 'fucku', 'fuckyou', 'motherfuck', 'motherfucker', 'motherfuckers', 'motherfucking', 'mofo',
+  'stfu', 'gtfo', 'wtf', 'fck', 'fk', 'fuk', 'fuq', 'fuxk', 'fvck', 'phuck', 'fokin', 'fokyu', 'fok', 'foking',
+  // ── EN — shit family ──
+  'shit', 'shits', 'shat', 'shitty', 'shithead', 'shitface', 'shithole', 'bullshit', 'dipshit', 'horseshit',
+  // ── EN — ass family ──
+  'ass', 'asses', 'asshole', 'assholes', 'asshat', 'asswipe', 'jackass', 'dumbass', 'smartass', 'bitchass',
+  // ── EN — bitch / cunt ──
+  'bitch', 'bitches', 'bitchy', 'biatch', 'cunt', 'cunts', 'kunt',
+  // ── EN — genital / sexual ──
+  'pussy', 'pussies', 'cock', 'cocks', 'cocksucker', 'dickhead', 'dickface', 'dickwad', 'penis', 'dildo',
+  'boner', 'jizz', 'wank', 'wanker', 'wankers', 'blowjob', 'handjob', 'porn', 'horny', 'nutsack', 'titty', 'tits',
+  // ── EN — whore / slut ──
+  'whore', 'whores', 'slut', 'sluts', 'slutty', 'hoe', 'hoes', 'thot', 'skank', 'skanky',
+  // ── EN — misc insults ──
+  'bastard', 'bastards', 'douche', 'douches', 'douchebag', 'twat', 'twats', 'bollocks', 'prick', 'pricks',
+  'knobhead', 'tosser', 'scumbag', 'arsehole', 'arse', 'goddamn', 'piss', 'pissed', 'bimbo',
+  // ── EN — ableist / generic ──
+  'retard', 'retards', 'retarded', 'tard', 'idiot', 'idiots', 'moron', 'morons', 'imbecile', 'stupid', 'loser', 'losers',
+  // ── EN — slurs (racial / ethnic / homophobic / trans) ──
+  'nigger', 'niggers', 'nigga', 'niggas', 'niga', 'spic', 'spics', 'chink', 'chinks', 'kike', 'kikes',
+  'wetback', 'wetbacks', 'beaner', 'beaners', 'gook', 'gooks', 'raghead', 'towelhead', 'paki', 'pakis',
+  'faggot', 'faggots', 'fag', 'fags', 'tranny', 'trannies', 'shemale',
+  // ── ES — puta / hijo de puta ──
+  'puta', 'putas', 'puto', 'putos', 'putita', 'putito', 'putamadre', 'putamare', 'hijoputa', 'hijodeputa',
+  'hijueputa', 'jueputa', 'hdp', 'malparido', 'malparida', 'pendanga',
+  // ── ES — mierda ──
+  'mierda', 'mierdas', 'comemierda', 'comemierdas', 'mierdero',
+  // ── ES — cabron / pendejo ──
+  'cabron', 'cabrona', 'cabrones', 'cabronazo', 'pendejo', 'pendeja', 'pendejos', 'pendejas', 'pendejada', 'pendejadas',
+  // ── ES — verga / pinga / polla ──
+  'verga', 'vergas', 'vergazo', 'vergudo', 'vergota', 'pinga', 'pinguda', 'pija', 'pijas', 'polla', 'pollas',
+  'chocha', 'panocha', 'chucha', 'comepinga', 'comebicho',
+  // ── ES — coño / carajo / cojones ──
+  'cono', 'conazo', 'carajo', 'carajos', 'cojones', 'cojudo', 'cojuda', 'puneta',
+  // ── ES — chinga / chingar ──
+  'chinga', 'chingar', 'chingada', 'chingado', 'chingados', 'chingadera', 'chingon', 'chingona', 'chingate',
+  'chingatumadre', 'chingatumare', 'rechinga',
+  // ── ES — joder ──
+  'joder', 'jodido', 'jodida', 'jodete', 'jodanse',
+  // ── ES — maricon / joto ──
+  'marica', 'maricas', 'maricon', 'maricona', 'maricones', 'mariquita', 'joto', 'jota', 'jotos', 'maricueca', 'maricoon',
+  // ── ES — culo / culero ──
+  'culo', 'culos', 'culito', 'culero', 'culera', 'culeros', 'culiao', 'culiado',
+  // ── ES — mamar / chupar ──
+  'mamada', 'mamadas', 'mamon', 'mamona', 'mamaguevo', 'mamahuevo', 'mamahuevos', 'mamabicho', 'mamapinga',
+  'chupame', 'chupamela', 'chupapija', 'chupaverga',
+  // ── ES — perra / zorra ──
+  'perra', 'perras', 'zorra', 'zorras',
+  // ── ES — generic insults (regional incl.) ──
+  'gilipollas', 'capullo', 'capullos', 'tarado', 'tarados', 'baboso', 'babosa', 'estupido', 'estupida',
+  'idiota', 'imbecil', 'imbeciles', 'naco', 'naca', 'sangron', 'sangrona', 'conchatumadre', 'conchetumadre',
+  'malnacido', 'malnacida', 'singao', 'mojon', 'pinche', 'huevon', 'webon', 'boludo', 'pelotudo', 'forro',
+  'cagada', 'cagado', 'cagon', 'verguero',
+]);
+
+function _normForProfanity(w: string): string {
+  return (w || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/** True if ANY whole word in `text` is a profanity/slur (EN + ES, accent-safe). */
+function containsProfanity(text: string): boolean {
+  const words = _normForProfanity(text).split(/[^a-z]+/).filter(Boolean);
+  return words.some((w) => PROFANITY_NAMES.has(w));
+}
+
 export function validateName(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
   const lettersOnly = raw.trim().replace(/[^a-zA-ZáéíóúñÁÉÍÓÚÑ\s-']/g, '');
   if (!lettersOnly || lettersOnly.length < 2) {
@@ -559,13 +640,9 @@ export function validateName(raw: string): { isValid: boolean; cleaned: string; 
   if (words.length >= 2 && words.every((w) => SUSPICIOUS_NAMES.has(w))) {
     return { isValid: false, cleaned: lettersOnly, reason: 'suspicious_all_words' };
   }
-  // WAVE 47 — flag when ANY word is a slur / insult ("fuck off" etc.). We
-  // keep this list short so we don't reject legitimate surnames.
-  const HARD_INSULTS = new Set([
-    'fuck', 'shit', 'asshole', 'bitch', 'cunt',
-    'pendejo', 'cabron', 'culero', 'puta', 'mierda', 'idiota',
-  ]);
-  if (words.some((w) => HARD_INSULTS.has(w))) {
+  // WAVE 47 + 2026-06-15 — reject names that are profanity / slurs (EN + ES,
+  // accent-safe, whole-word so real surnames are never rejected).
+  if (containsProfanity(lettersOnly)) {
     return { isValid: false, cleaned: lettersOnly, reason: 'contains_insult' };
   }
   // Reject all-same-character ("AAA" etc.) and obvious keyboard rolls.
@@ -2564,6 +2641,13 @@ export function processMessage(
     return { response: out, newState, needsHuman: !!state.advisorHandoffStarted };
   }
 
+  // Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7), LLM-free.
+  // Intercept here (sync entry + harness) so cost diagnosis is verifiable.
+  {
+    const _cfTurn = _handleCostFlow(userMessage, state);
+    if (_cfTurn) return _cfTurn;
+  }
+
   // Sawil 2026-06-12 — CONTACT CORRECTION. During/after handoff collection, if
   // the caller says a captured field is wrong ("el email está mal", "no tienes
   // mi nombre completo", "corrija mi teléfono"), re-ask ONLY that field. Never a
@@ -2682,6 +2766,8 @@ export function processMessage(
     const looksLikeNonName = (s: string): boolean => {
       const lower = s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
       if (/\?/.test(s)) return true;
+      if (containsProfanity(s)) return true; // never accept a slur as a name
+
       // Spanish: questions, fillers, common verbs, common topic nouns,
       // chip-button command words, Medicare domain terms.
       if (/\b(que|cuanto|cuanta|cuando|como|donde|por que|porque|cual|cuales|si|no|gracias|hola|ayuda|pregunta|problema|factura|facturas|cobro|cobros|doctor|doctora|m[eé]dic|medico|medicos|medicamento|medicamentos|medicina|medicinas|receta|recetas|farmacia|carta|cartas|plan|planes|asesor|asesora|quiero|necesito|tengo|soy|estoy|es|son|opciones|nuevo|nueva|cliente|paciente|aqui|alla|esto|eso|aep|iep|sep|prefiero|prefiere|despues|antes|todavia|mas tarde|ahora|hoy|ma[ñn]ana|ayer|saltar|siguiente|ninguno|nada|continuar|comenzar|empezar|otra|otro|otros|otras|listo|correo|email|tel[eé]fono|nombre|prima|primas|copago|copagos|deducible|cobertura|red|medicare|medicaid|seguro|sociales)\b/i.test(lower)) return true;
@@ -2693,6 +2779,29 @@ export function processMessage(
       // is a stop-word-ish term. (Defensive — the above mostly catches it.)
       return false;
     };
+    // Sawil 2026-06-15 — reject profanity/slurs entered AS the name (EN + ES).
+    // Fires ONLY while we're actually collecting the name, so a vent during the
+    // phone/email step never trips it. Re-ask politely; never store a junk name.
+    const _collectingName = state.lastBotIntent === 'handoff_asking_name'
+      || state.lastBotIntent === 'handoff_asking_lastname'
+      || state.lastBotIntent === 'collecting_identity';
+    if (_collectingName && containsProfanity(_msg)) {
+      const outPN = isEs
+        ? 'Disculpe — para que un asesor licenciado pueda contactarle, necesito su nombre real, por favor.'
+        : 'Sorry — so a licensed advisor can reach you, I need your real name, please.';
+      const newStatePN: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        lastBotIntent: state.lastBotIntent === 'handoff_asking_lastname' ? 'handoff_asking_lastname' : 'handoff_asking_name',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: outPN, timestamp: Date.now() },
+        ],
+      };
+      return { response: outPN, newState: newStatePN, needsHuman: false };
+    }
     let nameCandidate = '';
     if (phoneDigits) {
       // Pull anything before/around the digits, strip the digits themselves
@@ -2734,7 +2843,7 @@ export function processMessage(
       // loop forever (Mario Reyes "salta" loop). A real email (has @) never
       // matches these anchored patterns, so it is still captured normally.
       const _yesToEmail = /^(s[ií]|yes|yeah|yep|claro|sure|ok|okay|por favor|please|le doy|si por favor|s[ií] por favor|s[ií]?,? le doy.*correo|yes.*email)/i.test(_msg);
-      const _explicitSkip = /^(no|nope|nada|salt\w*|skip|skp|next|siguiente|ninguno|ningun|paso|m[aá]s tarde|later|prefiero no|no quiero|no gracias|no thanks|no tengo( (correo|email|uno|ninguno))?|no (correo|email)|sin (correo|email)|no uso (correo|email))\.?$/i.test(_msg);
+      const _explicitSkip = /^(no|nope|nada|salt\w*|skip|skp|next|siguiente|ninguno|ningun|paso|m[aá]s tarde|later|prefiero no|no quiero|no gracias|no thanks|no tengo( (correo|email|uno|ninguno))?|no (correo|email)|sin (correo|email)|no uso (correo|email))['’.!]*$/i.test(_msg);
       // Auto-skip fires ONLY for short, non-email-looking input, so an invalid
       // email TYPO like "mariogmail.com" still re-prompts instead of skipping.
       const _looksLikeEmailAttempt = /@|\.[a-z]{2,}/i.test(_msg);
@@ -3347,6 +3456,253 @@ function _normalizeForCompare(s: string): string {
 
 /** Does this turn need to be handled by the structural layer (sync only)?
  *  Returns the structural response if yes; returns null to defer to LLM. */
+// ════════════════════════════════════════════════════════════════════════════
+// Sawil 2026-06-15 — DETERMINISTIC MEDICARE COST FLOW (turns 4-7, never the LLM)
+// "me cobran mucho" → source → Part B confirm → income → net/gross → MSP / QMB /
+// SLMB / QI education (conditional, compliance-safe) → advisor offer. Restates on
+// "ya te dije". Verifiable turn-by-turn via the flow harness. Lives entirely in
+// Clara CS — no Zara, no GHL writes, no UI changes. Never confirms eligibility.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Lenient money extractor for INSIDE the cost flow, where we just asked for an
+ *  amount/income so a bare 2-5 digit number IS the figure. Falls back to strict
+ *  parseAmount() for "$", "1.8k", "dólares". Skips leading-zero (ZIP-like). */
+function _costMoney(text: string): number | null {
+  const p = parseAmount(text);
+  if (p != null) return p;
+  const c = (text || '').toLowerCase().replace(/[,$]/g, ' ');
+  const mm = c.match(/\b([1-9]\d{1,4})\b/);
+  return mm ? parseInt(mm[1], 10) : null;
+}
+
+/** Where does a Medicare charge come from, from the caller's own words? */
+function _classifyCostSource(m: string): 'social_security' | 'pharmacy' | 'provider' | 'bill' | 'unknown' {
+  // No trailing \b on the group — these are intentional STEMS (medicament,
+  // m[eé]dic, descuent) that must match plurals/conjugations (medicamentos,
+  // medico, descuentan). A trailing \b would break those mid-word.
+  if (/\b(seguro social|social security|del social|el social|del cheque|mi cheque|del ss\b|ssa|me lo (sacan|quitan|descuentan)|me (sacan|quitan|sacaron|quitaron)|descuent|cada mes|mensual|la prima|prima de|parte b|part b|la b|premium)/.test(m)) return 'social_security';
+  if (/\b(farmacia|pharmacy|medicament|medicina|medicine|drug|receta|pastilla)/.test(m)) return 'pharmacy';
+  if (/\b(doctor|m[eé]dic[oa]s?\b|hospital|cl[ií]nic|especialista|copago|copay|coseguro|coinsurance|visita)/.test(m)) return 'provider';
+  if (/\b(factura|bill|recibo|statement|me lleg[oó]|cobro de)/.test(m)) return 'bill';
+  return 'unknown';
+}
+
+function _mentionsMedicaid(m: string): boolean {
+  return /\bmedicaid\b/.test(m);
+}
+
+/** Deterministic Medicare COST diagnosis flow. Returns a full turn result when
+ *  it owns the turn (entering or mid-flow), else null so the normal engine runs. */
+function _handleCostFlow(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const isEs = (state.language || 'es') === 'es';
+  const raw = (userMessage || '').trim();
+  const m = raw.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const stage = state.costFlowStage;
+  const inFlow = !!stage && stage !== 'done';
+  const attempts = state.costFlowAttempts || 0;
+  const haveContact = !!(state.name && state.phoneNumber && (state.advisorHandoffStarted || (state as { consent_to_contact?: boolean }).consent_to_contact === true));
+
+  const emit = (
+    text: string,
+    patch: Partial<ConversationState>,
+    needsHuman = false,
+  ): { response: string; newState: ConversationState; needsHuman: boolean } => {
+    const newState: ConversationState = {
+      ...state,
+      activeCaseTopic: 'medicare_cost',
+      ...patch,
+      turnCount: (state.turnCount || 0) + 1,
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: text, timestamp: Date.now() },
+      ],
+    };
+    return { response: text, newState, needsHuman };
+  };
+
+  const isPushback = /\b(ya te dije|ya le dije|ya dije|ya lo dije|te dije|le dije|i already (told|said)|told you|i said)\b/.test(m);
+  const sourceQ = isEs
+    ? '¿Ese cobro sale de su cheque del Seguro Social (la prima de la Parte B), de una farmacia, de un doctor u hospital, o de una factura que recibió?'
+    : 'Does that charge come from your Social Security check (the Part B premium), a pharmacy, a doctor or hospital, or a bill you received?';
+
+  // restate on "ya te dije" → re-ask the CURRENT question, never reset
+  const restate = (question: string, intent: string) => emit(
+    (isEs ? 'Tiene razón, disculpe. ' : "You're right, sorry. ")
+    + (isEs
+        ? `Usted me dijo que le están cobrando${state.costMonthlyAmount ? ` como $${state.costMonthlyAmount}` : ''} de Medicare. `
+        : `You told me Medicare is charging you${state.costMonthlyAmount ? ` about $${state.costMonthlyAmount}` : ''}. `)
+    + question,
+    { lastBotIntent: intent },
+  );
+
+  // MSP / Extra Help education — conditional, compliance-safe, names QMB/SLMB/QI.
+  // Pure of state: takes THIS-turn values so flags set in the same patch show up.
+  const buildEducation = (chargeSource?: string, incomeMonthly?: string, dualEligible?: boolean): string => {
+    const incomeLine = incomeMonthly
+      ? (isEs ? `Con un ingreso aproximado de $${incomeMonthly} al mes, ` : `With an income of about $${incomeMonthly}/month, `)
+      : '';
+    const dual = dualEligible
+      ? (isEs
+          ? 'Como mencionó Medicaid: si en efecto tiene Medicare Y Medicaid, usted es "doble elegible" y normalmente estos costos ya están cubiertos o reducidos — el estado o un asesor lo confirma. '
+          : 'Since you mentioned Medicaid: if you indeed have Medicare AND Medicaid, you are "dual eligible" and these costs are usually already covered or reduced — the state or an advisor confirms. ')
+      : '';
+    if (chargeSource === 'pharmacy') {
+      return isEs
+        ? `${incomeLine}para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar mucho lo que paga en la farmacia. ${dual}No puedo confirmar por chat si califica — depende de su ingreso, recursos y reglas vigentes, y lo verifica el Seguro Social o un asesor licenciado, sin costo.`
+        : `${incomeLine}for drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy a lot. ${dual}I can't confirm eligibility in chat — it depends on income, resources and current rules, verified by Social Security or a licensed advisor, at no cost.`;
+    }
+    return isEs
+      ? `${incomeLine}en Nueva York los **Medicare Savings Programs (MSP)** pueden ayudar a pagar la prima de la Parte B y otros costos. Hay tres niveles según el ingreso: **QMB** (ingresos más bajos; también cubre deducibles y copagos), **SLMB** y **QI** (ingresos algo más altos; ayudan con la prima de la Parte B). ${dual}No puedo confirmar por chat cuál le toca ni si califica — depende de su ingreso exacto, recursos y las reglas de Nueva York, y lo verifica el Medicaid de Nueva York (1-800-541-2831) o un asesor licenciado, sin costo.`
+      : `${incomeLine}in New York the **Medicare Savings Programs (MSP)** can help pay the Part B premium and other costs. There are three levels by income: **QMB** (lowest income; also covers deductibles and copays), **SLMB**, and **QI** (somewhat higher income; help with the Part B premium). ${dual}I can't confirm which one applies or whether you qualify — it depends on your exact income, resources and New York rules, verified by New York Medicaid (1-800-541-2831) or a licensed advisor, at no cost.`;
+  };
+  const offerText = () => isEs
+    ? ' ¿Quiere que un asesor licenciado de ClearPoint revise su caso y le oriente sobre cómo aplicar, sin costo?'
+    : ' Would you like a licensed ClearPoint advisor to review your case and guide you on how to apply, at no cost?';
+  const goEducate = (patch: Partial<ConversationState>, prefix = '') => {
+    const chargeSource = (patch.costChargeSource ?? state.costChargeSource) as string | undefined;
+    const incomeMonthly = patch.incomeMonthly ?? state.incomeMonthly;
+    const dualEligible = patch.dualEligible ?? state.dualEligible;
+    const body = buildEducation(chargeSource, incomeMonthly, dualEligible);
+    if (haveContact) {
+      const tail = isEs
+        ? ' El asesor licenciado ya tiene sus datos y le ayudará también con esto cuando le llame.'
+        : ' The licensed advisor already has your info and will help with this too on the call.';
+      return emit(prefix + body + tail, { ...patch, costFlowStage: 'done', lastBotIntent: 'costflow_educate_existing' });
+    }
+    return emit(prefix + body + offerText(), { ...patch, costFlowStage: 'offered_advisor', lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_educate' });
+  };
+
+  // ── ENTRY (not in flow yet): classify the source from the complaint, then
+  //    route straight to the right next step (no generic menu, source-first). ──
+  if (!inFlow) {
+    if (!state.language) return null;
+    if (state.conversationClosed) return null;
+    if (['asking_language', 'asking_zip', 'asking_zip_natural', 'asking_name', 'collecting_identity'].includes(String(state.step))) return null;
+    if (state.advisorHandoffStarted && /^handoff_/.test(String(state.lastBotIntent || ''))) return null;
+    if (!_isMedicareCostComplaint(userMessage)) return null;
+    // A one-time BILL ("me llegó una factura del hospital") belongs to the
+    // existing bill handler, not the ongoing-cost flow. Defer unless the same
+    // message also carries an ongoing-charge signal.
+    if (/\b(factura|bill|recibo|statement|me lleg)/.test(m) && !/(cobran|cobrando|me sac|me quit|descuent|mucho|caro|car[oa]s|prima|cada mes|mensual)/.test(m)) return null;
+    const eAmt = _costMoney(raw);
+    const eAmtStr = eAmt != null ? String(eAmt) : undefined;
+    const eSrc = _classifyCostSource(m);
+    const base: Partial<ConversationState> = { activeCaseTopic: 'medicare_cost', lastUserProblem: raw, costFlowAttempts: 0, costMonthlyAmount: eAmtStr };
+    if (_mentionsMedicaid(m)) return goEducate({ ...base, dualEligible: true, costChargeSource: eSrc === 'unknown' ? undefined : eSrc });
+    if (eSrc === 'pharmacy') return goEducate({ ...base, costChargeSource: 'pharmacy' });
+    if (eSrc === 'provider' || eSrc === 'bill') {
+      return emit(
+        isEs ? 'Entiendo. Para orientarle sobre ayuda con esos costos, ¿cuál es aproximadamente su ingreso mensual? Es solo para orientar, no para decidir si califica.' : 'Got it. To guide you on help with those costs, what is your monthly income, roughly? Just to orient, not to decide eligibility.',
+        { ...base, costChargeSource: eSrc, costFlowStage: 'ask_income', lastBotIntent: 'costflow_ask_income' },
+      );
+    }
+    if (eSrc === 'social_security' || /\b(parte b|part b|la b|prima|del cheque|seguro social)\b/.test(m)) {
+      return emit(
+        isEs ? `Suena como la prima de la Parte B, que se descuenta del Seguro Social cada mes. Para confirmar: ¿esos ${eAmtStr ? '$' + eAmtStr : 'cargos'} se los descuentan del cheque del Seguro Social cada mes?` : `That sounds like the Part B premium, which comes out of Social Security each month. To confirm: are those ${eAmtStr ? '$' + eAmtStr : 'charges'} taken from your Social Security check every month?`,
+        { ...base, costChargeSource: 'social_security', costFlowStage: 'confirm_part_b', lastBotIntent: 'costflow_confirm_part_b' },
+      );
+    }
+    // vague → nice intro + the source question
+    return emit(
+      (isEs
+        ? 'Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos del doctor, o una factura. Para ubicarlo: '
+        : 'I understand. When you say Medicare is charging you, it could be the Part B premium, medications, doctor copays, or a bill. To pinpoint it: ') + sourceQ,
+      { ...base, costFlowStage: 'ask_source', lastBotIntent: 'costflow_ask_source' },
+    );
+  }
+
+  // ── STAGE MACHINE ──
+  if (stage === 'ask_source') {
+    if (isPushback && _classifyCostSource(m) === 'unknown' && _costMoney(raw) == null) return restate(sourceQ, 'costflow_ask_source');
+    const src = _classifyCostSource(m);
+    const amt = _costMoney(raw);
+    const amtStr = amt != null ? String(amt) : state.costMonthlyAmount;
+    if (_mentionsMedicaid(m)) return goEducate({ dualEligible: true, costChargeSource: src === 'unknown' ? state.costChargeSource : src, costMonthlyAmount: amtStr });
+    if (src === 'social_security' || (src === 'unknown' && /parte b|part b|la b|prima|seguro social|del cheque/.test(m)) || (src === 'unknown' && amt != null)) {
+      return emit(
+        isEs
+          ? `Suena como la prima de la Parte B, que es lo que se descuenta del Seguro Social cada mes. Para confirmar: ¿esos ${amtStr ? '$' + amtStr : 'cargos'} se los descuentan del cheque del Seguro Social cada mes?`
+          : `That sounds like the Part B premium, which comes out of Social Security each month. To confirm: are those ${amtStr ? '$' + amtStr : 'charges'} taken from your Social Security check every month?`,
+        { costFlowStage: 'confirm_part_b', costChargeSource: 'social_security', costMonthlyAmount: amtStr, costFlowAttempts: 0, lastBotIntent: 'costflow_confirm_part_b' },
+      );
+    }
+    if (src === 'pharmacy') return goEducate({ costChargeSource: 'pharmacy', costMonthlyAmount: amtStr });
+    if (src === 'provider' || src === 'bill') {
+      return emit(
+        isEs ? 'Entendido. Para orientarle sobre ayuda con esos costos, ¿cuál es aproximadamente su ingreso mensual? Es solo para orientar, no para decidir si califica.' : 'Got it. To guide you on help with those costs, what is your monthly income, roughly? Just to orient, not to decide eligibility.',
+        { costFlowStage: 'ask_income', costChargeSource: src, costMonthlyAmount: amtStr, costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+      );
+    }
+    if (attempts >= 1) {
+      return emit(
+        isEs ? 'Para no darle vueltas, lo más común es la prima de la Parte B. ¿Cuál es aproximadamente su ingreso mensual? (solo para orientar)' : "To keep it simple, the most common is the Part B premium. What's your monthly income, roughly? (just to orient)",
+        { costFlowStage: 'ask_income', costChargeSource: 'social_security', costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+      );
+    }
+    return emit(isEs ? `Para orientarle bien: ${sourceQ}` : `To guide you well: ${sourceQ}`, { costFlowAttempts: attempts + 1, lastBotIntent: 'costflow_ask_source' });
+  }
+
+  if (stage === 'confirm_part_b') {
+    if (isPushback) return restate(isEs ? '¿Esos cargos se los descuentan del cheque del Seguro Social cada mes?' : 'Are those charges taken from your Social Security check each month?', 'costflow_confirm_part_b');
+    const no = /\b(no|nop|para nada|no es|qu[eé] va)\b/.test(m) && !/\bs[ií]\b/.test(m);
+    if (no) return emit(isEs ? 'Entendido. Entonces, ¿de dónde sale ese cobro — de una farmacia, de un doctor u hospital, o de una factura?' : 'Got it. Then where does that charge come from — a pharmacy, a doctor or hospital, or a bill?', { costFlowStage: 'ask_source', costChargeSource: undefined, costFlowAttempts: 0, lastBotIntent: 'costflow_ask_source' });
+    return emit(
+      isEs
+        ? 'Entendido — es la prima de la Parte B (en 2026 la estándar es $202.90 al mes; puede ser más por ingresos altos). Con ese costo, si su ingreso es modesto, podría valer la pena revisar programas de ayuda. ¿Cuál es aproximadamente su ingreso mensual? Es solo para orientar.'
+        : "Got it — that's the Part B premium (the 2026 standard is $202.90/month; it can be higher at higher incomes). With that cost, if your income is modest, help programs may be worth reviewing. What's your monthly income, roughly? Just to orient.",
+      { costFlowStage: 'ask_income', costChargeSource: 'social_security', costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+    );
+  }
+
+  if (stage === 'ask_income') {
+    if (isPushback) return restate(isEs ? '¿Cuál es aproximadamente su ingreso mensual? Es solo para orientar.' : 'What is your monthly income, roughly? Just to orient.', 'costflow_ask_income');
+    if (_mentionsMedicaid(m)) return goEducate({ dualEligible: true });
+    const inc = _costMoney(raw);
+    if (inc == null) {
+      if (attempts >= 1) return goEducate({});
+      return emit(isEs ? 'Para orientarle, ¿me da una idea aproximada de su ingreso mensual? Es solo para orientar, no para decidir si califica.' : 'To orient you, can you give a rough idea of your monthly income? Just to orient, not to decide eligibility.', { costFlowAttempts: attempts + 1, lastBotIntent: 'costflow_ask_income' });
+    }
+    return emit(
+      isEs ? `Gracias. Para no orientarlo mal: ¿esos $${inc} son lo que recibe limpio DESPUÉS de descuentos, o es su ingreso total ANTES de que le descuenten Medicare?` : `Thanks. So I don't mis-orient you: is that $${inc} what you get NET after deductions, or your total income BEFORE Medicare is taken out?`,
+      { incomeMonthly: String(inc), costFlowStage: 'ask_net_gross', costFlowAttempts: 0, lastBotIntent: 'costflow_ask_net_gross' },
+    );
+  }
+
+  if (stage === 'ask_net_gross') {
+    if (isPushback) return restate(isEs ? '¿Ese ingreso es lo que recibe limpio después de descuentos, o el total antes de descuentos?' : 'Is that income what you receive net after deductions, or the total before deductions?', 'costflow_ask_net_gross');
+    const isNet = /\b(limpio|neto|despu[eé]s|me queda|me sacan|me quitan|ya descont|after|net)\b/.test(m);
+    const isGross = /\b(antes|bruto|total|completo|before|gross)\b/.test(m);
+    const net = state.incomeMonthly ? parseInt(state.incomeMonthly, 10) : null;
+    const partB = state.costMonthlyAmount ? parseInt(state.costMonthlyAmount, 10) : 0;
+    let prefix = '';
+    if (isNet && net != null) {
+      const grossEst = net + (partB || 0);
+      prefix = isEs
+        ? `Anotado — recibe alrededor de $${net} limpios; antes de descontar Medicare serían aproximadamente $${grossEst}. Los programas usan el ingreso ANTES de descuentos, así que eso es lo que el asesor revisará. `
+        : `Noted — about $${net} net; before Medicare is taken out that's roughly $${grossEst}. The programs use income BEFORE deductions, so that's what the advisor reviews. `;
+    } else if (isGross && net != null) {
+      prefix = isEs ? `Anotado — alrededor de $${net} antes de descuentos. ` : `Noted — about $${net} before deductions. `;
+    }
+    return goEducate({ incomeIsNet: isNet ? true : (isGross ? false : state.incomeIsNet) }, prefix);
+  }
+
+  if (stage === 'offered_advisor') {
+    if (isPushback) {
+      const body = buildEducation(state.costChargeSource, state.incomeMonthly, state.dualEligible);
+      return emit(body + (haveContact ? '' : offerText()), { lastBotOfferedAdvisor: !haveContact, lastBotIntent: 'costflow_educate' });
+    }
+    // Any real answer (yes / no / new topic) exits the flow to the deterministic
+    // engine, which owns consent→collection and graceful declines. Stage cleared.
+    return processMessage(userMessage, { ...state, costFlowStage: 'done' });
+  }
+
+  return null;
+}
+
 function _runStructuralFirst(
   userMessage: string,
   state: ConversationState,
@@ -3388,6 +3744,11 @@ function _runStructuralFirst(
   if (isClosingIntent(userMessage) && !state.conversationClosed) {
     return processMessage(userMessage, state);
   }
+  // Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7), never the
+  // LLM. Runs after safety + closing; owns the cost-diagnosis turns so they are
+  // verifiable and stable instead of LLM-dependent.
+  const _cf = _handleCostFlow(userMessage, state);
+  if (_cf) return _cf;
   return null;
 }
 
@@ -3400,7 +3761,7 @@ function _runStructuralFirst(
  *  "no entiendo lo que me descuentan", "me llegó una factura"). */
 export function _isMedicareCostComplaint(msg: string): boolean {
   const m = (msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  return /(cobr|me sac(an|aron|a)\b|me quit(an|aron)|descuent|me estan quitando|car[oa]s?\b|much[oa] de medicare|pag(o|ar|ando) de mas|factura|bill\b|charg|expensive|too much|me llego.*(factura|cobro)|costos? (de )?medicare)/i.test(m);
+  return /(cobr|me sac(an|aron|a)\b|me quit(an|aron)|descuent|me estan quitando|car[oa]s?\b|muy car[oa]|much[oa] de medicare|pag(o|ar|ando) (de mas|mucho)|cuesta(n)? mucho|gasto mucho|factura|bill\b|charg|expensive|too much|me llego.*(factura|cobro)|costos? (de )?medicare)/i.test(m);
 }
 
 /** A substantive problem statement worth remembering (NOT a yes/no/greeting/
@@ -3413,16 +3774,17 @@ export function _looksLikeStatedProblem(msg: string): boolean {
 }
 
 /** Build a topic-preserving continuation when the LLM slipped and re-asked the
- *  ZIP. NEVER repeats the ZIP; continues from the caller's stated problem. */
-export function _buildPostZipReaskReplacement(userMessage: string, isEs: boolean): string {
+ *  ZIP. Returns the focused source-triage question for a Medicare-COST complaint,
+ *  or `null` for ANY other topic — signalling the caller to delegate to the
+ *  deterministic engine (which knows the ZIP and classifies the real topic) so
+ *  the caller never gets a generic menu. NEVER repeats the ZIP. */
+export function _buildPostZipReaskReplacement(userMessage: string, isEs: boolean): string | null {
   if (_isMedicareCostComplaint(userMessage)) {
     return isEs
       ? 'Entiendo. Cuando dice que le están cobrando mucho de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos del doctor, o una factura médica. Para ubicarlo mejor: ¿ese cobro sale de su cheque del Seguro Social, de una farmacia, de un doctor u hospital, o de una factura que recibió?'
       : 'I understand. When you say Medicare is charging you a lot, it could be the Part B premium, your medications, doctor copays, or a medical bill. To pinpoint it: does that charge come out of your Social Security check, from a pharmacy, from a doctor or hospital, or from a bill you received?';
   }
-  return isEs
-    ? 'Entiendo. Para ayudarle bien, ¿me cuenta un poco más sobre el tema — es por una factura, un medicamento, su doctor, una carta que recibió, o un costo de Medicare?'
-    : 'Got it. To help you well, can you tell me a bit more about the topic — is it a bill, a medication, your doctor, a letter you received, or a Medicare cost?';
+  return null;
 }
 
 /** Public async entry: structural sync + LLM brain + fallback. */
@@ -3473,13 +3835,20 @@ export async function processMessageAsync(
   // ("como vive en NY"). The other patterns are inherently question-phrased.
   const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|necesito[^.?!]{0,30}(zip|c[oó]digo postal)|me (d[ií]ga|da|puede dar|proporcione|indique)[^.?!]{0,20}(zip|c[oó]digo postal)|(zip|c[oó]digo postal) de 5 d[ií]gitos|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip|(need|provide|share)[^.?!]{0,20}(zip|postal code))/i;
   if (_zipKnown && !_moved.test(userMessage) && _reAsksZip.test(_resp)) {
-    // Sawil 2026-06-14 — TOPIC-PRESERVING ZIP anti-re-ask. The old replacement
-    // discarded the problem the caller JUST stated and parroted the ZIP back
-    // ("Como ya tengo su código postal …"). Now we continue FROM the caller's
-    // stated problem: a Medicare-cost complaint gets the focused source-triage
-    // question; anything else gets a concrete clarifier. The ZIP stays internal
-    // and is never repeated. No GHL/flow/UI changes.
-    _resp = _buildPostZipReaskReplacement(userMessage, isEs);
+    // Sawil 2026-06-14 — TOPIC-PRESERVING ZIP anti-re-ask. The LLM occasionally
+    // slips and re-asks the ZIP it already has. The old replacement parroted the
+    // ZIP back and reset to a generic "cuénteme más", discarding the problem the
+    // caller JUST stated. Now: a Medicare-COST complaint gets the focused
+    // source-triage question; ANY OTHER topic (doctor, plan, letter, bill…) is
+    // delegated to the deterministic engine, which knows the ZIP (never re-asks)
+    // and classifies the real topic ("¿Qué pasó con su doctor?") instead of a
+    // menu. The ZIP stays internal and is never repeated. No GHL/flow/UI changes.
+    const _topicReply = _buildPostZipReaskReplacement(userMessage, isEs);
+    if (_topicReply) {
+      _resp = _topicReply;
+    } else {
+      return processMessage(userMessage, state);
+    }
   }
 
   let newState: ConversationState = {
