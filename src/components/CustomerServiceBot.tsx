@@ -1515,8 +1515,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           >
             <p>
               {isSpanish
-                ? 'ClearPoint Senior Advisors es una agencia independiente. No estamos conectados con Medicare ni con el gobierno federal. No envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. Podemos ayudarle en inglés o español.'
-                : 'ClearPoint Senior Advisors is an independent agency. We are not connected with Medicare or the federal government. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here. Language assistance available in English or Spanish.'}
+                ? 'Soy Clara, la asistente virtual bilingüe de Clear Point. Puedo darle información general y ayudar a conectar su caso con un asesor autorizado. Por favor, no envíe información sensible. ClearPoint Senior Advisors es una agencia independiente. No estamos conectados con Medicare ni con el gobierno federal. No envíe número de Medicare, Seguro Social, información bancaria, ni récords médicos privados aquí. Podemos ayudarle en inglés o español.'
+                : "I'm Clara, Clear Point's bilingual virtual assistant. I can provide general information and help connect your case with a licensed advisor. Please do not send sensitive information. ClearPoint Senior Advisors is an independent agency. We are not connected with Medicare or the federal government. Please do not send Medicare ID, Social Security numbers, banking information, or private medical records here. Language assistance available in English or Spanish."}
             </p>
           </button>
         ) : (
