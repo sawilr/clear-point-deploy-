@@ -303,6 +303,24 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     };
   }, [scrollToBottom]);
 
+  // Sawil 2026-06-14 — KEEP THE CARET IN THE BOX (desktop). The post-turn
+  // refocus in the engine handler fires via rAF while the bot is still
+  // "typing" (isTyping → input disabled), so focus() no-op'd and the caret
+  // "se salía de la cajita" at exactly the two steps where the input flips
+  // disabled→enabled: language→ZIP and ZIP→topic. After those it appeared to
+  // work because later turns happened to land. This effect re-focuses the
+  // input every time it becomes enabled again, so the cursor never leaves the
+  // box mid-intake. DESKTOP ONLY (pointer:fine): on touch we must NOT auto-
+  // focus, or the soft keyboard pops up unprompted (Sawil's mobile rule).
+  useEffect(() => {
+    const enabled = state.step !== 'asking_language' && !isTyping && !chatClosed;
+    if (!enabled) return;
+    if (typeof window === 'undefined') return;
+    if (window.matchMedia?.('(pointer: coarse)')?.matches) return;
+    const id = requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+    return () => cancelAnimationFrame(id);
+  }, [state.step, isTyping, chatClosed]);
+
   // PHASE E — collapse the persistent disclosure band after the first user
   // turn. Senior can still expand by tapping. Lets messages take more
   // vertical real estate after they've started typing.
