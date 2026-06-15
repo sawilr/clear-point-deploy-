@@ -4,84 +4,37 @@ import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validateEmail, validatePersonName } from '../lib/validation';
 import { CheckIcon, ChevronRight } from './icons';
+import {
+  type LeadType,
+  type Step1Option,
+  type SpecialSituation,
+  STEP1_OPTIONS,
+  COST_FOLLOWUPS,
+  SPECIAL_SITUATIONS,
+  SPECIAL_GUIDANCE,
+  SPECIAL_SCOPE_EN,
+  SPECIAL_SCOPE_ES,
+  isQualifiedSalesRoute,
+  buildLeadTags,
+} from '../lib/smartReviewRouting';
 
 const TOTAL_STEPS = 6;
 
 // Same fake-ZIP set as ChatBot.tsx and LeadForm.tsx — rejects obviously invalid entries.
 const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555','66666','77777','88888','99999','12345','54321','11223','00001']);
 
-const SSDI_CONCERN_EN = 'I have disability, SSI, SSDI, or need help with Medicare premiums';
-const SSDI_CONCERN_ES = 'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare';
-
-const ssdiQuestionsEN = [
-  { key: 'age',         q: 'Are you currently 65 or older?',                                                              opts: ['Yes', 'No', 'Turning 65 soon'] },
-  { key: 'medicare',    q: 'Do you currently have Medicare?',                                                              opts: ['Yes, I have Medicare', 'No, I do not have Medicare yet', 'I am not sure'] },
-  { key: 'benefits',    q: 'Do you receive SSI, SSDI, Medicaid, or disability-related benefits?',                         opts: ['SSI', 'SSDI', 'Medicaid', 'Disability benefits', 'Not sure', 'None of these'] },
-  { key: 'ssdiApproved',q: 'Have you been approved for Social Security Disability Insurance (SSDI)?',                     opts: ['Yes', 'No', 'Not sure'] },
-  { key: 'quarters',    q: 'Do you or your spouse have about 40 work quarters / 10 years of Medicare-covered work?',      opts: ['Yes', 'No', 'Not sure'] },
-  { key: 'needsHelp',   q: 'What do you need help understanding?',                                                        opts: ['When Medicare may start', 'Help paying Part A or Part B', 'Medicaid / MSP / Extra Help', 'Disability and Medicare rules', 'Speak with an advisor'] },
-];
-const ssdiQuestionsES = [
-  { key: 'age',         q: '¿Tiene 65 años o más?',                                                                      opts: ['Sí', 'No', 'Cumplo 65 pronto'] },
-  { key: 'medicare',    q: '¿Actualmente tiene Medicare?',                                                                opts: ['Sí, tengo Medicare', 'No, todavía no tengo Medicare', 'No estoy seguro'] },
-  { key: 'benefits',    q: '¿Recibe SSI, SSDI, Medicaid o beneficios relacionados con discapacidad?',                    opts: ['SSI', 'SSDI', 'Medicaid', 'Beneficios por discapacidad', 'No estoy seguro', 'Ninguno'] },
-  { key: 'ssdiApproved',q: '¿Fue aprobado para Social Security Disability Insurance (SSDI)?',                            opts: ['Sí', 'No', 'No estoy seguro'] },
-  { key: 'quarters',    q: '¿Usted o su cónyuge tienen aproximadamente 40 quarters / 10 años de trabajo cubierto?',      opts: ['Sí', 'No', 'No estoy seguro'] },
-  { key: 'needsHelp',   q: '¿Qué necesita entender?',                                                                   opts: ['Cuándo puede comenzar Medicare', 'Ayuda pagando Parte A o Parte B', 'Medicaid / MSP / Extra Help', 'Reglas de discapacidad y Medicare', 'Hablar con un asesor'] },
-];
-
-// Step 1 options — split into PRIMARY (always visible) and EXPANDED
-// (revealed via "More options"). Reduces choice overload for seniors on
-// mobile while preserving access to the full Medicare-situation list.
-// Wording is neutral and state-agnostic: ClearPoint covers NY/NJ/CT/FL
-// and we do NOT assume any single state's program rules apply universally.
-// The special-care option (PACE/MAP/LTC/I-SNP/home care) is a red-flag
-// review category — selection should route to careful advisor review, not
-// to plan-change recommendations.
-const PRIMARY_CONCERN_COUNT = 4;
-
-const concernsEN = [
-  // PRIMARY 4 — always visible
-  'I want to lower my Medicare costs',
-  'I need help paying for Medicare, Medicaid, MSP, Extra Help, LIS, or state help programs',
-  'I want to review or change my current plan',
-  "I'm new to Medicare or not sure what I have",
-  // EXPANDED — revealed via "More options"
-  'I have Medicare Advantage and want to review my plan',
-  'I have Medicare Supplement / Medigap',
-  'I am not insured or not sure what I have',
-  'I have disability, SSI, SSDI, or need help with Medicare premiums',
-  'I have retiree, union, federal, state, VA, or TRICARE coverage that may affect Medicare',
-  'I receive home care, nursing home care, PACE, MAP, LTC, I-SNP, or special care support',
-  'I am not sure',
-];
-
-const concernsES = [
-  // PRIMARIAS 4 — siempre visibles
-  'Quiero reducir mis costos de Medicare',
-  'Necesito ayuda para pagar Medicare, Medicaid, MSP, Extra Help, LIS o programas estatales de ayuda',
-  'Quiero revisar o cambiar mi plan actual',
-  'Soy nuevo en Medicare o no estoy seguro de lo que tengo',
-  // EXPANDIDAS — se muestran al tocar "Más opciones"
-  'Tengo Medicare Advantage y quiero revisar mi plan',
-  'Tengo Medicare Supplement / Medigap',
-  'No tengo seguro o no estoy seguro de lo que tengo',
-  'Tengo discapacidad, SSI, SSDI o necesito ayuda con primas de Medicare',
-  'Tengo cobertura de retiro, unión, federal, estatal, VA o TRICARE que puede afectar Medicare',
-  'Recibo cuidado en casa, hogar de ancianos, PACE, MAP, LTC, I-SNP o apoyo de cuidado especial',
-  'No estoy seguro',
-];
-
-// Special-care red-flag — exact-match constants for handler-level routing.
-// Selection should trigger careful advisor review (no plan-change recommendation,
-// no eligibility promise, no state-specific claim — these vary across NY/NJ/CT/FL).
-const SPECIAL_CARE_CONCERN_EN = 'I receive home care, nursing home care, PACE, MAP, LTC, I-SNP, or special care support';
-const SPECIAL_CARE_CONCERN_ES = 'Recibo cuidado en casa, hogar de ancianos, PACE, MAP, LTC, I-SNP o apoyo de cuidado especial';
-
 export function SmartMedicareReview() {
   const { t, lang } = useLanguage();
   const [step, setStep] = useState(1);
-  const [concern, setConcern] = useState('');
+  // Smart Review routing state. `selectedOption` drives the qualified
+  // sales/triage paths; `specialCat` drives the educational Special
+  // Situations path. `leadType` is the precise CRM lead type for whichever
+  // route the visitor took. `step1View` is the Step-1 internal view machine.
+  const [selectedOption, setSelectedOption] = useState<Step1Option | null>(null);
+  const [leadType, setLeadType] = useState<LeadType | ''>('');
+  const [step1View, setStep1View] = useState<'main' | 'cost' | 'special' | 'specialDetail' | 'specialResources'>('main');
+  const [specialCat, setSpecialCat] = useState<SpecialSituation | null>(null);
+  const [costAnswer, setCostAnswer] = useState('');
   const [zip, setZip] = useState('');
   const [zipInfo, setZipInfo] = useState<ReturnType<typeof getZipInfo>>(null);
   const [dob, setDob] = useState('');
@@ -96,19 +49,17 @@ export function SmartMedicareReview() {
   // PHASE A16 — SOA URL set after the lead submits successfully.
   const [soaUrl, setSoaUrl] = useState<string>('');
   const [error, setError] = useState('');
-  const [ssdiSubStep, setSsdiSubStep] = useState(0);
-  const [ssdiAnswers, setSsdiAnswers] = useState<Record<string, string>>({});
   // Sawil 2026-06: after every step transition, scroll the funnel card to
   // the top of the viewport so the new question is visible. Covers chips,
-  // Continue, Back, sub-steps, and the final success state.
+  // Continue, Back, Step-1 sub-views, and the final success state.
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
-    // Initial render (step 1, sub-step 0) does not scroll; only transitions.
-    if (step === 1 && ssdiSubStep === 0) return;
+    // Initial render (step 1, main view) does not scroll; only transitions.
+    if (step === 1 && step1View === 'main') return;
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [step, ssdiSubStep]);
+  }, [step, step1View]);
   // Honeypot anti-bot field — must stay empty. Real users never see this input;
   // bots that scrape and fill every form input will populate it. API discards
   // any submission where this is non-empty.
@@ -125,26 +76,40 @@ export function SmartMedicareReview() {
   // so the advisor needs to know up front. Program status ONLY — compliance-safe
   // (no income, health, or SSN collected).
   const [medicaidExtraHelp, setMedicaidExtraHelp] = useState('');
-  // Step 1 progressive disclosure — 4 primary options first, "More options"
-  // reveals the remaining 7. Resets if the user goes back to Step 1.
-  const [showMoreOptions, setShowMoreOptions] = useState(false);
-  // Sawil 2026-06 — when "More options" expands, gently scroll the new options
-  // into view ("bajar un chin") so on mobile the user sees that more choices
-  // appeared instead of them sitting below the fold.
-  const moreOptionsEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (showMoreOptions && moreOptionsEndRef.current) {
-      moreOptionsEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-  }, [showMoreOptions]);
 
-  const concerns = lang === 'es' ? concernsES : concernsEN;
   const isEs = lang === 'es';
-  const ssdiQuestions = isEs ? ssdiQuestionsES : ssdiQuestionsEN;
-  const isSSdiConcern = concern === SSDI_CONCERN_EN || concern === SSDI_CONCERN_ES;
-  const currentSsdiQ = (isSSdiConcern && ssdiSubStep >= 1 && ssdiSubStep <= 6)
-    ? ssdiQuestions[ssdiSubStep - 1]
-    : null;
+  // The human-readable selection label (localized) and the canonical EN
+  // label used for the CRM `interest_type` field.
+  const selectionLabel = selectedOption
+    ? (isEs ? selectedOption.es : selectedOption.en)
+    : specialCat
+      ? (isEs ? specialCat.es : specialCat.en)
+      : '';
+  const interestType = selectedOption ? selectedOption.en : specialCat ? specialCat.en : '';
+
+  // Reset Step 1 back to the main six-option view, clearing any route state.
+  const resetStep1 = () => {
+    setSelectedOption(null);
+    setLeadType('');
+    setSpecialCat(null);
+    setCostAnswer('');
+    setStep1View('main');
+  };
+
+  // Lock in a qualified sales/triage option and advance to the normal flow.
+  const chooseOption = (opt: Step1Option) => {
+    setSelectedOption(opt);
+    setSpecialCat(null);
+    setCostAnswer('');
+    if (opt.leadType === 'COST_REVIEW_TRIAGE') {
+      // "Lower my Medicare costs" → ask the triage follow-up before locking.
+      setLeadType('COST_REVIEW_TRIAGE');
+      setStep1View('cost');
+      return;
+    }
+    setLeadType(opt.leadType);
+    setStep(s => Math.min(s + 1, TOTAL_STEPS + 1));
+  };
 
   const handleZip = (val: string) => {
     const clean = val.replace(/\D/g, '').slice(0, 5);
@@ -185,7 +150,7 @@ export function SmartMedicareReview() {
 
   const canAdvanceStep = (): boolean => {
     switch (step) {
-      case 1: return !!concern;
+      case 1: return !!leadType;
       // Sawil 2026-06 COMPLIANCE — must be a SUPPORTED service-area ZIP
       // (NY/NJ/CT). A Florida ZIP resolves but supported === false, so it can
       // no longer advance past Step 2.
@@ -210,10 +175,12 @@ export function SmartMedicareReview() {
 
     const age = validateDOB(dob).age ?? 0;
     const phoneValid = validatePhone(phone);
+    const lt = (leadType || 'NEEDS_TRIAGE') as LeadType;
     const flags: string[] = [];
     if (age < 65) flags.push('Under 65 — verify Medicare eligibility');
     if (zipInfo && !zipInfo.supported) flags.push('ZIP outside supported service states');
     if (!email) flags.push('Email not provided');
+    if (!isQualifiedSalesRoute(lt)) flags.push('Special-situation education request — do NOT work as a normal sales lead');
 
     const payload = {
       source: 'Clear Point Senior Advisors Website',
@@ -232,17 +199,22 @@ export function SmartMedicareReview() {
       derived_state: zipInfo?.stateCode || '',
       preferred_language: prefLang === 'es' || prefLang === 'Español' ? 'Spanish' : prefLang === 'either' || prefLang === 'Cualquiera' ? 'Either' : 'English',
       medicare_status: '',
-      interest_type: concern,
+      interest_type: interestType,
+      // Precise lead taxonomy — never a generic hot bucket (Sawil 2026-06-15).
+      lead_type: lt,
       best_time_to_contact: '',
       consent_to_contact: true,
       consent_text: 'I agree to be contacted by Clear Point Senior Advisors.',
       lead_notes: buildSummary(),
       lead_quality_flags: flags.join('; '),
       bot_transcript_summary: '',
-      tags: ['Smart Review Lead', 'Medicare Lead'],
-      // PHASE A16 — Smart Review is an active-buyer signal → SOA required.
+      // Clean, business-usable CRM tags routed by lead type.
+      tags: buildLeadTags(lt, specialCat?.tag),
+      // PHASE A16 — SOA only required for qualified MA/PDP sales paths.
+      // Special-situation education requests are not MA/PDP product sales,
+      // so no Scope of Appointment is fetched.
       lead_source: 'smart_review',
-      soa_pending: true,
+      soa_pending: isQualifiedSalesRoute(lt),
       created_at: new Date().toISOString(),
       // Honeypot value forwarded to API for anti-bot gate
       website_url: websiteUrl,
@@ -254,34 +226,37 @@ export function SmartMedicareReview() {
       setSubmitted(true);
       setStep(TOTAL_STEPS + 1);
       // PHASE A16 — Fetch SOA signing token so the success view can render
-      // the CMS-required Scope of Appointment link.
+      // the CMS-required Scope of Appointment link. Only for qualified MA/PDP
+      // sales paths; special-situation education requests skip SOA.
       // PHASE 6 — 12s timeout so success view doesn't hang on bad networks.
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 12_000);
-      try {
-        const r = await fetch('/api/soa-token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'omit',
-          signal: controller.signal,
-          body: JSON.stringify({
-            fullName: `${firstName} ${lastName}`.trim(),
-            phone: phoneValid.cleaned,
-            email: email || '',
-            zip: zip || '',
-            language: isEs ? 'es' : 'en',
-            leadSource: 'smart_review',
-          }),
-        });
-        clearTimeout(t);
-        if (r.ok) {
-          const data = await r.json();
-          setSoaUrl(window.location.origin + (data.soaUrl || `/soa/${data.token}`));
+      if (isQualifiedSalesRoute(lt)) {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 12_000);
+        try {
+          const r = await fetch('/api/soa-token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'omit',
+            signal: controller.signal,
+            body: JSON.stringify({
+              fullName: `${firstName} ${lastName}`.trim(),
+              phone: phoneValid.cleaned,
+              email: email || '',
+              zip: zip || '',
+              language: isEs ? 'es' : 'en',
+              leadSource: 'smart_review',
+            }),
+          });
+          clearTimeout(t);
+          if (r.ok) {
+            const data = await r.json();
+            setSoaUrl(window.location.origin + (data.soaUrl || `/soa/${data.token}`));
+          }
+        } catch (e) {
+          clearTimeout(t);
+          // Non-fatal — user can still be reached by phone. Log only.
+          console.warn('[SmartReview] SOA token fetch failed', e);
         }
-      } catch (e) {
-        clearTimeout(t);
-        // Non-fatal — user can still be reached by phone. Log only.
-        console.warn('[SmartReview] SOA token fetch failed', e);
       }
     } else {
       setError(isEs ? 'Error al enviar. Intente de nuevo o llámenos.' : 'Submission failed. Please try again or call us.');
@@ -310,20 +285,20 @@ export function SmartMedicareReview() {
       `- Preferred Language: ${prefLang}`,
       `- Consent to contact: Yes`,
       '',
-      `Client Main Concern: ${concern}`,
+      `Smart Review Route: ${interestType || 'N/A'}`,
+      `Lead Type: ${leadType || 'N/A'}`,
+      ...(specialCat ? [`Special Situation: ${specialCat.en} (educational — not a normal sales lead)`] : []),
+      ...(costAnswer ? [`Cost triage answer: ${costAnswer}`] : []),
       // PHASE A18 — qualifier fields (optional).
       ...(currentCarrier ? [`Current Carrier: ${currentCarrier}`] : []),
       ...(rxCount ? [`Prescription medications: ${rxCount}`] : []),
       ...(doctorPriority ? [`Doctor to keep: ${doctorPriority}`] : []),
       ...(medicaidExtraHelp ? [`Medicaid / Extra Help: ${medicaidExtraHelp}`] : []),
-      ...(Object.keys(ssdiAnswers).length > 0 ? [
-        '',
-        'Disability / SSI / SSDI Screening Answers:',
-        ...Object.entries(ssdiAnswers).map(([k, v]) => `- ${k}: ${v}`),
-      ] : []),
       '',
       'Recommended Agent Follow-Up:',
-      'Verify Medicare status, current coverage, doctors, medications, income/household status if asking about Medicaid, MSP, Extra Help/LIS, and any plan review request.',
+      specialCat
+        ? 'Special-situation education request. Provide general Medicare guidance only. Do NOT work as a normal sales lead. ClearPoint does not enroll into or solve Medicaid, SSI, SSDI, VA, TRICARE, nursing home, home care, or state assistance programs.'
+        : 'Verify Medicare status, current coverage, doctors, medications, and the requested plan review. Confirm any program status with the proper agency before discussing options.',
     ].join('\n');
   };
 
@@ -432,173 +407,174 @@ export function SmartMedicareReview() {
               <span>{isEs ? 'Atrás' : 'Back'}</span>
             </button>
           )}
-          {/* Step 1 — Main Concern (progressive disclosure: 4 primary + More options) */}
-          {step === 1 && ssdiSubStep === 0 && (
+          {/* ── Step 1 — Main: six Medicare qualification options ─────────── */}
+          {step === 1 && step1View === 'main' && (
             <div>
               <p className="text-earth-800 text-base font-semibold mb-5">
                 {t('What Medicare situation best matches you today?', '¿Cuál situación de Medicare describe mejor su caso hoy?')}
               </p>
               <div className="grid gap-2.5">
-                {/* PRIMARY 4 — always visible */}
-                {concerns.slice(0, PRIMARY_CONCERN_COUNT).map((c) => (
+                {STEP1_OPTIONS.map((opt) => (
                   <button
-                    key={c}
-                    onClick={() => {
-                      setConcern(c);
-                      setSsdiAnswers({});
-                      const isSSdi = c === SSDI_CONCERN_EN || c === SSDI_CONCERN_ES;
-                      if (isSSdi) { setSsdiSubStep(1); } else { setSsdiSubStep(0); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }
-                    }}
+                    key={opt.id}
+                    onClick={() => chooseOption(opt)}
                     className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
-                      concern === c
+                      selectedOption?.id === opt.id
                         ? 'border-gold-400 bg-gold-50 text-earth-900'
                         : 'border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700'
                     }`}
                   >
-                    {c}
-                  </button>
-                ))}
-
-                {/* EXPANDED — revealed via "More options" */}
-                {showMoreOptions && concerns.slice(PRIMARY_CONCERN_COUNT).map((c) => {
-                  const isSpecialCare = c === SPECIAL_CARE_CONCERN_EN || c === SPECIAL_CARE_CONCERN_ES;
-                  return (
-                    <button
-                      key={c}
-                      onClick={() => {
-                        setConcern(c);
-                        setSsdiAnswers({});
-                        const isSSdi = c === SSDI_CONCERN_EN || c === SSDI_CONCERN_ES;
-                        const isSC = c === SPECIAL_CARE_CONCERN_EN || c === SPECIAL_CARE_CONCERN_ES;
-                        // Special-care: do NOT auto-advance. Show the careful-review note
-                        // below, require an explicit "Continue" tap so the user has a
-                        // chance to read the no-promise advisory before proceeding.
-                        if (isSSdi) { setSsdiSubStep(1); }
-                        else if (isSC) { setSsdiSubStep(0); /* stay on step 1, note renders */ }
-                        else { setSsdiSubStep(0); setStep(s => Math.min(s + 1, TOTAL_STEPS + 1)); }
-                      }}
-                      className={`w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
-                        concern === c
-                          ? 'border-gold-400 bg-gold-50 text-earth-900'
-                          : isSpecialCare
-                            ? 'border-amber-300 hover:border-amber-500 hover:bg-amber-50 text-earth-700'
-                            : 'border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700'
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  );
-                })}
-                {/* Sawil 2026-06 — scroll anchor for the "bajar un chin" nudge */}
-                {showMoreOptions && <div ref={moreOptionsEndRef} aria-hidden="true" className="h-px w-full" />}
-              </div>
-
-              {/* "More options" toggle — only shown when expanded list hidden */}
-              {!showMoreOptions && (
-                <button
-                  type="button"
-                  onClick={() => setShowMoreOptions(true)}
-                  className="mt-3 w-full text-center px-4 py-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-gold-300 hover:bg-cream-50 text-earth-600 hover:text-earth-800 text-sm font-medium transition-all"
-                  aria-expanded={false}
-                >
-                  {t('More options', 'Más opciones')}
-                </button>
-              )}
-
-              {/* Careful-review notice for special care selection — neutral, no promises.
-                  User must explicitly tap Continue to proceed; this gives them a chance
-                  to read the no-recommendation advisory before any plan-related step. */}
-              {(concern === SPECIAL_CARE_CONCERN_EN || concern === SPECIAL_CARE_CONCERN_ES) && (
-                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-900 leading-relaxed">
-                  <p className="font-semibold mb-1.5">
-                    {t('Special care situation — careful review required', 'Situación de cuidado especial — revisión cuidadosa requerida')}
-                  </p>
-                  <p className="mb-3">
-                    {t(
-                      'A change to your Medicare plan may affect benefits or services you already receive. A licensed advisor should review your situation carefully before any change. We do not make plan recommendations from this answer alone.',
-                      'Un cambio en su plan de Medicare puede afectar beneficios o servicios que ya recibe. Un asesor licenciado debe revisar su situación con cuidado antes de cualquier cambio. No hacemos recomendaciones de plan solo con esta respuesta.'
-                    )}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setStep(s => Math.min(s + 1, TOTAL_STEPS + 1))}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-earth-800 text-cream-50 text-sm font-semibold hover:bg-earth-900 transition-colors"
-                  >
-                    {t('Continue', 'Continuar')}
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SSDI/SSI Screening Sub-steps */}
-          {step === 1 && currentSsdiQ && (
-            <div>
-              <p className="text-xs font-bold tracking-widest uppercase text-gold-500 mb-3">
-                {isEs ? `Pregunta ${ssdiSubStep} de 6` : `Question ${ssdiSubStep} of 6`}
-              </p>
-              <p className="text-earth-800 text-base font-semibold mb-5">{currentSsdiQ.q}</p>
-              <div className="grid gap-2.5">
-                {currentSsdiQ.opts.map((opt) => (
-                  <button
-                    key={opt}
-                    onClick={() => {
-                      setSsdiAnswers(prev => ({ ...prev, [currentSsdiQ.key]: opt }));
-                      setSsdiSubStep(s => s + 1);
-                    }}
-                    className="w-full text-left px-4 py-4 rounded-xl border-2 border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700 text-base font-medium transition-all"
-                  >
-                    {opt}
+                    {isEs ? opt.es : opt.en}
                   </button>
                 ))}
               </div>
+
+              {/* Secondary, clearly-educational entry — NOT a marketing option.
+                  Routes to the scope-limited Special Situations path. */}
               <button
-                onClick={() => { setSsdiSubStep(s => s === 1 ? 0 : s - 1); }}
-                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+                type="button"
+                onClick={() => { setSpecialCat(null); setStep1View('special'); }}
+                className="mt-4 w-full text-center px-4 py-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-earth-300 hover:bg-cream-50 text-earth-600 hover:text-earth-800 text-sm font-medium transition-all"
               >
-                {isEs ? '← Atrás' : '← Back'}
+                {t('Special situations (Medicaid, SSI/SSDI, VA, long-term care…)', 'Situaciones especiales (Medicaid, SSI/SSDI, VA, cuidado a largo plazo…)')}
               </button>
             </div>
           )}
 
-          {/* SSDI/SSI Educational Summary */}
-          {step === 1 && isSSdiConcern && ssdiSubStep === 7 && (
+          {/* ── Step 1 — Cost triage follow-up (COST_REVIEW_TRIAGE) ────────── */}
+          {step === 1 && step1View === 'cost' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase text-gold-500 mb-3">
-                {isEs ? 'Información educativa' : 'Educational Information'}
+                {t('Lower my Medicare costs', 'Reducir mis costos de Medicare')}
               </p>
-              <div className="bg-cream-50 rounded-xl p-4 text-sm text-earth-700 space-y-3 mb-5 leading-relaxed">
-                {isEs ? (
-                  <>
-                    <p>Las reglas de Medicare pueden ser diferentes para personas que reciben SSI, SSDI, Medicaid o beneficios relacionados con discapacidad. <strong>SSI por sí solo no significa automáticamente que la persona tenga Medicare.</strong> Personas menores de 65 años pueden recibir Medicare si califican por SSDI después del período requerido, o por situaciones especiales como ALS o ESRD.</p>
-                    <p>Para Medicare Parte A, muchas personas no pagan prima si ellos o su cónyuge tienen aproximadamente 40 quarters, normalmente unos 10 años de trabajo cubierto por Medicare. Si alguien no tiene Parte A sin prima, todavía podría comprar Parte A.</p>
-                    <p>En algunos casos, si los ingresos y recursos son limitados, un Medicare Savings Program del estado, como QMB, puede ayudar a pagar Parte A y/o Parte B.</p>
-                    <p className="text-xs text-earth-500 italic">Clear Point puede ayudarle a organizar las preguntas correctas, pero la elegibilidad final debe confirmarse con Social Security, Medicare, Medicaid o la agencia estatal.</p>
-                  </>
-                ) : (
-                  <>
-                    <p>Medicare rules can be different for people who receive SSI, SSDI, Medicaid, or disability-related benefits. <strong>SSI by itself does not automatically mean a person has Medicare.</strong> People under 65 may get Medicare if they qualify through SSDI after the required waiting period, or through special situations such as ALS or ESRD.</p>
-                    <p>For Medicare Part A, many people do not pay a premium if they or a spouse have about 40 work quarters, usually around 10 years of Medicare-covered work. If someone does not have premium-free Part A, they may still be able to buy Part A.</p>
-                    <p>In some cases, if income and resources are limited, a state Medicare Savings Program such as QMB may help pay Part A and/or Part B.</p>
-                    <p className="text-xs text-earth-500 italic">Clear Point can help organize the right questions, but final eligibility must be confirmed with Social Security, Medicare, Medicaid, or the state agency.</p>
-                  </>
-                )}
+              <p className="text-earth-800 text-base font-semibold mb-5">
+                {t('Where is the cost coming from?', '¿De dónde viene el costo?')}
+              </p>
+              <div className="grid gap-2.5">
+                {COST_FOLLOWUPS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    onClick={() => {
+                      setCostAnswer(opt.en);
+                      setLeadType(opt.leadType);
+                      setStep(s => Math.min(s + 1, TOTAL_STEPS + 1));
+                    }}
+                    className="w-full text-left px-4 py-4 rounded-xl border-2 border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700 text-base font-medium transition-all"
+                  >
+                    {isEs ? opt.es : opt.en}
+                  </button>
+                ))}
               </div>
+              <button
+                onClick={resetStep1}
+                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+              >
+                {isEs ? '← Volver' : '← Back'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Step 1 — Special situations: scope language, then categories ─ */}
+          {step === 1 && step1View === 'special' && (
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+                {t('Special situations', 'Situaciones especiales')}
+              </p>
+              {/* Required scope language — shown BEFORE any category. */}
+              <div className="rounded-xl border border-cream-300 bg-cream-50 px-4 py-3 text-[13px] text-earth-700 leading-relaxed mb-5">
+                {isEs ? SPECIAL_SCOPE_ES : SPECIAL_SCOPE_EN}
+              </div>
+              <p className="text-earth-800 text-base font-semibold mb-3">
+                {t('Which best describes your situation?', '¿Cuál describe mejor su situación?')}
+              </p>
+              <div className="grid gap-2.5">
+                {SPECIAL_SITUATIONS.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => { setSpecialCat(cat); setStep1View('specialDetail'); }}
+                    className="w-full text-left px-4 py-4 rounded-xl border-2 border-cream-200 hover:border-earth-300 hover:bg-cream-50 text-earth-700 text-base font-medium transition-all"
+                  >
+                    {isEs ? cat.es : cat.en}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={resetStep1}
+                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+              >
+                {isEs ? '← Volver a las opciones de Medicare' : '← Back to Medicare options'}
+              </button>
+            </div>
+          )}
+
+          {/* ── Step 1 — Special situation detail: guidance + callback opt-in ─ */}
+          {step === 1 && step1View === 'specialDetail' && specialCat && (
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+                {isEs ? specialCat.es : specialCat.en}
+              </p>
+              <div className="rounded-xl border border-cream-200 bg-cream-50 p-4 text-sm text-earth-700 leading-relaxed mb-4">
+                {isEs ? SPECIAL_GUIDANCE[specialCat.id].es : SPECIAL_GUIDANCE[specialCat.id].en}
+              </div>
+              {/* Scope reminder sits right next to the offer. */}
+              <p className="text-xs text-earth-500 italic mb-5">
+                {isEs ? SPECIAL_SCOPE_ES : SPECIAL_SCOPE_EN}
+              </p>
+              <p className="text-earth-800 text-base font-semibold mb-3">
+                {t('Would you like a ClearPoint advisor to call you with general Medicare guidance?', '¿Le gustaría que un asesor de ClearPoint le llame con orientación general sobre Medicare?')}
+              </p>
               <div className="space-y-2.5">
                 <button
-                  onClick={() => nextStep()}
+                  onClick={() => {
+                    setSelectedOption(null);
+                    setLeadType('LOW_PRIORITY_EDUCATION_REQUEST');
+                    setStep(s => Math.min(s + 1, TOTAL_STEPS + 1));
+                  }}
                   className="w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 rounded-xl hover:bg-earth-900 transition-all flex items-center justify-center gap-2"
                 >
-                  {isEs ? 'Continuar — Solicitar revisión gratuita' : 'Continue — Request my free review'} <ChevronRight className="w-4 h-4" />
+                  {t('Yes — please have an advisor call me', 'Sí — que un asesor me llame')} <ChevronRight className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => { setConcern(''); setSsdiSubStep(0); setSsdiAnswers({}); }}
+                  onClick={() => setStep1View('specialResources')}
+                  className="w-full border-2 border-cream-200 text-earth-700 font-semibold px-5 py-4 rounded-xl hover:border-earth-300 hover:bg-cream-50 transition-all"
+                >
+                  {t('No — just show me resources', 'No — solo muéstreme recursos')}
+                </button>
+                <button
+                  onClick={() => setStep1View('special')}
                   className="w-full text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700 py-2"
                 >
-                  {isEs ? 'Volver a temas' : 'Back to topics'}
+                  {isEs ? '← Atrás' : '← Back'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* ── Step 1 — Special situation resources (callback declined; no CRM lead) ─ */}
+          {step === 1 && step1View === 'specialResources' && specialCat && (
+            <div>
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+                {t('Helpful resources', 'Recursos útiles')}
+              </p>
+              <div className="rounded-xl border border-cream-200 bg-cream-50 p-4 text-sm text-earth-700 leading-relaxed mb-4 space-y-2">
+                <p>{isEs ? SPECIAL_GUIDANCE[specialCat.id].es : SPECIAL_GUIDANCE[specialCat.id].en}</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>Medicare: 1-800-MEDICARE (1-800-633-4227) · medicare.gov</li>
+                  <li>{t('Social Security (SSI/SSDI): 1-800-772-1213 · ssa.gov', 'Seguro Social (SSI/SSDI): 1-800-772-1213 · ssa.gov')}</li>
+                  <li>{t('Your state Medicaid / SHIP office for local program help', 'Su oficina estatal de Medicaid / SHIP para ayuda local')}</li>
+                </ul>
+              </div>
+              <p className="text-sm text-earth-700 mb-4">
+                {t('You can also call ClearPoint for general Medicare guidance:', 'También puede llamar a ClearPoint para orientación general de Medicare:')}{' '}
+                <a href="tel:18663108702" className="font-semibold text-gold-600 hover:underline">1-866-310-8702</a>{' '}
+                <span className="text-earth-500">({t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')})</span>
+              </p>
+              <button
+                onClick={resetStep1}
+                className="w-full text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700 py-2"
+              >
+                {isEs ? '← Volver a las opciones de Medicare' : '← Back to Medicare options'}
+              </button>
             </div>
           )}
 
@@ -731,7 +707,7 @@ export function SmartMedicareReview() {
 
               {/* Summary */}
               <div className="bg-cream-50 rounded-xl p-4 text-base text-earth-700 space-y-1.5 mb-5">
-                <p><strong>{t('Concern:', 'Interés:')}</strong> {concern}</p>
+                <p><strong>{t('You selected:', 'Usted seleccionó:')}</strong> {selectionLabel}</p>
                 <p><strong>ZIP:</strong> {zip} — {zipInfo?.city}, {zipInfo?.county}, {zipInfo?.state}</p>
                 <p><strong>{t('DOB:', 'Fecha Nac.:')}</strong> {dob} ({t('Age:', 'Edad:')} {validateDOB(dob).age})</p>
                 <p><strong>{t('Name:', 'Nombre:')}</strong> {firstName} {lastName}</p>
@@ -858,7 +834,9 @@ export function SmartMedicareReview() {
               >
                 {submitting
                   ? t('Submitting...', 'Enviando...')
-                  : t('Request My Free Review', 'Solicitar Mi Revisión Gratis')}
+                  : leadType === 'LOW_PRIORITY_EDUCATION_REQUEST'
+                    ? t('Request Advisor Callback', 'Solicitar Llamada de Asesor')
+                    : t('Request My Free Review', 'Solicitar Mi Revisión Gratis')}
               </button>
             </div>
           )}
