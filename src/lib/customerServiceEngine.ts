@@ -3541,10 +3541,7 @@ function _handleCostFlow(
 
   // MSP / Extra Help education — conditional, compliance-safe, names QMB/SLMB/QI.
   // Pure of state: takes THIS-turn values so flags set in the same patch show up.
-  const buildEducation = (chargeSource?: string, incomeMonthly?: string, dualEligible?: boolean): string => {
-    const incomeLine = incomeMonthly
-      ? (isEs ? `Con un ingreso aproximado de $${incomeMonthly} al mes, ` : `With an income of about $${incomeMonthly}/month, `)
-      : '';
+  const buildEducation = (chargeSource?: string, dualEligible?: boolean): string => {
     const dual = dualEligible
       ? (isEs
           ? 'Como mencionó Medicaid: si en efecto tiene Medicare Y Medicaid, usted es "doble elegible" y normalmente estos costos ya están cubiertos o reducidos — el estado o un asesor lo confirma. '
@@ -3552,21 +3549,22 @@ function _handleCostFlow(
       : '';
     if (chargeSource === 'pharmacy') {
       return isEs
-        ? `${incomeLine}para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar mucho lo que paga en la farmacia. ${dual}No puedo confirmar por chat si califica — depende de su ingreso, recursos y reglas vigentes, y lo verifica el Seguro Social o un asesor licenciado, sin costo.`
-        : `${incomeLine}for drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy a lot. ${dual}I can't confirm eligibility in chat — it depends on income, resources and current rules, verified by Social Security or a licensed advisor, at no cost.`;
+        ? `Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. ${dual}No puedo confirmar por chat si califica — depende de su ingreso, recursos y reglas vigentes, y lo verifica el Seguro Social o un asesor licenciado, sin costo.`
+        : `For drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy. ${dual}I can't confirm eligibility in chat — it depends on income, resources and current rules, verified by Social Security or a licensed advisor, at no cost.`;
     }
+    // No QMB/SLMB/QI tier breakdown — kept short + conditional; an advisor or NY
+    // Medicaid verifies the specific program. (Sawil 2026-06-15.)
     return isEs
-      ? `${incomeLine}en Nueva York los **Medicare Savings Programs (MSP)** pueden ayudar a pagar la prima de la Parte B y otros costos. Hay tres niveles según el ingreso: **QMB** (ingresos más bajos; también cubre deducibles y copagos), **SLMB** y **QI** (ingresos algo más altos; ayudan con la prima de la Parte B). ${dual}No puedo confirmar por chat cuál le toca ni si califica — depende de su ingreso exacto, recursos y las reglas de Nueva York, y lo verifica el Medicaid de Nueva York (1-800-541-2831) o un asesor licenciado, sin costo.`
-      : `${incomeLine}in New York the **Medicare Savings Programs (MSP)** can help pay the Part B premium and other costs. There are three levels by income: **QMB** (lowest income; also covers deductibles and copays), **SLMB**, and **QI** (somewhat higher income; help with the Part B premium). ${dual}I can't confirm which one applies or whether you qualify — it depends on your exact income, resources and New York rules, verified by New York Medicaid (1-800-541-2831) or a licensed advisor, at no cost.`;
+      ? `En Nueva York, los **Medicare Savings Programs (MSP)** y **Extra Help** pueden ayudar con ciertos costos de Medicare (como la prima de la Parte B o costos compartidos), dependiendo de su ingreso, recursos y las reglas del estado. ${dual}No puedo confirmar por chat si califica — lo verifica el Medicaid de Nueva York (1-800-541-2831) o un asesor licenciado, sin costo.`
+      : `In New York, **Medicare Savings Programs (MSP)** and **Extra Help** may help with certain Medicare costs (like the Part B premium or cost-sharing), depending on your income, resources, and state rules. ${dual}I can't confirm whether you qualify in chat — New York Medicaid (1-800-541-2831) or a licensed advisor can verify, at no cost.`;
   };
   const offerText = () => isEs
-    ? ' ¿Quiere que un asesor licenciado de ClearPoint revise su caso y le oriente sobre cómo aplicar, sin costo?'
-    : ' Would you like a licensed ClearPoint advisor to review your case and guide you on how to apply, at no cost?';
+    ? ' ¿Quiere que un asesor licenciado de ClearPoint revise su caso, sin costo?'
+    : ' Would you like a licensed ClearPoint advisor to review your case, at no cost?';
   const goEducate = (patch: Partial<ConversationState>, prefix = '') => {
     const chargeSource = (patch.costChargeSource ?? state.costChargeSource) as string | undefined;
-    const incomeMonthly = patch.incomeMonthly ?? state.incomeMonthly;
     const dualEligible = patch.dualEligible ?? state.dualEligible;
-    const body = buildEducation(chargeSource, incomeMonthly, dualEligible);
+    const body = buildEducation(chargeSource, dualEligible);
     if (haveContact) {
       const tail = isEs
         ? ' El asesor licenciado ya tiene sus datos y le ayudará también con esto cuando le llame.'
@@ -3661,6 +3659,8 @@ function _handleCostFlow(
   if (stage === 'ask_income') {
     if (isPushback) return restate(isEs ? '¿Cuál es aproximadamente su ingreso mensual? Es solo para orientar.' : 'What is your monthly income, roughly? Just to orient.', 'costflow_ask_income');
     if (_mentionsMedicaid(m)) return goEducate({ dualEligible: true });
+    // User declines / doesn't know the income — never force it; go to advisor review.
+    if (/\b(no s[eé]|no lo s[eé]|prefiero no|no quiero (decir|dar)|es privado|privado|no le importa|don'?t know|dunno|not sure|rather not|prefer not|private)\b/.test(m)) return goEducate({});
     const inc = _costMoney(raw);
     if (inc == null) {
       if (attempts >= 1) return goEducate({});
@@ -3674,25 +3674,34 @@ function _handleCostFlow(
 
   if (stage === 'ask_net_gross') {
     if (isPushback) return restate(isEs ? '¿Ese ingreso es lo que recibe limpio después de descuentos, o el total antes de descuentos?' : 'Is that income what you receive net after deductions, or the total before deductions?', 'costflow_ask_net_gross');
-    const isNet = /\b(limpio|neto|despu[eé]s|me queda|me sacan|me quitan|ya descont|after|net)\b/.test(m);
+    const isNet = /\b(limpio|neto|despu[eé]s|me queda|me sacan|me quitan|ya descont|after|net|take ?home)\b/.test(m);
     const isGross = /\b(antes|bruto|total|completo|before|gross)\b/.test(m);
-    const net = state.incomeMonthly ? parseInt(state.incomeMonthly, 10) : null;
-    const partB = state.costMonthlyAmount ? parseInt(state.costMonthlyAmount, 10) : 0;
-    let prefix = '';
-    if (isNet && net != null) {
-      const grossEst = net + (partB || 0);
-      prefix = isEs
-        ? `Anotado — recibe alrededor de $${net} limpios; antes de descontar Medicare serían aproximadamente $${grossEst}. Los programas usan el ingreso ANTES de descuentos, así que eso es lo que el asesor revisará. `
-        : `Noted — about $${net} net; before Medicare is taken out that's roughly $${grossEst}. The programs use income BEFORE deductions, so that's what the advisor reviews. `;
-    } else if (isGross && net != null) {
-      prefix = isEs ? `Anotado — alrededor de $${net} antes de descuentos. ` : `Noted — about $${net} before deductions. `;
+    const incomeIsNet = isNet ? true : (isGross ? false : state.incomeIsNet);
+    const inc = state.incomeMonthly ? parseInt(state.incomeMonthly, 10) : null;
+    // HIGH-INCOME GUARD (Sawil 2026-06-15) — clearly above the usual NY MSP
+    // individual income guidance (~$2,400/mo single). Do NOT suggest MSP as
+    // likely, NEVER compute gross from net, pivot to a full advisor plan review.
+    // Conditional only — never confirms or denies eligibility.
+    if (inc != null && inc >= 3000) {
+      const netClause = incomeIsNet
+        ? (isEs ? ' No puedo calcular su ingreso bruto exacto aquí; un asesor puede revisarlo con usted.' : " I can't calculate your exact gross income here; an advisor can review it with you.")
+        : '';
+      const body = isEs
+        ? `Gracias. Si esos $${inc} son ingresos${incomeIsNet ? ' limpios' : ''} al mes, podría estar por encima de los límites usuales de algunos programas de ayuda como MSP. No puedo confirmar elegibilidad por chat.${netClause} Pero si paga muchos copagos, un asesor autorizado puede revisar su plan actual, doctores, medicamentos, farmacia, red y opciones disponibles para reducir costos cuando haya un período válido.`
+        : `Thank you. If that $${inc} is your monthly${incomeIsNet ? ' net' : ''} income, you may be above the usual income limits for some assistance programs like MSP. I can't confirm eligibility by chat.${netClause} But if you're paying many copays, a licensed advisor can review your current plan, doctors, medications, pharmacy, network, and available options to reduce costs when there is a valid enrollment period.`;
+      if (haveContact) return emit(body + (isEs ? ' El asesor licenciado ya tiene sus datos y le ayudará con esto cuando le llame.' : ' The licensed advisor already has your info and will help with this on the call.'), { incomeIsNet, costFlowStage: 'done', lastBotIntent: 'costflow_high_income' });
+      return emit(body + (isEs ? ' ¿Quiere que le conecte con un asesor de Clear Point sin costo?' : ' Would you like me to connect you with a Clear Point advisor at no cost?'), { incomeIsNet, costFlowStage: 'offered_advisor', lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_high_income' });
     }
-    return goEducate({ incomeIsNet: isNet ? true : (isGross ? false : state.incomeIsNet) }, prefix);
+    // Lower income — conditional MSP/Extra Help (no gross math, no QMB/SLMB/QI dump).
+    const prefix = (incomeIsNet && inc != null)
+      ? (isEs ? `Anotado — alrededor de $${inc} al mes (después de descuentos). No puedo calcular su ingreso bruto exacto aquí; un asesor puede revisarlo. ` : `Noted — about $${inc}/month (after deductions). I can't calculate your exact gross income here; an advisor can review it. `)
+      : (isGross && inc != null ? (isEs ? `Anotado — alrededor de $${inc} al mes (antes de descuentos). ` : `Noted — about $${inc}/month (before deductions). `) : '');
+    return goEducate({ incomeIsNet }, prefix);
   }
 
   if (stage === 'offered_advisor') {
     if (isPushback) {
-      const body = buildEducation(state.costChargeSource, state.incomeMonthly, state.dualEligible);
+      const body = buildEducation(state.costChargeSource, state.dualEligible);
       return emit(body + (haveContact ? '' : offerText()), { lastBotOfferedAdvisor: !haveContact, lastBotIntent: 'costflow_educate' });
     }
     // Any real answer (yes / no / new topic) exits the flow to the deterministic

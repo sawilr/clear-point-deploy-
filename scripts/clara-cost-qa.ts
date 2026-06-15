@@ -115,6 +115,41 @@ const noBadCompliance = (s: string) => !/definitivamente|usted califica|you qual
   check('K3 no re-colecta nombre/teléfono', !/cu[aá]l es su nombre|su tel[eé]fono|n[uú]mero donde/i.test(all));
 }
 
+// ════ HIGH-INCOME MSP GUARD (mission A–D) ════
+// A) High income ES — must NOT suggest MSP as likely, must NOT compute gross
+{
+  const { last } = convo('MSP-A — alto ingreso ES (5500 limpio)', 'Español', ['pago muchos copagos', '5500', 'limpio']);
+  check('A1 NO presenta MSP como ayuda probable', !/pueden ayudar a pagar|pueden ayudar con ciertos costos/i.test(last.bot));
+  check('A2 dice "por encima de los límites usuales"', /por encima de los l[ií]mites usuales/i.test(last.bot));
+  check('A3 NO calcula bruto desde neto', !/serían aproximadamente|antes de descontar Medicare ser/i.test(last.bot));
+  check('A4 dice que no puede calcular el bruto', /no puedo calcular su ingreso bruto/i.test(last.bot));
+  check('A5 escala a revisión de asesor (plan/doctores/medicamentos)', /(plan|doctores|medicamentos|farmacia)/i.test(last.bot) && /conecte con un asesor/i.test(last.bot));
+  check('A6 compliance ok (no "califica")', noBadCompliance(last.bot));
+}
+// B) Low income ES — conditional MSP/Extra Help, no "above limits"
+{
+  const { last } = convo('MSP-B — bajo ingreso ES (1200 bruto)', 'Español', ['pago muchos copagos', '1200', 'bruto']);
+  check('B1 menciona MSP/Extra Help condicional', /Medicare Savings Programs|MSP|Extra Help/i.test(last.bot) && /no puedo confirmar/i.test(last.bot));
+  check('B2 NO confirma elegibilidad', noBadCompliance(last.bot));
+  check('B3 ofrece asesor', /asesor/i.test(last.bot));
+  check('B4 NO dice "por encima de los límites" (es bajo)', !/por encima de los l[ií]mites/i.test(last.bot));
+}
+// C) Unknown income — does not force income, offers advisor review
+{
+  const { last } = convo('MSP-C — ingreso desconocido ES', 'Español', ['pago muchos copagos', 'no sé']);
+  check('C1 educa general + asesor sin forzar ingreso', /(Medicare Savings Programs|Extra Help)/i.test(last.bot) && /asesor/i.test(last.bot));
+  check('C2 NO re-pregunta el ingreso', !/idea aproximada de su ingreso|¿cu[aá]l es.*ingreso mensual/i.test(last.bot));
+}
+// D) High income EN — same safe behavior
+{
+  const { last } = convo('MSP-D — high income EN (5500 net)', 'English', ['my copays are too expensive', '5500', 'net']);
+  check('D1 says above the usual income limits', /above the usual income limits/i.test(last.bot));
+  check('D2 cannot calculate gross', /can't calculate your exact gross income/i.test(last.bot));
+  check('D3 NO presents MSP as likely help', !/may help with certain Medicare costs|can help pay/i.test(last.bot));
+  check('D4 advisor review + connect offer', /licensed advisor can review/i.test(last.bot) && /connect you with a Clear Point advisor/i.test(last.bot));
+  check('D5 responde en inglés (no español)', !/¿|usted califica/i.test(last.bot));
+}
+
 console.log(`\n═════════════════════════════════════════`);
 console.log(`TOTAL: ${PASS} PASS / ${FAIL} FAIL`);
 if (FAIL) console.log('FAILS: ' + fails.join(' | '));
