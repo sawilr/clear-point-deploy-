@@ -9,6 +9,7 @@ import {
   type Step1Option,
   type SpecialSituation,
   STEP1_OPTIONS,
+  SEP_OPTION,
   COST_FOLLOWUPS,
   SPECIAL_SITUATIONS,
   SPECIAL_GUIDANCE,
@@ -370,7 +371,7 @@ export function SmartMedicareReview() {
           <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-3 block">
             {t('Smart Medicare Review', 'Revisión Inteligente de Medicare')}
           </span>
-          <h2 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 mb-3">
+          <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 mb-3">
             {t('Start Your Smart Medicare Review', 'Comience Su Revisión Inteligente de Medicare')}
           </h2>
           <p className="text-earth-600 text-sm max-w-xl mx-auto">
@@ -429,14 +430,34 @@ export function SmartMedicareReview() {
                 ))}
               </div>
 
-              {/* Secondary, clearly-educational entry — NOT a marketing option.
-                  Routes to the scope-limited Special Situations path. */}
+              {/* Medicare-adjacent qualified catch-all. UX audit 2026-06-15:
+                  replaces the old "Special situations (Medicaid/VA/long-term
+                  care)" wording that advertised government assistance and drew
+                  unqualified leads. Employer-loss / SEP / life-change visitors
+                  are real MA/PDP/Medigap prospects → routes as NEEDS_TRIAGE
+                  through the normal flow (chooseOption). */}
+              <button
+                type="button"
+                onClick={() => chooseOption(SEP_OPTION)}
+                className={`mt-2.5 w-full text-left px-4 py-4 rounded-xl border-2 text-base font-medium transition-all ${
+                  selectedOption?.id === SEP_OPTION.id
+                    ? 'border-gold-400 bg-gold-50 text-earth-900'
+                    : 'border-cream-200 hover:border-gold-300 hover:bg-cream-50 text-earth-700'
+                }`}
+              >
+                {isEs ? SEP_OPTION.es : SEP_OPTION.en}
+              </button>
+
+              {/* Quiet, de-emphasized entry to the scope-limited education path
+                  (Medicaid / VA / long-term care). Intentionally NOT a primary
+                  marketing option — program names are kept off the main surface
+                  per the audit; the honest guidance still exists one tap away. */}
               <button
                 type="button"
                 onClick={() => { setSpecialCat(null); setStep1View('special'); }}
-                className="mt-4 w-full text-center px-4 py-3 rounded-xl border-2 border-dashed border-cream-300 hover:border-earth-300 hover:bg-cream-50 text-earth-600 hover:text-earth-800 text-sm font-medium transition-all"
+                className="mt-4 w-full text-center text-xs text-earth-400 hover:text-earth-600 underline underline-offset-2 transition-colors"
               >
-                {t('Special situations (Medicaid, SSI/SSDI, VA, long-term care…)', 'Situaciones especiales (Medicaid, SSI/SSDI, VA, cuidado a largo plazo…)')}
+                {t('Have a different situation?', '¿Tiene una situación diferente?')}
               </button>
             </div>
           )}

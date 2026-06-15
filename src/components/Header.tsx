@@ -176,7 +176,7 @@ export function Header() {
         <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
           <div className="flex items-center justify-between h-[70px]">
             {/* Logo */}
-            <a href="/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Go to homepage', 'Ir a la página principal')}>
+            <a href="/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
               <div className="transition-transform group-hover:scale-105 flex-shrink-0">
                 <LogoSvg size={40} />
               </div>
@@ -196,7 +196,7 @@ export function Header() {
               <div className="relative" ref={servicesRef}>
                 <button
                   onClick={() => { setServicesOpen(!servicesOpen); setEducationOpen(false); }}
-                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap py-1.5 min-h-[28px]"
+                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
                   aria-expanded={servicesOpen}
                   aria-haspopup="menu"
                 >
@@ -219,7 +219,7 @@ export function Header() {
               <div className="relative" ref={educationRef}>
                 <button
                   onClick={() => { setEducationOpen(!educationOpen); setServicesOpen(false); }}
-                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap py-1.5 min-h-[28px]"
+                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
                   aria-expanded={educationOpen}
                   aria-haspopup="menu"
                 >
@@ -242,7 +242,7 @@ export function Header() {
                   <button
                     key={link.href}
                     onClick={() => handleScrollNav(link.href)}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap py-1.5 min-h-[28px]"
+                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap inline-flex items-center min-h-[44px] px-1"
                   >
                     {t(link.label, link.labelEs)}
                   </button>
@@ -250,7 +250,7 @@ export function Header() {
                   <Link
                     key={link.href}
                     to={link.href}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap py-1.5 min-h-[28px] inline-flex items-center"
+                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap min-h-[44px] px-1 inline-flex items-center"
                     onClick={closeNav}
                   >
                     {t(link.label, link.labelEs)}
@@ -271,7 +271,7 @@ export function Header() {
               </a>
               <button
                 onClick={handleFreeReview}
-                className="bg-earth-800 text-cream-50 text-sm font-semibold px-4 py-2.5 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap"
+                className="bg-earth-800 text-cream-50 text-sm font-semibold px-4 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap inline-flex items-center justify-center min-h-[44px]"
               >
                 {t('Free Review', 'Revisión Gratis')}
               </button>

@@ -7,6 +7,7 @@
 // Run: npx tsx scripts/smart-review-qa.ts
 import {
   STEP1_OPTIONS,
+  SEP_OPTION,
   COST_FOLLOWUPS,
   SPECIAL_SITUATIONS,
   SPECIAL_GUIDANCE,
@@ -45,6 +46,13 @@ for (const opt of STEP1_OPTIONS) {
 const banned = /medicaid|msp|extra help|\blis\b|ssi|ssdi|disabilit|retiree|union|federal|\bva\b|tricare|home care|nursing|pace|\bmap\b|\bltc\b|i-snp/i;
 check('NO broad assistance wording in Step 1 (EN)', STEP1_OPTIONS.every(o => !banned.test(o.en)));
 check('NO broad assistance wording in Step 1 (ES)', STEP1_OPTIONS.every(o => !banned.test(o.es)));
+
+console.log('\n══════════ SEP catch-all (audit option #7 fix) ══════════');
+check('P1 SEP → NEEDS_TRIAGE (qualified, NOT low-priority)', SEP_OPTION.leadType === 'NEEDS_TRIAGE');
+check('P2 SEP label is Medicare-adjacent — NO Medicaid/SSI/SSDI/VA/LTC wording (EN)', !banned.test(SEP_OPTION.en));
+check('P3 SEP label is Medicare-adjacent — NO Medicaid/SSI/SSDI/VA/LTC wording (ES)', !banned.test(SEP_OPTION.es));
+check('P4 SEP submits to CRM as a qualified route', isQualifiedSalesRoute(SEP_OPTION.leadType));
+check('P5 SEP is NOT in the 6 primary options array', !STEP1_OPTIONS.some(o => o.id === SEP_OPTION.id));
 
 console.log('\n══════════ MA_LEAD path ══════════');
 {

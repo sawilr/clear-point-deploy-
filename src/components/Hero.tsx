@@ -84,7 +84,7 @@ export function Hero({
               <div className="w-2 h-2 rounded-full bg-gold-400" />
               <span className="text-xs font-bold tracking-[0.15em] uppercase text-gold-300">{t(eyebrow, eyebrowEs)}</span>
             </div>
-            <h1 className="font-serif text-[2rem] xs:text-[2.25rem] sm:text-5xl lg:text-[3.4rem] 2xl:text-[4rem] 3xl:text-[4.5rem] font-medium leading-[1.15] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
+            <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.4rem] 2xl:text-[4rem] 3xl:text-[4.5rem] font-medium leading-[1.15] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
             <p className="text-cream-100/80 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
               {t(subheadline, subheadlineEs)}
             </p>

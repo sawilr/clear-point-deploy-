@@ -241,7 +241,7 @@ export default function Home() {
         <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
-            <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
+            <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
               {t('Medicare Solutions We Offer', 'Soluciones Medicare Que Ofrecemos')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed">
@@ -272,7 +272,7 @@ export default function Home() {
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <div>
               <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Enrollment Guide', 'Guía de Inscripción')}</span>
-              <h2 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-3">
+              <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-3">
                 {t('Medicare Enrollment Periods', 'Períodos de Inscripción de Medicare')}
               </h2>
               <p className="text-earth-600 text-base leading-relaxed mb-8">
@@ -326,9 +326,10 @@ export default function Home() {
               <img
                 src="/enrollment-advisor.jpg"
                 alt="Senior couple reviewing Medicare enrollment options with a trusted advisor."
-                className="rounded-2xl shadow-lifted w-full object-cover"
+                className="rounded-2xl shadow-lifted w-full object-cover bg-cream-100"
                 style={{ maxHeight: '600px' }}
-                loading="lazy"
+                loading="eager"
+                decoding="async"
               />
             </div>
           </div>
@@ -341,7 +342,7 @@ export default function Home() {
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
               <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Simple Process', 'Proceso Simple')}</span>
-              <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
+              <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
                 {t('How It Works', 'Cómo Funciona')}
               </h2>
               <p className="text-earth-600 text-base leading-relaxed mb-10">
@@ -385,7 +386,7 @@ export default function Home() {
         <div className="cp-section px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
-            <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
+            <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
               {t('We Work for You,', 'Trabajamos para Usted,')}<br />{t('Not the Insurance Company', 'No para la Aseguradora')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed mb-8">
@@ -460,7 +461,7 @@ export default function Home() {
         <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Our Commitment', 'Nuestro Compromiso')}</span>
-            <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
+            <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
               {t('Client Experience Standards', 'Estándares de Experiencia del Cliente')}
             </h2>
             <p className="text-earth-700 text-base leading-relaxed">

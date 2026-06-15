@@ -129,10 +129,15 @@ export function BotLauncher() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label={isEs ? 'Abrir menú de ayuda' : 'Open help menu'}
-        className="cp-zara-fab fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 active:scale-95 transition-all min-h-[56px]"
+        // Sawil 2026-06-15 (UX audit L5): on very narrow phones (≤360px) the
+        // wide "Help" pill overlapped the hero "Schedule Free Consultation"
+        // button. Below 360px the launcher collapses to an icon-only 56px
+        // circle so it tucks into the corner without covering the CTA label.
+        // Position/behavior unchanged at 361px+ and on tablet/desktop.
+        className="cp-zara-fab fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 active:scale-95 transition-all min-h-[56px] max-[360px]:w-14 max-[360px]:gap-0 max-[360px]:px-0 max-[360px]:justify-center max-[360px]:rounded-full"
       >
         <MessageCircle aria-hidden className="w-5 h-5" />
-        <span className="text-sm font-medium pr-1">
+        <span className="text-sm font-medium pr-1 max-[360px]:hidden">
           {isEs ? 'Ayuda' : 'Help'}
         </span>
       </button>

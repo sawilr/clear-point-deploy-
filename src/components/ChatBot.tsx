@@ -4838,13 +4838,16 @@ export function ChatBot() {
       )}
 
       {/* Sawil 2026-06-15 — modal backdrop: subtle on-brand tint behind Zara that
-          blocks clicks to the page and closes Zara on tap. z-40 sits BELOW the
-          panel (z-50) so Zara itself stays fully interactive. */}
+          blocks clicks to the page and closes Zara on tap. z-[55] sits ABOVE the
+          sticky header (z-50) so the whole page — header included — is
+          de-emphasized and non-interactive, and BELOW the panel (z-[60]) so Zara
+          itself stays fully interactive. (UX audit 2026-06-15: prior z-40 left
+          the header clickable through the overlay.) */}
       {isOpen && !isMinimized && (
         <div
           aria-hidden="true"
           onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }}
-          className="fixed inset-0 z-40 bg-earth-900/30 animate-fade-in"
+          className="fixed inset-0 z-[55] bg-earth-900/30 animate-fade-in"
         />
       )}
 
@@ -4854,7 +4857,7 @@ export function ChatBot() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="zara-chat-title"
-          className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-50 md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
+          className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-[60] md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
           style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px`, bottom: `${(zKbBottom || 0) + 8}px` } : undefined}
         >
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">

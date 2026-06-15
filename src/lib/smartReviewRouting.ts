@@ -43,6 +43,20 @@ export const STEP1_OPTIONS: Step1Option[] = [
   { id: 'unsure',  en: 'Not sure — guide me',                      es: 'No estoy seguro — guíeme',                     leadType: 'NEEDS_TRIAGE' },
 ];
 
+// Medicare-adjacent catch-all (UX audit 2026-06-15). Replaces the old
+// "Special situations (Medicaid/SSI/SSDI/VA/long-term care)" primary wording,
+// which advertised government assistance and attracted unqualified leads.
+// Losing employer/union coverage or a life-change SEP makes someone a genuine
+// Medicare Advantage / Part D / Medigap prospect, so this routes as a normal
+// qualified triage lead — NOT the low-priority special-situations bucket. The
+// scope-limited education path still exists behind a quiet secondary link.
+export const SEP_OPTION: Step1Option = {
+  id: 'sep',
+  en: "I'm losing employer coverage or have a special enrollment question",
+  es: 'Estoy perdiendo cobertura de empleador o tengo una pregunta de inscripción especial',
+  leadType: 'NEEDS_TRIAGE',
+};
+
 // ── COST_REVIEW_TRIAGE follow-up ─────────────────────────────────────────
 // "Lower my Medicare costs" stays COST_REVIEW_TRIAGE unless the visitor
 // clearly reclassifies it. We only promote to a precise sales type when the
