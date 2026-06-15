@@ -13,7 +13,6 @@ import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
 // PHASE A7 — LLM bridge (Claude Haiku via /api/chat). Optional, fails gracefully.
 import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler.ts';
-import { getZipInfo } from './zipLookup.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -58,6 +57,14 @@ export interface ConversationState {
   isValidState: boolean;
   messages: { role: 'user' | 'bot'; content: string; timestamp: number }[];
   currentProblem: string;
+  /** Sawil 2026-06-14 — SUPPORT TOPIC MEMORY (Clara support microfix).
+   *  activeCaseTopic = classified support topic (e.g. 'medicare_cost') that
+   *  PERSISTS once the caller states a problem, so a later "ya te dije" or an
+   *  LLM ZIP-re-ask slip never resets the case. lastUserProblem keeps the
+   *  caller's OWN words of the problem and is never overwritten by a pushback
+   *  like "ya te dije". (serviceZip == zipCode; supportStage == step.) */
+  activeCaseTopic?: string;
+  lastUserProblem?: string;
   intent: string;
   emotionalState: string;
   turnCount: number;
@@ -3384,6 +3391,40 @@ function _runStructuralFirst(
   return null;
 }
 
+/** Sawil 2026-06-14 — Clara SUPPORT MICROFIX helpers (post-ZIP topic memory).
+ *  Pure + exported so the flow harness can unit-test them offline. */
+
+/** Does this message read as a Medicare COST / charge complaint? Matches the
+ *  mission examples ("me están cobrando mucho de Medicare", "me sacan", "me
+ *  quitaron como 200", "los medicamentos están caros", "el doctor me cobró",
+ *  "no entiendo lo que me descuentan", "me llegó una factura"). */
+export function _isMedicareCostComplaint(msg: string): boolean {
+  const m = (msg || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return /(cobr|me sac(an|aron|a)\b|me quit(an|aron)|descuent|me estan quitando|car[oa]s?\b|much[oa] de medicare|pag(o|ar|ando) de mas|factura|bill\b|charg|expensive|too much|me llego.*(factura|cobro)|costos? (de )?medicare)/i.test(m);
+}
+
+/** A substantive problem statement worth remembering (NOT a yes/no/greeting/
+ *  pushback). Used to fill lastUserProblem without clobbering it on "ya te dije". */
+export function _looksLikeStatedProblem(msg: string): boolean {
+  const t = (msg || '').trim();
+  if (t.length < 7) return false;
+  if (/^(s[ií]|no|ok|okay|gracias|thanks|ya (te|le)? ?dije|te dije|ya dije|ya lo dije|hola|hello|hi)\b/i.test(t)) return false;
+  return true;
+}
+
+/** Build a topic-preserving continuation when the LLM slipped and re-asked the
+ *  ZIP. NEVER repeats the ZIP; continues from the caller's stated problem. */
+export function _buildPostZipReaskReplacement(userMessage: string, isEs: boolean): string {
+  if (_isMedicareCostComplaint(userMessage)) {
+    return isEs
+      ? 'Entiendo. Cuando dice que le están cobrando mucho de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos del doctor, o una factura médica. Para ubicarlo mejor: ¿ese cobro sale de su cheque del Seguro Social, de una farmacia, de un doctor u hospital, o de una factura que recibió?'
+      : 'I understand. When you say Medicare is charging you a lot, it could be the Part B premium, your medications, doctor copays, or a medical bill. To pinpoint it: does that charge come out of your Social Security check, from a pharmacy, from a doctor or hospital, or from a bill you received?';
+  }
+  return isEs
+    ? 'Entiendo. Para ayudarle bien, ¿me cuenta un poco más sobre el tema — es por una factura, un medicamento, su doctor, una carta que recibió, o un costo de Medicare?'
+    : 'Got it. To help you well, can you tell me a bit more about the topic — is it a bill, a medication, your doctor, a letter you received, or a Medicare cost?';
+}
+
 /** Public async entry: structural sync + LLM brain + fallback. */
 export async function processMessageAsync(
   userMessage: string,
@@ -3432,16 +3473,24 @@ export async function processMessageAsync(
   // ("como vive en NY"). The other patterns are inherently question-phrased.
   const _reAsksZip = /(vive en\b[^.?!]{0,60}\b(nueva\s?jersey|new\s?jersey|nj|connecticut|ct)\b|en qu[eé] estado vive|cu[aá]l es su (zip|c[oó]digo postal)|d[ií]game su (zip|c[oó]digo postal)|deme su (zip|c[oó]digo postal)|necesito[^.?!]{0,30}(zip|c[oó]digo postal)|me (d[ií]ga|da|puede dar|proporcione|indique)[^.?!]{0,20}(zip|c[oó]digo postal)|(zip|c[oó]digo postal) de 5 d[ií]gitos|what state do you live|which state do you live|what(?:'| i)s your zip|your 5[\s-]?digit zip|(need|provide|share)[^.?!]{0,20}(zip|postal code))/i;
   if (_zipKnown && !_moved.test(userMessage) && _reAsksZip.test(_resp)) {
-    const _zi = getZipInfo(state.zipCode || '');
-    const _place = _zi && _zi.county ? `${_zi.county}, ${_zi.state}` : (state.state === 'NY' ? 'New York' : state.state === 'NJ' ? 'New Jersey' : 'Connecticut');
-    _resp = isEs
-      ? `Gracias. Como ya tengo su código postal ${state.zipCode} en ${_place}, seguimos con su caso. Para orientarle mejor, cuénteme un poco más sobre lo que necesita.`
-      : `Thanks. Since I already have your ZIP ${state.zipCode} in ${_place}, let's continue with your case. To guide you better, tell me a bit more about what you need.`;
+    // Sawil 2026-06-14 — TOPIC-PRESERVING ZIP anti-re-ask. The old replacement
+    // discarded the problem the caller JUST stated and parroted the ZIP back
+    // ("Como ya tengo su código postal …"). Now we continue FROM the caller's
+    // stated problem: a Medicare-cost complaint gets the focused source-triage
+    // question; anything else gets a concrete clarifier. The ZIP stays internal
+    // and is never repeated. No GHL/flow/UI changes.
+    _resp = _buildPostZipReaskReplacement(userMessage, isEs);
   }
 
   let newState: ConversationState = {
     ...state,
     turnCount: (state.turnCount || 0) + 1,
+    // Sawil 2026-06-14 — persist support topic memory across LLM turns so a
+    // later "ya te dije" or a ZIP slip can restate the problem instead of
+    // resetting. activeCaseTopic sticks once set; lastUserProblem keeps the
+    // caller's own words and is NOT clobbered by pushback ("ya te dije").
+    activeCaseTopic: _isMedicareCostComplaint(userMessage) ? 'medicare_cost' : state.activeCaseTopic,
+    lastUserProblem: _looksLikeStatedProblem(userMessage) ? userMessage.trim() : state.lastUserProblem,
     messages: [
       ...(state.messages || []),
       { role: 'user', content: userMessage, timestamp: Date.now() },

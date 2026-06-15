@@ -2,7 +2,7 @@
 // Sawil 2026-06-12 — Contact-flow regression harness (3 bugs).
 // Drives the pure deterministic collector (processMessage) offline.
 // Run: npx tsx _flowharness.ts
-import { processMessage } from '../src/lib/customerServiceEngine';
+import { processMessage, _isMedicareCostComplaint, _looksLikeStatedProblem, _buildPostZipReaskReplacement } from '../src/lib/customerServiceEngine';
 
 type Any = any;
 let PASS = 0, FAIL = 0;
@@ -160,6 +160,46 @@ lines.push('Crisis / emergencia médica');
   check('6B médico needsHuman', (medical as Any).needsHuman === true);
   // self-harm must NOT be mislabeled as medical-only (must contain 988, the crisis line)
   check('6A NO se va a flujo Medicare normal', !/medicare advantage|parte b|inscripci/i.test(selfHarm.response), selfHarm.response.slice(0, 60));
+}
+
+// ---- G. Post-ZIP topic preservation (Clara support microfix 2026-06-14)
+//      The async ZIP anti-re-ask guard must continue FROM the stated problem,
+//      never reset to a generic ask and never parrot the ZIP back.
+lines.push('G. Post-ZIP topic preservation');
+{
+  // G1 — cost complaint (ES): focused source-triage, no ZIP parrot, no generic reset
+  const g1 = _buildPostZipReaskReplacement('me están cobrando mucho de medicare', true);
+  check('G1 costo ES → pregunta la fuente (SS/farmacia/doctor/factura)',
+    /seguro social/i.test(g1) && /farmacia/i.test(g1) && /doctor/i.test(g1) && /factura/i.test(g1), g1.slice(0, 80));
+  check('G1b costo ES → NO repite "código postal" ni "cuénteme un poco más"',
+    !/c[oó]digo postal/i.test(g1) && !/cu[ée]nteme un poco m[áa]s/i.test(g1), g1.slice(0, 80));
+  // G2 — cost complaint (EN): English source-triage, no ZIP parrot
+  const g2 = _buildPostZipReaskReplacement('they are charging me too much', false);
+  check('G2 cost EN → asks the source (Social Security/pharmacy/doctor/bill)',
+    /social security/i.test(g2) && /pharmacy/i.test(g2) && /doctor/i.test(g2) && /bill/i.test(g2), g2.slice(0, 80));
+  check('G2b cost EN → does NOT repeat "ZIP"', !/\bzip\b/i.test(g2), g2.slice(0, 80));
+  // G3 — non-cost statement: concrete clarifier with options, never the ZIP parrot
+  const g3 = _buildPostZipReaskReplacement('necesito ayuda con una carta que recibí', true);
+  check('G3 no-costo ES → clarificador concreto con opciones', /factura|medicamento|doctor|carta|costo/i.test(g3), g3.slice(0, 80));
+  check('G3b no-costo ES → NO repite "código postal"', !/c[oó]digo postal/i.test(g3), g3.slice(0, 80));
+  // G4 — cost-complaint classifier matches every mission example
+  const costExamples = [
+    'me están cobrando mucho de medicare', 'me sacan mucho', 'me llegó una factura',
+    'los medicamentos están caros', 'el doctor me cobró', 'no entiendo lo que me descuentan',
+    'me quitaron como 200',
+  ];
+  check('G4 clasificador detecta los 7 ejemplos de costo',
+    costExamples.every((m) => _isMedicareCostComplaint(m)),
+    costExamples.filter((m) => !_isMedicareCostComplaint(m)).join(' | '));
+  // G5 — classifier does NOT fire on non-cost intents
+  const nonCost = ['quiero cambiar mi doctor', 'necesito una cita', 'tengo una pregunta sobre inscripción', 'hola'];
+  check('G5 clasificador NO dispara en no-costo',
+    nonCost.every((m) => !_isMedicareCostComplaint(m)),
+    nonCost.filter((m) => _isMedicareCostComplaint(m)).join(' | '));
+  // G6 — lastUserProblem fill: substantive problem yes, pushback/yes-no no
+  check('G6 recuerda problema sustantivo', _looksLikeStatedProblem('me están cobrando mucho de medicare'));
+  check('G6b NO guarda pushback/yes-no como problema',
+    !_looksLikeStatedProblem('ya te dije') && !_looksLikeStatedProblem('si') && !_looksLikeStatedProblem('no'));
 }
 
 console.log(lines.join('\n'));
