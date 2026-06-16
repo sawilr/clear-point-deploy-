@@ -16,8 +16,8 @@ const services = [
     image: '/senior-adv-3.jpg',
     title: 'Medicare Advantage',
     titleEs: 'Medicare Advantage',
-    description: 'All-in-one plans that often include dental, vision, hearing, and Part D drug coverage — sometimes at $0 premium.',
-    descriptionEs: 'Planes todo en uno que frecuentemente incluyen dental, visión, audición y cobertura de medicamentos — a veces con prima de $0.',
+    description: 'All-in-one plans that may include dental, vision, hearing, and Part D drug coverage — sometimes at a $0 monthly premium.',
+    descriptionEs: 'Planes todo en uno que pueden incluir beneficios dentales, visión, audición y cobertura de medicamentos, a veces con prima mensual de $0.',
     link: '/medicare-advantage',
   },
   // HIDDEN per Sawil 2026-06: Medicare Supplement / Medigap moved to Education
