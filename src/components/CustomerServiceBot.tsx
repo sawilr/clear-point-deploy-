@@ -1515,8 +1515,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           >
             <p>
               {isSpanish
-                ? 'Soy Clara, asistente virtual de Clear Point. Doy información general y puedo conectarle con un asesor autorizado. No envíe información sensible.'
-                : "I'm Clara, Clear Point's virtual assistant. I provide general information and can connect you with a licensed advisor. Please don't send sensitive information."}
+                ? 'Soy Clara, asistente virtual de Clear Point. Doy información general y puedo conectarle con un asesor licenciado. Por favor no comparta información sensible como su número de Seguro Social, número de Medicare, datos bancarios ni documentos médicos.'
+                : "I'm Clara, Clear Point's virtual assistant. I provide general information and can connect you with a licensed advisor. Please don't share sensitive information like your Social Security number, Medicare ID, bank details, or medical records."}
             </p>
           </button>
         ) : (

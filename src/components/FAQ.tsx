@@ -48,7 +48,7 @@ export function FAQ({ items, title, titleEs }: FAQProps) {
                 <ChevronDown className={`w-5 h-5 text-gold-400 flex-shrink-0 mt-0.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
               </button>
               <div className={`overflow-hidden transition-all duration-300 ${isOpen ? 'max-h-96' : 'max-h-0'}`}>
-                <p className="px-6 pb-6 text-earth-600 text-sm leading-relaxed">{t(item.a, item.aEs)}</p>
+                <p className="px-6 pb-6 text-earth-600 text-base leading-relaxed">{t(item.a, item.aEs)}</p>
               </div>
             </div>
           );

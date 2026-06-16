@@ -20,7 +20,7 @@ export function ServiceCard({ image, title, titleEs, description, descriptionEs,
       </div>
       <div className="p-5">
         <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">{t(title, titleEs)}</h3>
-        <p className="text-earth-600 text-sm leading-relaxed mb-3">{t(description, descriptionEs)}</p>
+        <p className="text-earth-600 text-base leading-relaxed mb-3">{t(description, descriptionEs)}</p>
         <span className="inline-flex items-center gap-1 text-sm font-semibold text-gold-500 group-hover:text-gold-400 transition-colors">
           {t('Learn more', 'Más información')} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
         </span>

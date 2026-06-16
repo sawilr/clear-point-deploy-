@@ -24,6 +24,27 @@ const TOTAL_STEPS = 6;
 // Same fake-ZIP set as ChatBot.tsx and LeadForm.tsx — rejects obviously invalid entries.
 const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555','66666','77777','88888','99999','12345','54321','11223','00001']);
 
+// Sawil 2026-06-15 (M10) — senior-friendly DOB dropdowns (Month / Day / Year)
+// instead of a typed MM/DD/YYYY field. No format confusion, no keyboard juggling.
+const DOB_MONTHS = [
+  { en: 'January', es: 'Enero' }, { en: 'February', es: 'Febrero' }, { en: 'March', es: 'Marzo' },
+  { en: 'April', es: 'Abril' }, { en: 'May', es: 'Mayo' }, { en: 'June', es: 'Junio' },
+  { en: 'July', es: 'Julio' }, { en: 'August', es: 'Agosto' }, { en: 'September', es: 'Septiembre' },
+  { en: 'October', es: 'Octubre' }, { en: 'November', es: 'Noviembre' }, { en: 'December', es: 'Diciembre' },
+];
+// Year range covers realistic Medicare-age birthdates (18–100 yrs old).
+const _DOB_THIS_YEAR = new Date().getFullYear();
+const DOB_YEARS: number[] = [];
+for (let y = _DOB_THIS_YEAR - 18; y >= _DOB_THIS_YEAR - 100; y--) DOB_YEARS.push(y);
+// Days available for a given month/year (handles 28/29/30/31 + leap years).
+function daysInMonth(mm: string, yyyy: string): number {
+  const m = parseInt(mm, 10);
+  if (!m) return 31;
+  const y = parseInt(yyyy, 10);
+  if (!y) return m === 2 ? 29 : [4, 6, 9, 11].includes(m) ? 30 : 31;
+  return new Date(y, m, 0).getDate();
+}
+
 export function SmartMedicareReview() {
   const { t, lang } = useLanguage();
   const [step, setStep] = useState(1);
@@ -39,6 +60,11 @@ export function SmartMedicareReview() {
   const [zip, setZip] = useState('');
   const [zipInfo, setZipInfo] = useState<ReturnType<typeof getZipInfo>>(null);
   const [dob, setDob] = useState('');
+  // M10 — DOB dropdown parts. `dob` (MM/DD/YYYY) is composed from these so all
+  // downstream logic (validateDOB, handleSubmit, summary) is unchanged.
+  const [dobMonth, setDobMonth] = useState('');
+  const [dobDay, setDobDay] = useState('');
+  const [dobYear, setDobYear] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [phone, setPhone] = useState('');
@@ -61,6 +87,16 @@ export function SmartMedicareReview() {
     if (step === 1 && step1View === 'main') return;
     el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [step, step1View]);
+
+  // M10 — compose dob (MM/DD/YYYY) from the three dropdowns; clamp the day if
+  // a shorter month/year is picked (e.g. day 31 then February → reset day).
+  useEffect(() => {
+    if (dobDay && parseInt(dobDay, 10) > daysInMonth(dobMonth, dobYear)) {
+      setDobDay('');
+      return;
+    }
+    setDob(dobMonth && dobDay && dobYear ? `${dobMonth}/${dobDay}/${dobYear}` : '');
+  }, [dobMonth, dobDay, dobYear]);
   // Honeypot anti-bot field — must stay empty. Real users never see this input;
   // bots that scrape and fill every form input will populate it. API discards
   // any submission where this is non-empty.
@@ -133,20 +169,6 @@ export function SmartMedicareReview() {
     // Strip US country code prefix if 11 digits starting with 1 (e.g. +1 718 285 3366)
     const national = digits.length === 11 && digits[0] === '1' ? digits.slice(1) : digits;
     setPhone(national.slice(0, 10));
-  };
-
-  // DOB input mask — auto-inserts slashes for MM/DD/YYYY format (Task #120).
-  // Strips non-numeric, keeps up to 8 digits, inserts separators on the fly.
-  // validateDOB() accepts MM/DD/YYYY via new Date(), so no downstream changes needed.
-  const handleDob = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 8);
-    let masked = digits;
-    if (digits.length > 4) {
-      masked = digits.slice(0, 2) + '/' + digits.slice(2, 4) + '/' + digits.slice(4);
-    } else if (digits.length > 2) {
-      masked = digits.slice(0, 2) + '/' + digits.slice(2);
-    }
-    setDob(masked);
   };
 
   const canAdvanceStep = (): boolean => {
@@ -648,24 +670,64 @@ export function SmartMedicareReview() {
               <p className="text-earth-800 text-base font-semibold mb-2">
                 {t('What is your date of birth?', '¿Cuál es su fecha de nacimiento?')}
               </p>
-              <input
-                type="text"
-                value={dob}
-                onChange={(e) => handleDob(e.target.value)}
-                placeholder="MM/DD/YYYY"
-                inputMode="numeric"
-                maxLength={10}
-                autoComplete="bday"
-                aria-label={isEs ? 'Fecha de nacimiento MM/DD/AAAA' : 'Date of birth MM/DD/YYYY'}
-                className="w-full px-4 py-4 sm:py-3.5 bg-cream-50 border border-cream-300 rounded-xl text-lg text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all"
-              />
-              {dob && validateDOB(dob).age !== null && (
-                <p className="text-sm text-earth-500 mt-2">
-                  {isEs ? `Edad calculada: ${validateDOB(dob).age} años` : `Calculated age: ${validateDOB(dob).age}`}
+              <p className="text-earth-500 text-sm mb-4">
+                {t('Select the month, day, and year.', 'Seleccione el mes, el día y el año.')}
+              </p>
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">{t('Month', 'Mes')}</span>
+                  <select
+                    value={dobMonth}
+                    onChange={(e) => setDobMonth(e.target.value)}
+                    aria-label={t('Birth month', 'Mes de nacimiento')}
+                    className="w-full px-3 py-3.5 min-h-[48px] rounded-xl border border-cream-300 bg-cream-50 text-earth-900 text-base focus:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40"
+                  >
+                    <option value="">{t('Month', 'Mes')}</option>
+                    {DOB_MONTHS.map((m, i) => (
+                      <option key={m.en} value={String(i + 1).padStart(2, '0')}>{isEs ? m.es : m.en}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">{t('Day', 'Día')}</span>
+                  <select
+                    value={dobDay}
+                    onChange={(e) => setDobDay(e.target.value)}
+                    aria-label={t('Birth day', 'Día de nacimiento')}
+                    className="w-full px-3 py-3.5 min-h-[48px] rounded-xl border border-cream-300 bg-cream-50 text-earth-900 text-base focus:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40"
+                  >
+                    <option value="">{t('Day', 'Día')}</option>
+                    {Array.from({ length: daysInMonth(dobMonth, dobYear) }, (_, i) => String(i + 1).padStart(2, '0')).map((d) => (
+                      <option key={d} value={d}>{parseInt(d, 10)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-sm text-earth-700 mb-1.5">{t('Year', 'Año')}</span>
+                  <select
+                    value={dobYear}
+                    onChange={(e) => setDobYear(e.target.value)}
+                    aria-label={t('Birth year', 'Año de nacimiento')}
+                    className="w-full px-3 py-3.5 min-h-[48px] rounded-xl border border-cream-300 bg-cream-50 text-earth-900 text-base focus:border-gold-400 focus:outline-none focus:ring-2 focus:ring-gold-400/40"
+                  >
+                    <option value="">{t('Year', 'Año')}</option>
+                    {DOB_YEARS.map((y) => (
+                      <option key={y} value={String(y)}>{y}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              {dob && validateDOB(dob).valid && validateDOB(dob).age !== null && (
+                <p className="text-sm text-earth-500 mt-3">
+                  {isEs ? `Edad: ${validateDOB(dob).age} años` : `Age: ${validateDOB(dob).age}`}
                 </p>
               )}
               {dob && !validateDOB(dob).valid && (
-                <p role="alert" className="text-sm text-red-500 mt-2">{t('Please enter a valid date of birth.', 'Por favor ingrese una fecha de nacimiento válida.')}</p>
+                <p role="alert" className="text-sm text-red-500 mt-3">
+                  {((validateDOB(dob).age ?? -1) >= 0 && (validateDOB(dob).age ?? 0) < 18)
+                    ? t('Please double-check the year — this date is under 18.', 'Por favor revise el año — esta fecha es menor de 18.')
+                    : t('Please select a valid date of birth.', 'Por favor seleccione una fecha de nacimiento válida.')}
+                </p>
               )}
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />

@@ -188,7 +188,7 @@ export default function Home() {
               <h2 className="font-serif text-2xl sm:text-3xl text-earth-900 leading-snug mb-2">
                 {t('Important Before Changing Any Medicare Plan', 'Importante Antes de Cambiar Cualquier Plan de Medicare')}
               </h2>
-              <p className="text-earth-700 text-sm sm:text-base leading-relaxed">
+              <p className="text-earth-700 text-base leading-relaxed">
                 {t(
                   'A change in your Medicare plan may affect benefits or coverage you already have. Please review with a licensed advisor before making any change.',
                   'Un cambio en su plan de Medicare puede afectar beneficios o coberturas que ya tiene. Por favor revise con un asesor licenciado antes de hacer cualquier cambio.'
@@ -196,7 +196,7 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-sm sm:text-[15px] leading-relaxed sm:pl-9">
+          <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-base leading-relaxed sm:pl-9">
             <li className="flex items-start gap-2">
               <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
               <span>{t('Medicaid, Medicare Savings Programs (MSP), Extra Help / LIS', 'Medicaid, Programas de Ahorro de Medicare (MSP), Ayuda Extra / LIS')}</span>
@@ -292,7 +292,7 @@ export default function Home() {
                 ].map((p, i) => (
                   <div key={i} className="bg-white rounded-xl p-5 border border-cream-200 shadow-xs">
                     <h3 className="font-serif text-base font-semibold text-earth-900 mb-1.5">{t(p.title, p.titleEs)}</h3>
-                    <p className="text-earth-600 text-sm leading-relaxed">{t(p.en, p.es)}</p>
+                    <p className="text-earth-600 text-base leading-relaxed">{t(p.en, p.es)}</p>
                   </div>
                 ))}
               </div>
@@ -308,7 +308,7 @@ export default function Home() {
                 <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">
                   {t('Not sure which enrollment period applies to you?', '¿No está seguro de qué período de inscripción aplica?')}
                 </h3>
-                <p className="text-earth-700 text-sm mb-5">
+                <p className="text-earth-700 text-base mb-5">
                   {t('A licensed Medicare advisor can help you review your situation and understand your next steps.', 'Un asesor licenciado de Medicare puede ayudarle a revisar su situación y entender sus próximos pasos.')}
                 </p>
                 <div className="flex flex-wrap gap-3">
@@ -354,7 +354,7 @@ export default function Home() {
                     <div className="flex-shrink-0 w-11 h-11 rounded-full bg-earth-800 text-gold-300 font-bold text-sm flex items-center justify-center">{step.num}</div>
                     <div>
                       <h3 className="font-serif text-base font-semibold text-earth-900 mb-1">{t(step.title, step.titleEs)}</h3>
-                      <p className="text-earth-600 text-sm leading-relaxed">{t(step.desc, step.descEs)}</p>
+                      <p className="text-earth-600 text-base leading-relaxed">{t(step.desc, step.descEs)}</p>
                     </div>
                   </div>
                 ))}
@@ -366,7 +366,7 @@ export default function Home() {
                 <div className="relative z-10">
                   <div className="mb-4"><LogoSvg size={52} /></div>
                   <h3 className="font-serif text-xl text-cream-50 mb-3">{t('Ready to Talk?', '¿Listo para Hablar?')}</h3>
-                  <p className="text-cream-100/70 text-sm leading-relaxed mb-6 max-w-sm mx-auto">
+                  <p className="text-cream-100/70 text-base leading-relaxed mb-6 max-w-sm mx-auto">
                     {t('Our advisors are available Monday through Friday, 9am–6pm Eastern Time. No robots. No hold music. Just a real person who knows Medicare.', 'Nuestros asesores están disponibles de lunes a viernes, 9am–6pm hora del Este. Sin robots. Sin música de espera. Solo una persona real que conoce Medicare.')}
                   </p>
                   <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-866-310-8702</span>
@@ -401,8 +401,8 @@ export default function Home() {
                 <div key={i} className="flex gap-4 items-start bg-cream-50 rounded-xl p-5 shadow-xs hover:shadow-soft transition-shadow">
                   <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-gold-100 flex items-center justify-center">{r.icon}</div>
                   <div>
-                    <h3 className="font-serif text-sm font-semibold text-earth-900 mb-1">{t(r.title, r.titleEs)}</h3>
-                    <p className="text-earth-600 text-sm leading-relaxed">{t(r.desc, r.descEs)}</p>
+                    <h3 className="font-serif text-base font-semibold text-earth-900 mb-1">{t(r.title, r.titleEs)}</h3>
+                    <p className="text-earth-600 text-base leading-relaxed">{t(r.desc, r.descEs)}</p>
                   </div>
                 </div>
               ))}
@@ -417,7 +417,7 @@ export default function Home() {
           <h3 className="font-serif text-xl sm:text-2xl text-earth-900 mb-2">
             {t('Carriers We May Help You Review', 'Aseguradoras que podemos ayudarle a revisar')}
           </h3>
-          <p className="text-earth-600 text-sm sm:text-base mb-3 max-w-3xl">
+          <p className="text-earth-600 text-base mb-3 max-w-3xl">
             {t(
               'Carrier availability varies by location and eligibility. We help you review options available in your area.',
               'La disponibilidad de aseguradoras varía por ubicación y elegibilidad. Le ayudamos a revisar las opciones disponibles en su área.'
@@ -499,7 +499,7 @@ export default function Home() {
                 <h3 className="font-serif text-xl font-semibold text-earth-900 mb-3">
                   {t(card.titleEn, card.titleEs)}
                 </h3>
-                <p className="text-earth-600 text-sm leading-relaxed">
+                <p className="text-earth-600 text-base leading-relaxed">
                   {t(card.descEn, card.descEs)}
                 </p>
               </div>
