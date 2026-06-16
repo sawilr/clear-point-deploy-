@@ -133,6 +133,48 @@ function convo(label: string, lang: string, turns: string[], seedPatch: Any = {}
   // 8e — a valid ZIP still finalizes the handoff (no regression).
   const okEs = handoffZip('Español', 'Maria Gomez', '10550');
   check('8e ES valid ZIP still finalizes handoff', okEs.needsHuman === true && okEs.newState.zipCode === '10550');
+
+  // ── Sawil 2026-06-16 post-live hotfix — broaden refusal + advisor at ZIP ──
+  // 8f — "no tengo zip" (was treated as invalid ZIP, fails++).
+  const f = handoffZip('Español', 'Maria Gomez', 'no tengo zip');
+  console.log(`\n> [ES] no tengo zip\nCLARA: ${f.response.slice(0, 80)}…`);
+  check('8f ES "no tengo zip" → finalizes handoff, no fail attempt',
+    f.needsHuman === true && /asesor licenciado/i.test(f.response) && (f.newState.failedZipAttempts || 0) === 0);
+  // 8g — "no tengo código postal" (was misrouting to the BILL flow).
+  const g = handoffZip('Español', 'Maria Gomez', 'no tengo código postal');
+  console.log(`\n> [ES] no tengo código postal\nCLARA: ${g.response.slice(0, 80)}…`);
+  check('8g ES "no tengo código postal" → handoff, NOT bill flow',
+    g.needsHuman === true && /asesor licenciado/i.test(g.response) && !/factura|bill|cobr/i.test(g.response));
+  // 8h — "no quiero dar datos" refusal.
+  const h = handoffZip('Español', 'Maria Gomez', 'no quiero dar datos');
+  check('8h ES "no quiero dar datos" → finalizes handoff',
+    h.needsHuman === true && /asesor licenciado/i.test(h.response));
+  // 8i — explicit advisor re-ask at the ZIP step → route immediately, no loop.
+  const i = handoffZip('Español', 'Maria Gomez', 'quiero hablar con asesor');
+  console.log(`\n> [ES] quiero hablar con asesor (at ZIP)\nCLARA: ${i.response.slice(0, 80)}…`);
+  check('8i ES advisor re-ask at ZIP → finalizes, does NOT re-ask ZIP',
+    i.needsHuman === true && /asesor licenciado/i.test(i.response) && !/c[oó]digo postal\?|su zip/i.test(i.response));
+  // 8j — EN "i don't have a zip" refusal.
+  const j = handoffZip('English', 'John Smith', "i don't have a zip");
+  check('8j EN "i don\'t have a zip" → finalizes handoff',
+    j.needsHuman === true && /licensed.*advisor/i.test(j.response));
+  // 8k — numeric miss ("123") asks ONCE for a valid ZIP, does not finalize/loop.
+  const k = handoffZip('Español', 'Maria Gomez', '123');
+  check('8k ES "123" → single re-ask for 5-digit ZIP (fails=1, not finalized)',
+    k.needsHuman === false && (k.newState.failedZipAttempts || 0) === 1 && /5 d[ií]gitos/i.test(k.response));
+
+  // ── Natural ZIP step (pre-handoff) parity: refusal never loops ──
+  function naturalZip(lang: string, zipReply: string) {
+    let st: Any = { ...createInitialState() };
+    st = processMessage(lang, st).newState;            // → asking_zip_natural
+    return processMessage(zipReply, st);
+  }
+  const n1 = naturalZip('Español', 'no tengo zip');
+  check('8l NAT ES "no tengo zip" → graceful, no failed attempt, no loop',
+    (n1.newState.failedZipAttempts || 0) === 0 && n1.newState.step === 'asking_topic');
+  const n2 = naturalZip('Español', 'no quiero dar datos');
+  check('8m NAT ES "no quiero dar datos" → graceful, no loop',
+    (n2.newState.failedZipAttempts || 0) === 0 && n2.newState.step === 'asking_topic');
 }
 
 console.log(`\n═════════════════════════════════════════`);

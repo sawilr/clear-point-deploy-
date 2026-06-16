@@ -335,6 +335,19 @@ function getStateFromZip(zip: string): string | null {
   return null;
 }
 
+// Sawil 2026-06-16 — single source of truth for "the user is declining to give
+// a ZIP." Used by BOTH ZIP steps (asking_zip_natural + asking_zip handoff) so
+// they stay in sync. Catches bare refusals, "no quiero / prefiero no decir / no
+// sé mi zip / no tengo zip / no quiero dar datos" (ES) and the EN equivalents.
+// MUST be checked BEFORE detectProblemType — e.g. "no tengo código postal"
+// otherwise misroutes to the bill flow.
+export function isZipRefusal(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  return /^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(t)
+    || /\b(no quiero (decir|dar|compartir|dar datos|dar mis datos|dar informaci[oó]n)|prefiero no (decir|compartir|dar)|i (don'?t|do not) want to (share|give)|prefer not to (share|say|give)|no s[eé] (mi |el |my )?(zip|c[oó]digo postal|c[oó]digo|zip code)|no tengo (mi |el |un |my )?(zip|c[oó]digo postal|c[oó]digo|zip code)|i (don'?t|do not) (know|have) (a |my )?zip( code)?|i forgot my zip|i forget my zip)\b/i.test(t);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // WAVE 21 — SAFETY HELPERS
 //
@@ -4841,14 +4854,17 @@ function processMessageInner(
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
-    // Path B: user refused ZIP — "no", "no quiero", "skip", "prefiero no".
-    if (/^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(trimmed)
-        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say)|no s[eé] (mi |el |my )?(zip|c[oó]digo|zip code)|i don'?t know my zip|i forgot my zip|i forget my zip)\b/i.test(trimmed)) {
+    // Path B: user refused ZIP — "no", "no quiero", "no tengo zip", "prefiero
+    // no decir", "skip". Sawil 2026-06-16 — uses the shared isZipRefusal so
+    // this stays in sync with the handoff step and now catches "no tengo zip /
+    // código postal" + "no quiero dar datos". The ZIP is optional: acknowledge,
+    // explain why it helps, and offer the advisor path without forcing it.
+    if (isZipRefusal(trimmed)) {
       newState.zipRefused = true;
       newState.step = 'asking_topic';
       const out = isSpanish
-        ? 'No hay problema. ¿En qué le puedo ayudar?'
-        : 'No problem. How can I help you?';
+        ? 'No hay problema, el ZIP solo ayuda a orientarle sobre su área — podemos seguir sin él. ¿En qué le puedo ayudar, o prefiere que un asesor licenciado le contacte?'
+        : 'No problem, the ZIP just helps tailor guidance to your area — we can continue without it. How can I help you, or would you prefer a licensed advisor to reach out?';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -4975,24 +4991,35 @@ function processMessageInner(
     const zipRaw = userMessage.trim();
     const zip = zipRaw.replace(/\D/g, '');
     if (zip.length !== 5) {
-      // Sawil 2026-06-16 — ZIP-step parity fix. This handoff ZIP step used to
-      // treat a refusal ("no quiero", "prefiero no decir", "no sé mi zip",
-      // "skip") as a failed ZIP attempt, so the user looped or got dumped into
-      // recovery. Mirror asking_zip_natural Path B: honor the refusal. If they
-      // already asked for an advisor, a missing ZIP must NOT block them.
-      const refusedZip = /^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(zipRaw)
-        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say)|no s[eé] (mi |el |my )?(zip|c[oó]digo|zip code)|i don'?t know my zip|i forgot my zip|i forget my zip)\b/i.test(zipRaw);
-      if (refusedZip) {
-        newState.zipRefused = true;
-        if (newState.pendingAdvisorHandoff) {
+      // Sawil 2026-06-16 — ZIP-step parity + refusal/advisor loop fix. This
+      // handoff ZIP step used to treat a refusal ("no sé mi zip", "no tengo
+      // zip", "prefiero no decir") OR a repeated advisor request as a failed
+      // ZIP attempt — looping or dumping the user into recovery. Now we honor
+      // both. asking_zip is only reached AFTER asking_name, so a name is always
+      // present and pendingAdvisorHandoff is set; a missing ZIP must NEVER block
+      // the handoff. Checked BEFORE detectProblemType so phrases like "no tengo
+      // código postal" don't misroute into the bill flow.
+      const refusedZip = isZipRefusal(zipRaw);
+      const wantsAdvisorNow = detectProblemType(userMessage) === 'advisor';
+      if (refusedZip || wantsAdvisorNow) {
+        if (refusedZip) newState.zipRefused = true;
+        newState.pendingAdvisorHandoff = true;
+        if (newState.name) {
           newState.step = 'conversation';
           newState.needsHuman = true;
+          const leadEs = refusedZip
+            ? `Está bien${withName(newState.name)}, no necesita compartir el ZIP.`
+            : `Perfecto${withName(newState.name)}.`;
+          const leadEn = refusedZip
+            ? `That's okay${withName(newState.name)}, you don't have to share your ZIP.`
+            : `Perfect${withName(newState.name)}.`;
           const outA = isSpanish
-            ? `Está bien${withName(newState.name)}, no necesita compartir el ZIP. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
-            : `That's okay${withName(newState.name)}, you don't have to share your ZIP. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+            ? `${leadEs} Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+            : `${leadEn} I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
           newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
           return { response: outA, newState, needsHuman: true };
         }
+        // Defensive fallback (name somehow missing): continue without ZIP.
         newState.step = 'asking_problem';
         const out = isSpanish
           ? 'No hay problema, seguimos sin ZIP. ¿En qué le puedo ayudar?'
@@ -5001,7 +5028,8 @@ function processMessageInner(
         return { response: out, newState, needsHuman: false };
       }
       // Wave 19 Rule 8 — never trap the user on ZIP. If they already gave us
-      // an actionable topic, jump straight to triage and let ZIP wait.
+      // an actionable topic (NOT advisor — handled above), jump straight to
+      // triage and let ZIP wait.
       const probableIntent = detectProblemType(userMessage);
       if (probableIntent && probableIntent !== 'general' && probableIntent !== 'casual') {
         newState.step = 'asking_problem';
