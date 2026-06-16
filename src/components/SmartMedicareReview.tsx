@@ -157,7 +157,9 @@ export function SmartMedicareReview() {
       // no longer advance past Step 2.
       case 2: return zip.length === 5 && !!zipInfo && zipInfo.supported;
       case 3: return validateDOB(dob).valid;
-      case 4: return validatePersonName(firstName).valid && validatePersonName(lastName).valid && validatePhone(phone).valid;
+      // Email is optional, but if the visitor types one it must be valid (blocks
+      // junk/profanity emails like fuckyou@gmail.com from advancing). Sawil 2026-06-15.
+      case 4: return validatePersonName(firstName).valid && validatePersonName(lastName).valid && validatePhone(phone).valid && (!email || validateEmail(email).valid);
       case 5: return !!prefLang;
       default: return true;
     }

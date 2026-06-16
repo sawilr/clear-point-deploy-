@@ -145,6 +145,12 @@ export function validatePhone(rawInput: string): {
   // Block numbers with same digit repeated 7+ consecutive times
   if (/(\d)\1{6,}/.test(national)) return FAIL('Phone appears fake');
 
+  // Sawil 2026-06-15 — low-entropy guard. A real 10-digit US number effectively
+  // never uses only 1–2 distinct digits across all 10 positions. This catches
+  // plausible-looking fakes that pass the area/exchange/pattern rules above —
+  // e.g. 212-212-2122 or 717-717-7177 — without touching any real number.
+  if (new Set(national).size <= 2) return FAIL('Phone appears fake (too few distinct digits)');
+
   const e164 = '+1' + national;
   return { valid: true, cleaned: national, e164, flags: [] };
 }
@@ -196,7 +202,7 @@ const FAKE_NAME_WORDS = new Set([
   'noemail','nope','nothing','nobody','someone','anyone','noone',
   // Short keyboard patterns / letter runs
   'abc','abcd','abcde','xyz','xyx','xxx','yyy','zzz','aaa','bbb','ccc','ddd',
-  'aab','ab','ba','xy','yx',
+  'aab','xy','yx', // 'ab'/'ba' removed — real surnames (Vietnamese/African). Sawil 2026-06-15
   // Conversational words that are never real first/last names
   'thanks','thankyou','please','okay','hola','adios',
   // NOTE: syllable-style entries (toto, lulu, nene, bebe, mimi, kiki, fifi,
@@ -264,12 +270,15 @@ export function validatePersonName(value: string): { valid: boolean; flags: stri
 
   // Allow: Unicode letters (U+0041–U+024F covers full Latin extended range),
   // spaces, hyphens, apostrophes, periods — reject everything else
-  if (!/^[a-zA-Z\u00C0-\u024F\s'\-.]+$/.test(raw)) {
+  // Sawil 2026-06-15 i18n audit: also allow Latin Extended Additional
+  // (\u1E00-\u1EFF, Vietnamese names like \u0110\u1EB7ng) and curly/modifier
+  // apostrophes (\u2018\u2019\u02BC \u2014 iOS autocorrects ' to \u2019, so D\u2019Angelo passes).
+  if (!/^[a-zA-Z\u00C0-\u024F\u1E00-\u1EFF\s'\u2018\u2019\u02BC\-.]+$/.test(raw)) {
     return { valid: false, flags: ['Name contains invalid characters'] };
   }
 
   // Must contain at least one letter
-  if (!/[a-zA-Z\u00C0-\u024F]/.test(raw)) {
+  if (!/[a-zA-Z\u00C0-\u024F\u1E00-\u1EFF]/.test(raw)) {
     return { valid: false, flags: ['Name must contain letters'] };
   }
 
@@ -333,6 +342,21 @@ const PROFANE_EMAIL_LOCALS = new Set([
   'whore','slut','bastard','faggot','nigger','twat','wanker',
   'motherfucker','jackass','dumbass','dipshit',
 ]);
+
+// Sawil 2026-06-15 — substring profanity for email LOCAL parts. Only long,
+// unambiguous tokens that never appear inside a real local part (so
+// assistant@, ridiculous@, reputation@, hancock@, dickson@, cassandra@,
+// analyst@ are NOT flagged). Short ambiguous tokens (ass/cock/dick/puta/culo)
+// are intentionally excluded here — they are caught whole-token via the
+// segment pass below instead. Catches concatenated abuse the whole-local
+// check misses: fuckyou@, putamadre@, pendejo123@, shithead@, mamaguevo99@.
+const PROFANE_EMAIL_SUBSTRINGS = [
+  'fuck','shit','bitch','asshole','motherfucker','cunt','pussy','faggot',
+  'nigger','nigga','dipshit','dumbass','jackass','whore','slut','cumshot',
+  'pendejo','pendeja','cabron','cabrón','maricon','maricón','mamaguevo',
+  'mamahuevo','mamagueva','gilipollas','chingado','chingada','culero',
+  'putamadre','hijueputa','hijoputa','singao','mierda',
+];
 
 const FAKE_EMAIL_PATTERNS: RegExp[] = [
   // Fake local parts
@@ -420,8 +444,22 @@ export function validateEmail(email: string): { valid: boolean; flags: string[] 
   // Blocked / disposable / profanity domains
   if (BLOCKED_DOMAINS.has(domain)) return { valid: false, flags: ['Email domain not accepted'] };
 
-  // Profane local part check (e.g. culo@gmail.com, fuck@hotmail.com)
+  // Profane local part check, three passes:
+  // 1) whole local part (culo@, fuck@)
   if (PROFANE_EMAIL_LOCALS.has(local)) return { valid: false, flags: ['Email contains inappropriate content'] };
+  // 2) per-segment whole-token (split on . _ - + digits): fuck.you@, puta_madre@,
+  //    fuck123you@ → segment "fuck"/"puta". Segments are deliberate separations,
+  //    so short tokens (ass/dick) here won't hit "class"/"dickson" (single token).
+  const segments = local.split(/[._\-+0-9]+/).filter(Boolean);
+  for (const seg of segments) {
+    if (PROFANE_EMAIL_LOCALS.has(seg)) return { valid: false, flags: ['Email contains inappropriate content'] };
+  }
+  // 3) substring of the local part, unambiguous list only: fuckyou@, putamadre@,
+  //    pendejo123@, shithead@, mamaguevo99@ — without flagging assistant@,
+  //    ridiculous@, reputation@, hancock@, dickson@.
+  for (const profane of PROFANE_EMAIL_SUBSTRINGS) {
+    if (local.includes(profane)) return { valid: false, flags: ['Email contains inappropriate content'] };
+  }
 
   return { valid: true, flags: [] };
 }
