@@ -271,7 +271,7 @@ export function Header() {
               </a>
               <button
                 onClick={handleFreeReview}
-                className="bg-earth-800 text-cream-50 text-sm font-semibold px-4 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap inline-flex items-center justify-center min-h-[44px]"
+                className="bg-earth-800 text-cream-50 text-base font-semibold px-4 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap inline-flex items-center justify-center min-h-[44px]"
               >
                 {t('Free Review', 'Revisión Gratis')}
               </button>

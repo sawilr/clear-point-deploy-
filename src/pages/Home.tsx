@@ -312,10 +312,10 @@ export default function Home() {
                   {t('A licensed Medicare advisor can help you review your situation and understand your next steps.', 'Un asesor licenciado de Medicare puede ayudarle a revisar su situación y entender sus próximos pasos.')}
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  <Link to="/contact" className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-6 py-3 rounded-xl hover:bg-earth-900 transition-all">
+                  <Link to="/contact" className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-base px-6 py-3 rounded-xl hover:bg-earth-900 transition-all">
                     {t('Check My Enrollment Options', 'Revisar Mis Opciones de Inscripción')}
                   </Link>
-                  <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-white text-earth-800 font-semibold text-sm px-6 py-3 rounded-xl border border-cream-200 hover:bg-cream-50 transition-all">
+                  <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-white text-earth-800 font-semibold text-base px-6 py-3 rounded-xl border border-cream-200 hover:bg-cream-50 transition-all">
                     {t('Call 1-866-310-8702', 'Llamar al 1-866-310-8702')}
                   </a>
                 </div>
@@ -370,7 +370,7 @@ export default function Home() {
                     {t('Our advisors are available Monday through Friday, 9am–6pm Eastern Time. No robots. No hold music. Just a real person who knows Medicare.', 'Nuestros asesores están disponibles de lunes a viernes, 9am–6pm hora del Este. Sin robots. Sin música de espera. Solo una persona real que conoce Medicare.')}
                   </p>
                   <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-866-310-8702</span>
-                  <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-gold-400 text-earth-900 font-bold text-sm px-6 py-3 rounded-xl hover:bg-gold-300 transition-all">
+                  <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-gold-400 text-earth-900 font-bold text-base px-6 py-3 rounded-xl hover:bg-gold-300 transition-all">
                     <PhoneIcon className="w-4 h-4" />
                     {t("Call Now — It's Free", 'Llamar Ahora — Es Gratis')}
                   </a>

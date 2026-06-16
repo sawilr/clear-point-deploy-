@@ -58,7 +58,7 @@ export function Hero({
               <div className="w-2 h-2 rounded-full bg-gold-400" />
               <span className="text-xs font-bold tracking-[0.15em] uppercase text-gold-300">{t(eyebrow, eyebrowEs)}</span>
             </div>
-            <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-medium text-cream-50 leading-[1.15] mb-5">
+            <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-medium text-cream-50 leading-[1.2] mb-5">
               {t(headline, headlineEs)}
             </h1>
             <p className="text-cream-100/80 text-base sm:text-lg leading-relaxed max-w-lg">
@@ -84,16 +84,16 @@ export function Hero({
               <div className="w-2 h-2 rounded-full bg-gold-400" />
               <span className="text-xs font-bold tracking-[0.15em] uppercase text-gold-300">{t(eyebrow, eyebrowEs)}</span>
             </div>
-            <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.4rem] 2xl:text-[4rem] 3xl:text-[4.5rem] font-medium leading-[1.15] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
+            <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.4rem] 2xl:text-[4rem] 3xl:text-[4.5rem] font-medium leading-[1.2] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
             <p className="text-cream-100/80 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
               {t(subheadline, subheadlineEs)}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mb-10">
-              <button type="button" onClick={handleFreeReview} className="inline-flex items-center justify-center gap-2 bg-gold-400 text-earth-900 font-bold text-sm px-6 py-3.5 rounded-xl hover:bg-gold-300 transition-all hover:shadow-lifted active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
+              <button type="button" onClick={handleFreeReview} className="inline-flex items-center justify-center gap-2 bg-gold-400 text-earth-900 font-bold text-base px-6 py-3.5 rounded-xl hover:bg-gold-300 transition-all hover:shadow-lifted active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
                 <CalendarIcon className="w-4 h-4" />
                 {t('Schedule Free Consultation', 'Agendar Consulta Gratis')}
               </button>
-              <a href="tel:18663108702" className="inline-flex items-center justify-center gap-2 border border-cream-50/30 text-cream-50 font-semibold text-sm px-6 py-3.5 rounded-xl hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
+              <a href="tel:18663108702" className="inline-flex items-center justify-center gap-2 border border-cream-50/30 text-cream-50 font-semibold text-base px-6 py-3.5 rounded-xl hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
                 <PhoneIcon className="w-4 h-4" />
                 1-866-310-8702
               </a>

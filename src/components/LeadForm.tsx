@@ -383,7 +383,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-earth-800 text-cream-50 font-bold text-sm py-3 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full bg-earth-800 text-cream-50 font-bold text-base py-3.5 min-h-[48px] rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {submitting
               ? t('Sending...', 'Enviando...')

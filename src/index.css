@@ -32,6 +32,28 @@
     --sidebar-accent-foreground: 30 10% 16%;
     --sidebar-border: 35 20% 85%;
     --sidebar-ring: 30 35% 58%;
+
+    /* Sawil 2026-06-15 — Typography system (audit: ClearPoint_Typography_Audit).
+       Fluid tokens + line-heights + reading measures. Tailwind utilities still
+       win where applied; these are the shared scale + the base for un-classed
+       text and the .cp-measure helper. */
+    --text-xs: 0.75rem;    /* 12px — legal / disclaimers */
+    --text-sm: 0.875rem;   /* 14px — meta, labels (non-CTA) */
+    --text-base: 1rem;     /* 16px — body (mobile), min CTA */
+    --text-lg: 1.125rem;   /* 18px — body (desktop), card titles */
+    --text-xl: 1.25rem;    /* 20px — lead paragraphs */
+    --text-2xl: 1.5rem;    /* 24px — H3 */
+    --text-3xl: 2rem;      /* 32px — H2 mobile cap */
+    --text-4xl: clamp(2rem, 1.4rem + 2.6vw, 2.25rem);     /* H2 32→36px fluid */
+    --text-5xl: clamp(2.25rem, 1.6rem + 3vw, 4.5rem);     /* H1 36→72px fluid */
+
+    --line-tight: 1.2;
+    --line-normal: 1.5;
+    --line-relaxed: 1.65;
+
+    --measure-sm: 45ch;
+    --measure-md: 65ch;
+    --measure-lg: 75ch;
   }
 
   html {
@@ -69,6 +91,22 @@
 
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Playfair Display', Georgia, serif;
+  }
+
+  /* Sawil 2026-06-15 typography audit — base heading rhythm. A Tailwind
+     `leading-*` / `tracking-*` utility on a specific heading still overrides
+     this; it is the safety net so no heading is ever cramped (≥1.2) and gives
+     a subtle premium tracking. Fixes audit #4 (H1 line-height) + #15 (tracking). */
+  h1 { line-height: var(--line-tight); letter-spacing: 0.01em; }
+  h2 { line-height: 1.25; letter-spacing: 0.01em; }
+
+  /* Audit #5/#9 — the skip-link must be fully readable when focused (never
+     clipped with an ellipsis). */
+  .cp-skip-link:focus {
+    white-space: normal !important;
+    text-overflow: clip !important;
+    width: auto !important;
+    max-width: calc(100vw - 1rem) !important;
   }
 
   /* Sawil 2026-06 enterprise interaction polish — site-wide, every page.
@@ -224,6 +262,10 @@
   .font-sans {
     font-family: 'Inter', system-ui, sans-serif;
   }
+  /* Audit #11 — reading measure. Caps paragraph line length so body copy never
+     stretches past a comfortable ~65ch on ultra-wide screens. */
+  .cp-measure { max-width: var(--measure-md); }
+  .cp-measure-lg { max-width: var(--measure-lg); }
   /* PHASE 9C — premium chat polish utilities. */
   @keyframes message-in {
     from { opacity: 0; transform: translateY(8px); }
