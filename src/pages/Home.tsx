@@ -130,8 +130,8 @@ interface Carrier {
 }
 
 const carriers: Carrier[] = [
-  { name: 'Aetna',                        logo: '/carriers/aetna.png',            alt: 'Aetna logo'                         },
-  { name: 'AARP',                          logo: '/carriers/aarp.png',             alt: 'AARP logo'                          },
+  { name: 'Aetna',                        logo: '/carriers/aetna.svg',            alt: 'Aetna logo'                         },
+  { name: 'AARP',                          logo: '/carriers/aarp.svg',             alt: 'AARP logo'                          },
   { name: 'Anthem Blue Cross Blue Shield', logo: '/carriers/anthem.png',           alt: 'Anthem Blue Cross Blue Shield logo', logoClass: 'scale-[1.48] saturate-[1.35] contrast-[1.12]' },
   { name: 'Cigna Healthcare',              logo: '/carriers/cigna.png',            alt: 'Cigna Healthcare logo',             logoClass: 'scale-[2.10]' },
   { name: 'Clover Health',                 logo: '/carriers/clover.png',           alt: 'Clover Health logo',                logoClass: 'scale-[1.38]' },
@@ -139,7 +139,7 @@ const carriers: Carrier[] = [
   { name: 'Empire BlueCross BlueShield',   logo: '/carriers/empire.png',           alt: 'Empire BlueCross BlueShield logo'   },
   { name: 'Fidelis Care',                  logo: '/carriers/fidelis-care-final.png', alt: 'Fidelis Care logo',                 logoClass: 'scale-[1.65]' },
   { name: 'Healthfirst',                   logo: '/carriers/healthfirst.png',      alt: 'Healthfirst logo',                  logoClass: 'scale-[1.30]' },
-  { name: 'Humana',                        logo: '/carriers/humana.png',           alt: 'Humana logo'                        },
+  { name: 'Humana',                        logo: '/carriers/humana.svg',           alt: 'Humana logo'                        },
   { name: 'UnitedHealthcare',              logo: '/carriers/unitedhealthcare.png', alt: 'UnitedHealthcare logo',              logoClass: 'scale-[1.42]' },
   { name: 'Wellcare',                      logo: '/carriers/wellcare-final.png',     alt: 'Wellcare logo',                     logoClass: 'scale-[1.75]' },
   { name: 'Wellpoint',                     logo: '/carriers/wellpoint.png',        alt: 'Wellpoint logo',                    logoClass: 'scale-[1.52] saturate-[1.4] contrast-[1.15]' },
