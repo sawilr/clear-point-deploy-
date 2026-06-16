@@ -13,6 +13,10 @@ import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
 // PHASE A7 — LLM bridge (Claude Haiku via /api/chat). Optional, fails gracefully.
 import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler.ts';
+// Sawil 2026-06-15 — hardened shared validators (substring profanity, fake
+// patterns, low-entropy phones, area-code allowlist). Clara delegates to these
+// so the bot and the Smart Review form enforce the SAME junk-lead rules.
+import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailStrict } from './validation.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -546,6 +550,11 @@ export function validateEmail(raw: string): { isValid: boolean; cleaned: string;
   for (const re of FAKE_EMAIL_PATTERNS) {
     if (re.test(cleaned)) return { isValid: false, cleaned, reason: 'fake_pattern' };
   }
+  // Sawil 2026-06-15 — defer to the hardened shared validator for profanity
+  // (substring + per-segment, e.g. fuckyou@gmail.com, putamadre@gmail.com) and
+  // the wider disposable/placeholder domain list. Clara's own patterns above
+  // never checked the local part for profanity, so junk emails were stored.
+  if (!_validateEmailStrict(cleaned).valid) return { isValid: false, cleaned, reason: 'inappropriate_or_fake' };
   return { isValid: true, cleaned };
 }
 
@@ -2746,7 +2755,12 @@ export function processMessage(
       const digitCounts: Record<string, number> = {};
       for (const d of phoneDigits) digitCounts[d] = (digitCounts[d] || 0) + 1;
       const tooRepetitive = Math.max(...Object.values(digitCounts)) >= 7;
-      if (isAllSame || isSequential || badAreaCode || badExchange || fakePrefix || reserved555 || tooRepetitive) {
+      // Sawil 2026-06-15 — also defer to the shared validator, which adds the
+      // US area-code allowlist (rejects non-existent areas like 233/200/521)
+      // and a ≤2-distinct-digit guard (catches 212-212-2122 that passes every
+      // structural rule above). Single source of truth with the Smart Review form.
+      const failsStrict = !_validatePhoneStrict(phoneDigits).valid;
+      if (isAllSame || isSequential || badAreaCode || badExchange || fakePrefix || reserved555 || tooRepetitive || failsStrict) {
         phoneDigits = '';
       }
     }
@@ -2836,7 +2850,14 @@ export function processMessage(
 
       // Step 1 — try to parse email from THIS message if email step is active
       const emailMatch = _msg.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
-      const emailCandidate = emailMatch?.[0] || '';
+      let emailCandidate = emailMatch?.[0] || '';
+      // Sawil 2026-06-15 — the email step was storing ANY @-shaped string with
+      // no validation (fuckyou@gmail.com, test@test.com got captured into GHL).
+      // Validate the candidate; treat junk as "not provided" so the re-ask path
+      // runs. `_emailWasJunk` also forces an auto-skip on the SECOND junk email
+      // so a troll typing profanity repeatedly can never loop the bot.
+      const _emailWasJunk = !!emailCandidate && !validateEmail(emailCandidate).isValid;
+      if (_emailWasJunk) emailCandidate = '';
       // Sawil 2026-06-13 — robust skip on the OPTIONAL email step. Catch "salta"
       // (missing r), "saltar/saltarlo/saltear", "no tengo email", "sin correo",
       // etc.; AND auto-skip after one re-prompt so a stuck/typo input can NEVER
@@ -2849,7 +2870,10 @@ export function processMessage(
       const _looksLikeEmailAttempt = /@|\.[a-z]{2,}/i.test(_msg);
       const userSaidSkip = _explicitSkip
         || (state.lastBotIntent === 'handoff_asking_email_retry'
-            && !emailCandidate && !_yesToEmail && !_looksLikeEmailAttempt && _msg.length <= 20);
+            && !emailCandidate && !_yesToEmail && !_looksLikeEmailAttempt && _msg.length <= 20)
+        // Sawil 2026-06-15 — second junk/profanity email after we already
+        // re-asked → skip the optional email rather than loop forever.
+        || (_emailWasJunk && state.lastBotIntent === 'handoff_asking_email_retry');
       const haveEmail = !!(state.email || emailCandidate);
       const finalEmail = state.email || emailCandidate;
 
