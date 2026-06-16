@@ -2650,6 +2650,36 @@ export function processMessage(
     return { response: out, newState, needsHuman: !!state.advisorHandoffStarted };
   }
 
+  // Sawil 2026-06-15 (reasoning layer, PART 6) — SESSION-LOSS RECOVERY. If the
+  // caller signals there is prior context ("ya te dije", "I already told you",
+  // "eso no fue lo que pregunté") but we have NO stored case (e.g. the session
+  // refreshed and state was lost), do NOT pretend to remember and do NOT dump
+  // the generic topic menu. Briefly own it and ask for a one-line restate. The
+  // condition requires genuinely empty case context, so the normal "ya te dije"
+  // restate (which keeps the active case) is never affected.
+  {
+    const _cont = /\b(ya\s+(te\s+|le\s+)?dij[eo]|ya\s+lo\s+dije|te\s+lo\s+dije|como\s+(te|le)\s+dije|eso\s+no\s+fue\s+lo\s+que\s+(pregunt|dij)|no\s+entendiste|i\s+already\s+(told|said)|told\s+you\s+(already|that)|that'?s\s+not\s+what\s+i\s+(asked|said)|you\s+(didn'?t|did\s+not)\s+understand)\b/i.test(userMessage.trim());
+    const _hasCase = !!(state.activeCaseTopic || state.lastUserProblem || state.costFlowStage || (state as any).letterSender || state.advisorHandoffStarted || state.name);
+    if (_cont && !_hasCase && state.language) {
+      const isEs = state.language === 'es';
+      const out = isEs
+        ? 'Perdón, parece que perdí parte del contexto. Para no adivinar, dígame en una frase cuál era el problema y sigo desde ahí.'
+        : "Sorry — it looks like I lost part of the context. So I don't guess, tell me in one sentence what the problem was and I'll pick up from there.";
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        lastBotIntent: 'context_recovery',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
   // Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7), LLM-free.
   // Intercept here (sync entry + harness) so cost diagnosis is verifiable.
   {
