@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { LockIcon, CheckIcon } from './icons';
 import { Link, useLocation } from 'react-router';
@@ -24,6 +24,11 @@ interface LeadFormProps {
 export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFormProps) {
   const { lang, t } = useLanguage();
   const location = useLocation();
+  // Sawil 2026-06-16 compliance audit — programmatic label↔input association
+  // (WCAG 1.3.1 / 4.1.2). useId() keeps ids unique even if two LeadForms render
+  // on the same page. `fid('phone')` → label htmlFor + input id.
+  const uid = useId();
+  const fid = (name: string) => `${uid}-${name}`;
   const firstNameRef = useRef<HTMLInputElement>(null);
   const [submitted, setSubmitted] = useState(false);
 
@@ -264,7 +269,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
+        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate aria-labelledby="lead-form-heading">
           {/* Honeypot anti-bot field — hidden from sight, keyboard, and screen
               readers. Real users never see or touch this. Bots that scrape
               and auto-fill every input will populate it; the API discards
@@ -284,29 +289,29 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           />
           <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
-              <input ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
+              <label htmlFor={fid('first_name')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
+              <input id={fid('first_name')} ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
               {errors.first_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.first_name}</p>}
             </div>
             <div>
-              <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Last Name', 'Apellido')} *</label>
-              <input type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
+              <label htmlFor={fid('last_name')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Last Name', 'Apellido')} *</label>
+              <input id={fid('last_name')} type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
               {errors.last_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.last_name}</p>}
             </div>
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(555) 000-0000" />
+            <label htmlFor={fid('phone')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
+            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(555) 000-0000" />
             {errors.phone && <p role="alert" className="text-xs text-red-500 mt-1">{errors.phone}</p>}
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Email', 'Correo')}</label>
-            <input type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
+            <label htmlFor={fid('email')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Email', 'Correo')}</label>
+            <input id={fid('email')} type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
             {errors.email && <p role="alert" className="text-xs text-red-500 mt-1">{errors.email}</p>}
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
-            <input type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
+            <label htmlFor={fid('zip')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
+            <input id={fid('zip')} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
             {errors.zip && <p role="alert" className="text-xs text-red-500 mt-1">{errors.zip}</p>}
           </div>
           <div>
@@ -323,8 +328,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             </div>
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Current Coverage', 'Cobertura Actual')}</label>
-            <select name="medicare_status" value={formData.medicare_status} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all">
+            <label htmlFor={fid('medicare_status')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Current Coverage', 'Cobertura Actual')}</label>
+            <select id={fid('medicare_status')} name="medicare_status" value={formData.medicare_status} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all">
               <option value="">{t('-- Select --', '-- Seleccionar --')}</option>
               <option value="none">{t('No Medicare yet', 'Sin Medicare todavía')}</option>
               <option value="original">{t('Original Medicare (Parts A & B)', 'Medicare Original (Partes A y B)')}</option>
@@ -335,8 +340,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             </select>
           </div>
           <div>
-            <label className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Best Time to Contact', 'Mejor Hora para Contactar')}</label>
-            <select name="best_time_to_contact" value={formData.best_time_to_contact} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all">
+            <label htmlFor={fid('best_time_to_contact')} className="block text-[13px] font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Best Time to Contact', 'Mejor Hora para Contactar')}</label>
+            <select id={fid('best_time_to_contact')} name="best_time_to_contact" value={formData.best_time_to_contact} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all">
               <option value="">{t('-- Select --', '-- Seleccionar --')}</option>
               <option value="morning">{t('Morning (9am–12pm ET)', 'Mañana (9am–12pm ET)')}</option>
               <option value="afternoon">{t('Afternoon (12pm–3pm ET)', 'Tarde (12pm–3pm ET)')}</option>
@@ -349,8 +354,12 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <div className="bg-cream-100 rounded-lg p-3.5 border border-cream-300">
             <label className="flex items-start gap-3 cursor-pointer">
               <input
+                id={fid('tcpa_consent')}
                 type="checkbox"
                 name="tcpa_consent"
+                required
+                aria-required="true"
+                aria-describedby={errors.consent ? fid('consent_err') : undefined}
                 checked={formData.tcpa_consent}
                 onChange={handleChange}
                 className="mt-0.5 w-4 h-4 accent-earth-800 flex-shrink-0"
@@ -364,7 +373,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 {t('for more information.', 'para más información.')}
               </span>
             </label>
-            {errors.consent && <p className="text-xs text-red-500 mt-2">{errors.consent}</p>}
+            {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-500 mt-2">{errors.consent}</p>}
           </div>
 
           {/* Privacy / HIPAA-style notice */}

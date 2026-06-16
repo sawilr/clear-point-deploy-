@@ -44,6 +44,13 @@ export function TrustBar({ stats }: TrustBarProps) {
           ))}
         </div>
         <p className="text-center text-[13px] text-cream-50/55 mt-3">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
+        {/* Sawil 2026-06-16 compliance audit — "How We Get Paid" disclosure next
+            to the "$0 Cost to You" claim. CMS best practice: clarify the
+            commission model without sounding like a government benefit. */}
+        <p className="text-center text-[13px] text-cream-50/60 mt-2 max-w-2xl mx-auto">{t(
+          'Our service is no cost to you. If you enroll in a plan through us, ClearPoint may be compensated by the insurance carrier. Your plan cost is not increased because you use our help.',
+          'Nuestro servicio no tiene costo para usted. Si se inscribe en un plan a través de nosotros, ClearPoint puede recibir compensación de la aseguradora. El costo de su plan no aumenta por usar nuestra ayuda.'
+        )}</p>
       </div>
     </div>
   );

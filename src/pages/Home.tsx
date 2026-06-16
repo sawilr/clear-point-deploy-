@@ -245,7 +245,7 @@ export default function Home() {
               {t('Medicare Solutions We Offer', 'Soluciones Medicare Que Ofrecemos')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed">
-              {t('We work with all major carriers to find the plan that fits your health needs, budget, and lifestyle.', 'Trabajamos con todas las aseguradoras principales para encontrar el plan que se adapte a sus necesidades de salud, presupuesto y estilo de vida.')}
+              {t('We work with many leading Medicare insurance carriers to find the plan that fits your health needs, budget, and lifestyle.', 'Trabajamos con muchas de las principales aseguradoras de Medicare para encontrar el plan que se adapte a sus necesidades de salud, presupuesto y estilo de vida.')}
             </p>
           </div>
           {/* Grid width auto-adapts to service count so cards stay centered

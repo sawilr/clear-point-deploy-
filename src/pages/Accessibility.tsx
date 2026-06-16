@@ -13,7 +13,7 @@ export default function Accessibility() {
         <h1 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-2">
           {t('Accessibility Statement', 'Declaración de Accesibilidad')}
         </h1>
-        <p className="text-earth-500 text-sm mb-8">{t('Last Updated: May 5, 2025', 'Última Actualización: 5 de mayo de 2025')}</p>
+        <p className="text-earth-500 text-sm mb-8">{t('Last Updated: June 16, 2026', 'Última Actualización: 16 de junio de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>
