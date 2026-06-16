@@ -4972,8 +4972,34 @@ function processMessageInner(
 
   // ───── STEP 3: ASKING ZIP ─────
   if (newState.step === 'asking_zip') {
-    const zip = userMessage.trim().replace(/\D/g, '');
+    const zipRaw = userMessage.trim();
+    const zip = zipRaw.replace(/\D/g, '');
     if (zip.length !== 5) {
+      // Sawil 2026-06-16 — ZIP-step parity fix. This handoff ZIP step used to
+      // treat a refusal ("no quiero", "prefiero no decir", "no sé mi zip",
+      // "skip") as a failed ZIP attempt, so the user looped or got dumped into
+      // recovery. Mirror asking_zip_natural Path B: honor the refusal. If they
+      // already asked for an advisor, a missing ZIP must NOT block them.
+      const refusedZip = /^(no|nope|no quiero|prefiero no|no s[eé]|skip|paso|m[aá]s tarde|later|prefer not|i'?d rather not|no thanks|no gracias)\.?$/i.test(zipRaw)
+        || /\b(no quiero (decir|dar|compartir)|prefiero no decir|i (don'?t|do not) want to (share|give)|prefer not to (share|say)|no s[eé] (mi |el |my )?(zip|c[oó]digo|zip code)|i don'?t know my zip|i forgot my zip|i forget my zip)\b/i.test(zipRaw);
+      if (refusedZip) {
+        newState.zipRefused = true;
+        if (newState.pendingAdvisorHandoff) {
+          newState.step = 'conversation';
+          newState.needsHuman = true;
+          const outA = isSpanish
+            ? `Está bien${withName(newState.name)}, no necesita compartir el ZIP. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+            : `That's okay${withName(newState.name)}, you don't have to share your ZIP. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+          newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
+          return { response: outA, newState, needsHuman: true };
+        }
+        newState.step = 'asking_problem';
+        const out = isSpanish
+          ? 'No hay problema, seguimos sin ZIP. ¿En qué le puedo ayudar?'
+          : "No problem, we can continue without the ZIP. How can I help you?";
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
+      }
       // Wave 19 Rule 8 — never trap the user on ZIP. If they already gave us
       // an actionable topic, jump straight to triage and let ZIP wait.
       const probableIntent = detectProblemType(userMessage);
@@ -4991,10 +5017,19 @@ function processMessageInner(
         if ((newState.failedZipAttempts || 0) >= 2) {
           return enterRecoveryMode(newState, 'zip_loop');
         }
-        // V20 first miss — Sawil's exact wording.
-        const out = isSpanish
-          ? 'Ese no parece ser un ZIP de 5 dígitos. Puede escribirlo de nuevo o decirme primero qué necesita revisar.'
-          : 'That does not look like a 5-digit ZIP. You can enter it again or tell me what you need help with first.';
+        // Sawil 2026-06-16 — tailor the re-ask to WHAT they typed. Pure
+        // letters/words (no digits at all) were the reported bug: the old copy
+        // said "not a 5-digit ZIP" which wrongly implies a wrong DIGIT count.
+        // Now words get a clear "that's not a ZIP" + an explicit decline path,
+        // symmetric in EN/ES. Numeric misses keep the original wording.
+        const hasAnyDigit = /\d/.test(zipRaw);
+        const out = !hasAnyDigit
+          ? (isSpanish
+              ? 'Disculpe, eso no parece un código postal. Necesito su ZIP de 5 dígitos (por ejemplo 10550). Si prefiere no compartirlo, dígame "no" y seguimos.'
+              : "Sorry, that doesn't look like a ZIP code. I need your 5-digit ZIP (for example 10550). If you'd rather not share it, just say \"no\" and we'll continue.")
+          : (isSpanish
+              ? 'Ese no parece ser un ZIP de 5 dígitos. Puede escribirlo de nuevo o decirme primero qué necesita revisar.'
+              : 'That does not look like a 5-digit ZIP. You can enter it again or tell me what you need help with first.');
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }

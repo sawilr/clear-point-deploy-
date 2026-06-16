@@ -99,6 +99,42 @@ function convo(label: string, lang: string, turns: string[], seedPatch: Any = {}
   check('7b gracefully asks the user to restate / what the issue is', /(perd|d[ií]game|cu[eé]nteme|cu[aá]l (era|es)|en una frase|qu[eé] (necesita|problema)|tell me|what (was|is) the)/i.test(r.response));
 }
 
+// ── CLARA 8 — handoff ZIP step: words & refusal (Sawil 2026-06-16 bug) ──
+// At the advisor-handoff ZIP step the user used to be able to type words and
+// Clara wouldn't recognize them (esp. in Spanish). Now: words → clear "not a
+// ZIP" + decline path; refusal → finalize the handoff, never loop.
+{
+  function handoffZip(lang: string, name: string, zipReply: string) {
+    let st: Any = { ...createInitialState() };
+    st = processMessage(lang, st).newState;
+    st = processMessage(lang === 'Español' ? 'quiero hablar con un asesor' : 'I want to talk to an advisor', st).newState;
+    st = processMessage(name, st).newState;          // → asking_zip
+    return processMessage(zipReply, st);
+  }
+  console.log(`\n══════════ CLARA-8 handoff ZIP words/refusal ══════════`);
+  // 8a/8b — words at ZIP get a clear non-ZIP re-ask offering a decline, in BOTH languages.
+  const wEs = handoffZip('Español', 'Maria Gomez', 'manzana');
+  console.log(`\n> [ES] manzana\nCLARA: ${wEs.response}`);
+  check('8a ES word → "no parece" + offers decline ("no")',
+    /no parece un c[oó]digo postal/i.test(wEs.response) && /d[ií]game "?no"?|no compartirlo/i.test(wEs.response));
+  const wEn = handoffZip('English', 'John Smith', 'apple');
+  console.log(`\n> [EN] apple\nCLARA: ${wEn.response}`);
+  check('8b EN word → "doesn\'t look like a ZIP" + offers decline',
+    /look like a zip code/i.test(wEn.response) && /say "?no"?/i.test(wEn.response));
+  // 8c/8d — refusal finalizes the handoff (needsHuman) instead of looping.
+  const rEs = handoffZip('Español', 'Maria Gomez', 'no sé mi zip');
+  console.log(`\n> [ES] no sé mi zip\nCLARA: ${rEs.response.slice(0, 80)}…`);
+  check('8c ES refusal → finalizes handoff (needsHuman, no loop)',
+    rEs.needsHuman === true && /asesor licenciado/i.test(rEs.response) && !/no parece/i.test(rEs.response));
+  const rEn = handoffZip('English', 'John Smith', "i don't know my zip");
+  console.log(`\n> [EN] i don't know my zip\nCLARA: ${rEn.response.slice(0, 80)}…`);
+  check('8d EN refusal → finalizes handoff (needsHuman, no loop)',
+    rEn.needsHuman === true && /licensed.*advisor/i.test(rEn.response) && !/look like/i.test(rEn.response));
+  // 8e — a valid ZIP still finalizes the handoff (no regression).
+  const okEs = handoffZip('Español', 'Maria Gomez', '10550');
+  check('8e ES valid ZIP still finalizes handoff', okEs.needsHuman === true && okEs.newState.zipCode === '10550');
+}
+
 console.log(`\n═════════════════════════════════════════`);
 console.log(`TOTAL: ${PASS} PASS / ${FAIL} FAIL`);
 if (FAIL) console.log('FAILS: ' + fails.join(' | '));
