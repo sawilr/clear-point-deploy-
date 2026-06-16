@@ -238,7 +238,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         <p className="text-earth-600 text-sm mb-4">
           {lang === 'es' ? FREE_REVIEW_SUCCESS_ES : FREE_REVIEW_SUCCESS_EN}
         </p>
-        <p className="text-earth-700 text-xs">{t('Reply STOP to unsubscribe from SMS.', 'Responda STOP para cancelar suscripción de SMS.')}</p>
+        <p className="text-earth-700 text-sm">{t('Reply STOP to unsubscribe from SMS.', 'Responda STOP para cancelar suscripción de SMS.')}</p>
       </div>
     );
   }
@@ -252,7 +252,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         <h2 id="lead-form-heading" className="font-serif text-xl text-earth-900 text-center mt-2 mb-1 scroll-mt-[100px]">
           {t('Get Your Free Plan Review', 'Obtenga Su Revisión Gratis')}
         </h2>
-        <p className="text-earth-600 text-xs text-center mb-6">
+        <p className="text-earth-600 text-sm text-center mb-6">
           {t('Takes 2 minutes · No pressure · 100% confidential', 'Toma 2 minutos · Sin presión · 100% confidencial')}
         </p>
 
@@ -355,7 +355,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 onChange={handleChange}
                 className="mt-0.5 w-4 h-4 accent-earth-800 flex-shrink-0"
               />
-              <span className="text-[12px] text-earth-700 leading-relaxed">
+              <span className="text-sm text-earth-700 leading-relaxed">
                 {t(
                   'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided above. I understand that these calls may be made using an automatic telephone dialing system and that message and data rates may apply. I understand that I am not required to consent as a condition of purchasing any goods or services, and that I may revoke my consent at any time by replying STOP or calling 1-866-310-8702. Message frequency may vary. See our',
                   'Acepto recibir llamadas de marketing y mensajes de texto de ClearPoint Senior Advisors en el número de teléfono proporcionado arriba. Entiendo que estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático y que pueden aplicarse tarifas de mensajes y datos. Entiendo que no estoy obligado a consentir como condición para comprar bienes o servicios, y que puedo revocar mi consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. La frecuencia de mensajes puede variar. Consulte nuestra'
@@ -368,7 +368,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
 
           {/* Privacy / HIPAA-style notice */}
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12px] text-amber-900 leading-relaxed">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900 leading-relaxed">
             <p className="font-semibold mb-1">
               {t('Privacy Notice', 'Aviso de Privacidad')}
             </p>
@@ -391,11 +391,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             }
           </button>
         </form>
-        <p className="text-center text-[12px] text-earth-700 mt-3 flex items-center justify-center gap-1">
+        <p className="text-center text-sm text-earth-700 mt-3 flex items-center justify-center gap-1">
           <LockIcon className="w-3 h-3" />
           {t('Your information is secure and never sold.', 'Su información es segura y nunca se vende.')}
         </p>
-        <p className="text-center text-[12px] text-earth-700 mt-1">
+        <p className="text-center text-sm text-earth-700 mt-1">
           {t('Reply STOP to unsubscribe. Message frequency may vary.', 'Responda STOP para cancelar. La frecuencia de mensajes puede variar.')}
         </p>
       </div>

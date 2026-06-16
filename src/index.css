@@ -54,6 +54,13 @@
     --measure-sm: 45ch;
     --measure-md: 65ch;
     --measure-lg: 75ch;
+    /* Sawil 2026-06-16 typography audit (62/100) — readable measures for the
+       legally-critical text and a hard page ceiling. --measure-legal caps the
+       footer disclaimer so it stops spanning ~1112px / ~168 chars per line
+       (audit #1); --measure-max is the global "don't stretch text forever on
+       4K" ceiling (audit #6). */
+    --measure-legal: 68ch;
+    --measure-max: 800px;
   }
 
   html {
@@ -97,8 +104,15 @@
      `leading-*` / `tracking-*` utility on a specific heading still overrides
      this; it is the safety net so no heading is ever cramped (≥1.2) and gives
      a subtle premium tracking. Fixes audit #4 (H1 line-height) + #15 (tracking). */
-  h1 { line-height: var(--line-tight); letter-spacing: 0.01em; }
-  h2 { line-height: 1.25; letter-spacing: 0.01em; }
+  /* Sawil 2026-06-16 typography audit (62/100) — line-height FLOOR.
+     Tailwind's text-{4xl,5xl,…} utilities bundle line-height:1, and their
+     responsive (sm:) variant out-cascades a non-responsive leading-[1.2] on the
+     same element (measured: home H1 rendered 54.4px/54.4px = ratio 1.0, audit
+     #3). !important guarantees the readable floor the audit requires (H1/H2
+     ≥1.15) regardless of which Tailwind size class is active — it only pins
+     line-height, not size, so the fluid type scale is untouched. */
+  h1 { line-height: 1.2 !important; letter-spacing: 0.01em; }
+  h2 { line-height: 1.2 !important; letter-spacing: 0.01em; }
 
   /* Audit #5/#9 — the skip-link must be fully readable when focused (never
      clipped with an ellipsis). */
@@ -266,6 +280,10 @@
      stretches past a comfortable ~65ch on ultra-wide screens. */
   .cp-measure { max-width: var(--measure-md); }
   .cp-measure-lg { max-width: var(--measure-lg); }
+  /* Audit #1 — legal/disclaimer reading measure. Caps the disclaimer block to a
+     readable ~68ch so it never stretches to the full footer width on desktop.
+     leading-relaxed line-height is applied on the element for senior comfort. */
+  .cp-legal { max-width: var(--measure-legal); }
   /* PHASE 9C — premium chat polish utilities. */
   @keyframes message-in {
     from { opacity: 0; transform: translateY(8px); }

@@ -9,7 +9,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
 
   if (variant === 'compact') {
     return (
-      <div className="text-[13px] text-earth-700 leading-relaxed">
+      <div className="cp-legal text-sm text-earth-700 leading-relaxed">
         <p>
           {t(
             'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, and costs vary by plan, location, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov or 1-800-MEDICARE for official information.',
@@ -22,7 +22,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
 
   if (variant === 'inline') {
     return (
-      <p className="text-[13px] text-earth-700 leading-relaxed">
+      <p className="cp-legal text-sm text-earth-700 leading-relaxed">
         {t(
           'ClearPoint Senior Advisors is an independent insurance agency. Not connected with or endorsed by Medicare, CMS, or the U.S. government. Plan availability varies by location.',
           'ClearPoint Senior Advisors es una agencia de seguros independiente. No está conectada ni respaldada por Medicare, CMS ni el gobierno de EE. UU. La disponibilidad de planes varía por ubicación.'
@@ -33,7 +33,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
 
   if (variant === 'privacy') {
     return (
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-[12px] text-amber-900 leading-relaxed">
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 leading-relaxed">
         <p className="font-semibold mb-1.5 flex items-center gap-1.5">
           <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -47,7 +47,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
             'ClearPoint Senior Advisors utiliza la información que usted proporciona únicamente para responder a su solicitud y conectarle con apoyo de seguros licenciado. Aplicamos salvaguardas administrativas y técnicas razonables para proteger la información que usted envía. Por favor, no envíe números de Seguro Social, números de Medicare, información bancaria ni expedientes médicos detallados a través de este sitio web o chat.'
           )}
         </p>
-        <p className="text-[11px] text-amber-700">
+        <p className="text-[13px] text-amber-700">
           {t(
             'For questions about how your information is handled, contact us at 1-866-310-8702.',
             'Para preguntas sobre cómo se maneja su información, contáctenos al 1-866-310-8702.'
@@ -58,7 +58,7 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
   }
 
   return (
-    <div className="text-[12px] text-cream-50/70 leading-relaxed space-y-2.5">
+    <div className="cp-legal text-sm text-cream-50/70 leading-relaxed space-y-2.5">
       <p>
         {t(
           'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.',

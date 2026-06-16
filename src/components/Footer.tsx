@@ -161,9 +161,9 @@ export function Footer() {
                   mailto href stays a single string so the email client opens
                   the address correctly. <wbr> is silent for screen readers. */}
               <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors break-all">info@clearpointsenioradvisors.com</a></li>
-              <li className="text-cream-50/70 text-xs">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
+              <li className="text-cream-50/70 text-[13px]">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
               {/* HIDDEN per Sawil 2026-06: FL not yet licensed. Restore once authorization confirmed. Keeping file/text intact for easy re-enable. */}
-              <li className="text-cream-50/70 text-xs mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
+              <li className="text-cream-50/70 text-[13px] mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
             </ul>
           </div>
         </div>
@@ -174,7 +174,7 @@ export function Footer() {
         </div>
 
         {/* Licensing disclosure — CMS-required for MA marketing. */}
-        <div className="border-t border-cream-50/10 pt-4 pb-3 text-center sm:text-left text-xs text-cream-50/80 leading-relaxed">
+        <div className="border-t border-cream-50/10 pt-4 pb-3 text-center sm:text-left text-[13px] text-cream-50/80 leading-relaxed">
           <span className="font-semibold">NPN: 17261494</span>
           <span className="mx-2 text-cream-50/40">|</span>
           <span>{t('Licensed in NY · NJ · CT', 'Licenciado en NY · NJ · CT')}</span>
@@ -183,7 +183,7 @@ export function Footer() {
         </div>
 
         {/* Bottom */}
-        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-cream-50/70">
+        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[13px] text-cream-50/70">
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center gap-3 flex-wrap">
             <Link to="/privacy-policy" className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>

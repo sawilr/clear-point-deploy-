@@ -451,7 +451,7 @@ export default function Resources() {
         <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Free Educational Guides', 'Guías Educativas Gratuitas')}</span>
-            <h2 className="font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal text-earth-900 leading-snug mb-4">
+            <h2 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
               {t('Educational Resources', 'Recursos Educativos')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed max-w-2xl mx-auto">

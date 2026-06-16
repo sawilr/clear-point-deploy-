@@ -479,7 +479,7 @@ export function SmartMedicareReview() {
               <button
                 type="button"
                 onClick={() => { setSpecialCat(null); setStep1View('special'); }}
-                className="mt-4 w-full text-center text-xs text-earth-400 hover:text-earth-600 underline underline-offset-2 transition-colors"
+                className="mt-4 w-full text-center text-sm text-earth-400 hover:text-earth-600 underline underline-offset-2 transition-colors"
               >
                 {t('Have a different situation?', '¿Tiene una situación diferente?')}
               </button>

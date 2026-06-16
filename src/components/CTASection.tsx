@@ -76,7 +76,7 @@ export function CTASection({
   return (
     <section ref={ref} className={`py-14 sm:py-16 lg:py-20 transition-all duration-700 ${visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'} ${variant === 'gold' ? 'bg-gold-200' : 'bg-earth-800'}`}>
       <div className="max-w-3xl lg:max-w-4xl 2xl:max-w-5xl 3xl:max-w-6xl mx-auto px-5 text-center">
-        <h2 className={`font-serif text-3xl sm:text-4xl lg:text-[2.6rem] font-normal leading-snug mb-4 ${variant === 'gold' ? 'text-earth-900' : 'text-cream-50'}`}>
+        <h2 className={`font-serif text-3xl sm:text-4xl font-normal leading-snug mb-4 ${variant === 'gold' ? 'text-earth-900' : 'text-cream-50'}`}>
           {t(headline, headlineEs)}
         </h2>
         <p className={`text-base leading-relaxed mb-8 max-w-xl mx-auto ${variant === 'gold' ? 'text-earth-700' : 'text-cream-100/70'}`}>
