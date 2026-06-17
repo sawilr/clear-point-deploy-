@@ -86,6 +86,17 @@ export interface ConversationState {
   billSource?: 'provider' | 'pharmacy' | 'plan' | 'unknown';
   /** True if user mentioned having BOTH Medicaid + Medicare (dual eligible). */
   dualEligible?: boolean;
+  // ─── 2026-06-17: dual-eligible Medicare-knowledge reasoning (Sawil mission) ───
+  /** True once the user states Medicaid (alone or with Medicare). */
+  hasMedicaid?: boolean;
+  /** Derived: Medicaid + Medicare ⇒ automatic Extra Help/LIS. Set so Clara
+   *  NEVER asks "do you also have Extra Help?" after Medicaid is stated. */
+  extraHelpInferred?: boolean;
+  /** Derived caution flag: a dual-eligible reporting Medicare cost-sharing
+   *  bills is possibly QMB-protected (providers generally can't balance-bill). */
+  possibleQMB?: boolean;
+  /** Stage of the deterministic dual-eligible billing triage. */
+  dualFlowStage?: 'ask_source' | 'offered_advisor' | 'done';
   /** Most recent dollar amount the user mentioned. */
   amountMentioned?: string;
   // ─── Wave 18: fraud / data-quality detection ───
@@ -2663,6 +2674,39 @@ export function processMessage(
     return { response: out, newState, needsHuman: !!state.advisorHandoffStarted };
   }
 
+  // Sawil 2026-06-16 — ZIP META-QUESTION POLISH (Codex stabilization micro-fix).
+  // If a valid 5-digit ZIP is already stored and the user asks what ZIP they
+  // gave (EN / ES / Spanglish), echo the stored ZIP and continue — never
+  // restart ZIP collection. Placed BEFORE session-loss recovery so a phrase
+  // like "ya te dije the ZIP, what was it?" answers the ZIP instead of being
+  // treated as lost context. Gated tightly (ZIP mention + recall question) so
+  // it never fires on "what zip codes do you serve". \b is avoided around
+  // accented ES words (é/í break JS \b); "te di"/"le di" carry the ES signal.
+  if (state.zipCode && /^\d{5}$/.test(state.zipCode)) {
+    const _mentionsZip = /\bzip\b|c[oó]digo postal/i.test(userMessage);
+    const _asksRecall = /\b(what|which)\b[^?!.]*\b(gave|give|was|provided|did i)\b/i.test(userMessage)
+      || /what was it|what did i (give|say)/i.test(userMessage)
+      || /\b(te di|le di)\b/i.test(userMessage)
+      || /(qu[eé]|cu[aá]l)[^?!.]{0,40}(fue|era|es)\b/i.test(userMessage);
+    if (_mentionsZip && _asksRecall) {
+      const isEs = state.language === 'es';
+      const out = isEs
+        ? `Me dio el ZIP ${state.zipCode}. Seguimos con ese ZIP para orientarle.`
+        : `You gave me the ZIP ${state.zipCode}. We'll keep using that ZIP to help you.`;
+      const newState: ConversationState = {
+        ...state,
+        turnCount: _currentTurnIdx,
+        lastBotIntent: 'zip_recall',
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+  }
+
   // Sawil 2026-06-15 (reasoning layer, PART 6) — SESSION-LOSS RECOVERY. If the
   // caller signals there is prior context ("ya te dije", "I already told you",
   // "eso no fue lo que pregunté") but we have NO stored case (e.g. the session
@@ -3779,6 +3823,218 @@ function _handleCostFlow(
   return null;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// 2026-06-17 — DUAL-ELIGIBLE MEDICARE-KNOWLEDGE REASONING (Sawil mission)
+//
+// A trained Medicare agent INFERS implied facts instead of asking what's already
+// known. Core rules, applied deterministically (verifiable, never LLM-dependent):
+//   • Medicaid + Medicare              ⇒ dual-eligible
+//   • dual-eligible                    ⇒ automatic Extra Help / LIS  → NEVER ask
+//                                        "do you also have Extra Help?"
+//   • dual-eligible + Medicare cost-sharing bill ⇒ possibly QMB → providers
+//     generally cannot balance-bill → do NOT advise paying → escalate to advisor.
+// Compliance: conditional language only ("normalmente / puede"), no eligibility
+// or legal guarantees, never "pay/ignore it", no sensitive-data requests, exactly
+// one question per turn. Runs in _runStructuralFirst, before the LLM.
+// ════════════════════════════════════════════════════════════════════════════
+function _statesDualEligible(m: string): boolean {
+  return detectDualEligible(m)
+    || /\b(soy dual|plan dual|tengo (un )?plan dual|d-?snp|doble elegib|dually eligible|i'?m dual|i am dual)\b/i.test(m);
+}
+function _statesMedicaidNow(m: string): boolean {
+  return /\b(medicaid|medicaide|medicad|medicadi|medi-?cal)\b/i.test(m) || /ayuda del estado/i.test(m);
+}
+function _statesBothCoverage(m: string): boolean {
+  return /\b(tengo los dos|tengo ambos|i have both|have both of them|los dos|ambos)\b/i.test(m);
+}
+function _statesQMBNow(m: string): boolean {
+  return /\bqmb\b/i.test(m) || /qualified medicare beneficiary/i.test(m);
+}
+function _statesExtraHelpNow(m: string): boolean {
+  return /\b(extra help|ayuda extra|\blis\b|low[- ]income subsidy|subsidio (de )?bajo ingreso)\b/i.test(m);
+}
+function _dualMentionsMedicalBill(m: string): boolean {
+  // NOTE: use m[eé]dico/m[eé]dica (a provider), NOT bare "medic", which would
+  // swallow medicamento / medicare / medicaid.
+  return /\b(factura|facturas|cobro|cobros|me cobr|bill|billed|charge[ds]?|copago|copay|coinsuranc|coseguro|deducible|deductible|hospital|doctor|m[eé]dic[oa]|laboratorio|\blab\b|ambulanc|sala de emergenc|emergency room)\b/i.test(m);
+}
+function _dualMentionsProvider(m: string): boolean {
+  return /\b(hospital|doctor|m[eé]dic[oa]|proveedor|provider|consultorio|cl[ií]nica|especialista|specialist|laboratorio|\blab\b|ambulanc|sala de emergenc|emergency room)\b/i.test(m);
+}
+function _dualMentionsPharmacy(m: string): boolean {
+  return /\b(farmacia|pharmacy|medicament|medicina|medicine|medication|receta|prescription|pastilla|pill)\b/i.test(m);
+}
+function _dualRecentUserText(state: ConversationState): string {
+  return (state.messages || []).filter(x => x.role === 'user').slice(-6).map(x => x.content).join(' ').toLowerCase();
+}
+function _dualBillSource(m: string): 'pharmacy' | 'hospital' | 'doctor' | 'lab' | 'ambulance' | 'plan' | 'unknown' {
+  if (_dualMentionsPharmacy(m)) return 'pharmacy';
+  if (/hospital/i.test(m)) return 'hospital';
+  if (/ambulanc/i.test(m)) return 'ambulance';
+  if (/laboratorio|\blab\b/i.test(m)) return 'lab';
+  if (/doctor|m[eé]dic|provider|proveedor|consultorio|cl[ií]nica|especialista|specialist/i.test(m)) return 'doctor';
+  if (/\bplan\b|aseguradora|carrier|del plan/i.test(m)) return 'plan';
+  return 'unknown';
+}
+
+function _handleDualEligible(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const m = (userMessage || '').toLowerCase().trim();
+  if (!m) return null;
+  const isEs = (state.language || 'es') === 'es';
+  const hist = _dualRecentUserText(state);
+  const knownDual = !!(state.dualEligible || state.hasMedicaid);
+
+  const billNow = _dualMentionsMedicalBill(m);
+  const billish = billNow || /factura|bill|cobr|copay|copago|coinsuranc|coseguro|deducible|deductible/i.test(hist);
+  const frustrated = /\b(ya te (lo )?dij|te dije|i already told you|i told you|you already asked|no sab[eé]s lo que (hablas|dices)|no sabes lo que (hablas|dices))/i.test(m);
+
+  const dualNow = _statesDualEligible(m) || _statesQMBNow(m);
+  // Medicare-support context: a caller who mentions Medicaid is almost always
+  // already on Medicare too (this IS the Medicare assistant), so a Medicaid
+  // mention triggers dual reasoning even if they didn't also type "Medicare".
+  const medicaidWithMedicare = _statesMedicaidNow(m);
+  const bothNow = _statesBothCoverage(m) && (knownDual || /medicare|medicaid/i.test(hist));
+  const reinforceDual = knownDual && (_statesExtraHelpNow(m) || _statesBothCoverage(m) || _dualMentionsMedicalBill(m) || _dualMentionsPharmacy(m));
+  // A frustration turn ("ya te dije" / "no sabes…") while dual eligibility is
+  // already known AND a billing case is active must stay in dual reasoning
+  // (apologize + restate + ask source) rather than fall through to a generic
+  // handler or the LLM.
+  const frustratedDualBill = frustrated && knownDual && (billish || state.dualFlowStage === 'ask_source');
+  const isDualContext = dualNow || medicaidWithMedicare || bothNow || reinforceDual || frustratedDualBill;
+  if (!isDualContext) return null;
+
+  const baseFacts: Partial<ConversationState> = {
+    dualEligible: true, hasMedicaid: true, extraHelpInferred: true,
+    activeCaseTopic: state.activeCaseTopic || 'dual_eligible',
+    lastUserProblem: state.lastUserProblem || userMessage,
+    quickReplies: [], // conversation-first: dual replies never carry chip menus
+  };
+  const emit = (text: string, patch: Partial<ConversationState> = {}, needsHuman = false) => {
+    const newState: ConversationState = { ...state, ...baseFacts, ...patch };
+    newState.messages = [...(state.messages || []), { role: 'bot', content: text, timestamp: Date.now() }];
+    return { response: text, newState, needsHuman };
+  };
+
+  const qmbExplicit = _statesQMBNow(m) || /\bqmb\b/i.test(hist);
+  const pharmNow = _dualMentionsPharmacy(m) && !_dualMentionsProvider(m);
+
+  // ── Follow-up: we asked the bill source last turn; user now names it. ──
+  if (state.dualFlowStage === 'ask_source') {
+    const src = _dualBillSource(m);
+    if (src === 'pharmacy') {
+      const out = isEs
+        ? 'Gracias. Como es de la farmacia y usted tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra, así que sus medicinas deberían costar muy poco. ¿La farmacia le dijo que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió? Un asesor licenciado puede revisarlo sin costo.'
+        : 'Thanks. Since it is from the pharmacy and you have both Medicare and Medicaid, you usually already have Extra Help, so your medicines should cost very little. Did the pharmacy say the drug is not covered, that it needs prior authorization, or that the price went up? A licensed advisor can review it at no cost.';
+      return emit(out, { dualFlowStage: 'offered_advisor', serviceCategory: 'bill_pharmacy', lastBotOfferedAdvisor: true, lastBotIntent: 'dual_pharmacy_followup' });
+    }
+    const srcLabelEs = src === 'hospital' ? 'del hospital' : src === 'doctor' ? 'del doctor' : src === 'lab' ? 'del laboratorio' : src === 'ambulance' ? 'de la ambulancia' : src === 'plan' ? 'del plan' : 'que recibió';
+    const srcLabelEn = src === 'hospital' ? 'from the hospital' : src === 'doctor' ? 'from the doctor' : src === 'lab' ? 'from the lab' : src === 'ambulance' ? 'from the ambulance' : src === 'plan' ? 'from the plan' : 'you received';
+    const out = isEs
+      ? `Gracias. Una factura ${srcLabelEs} cuando usted tiene Medicare y Medicaid es justo lo que un asesor licenciado debe revisar — con frecuencia no le deberían cobrar esos montos por servicios cubiertos por Medicare. No la pague todavía. ¿Quiere que un asesor de Clear Point revise su caso, sin costo?`
+      : `Thanks. A bill ${srcLabelEn} when you have both Medicare and Medicaid is exactly what a licensed advisor should review — often you should not be charged those amounts for Medicare-covered services. Please don't pay it yet. Would you like a Clear Point advisor to review your case, at no cost?`;
+    return emit(out, { dualFlowStage: 'offered_advisor', serviceCategory: 'bill_provider', possibleQMB: true, lastBotOfferedAdvisor: true, lastBotIntent: 'dual_bill_followup' });
+  }
+
+  // ── "Ya te dije" / "no sabes lo que hablas" while dual context is known. ──
+  if (frustrated && (knownDual || billish)) {
+    const out = isEs
+      ? 'Tiene toda la razón, disculpe. Ya entendí lo importante: usted tiene Medicare y Medicaid, y le llegaron facturas que pensaba que estaban cubiertas. Con esa combinación puede tener protecciones que conviene revisar antes de que pague nada. ¿La factura vino de un doctor, hospital, farmacia, laboratorio o ambulancia?'
+      : "You're absolutely right, my apologies. I have the important part: you have both Medicare and Medicaid, and you got bills you thought were covered. With that combination you may have protections worth reviewing before you pay anything. Did the bill come from a doctor, hospital, pharmacy, lab, or ambulance?";
+    return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_recover_source' });
+  }
+
+  // ── QMB explicitly stated + a bill. ──
+  if (qmbExplicit && billish) {
+    const out = isEs
+      ? 'Gracias por decírmelo. Si usted está en QMB, normalmente los proveedores no deberían cobrarle deducibles, coseguro ni copagos por servicios cubiertos por Medicare. Aun así podría haber un copago de Medicaid o un servicio no cubierto, por eso conviene revisar la factura antes de pagar. No la pague todavía. ¿La factura es de un doctor, hospital, farmacia, laboratorio o ambulancia?'
+      : "Thank you for telling me. If you are in QMB, providers generally should not bill you for deductibles, coinsurance, or copays on Medicare-covered services. There could still be a Medicaid copay or a non-covered service, so it's worth reviewing the bill before paying. Please don't pay it yet. Is the bill from a doctor, hospital, pharmacy, lab, or ambulance?";
+    return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_qmb_bill' });
+  }
+
+  // ── Dual + a medical/cost-sharing bill (the primary failure scenario). ──
+  if (billNow || (billish && (dualNow || medicaidWithMedicare || bothNow))) {
+    const out = isEs
+      ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Extra automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, no le recomiendo pagar esa factura todavía hasta revisarla. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
+      : 'I understand, and thank you for telling me. Since you have both Medicare and Medicaid, that usually means you already have Extra Help automatically for your medications, and you may also have important protections (like QMB) that reduce or remove certain copays or bills for Medicare-covered services.\n\nBecause of that, please don\'t pay that bill yet until it is reviewed. First, let\'s see where it is from: did the bill come from a doctor, hospital, pharmacy, lab, ambulance, or your plan?';
+    return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_bill_triage' });
+  }
+
+  // ── Dual + a pharmacy / medication issue (Extra Help applies, not QMB). ──
+  if (pharmNow) {
+    const out = isEs
+      ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra (Extra Help) automática, así que sus medicamentos deberían costar muy poco. Si la farmacia le cobró de más, ¿le dijeron que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió?'
+      : 'Thank you for telling me. Since you have both Medicare and Medicaid, you usually already have Extra Help automatically, so your medications should cost very little. If the pharmacy charged you more, did they say the drug is not covered, that it needs prior authorization, or that the price went up?';
+    return emit(out, { serviceCategory: 'bill_pharmacy', lastBotIntent: 'dual_pharmacy_triage' });
+  }
+
+  // ── Plain dual / Medicaid statement (no specific issue yet), or correction
+  //    "tengo extra help automático" — acknowledge, infer Extra Help, never
+  //    re-ask it, and ask one open routing question. ──
+  if (_statesExtraHelpNow(m)) {
+    const out = isEs
+      ? 'Correcto. Si tiene Medicaid y Medicare, normalmente ya califica automáticamente para Ayuda Extra para sus medicamentos — así que no le pregunto eso otra vez. ¿En qué le puedo ayudar — una factura, un copago, una medicina, un doctor, o algo de su plan?'
+      : 'Correct. If you have both Medicaid and Medicare, you usually qualify automatically for Extra Help for your medications — so I won\'t ask you that again. How can I help — a bill, a copay, a medication, a doctor, or something about your plan?';
+    return emit(out, { lastBotIntent: 'dual_extrahelp_ack' });
+  }
+  const out = isEs
+    ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra automática para medicamentos y puede tener otras protecciones de costos. ¿En qué le puedo ayudar hoy — una factura, un copago, una medicina, un doctor, una carta, o algo de su plan?'
+    : 'Thank you for telling me. Since you have both Medicare and Medicaid, you usually already have Extra Help automatically for medications and may have other cost protections. How can I help you today — a bill, a copay, a medication, a doctor, a letter, or something about your plan?';
+  return emit(out, { lastBotIntent: 'dual_ack_open' });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2026-06-17 — PROVIDER / HOSPITAL BILL workflow (Sawil mission).
+//
+// A SPECIFIC bill from a named provider (hospital, doctor, lab, ambulance, ER)
+// is a billing dispute that a licensed advisor must review — NOT the Part-B
+// premium / income / MSP diagnosis flow. The old cost-flow grabbed the biggest
+// dollar amount, mistook a $3,500 hospital bill for a monthly premium, looped on
+// the source question, then asked for income. This handler runs BEFORE the cost
+// flow (live async path) so a named-provider bill is recognized even when the
+// caller ALSO mentions a monthly charge. Compliance-safe: never "pay it", never
+// guarantee the bill is wrong, escalate to a licensed advisor, one question.
+// ════════════════════════════════════════════════════════════════════════════
+function _statesProviderBill(m: string): boolean {
+  if (!_dualMentionsProvider(m)) return false;
+  const billWord = /\b(factura|facturas|me mandaron|me lleg[oó]|me enviaron|me cobr|cobraron|bill|billed|invoice|cuenta)\b/i.test(m);
+  const amount = /\$\s?\d{2,}|\b\d{3,6}\b/.test(m);
+  return billWord || amount;
+}
+function _handleProviderBill(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const m = (userMessage || '').toLowerCase().trim();
+  if (!m) return null;
+  // Don't re-fire after we've already offered the advisor for this bill.
+  if (state.serviceCategory === 'bill_provider' && state.lastBotOfferedAdvisor) return null;
+  if (!_statesProviderBill(m)) return null;
+  const isEs = (state.language || 'es') === 'es';
+  const multi = /\b(mensual|al mes|cada mes|por mes|monthly|copago|copay)\b/i.test(m) && /\$\s?\d{2,}|\b\d{3,6}\b/.test(m);
+  const out = isEs
+    ? (multi
+        ? 'Entiendo, y veo que hay varias cosas. Empecemos por la factura del hospital, que es lo más importante: una factura así es justo lo que un asesor licenciado debe revisar — a veces hay errores, cobros duplicados, o montos que no corresponden a lo que Medicare cubre. No le recomiendo pagarla hasta que la revisen. ¿Quiere que un asesor de Clear Point revise todo su caso, sin costo?'
+        : 'Entiendo, y lamento la preocupación. Una factura de un hospital o doctor como esa es justo lo que un asesor licenciado debe revisar — a veces hay errores, cobros duplicados, o montos que no corresponden a lo que Medicare cubre. No le recomiendo pagarla hasta que la revisen. ¿Quiere que un asesor de Clear Point la revise con usted, sin costo?')
+    : (multi
+        ? "I understand, and I can see there's more than one thing here. Let's start with the hospital bill, which matters most: a bill like that is exactly what a licensed advisor should review — sometimes there are errors, duplicate charges, or amounts that shouldn't apply under Medicare. I don't recommend paying it until it's reviewed. Would you like a Clear Point advisor to review your whole case, at no cost?"
+        : "I understand, and I'm sorry for the worry. A hospital or doctor bill like that is exactly what a licensed advisor should review — sometimes there are errors, duplicate charges, or amounts that shouldn't apply under Medicare. I don't recommend paying it until it's reviewed. Would you like a Clear Point advisor to review it with you, at no cost?");
+  const newState: ConversationState = {
+    ...state,
+    serviceCategory: 'bill_provider',
+    activeCaseTopic: state.activeCaseTopic || 'provider_bill',
+    lastUserProblem: state.lastUserProblem || userMessage,
+    costFlowStage: undefined,
+    lastBotOfferedAdvisor: true,
+    lastBotIntent: 'provider_bill_review',
+    quickReplies: [],
+  };
+  newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
+  return { response: out, newState, needsHuman: false };
+}
+
 function _runStructuralFirst(
   userMessage: string,
   state: ConversationState,
@@ -3820,6 +4076,19 @@ function _runStructuralFirst(
   if (isClosingIntent(userMessage) && !state.conversationClosed) {
     return processMessage(userMessage, state);
   }
+  // 2026-06-17 — DUAL-ELIGIBLE reasoning (Sawil mission). Runs BEFORE the cost
+  // flow and the LLM: when the user states Medicare + Medicaid (dual-eligible),
+  // Clara must infer automatic Extra Help (never ask it) and, for cost-sharing
+  // bills, apply QMB billing-protection reasoning + advisor escalation. Owned
+  // deterministically so it is verifiable and never slips to the LLM.
+  const _de = _handleDualEligible(userMessage, state);
+  if (_de) return _de;
+  // 2026-06-17 — PROVIDER / HOSPITAL bill before the cost flow: a named-provider
+  // bill (hospital/doctor/lab/ambulance) is a billing dispute for advisor review,
+  // not the premium/income diagnosis. Prevents the "$3,500 hospital bill mistaken
+  // for a monthly premium + source loop" failure.
+  const _pb = _handleProviderBill(userMessage, state);
+  if (_pb) return _pb;
   // Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7), never the
   // LLM. Runs after safety + closing; owns the cost-diagnosis turns so they are
   // verifiable and stable instead of LLM-dependent.

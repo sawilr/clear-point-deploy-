@@ -1394,7 +1394,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // Wave 19 — recovery chips (Factura / Carta / Cobertura / Medicamentos /
   // Doctor-Proveedor / Hablar con asesor) when the engine sends them.
   const quickReplies = state.quickReplies || [];
-  const showRecoveryChips = quickReplies.length > 0 && !isTyping;
+  // Sawil 2026-06-17 — CONVERSATION-FIRST RULE. Clara must read like a calm,
+  // trained human rep, never a button/menu robot. The deterministic engine and
+  // LLM fully understand free text, so the mid-conversation chip grids are
+  // suppressed: the user simply types. Buttons remain ONLY for the one-time
+  // language pick (entry) and the form-style final actions (call / callback /
+  // advisor) that the engine ALSO offers in plain text. No topic/recovery menus.
+  const showRecoveryChips = false && quickReplies.length > 0 && !isTyping;
 
   // PHASE E — viewport tier still drives chip-row layout and desktop max-width.
   // Mobile container height now comes from the CSS var `--svh`
@@ -1454,9 +1460,19 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             {/* Sawil 2026-06 — short title so it NEVER truncates to "Clara —
                 Sop…" on a phone. The site header above already carries the
                 "Clear Point" brand; the subtitle below carries the rest. */}
-            <div className="text-[15px] font-semibold truncate">
-              {isSpanish ? 'Clara · Soporte' : 'Clara · Support'}
-            </div>
+            {/* Sawil 2026-06-16 — exactly one visible H1 on the /support route
+                (page mode only). font-sans keeps it visually identical to the
+                prior div (overrides the Playfair h1 base rule); widget mode
+                stays a div so floating Clara never adds a 2nd H1 to a page. */}
+            {mode === 'page' ? (
+              <h1 className="text-[15px] font-sans font-semibold truncate leading-tight m-0">
+                {isSpanish ? 'Clara · Soporte' : 'Clara · Support'}
+              </h1>
+            ) : (
+              <div className="text-[15px] font-semibold truncate">
+                {isSpanish ? 'Clara · Soporte' : 'Clara · Support'}
+              </div>
+            )}
             <div className="text-[11px] text-cream-200 font-normal truncate">
               {state.name && state.zipCode
                 ? `${state.name} · ${state.zipCode}${state.state ? ' · ' + state.state : ''}`

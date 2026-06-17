@@ -177,6 +177,33 @@ function convo(label: string, lang: string, turns: string[], seedPatch: Any = {}
     (n2.newState.failedZipAttempts || 0) === 0 && n2.newState.step === 'asking_topic');
 }
 
+// ── CLARA 9 — ZIP meta-question recall (Sawil 2026-06-16 Codex micro-fix) ──
+// A valid stored ZIP + "what ZIP did I give?" must echo the ZIP and NOT
+// restart ZIP collection. Negative: "what zip codes do you serve" must NOT
+// trigger the recall echo.
+{
+  console.log(`\n══════════ CLARA-9 ZIP meta-question recall ══════════`);
+  function withZip(lang: string) {
+    let st: Any = { ...createInitialState() };
+    st = processMessage(lang, st).newState;     // language → asking_zip_natural
+    st = processMessage('10001', st).newState;  // store ZIP 10001 (NY)
+    return st;
+  }
+  const en = processMessage('What ZIP did I give you?', withZip('English'));
+  console.log(`\n> [EN] What ZIP did I give you?\nCLARA: ${en.response}`);
+  check('9a EN recall echoes 10001, no ZIP re-ask', /10001/.test(en.response) && !/what is your zip|5-digit zip\?/i.test(en.response));
+  const es = processMessage('¿Qué ZIP te di?', withZip('Español'));
+  console.log(`> [ES] ¿Qué ZIP te di?\nCLARA: ${es.response}`);
+  check('9b ES recall echoes 10001, stays Spanish', /10001/.test(es.response) && /me dio|ese zip|seguimos/i.test(es.response));
+  const span = processMessage('Ya te dije the ZIP, what was it?', withZip('English'));
+  check('9c Spanglish recall echoes 10001', /10001/.test(span.response));
+  const esCp = processMessage('¿Qué código postal te di?', withZip('Español'));
+  check('9d ES "código postal" recall echoes 10001', /10001/.test(esCp.response));
+  // Negative — service-area question must NOT echo the stored ZIP.
+  const neg = processMessage('What zip codes do you serve?', withZip('English'));
+  check('9e negative: "what zip codes do you serve" does NOT echo recall', !/you gave me the zip 10001/i.test(neg.response));
+}
+
 console.log(`\n═════════════════════════════════════════`);
 console.log(`TOTAL: ${PASS} PASS / ${FAIL} FAIL`);
 if (FAIL) console.log('FAILS: ' + fails.join(' | '));
