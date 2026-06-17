@@ -490,7 +490,7 @@ export function SmartMedicareReview() {
           {step === 1 && step1View === 'cost' && (
             <div>
               <p className="text-xs font-bold tracking-widest uppercase text-gold-500 mb-3">
-                {t('Lower my Medicare costs', 'Reducir mis costos de Medicare')}
+                {t('Review my Medicare costs', 'Revisar mis costos de Medicare')}
               </p>
               <p className="text-earth-800 text-base font-semibold mb-5">
                 {t('Where is the cost coming from?', '¿De dónde viene el costo?')}

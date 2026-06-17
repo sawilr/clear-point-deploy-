@@ -37,7 +37,7 @@ export type Step1Option = { id: string; en: string; es: string; leadType: LeadTy
 export const STEP1_OPTIONS: Step1Option[] = [
   { id: 'ma',      en: 'Compare Medicare Advantage plans',         es: 'Comparar planes Medicare Advantage',           leadType: 'MA_LEAD' },
   { id: 'pdp',     en: 'Review my Part D drug coverage',           es: 'Revisar mi cobertura de medicamentos Parte D', leadType: 'PDP_LEAD' },
-  { id: 'cost',    en: 'Lower my Medicare costs',                  es: 'Reducir mis costos de Medicare',               leadType: 'COST_REVIEW_TRIAGE' },
+  { id: 'cost',    en: 'Review my Medicare costs',                 es: 'Revisar mis costos de Medicare',               leadType: 'COST_REVIEW_TRIAGE' },
   { id: 'new',     en: 'New to Medicare or not sure what I have',  es: 'Nuevo en Medicare o no sé qué tengo',          leadType: 'NEEDS_TRIAGE' },
   { id: 'medigap', en: 'Have Medigap and want to review options', es: 'Tengo Medigap y quiero revisar opciones',      leadType: 'MEDIGAP_REVIEW' },
   { id: 'unsure',  en: 'Not sure — guide me',                      es: 'No estoy seguro — guíeme',                     leadType: 'NEEDS_TRIAGE' },
