@@ -51,6 +51,7 @@ import {
   inferTopic,
 } from '../lib/claraOuterFlow';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
+import { containsSensitiveData, sensitiveWarning } from '../lib/sensitiveGuard';
 // Phase A — ZIP → city/county lookup, used to answer "cuál es mi zona"
 // accurately (no fabricated neighborhoods). Read-only data utility.
 import { getZipInfo } from '../lib/zipLookup';
@@ -526,6 +527,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       pushUserMessageDirect(text.trim());
       setInputValue('');
       pushBotMessageDirect(reply);
+      return;
+    }
+    // PHASE 12 — Client-side PHI / sensitive-data firewall. Raw SSN / Medicare
+    // number / bank / card data (or an intent to send a card) must NEVER leave
+    // the browser. Short-circuit BEFORE outer flow, the engine, and any
+    // /api/chat call. We show a redacted placeholder (never the raw text) plus
+    // a deterministic bilingual warning. Server-side scrubPHI is defense-in-depth.
+    if (containsSensitiveData(text)) {
+      const isEs = outerState.language === 'es';
+      pushUserMessageDirect(isEs ? '[Mensaje ocultado por seguridad]' : '[Message hidden for your safety]');
+      setInputValue('');
+      pushBotMessageDirect(sensitiveWarning(isEs));
       return;
     }
     // PHASE 10 — When outer flow is in progress, route text inputs there

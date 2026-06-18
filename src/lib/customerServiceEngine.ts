@@ -1189,8 +1189,15 @@ export function detectMedicationAnswer(text: string): {
   if (/\b(letter|notice|carta|aviso|plan letter|carta del plan)\b/i.test(normalized) && t.length < 40) {
     return { category: 'letter_received' };
   }
-  // Cost too high
-  if (/\b(too (expensive|much|high|costly)|expensive|caro|muy caro|costoso|high price|precio alto|cost (was|is) (too |so )?(high|much)|priced too high)\b/i.test(normalized)) {
+  // Cost too high. Covers feminine forms ("cara", "muy cara"), "cuesta
+  // mucho"/"me cuesta", and — because this detector only runs once we are
+  // already inside a medication conversation — a bare money amount ("$80",
+  // "200 dolares") which in that context means the PRICE is the problem.
+  // The amount path is suppressed when the message also signals coverage or
+  // prior-auth, so "no la cubren, me cobraron 80" still routes to not_covered.
+  const _medHasCoverageOrAuth = /\b(not covered|cover|denied|deny|rejected|negaron|denegaron|cubr|prior auth|autorizaci[oó]n)\b/i.test(normalized);
+  if (/\b(too (expensive|much|high|costly)|expensive|car[oa]s?|muy car[oa]|cuesta[n]? mucho|me cuesta|me sal(e|i[oó])|costos[oa]|high price|precio alto|cost (was|is) (too |so )?(high|much)|priced too high)\b/i.test(normalized)
+      || (!_medHasCoverageOrAuth && /(?:\$\s?\d{1,4}|\b\d{2,4}\s?(d[oó]lares|dollars|bucks|usd)\b)/i.test(normalized))) {
     return { category: 'cost_too_high' };
   }
   // Pharmacy rejected (short answer "pharmacy" / "the pharmacy" / "farmacia")
@@ -3592,7 +3599,7 @@ function _classifyCostSource(m: string): 'social_security' | 'pharmacy' | 'provi
   // m[eé]dic, descuent) that must match plurals/conjugations (medicamentos,
   // medico, descuentan). A trailing \b would break those mid-word.
   if (/\b(seguro social|social security|del social|el social|del cheque|mi cheque|del ss\b|ssa|me lo (sacan|quitan|descuentan)|me (sacan|quitan|sacaron|quitaron)|descuent|cada mes|mensual|la prima|prima de|parte b|part b|la b|premium)/.test(m)) return 'social_security';
-  if (/\b(farmacia|pharmacy|medicament|medicina|medicine|drug|receta|pastilla)/.test(m)) return 'pharmacy';
+  if (/\b(farmacia|pharmacy|medicament|medication|medicina|medicine|drug|receta|prescription|pastilla|pill|rx|inhaler|inhalador|insulin|insulina)/.test(m)) return 'pharmacy';
   if (/\b(doctor|m[eé]dic[oa]s?\b|hospital|cl[ií]nic|especialista|copago|copay|coseguro|coinsurance|visita)/.test(m)) return 'provider';
   if (/\b(factura|bill|recibo|statement|me lleg[oó]|cobro de)/.test(m)) return 'bill';
   return 'unknown';
@@ -3692,6 +3699,20 @@ function _handleCostFlow(
     if (state.conversationClosed) return null;
     if (['asking_language', 'asking_zip', 'asking_zip_natural', 'asking_name', 'collecting_identity'].includes(String(state.step))) return null;
     if (state.advisorHandoffStarted && /^handoff_/.test(String(state.lastBotIntent || ''))) return null;
+    // A live medication conversation owns its own follow-ups. Once Clara has
+    // framed the issue as a medication/pharmacy matter (serviceCategory='drug'),
+    // a follow-up like "es muy cara", "$200", or "no se" must stay in the
+    // medication triage — which escalates to a licensed advisor — instead of
+    // being pulled into the generic Part-B-premium / monthly-income flow (the
+    // exact loop Sawil flagged). Defer unless the user explicitly pivots to the
+    // Part B premium or a Social Security deduction. (A FIRST-turn drug COST
+    // message is intentionally NOT deferred — the cost flow gives the immediate
+    // Extra Help / LIS education and sets costChargeSource='pharmacy'; the
+    // _classifyCostSource fix above makes that path language-symmetric.)
+    if (state.serviceCategory === 'drug'
+        && !/\b(parte b|part b|prima|del cheque|seguro social|social security|premium)\b/.test(m)) {
+      return null;
+    }
     if (!_isMedicareCostComplaint(userMessage)) return null;
     // A one-time BILL ("me llegó una factura del hospital") belongs to the
     // existing bill handler, not the ongoing-cost flow. Defer unless the same
@@ -3815,6 +3836,20 @@ function _handleCostFlow(
       const body = buildEducation(state.costChargeSource, state.dualEligible);
       return emit(body + (haveContact ? '' : offerText()), { lastBotOfferedAdvisor: !haveContact, lastBotIntent: 'costflow_educate' });
     }
+    // The user keeps describing the cost (an amount / "cada mes") instead of
+    // answering the advisor offer. Acknowledge the detail and reaffirm the
+    // offer rather than dumping them into the generic topic menu — that menu
+    // after a diagnosed cost case reads as Clara "forgetting" the conversation.
+    const _amtFollow = _costMoney(raw);
+    const _yesNoFollow = /\b(s[ií]|yes|ok|okay|dale|claro|por favor|please|no|nope|not now|ahora no|despu[eé]s|luego|maybe|tal vez|quiz[aá]s)\b/.test(m);
+    if (_amtFollow != null && !_yesNoFollow) {
+      return emit(
+        isEs
+          ? `Entiendo, alrededor de $${_amtFollow}. Con ese costo, lo mejor es que un asesor licenciado de ClearPoint lo revise con la farmacia y el plan, sin costo. ¿Le contactamos?`
+          : `I understand, about $${_amtFollow}. With that cost, the best step is to have a licensed ClearPoint advisor review it with the pharmacy and plan, at no cost. Want them to follow up?`,
+        { lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_educate' },
+      );
+    }
     // Any real answer (yes / no / new topic) exits the flow to the deterministic
     // engine, which owns consent→collection and graceful declines. Stage cleared.
     return processMessage(userMessage, { ...state, costFlowStage: 'done' });
@@ -3843,6 +3878,26 @@ function _statesDualEligible(m: string): boolean {
 }
 function _statesMedicaidNow(m: string): boolean {
   return /\b(medicaid|medicaide|medicad|medicadi|medi-?cal)\b/i.test(m) || /ayuda del estado/i.test(m);
+}
+// States HAVING Medicaid (a coverage fact) — NOT a bare source answer like
+// "de medicaid" replying to "where did the letter come from?". This stops the
+// dual handler from hijacking a letter/bill source answer (Sawil 2026-06-17).
+function _statesHasMedicaid(m: string): boolean {
+  if (!_statesMedicaidNow(m)) return false;
+  // Someone APPLYING FOR / QUALIFYING FOR Medicaid does NOT have it yet — that
+  // is a seeking signal, not possession (see _seekingMedicaid). Never infer
+  // dual-eligibility from "apply for / qualify for medicaid".
+  if (_seekingMedicaid(m)) return false;
+  return /\b(tengo|tiene|tengo el|con|i have|i'?ve|estoy en|me dieron|recib[ií]|both|los dos|ambos|dual|d-?snp|tambi[eé]n|too)\b/i.test(m)
+    || /\b(medicaid\s+(y|and|\+|m[aá]s)\s+medicare|medicare\s+(y|and|\+|m[aá]s)\s+medicaid)\b/i.test(m);
+}
+// States the user is SEEKING Medicaid (does not have it yet): applying for,
+// qualifying for, enrolling in, asking how to get it. This must block the
+// dual-eligible inference — "I need to apply for medicaid" is the opposite of
+// "I have medicaid". (Sawil live failure 2026-06-17.)
+function _seekingMedicaid(m: string): boolean {
+  if (!_statesMedicaidNow(m)) return false;
+  return /\b(apply|applying|aplicar|aplico|solicitar|solicito|solicitud|sign[- ]?up|signup|enroll|enrolling|inscrib|qualif|elig|how (do|can) i get|how to get|c[oó]mo (obtengo|consigo|aplico|solicito|me inscribo|califico|puedo (obtener|conseguir|aplicar))|get on|getting on|put me on|need medicaid|want medicaid|necesito medicaid|quiero medicaid|para medicaid|for medicaid|to medicaid)\b/i.test(m);
 }
 function _statesBothCoverage(m: string): boolean {
   return /\b(tengo los dos|tengo ambos|i have both|have both of them|los dos|ambos)\b/i.test(m);
@@ -3877,6 +3932,41 @@ function _dualBillSource(m: string): 'pharmacy' | 'hospital' | 'doctor' | 'lab' 
   return 'unknown';
 }
 
+// 2026-06-17 — SEEKING MEDICAID (apply / qualify / enroll). A user who wants to
+// APPLY for Medicaid does NOT have it, so Clara must NOT infer dual-eligibility
+// or claim "you already have Extra Help" (the live failure). Give a compliant,
+// helpful answer (eligibility depends on income/resources; NY runs Medicaid; a
+// licensed advisor can check MSP/Medicaid and help apply) + advisor offer.
+function _handleMedicaidSeeking(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const m = (userMessage || '').toLowerCase().trim();
+  if (!m) return null;
+  // If we already KNOW they have Medicaid, this is dual territory, not seeking.
+  if (state.dualEligible || state.hasMedicaid) return null;
+  if (!_seekingMedicaid(m)) return null;
+  const isEs = (state.language || 'es') === 'es';
+  const repeat = state.serviceCategory === 'medicaid_application' && !!state.lastBotOfferedAdvisor;
+  const out = isEs
+    ? (repeat
+        ? 'Como le mencioné, un asesor licenciado de ClearPoint puede revisar si usted podría calificar para Medicaid o para un Programa de Ahorro de Medicare (MSP) y ayudarle con la solicitud, sin costo. ¿Le gustaría que un asesor le contacte?'
+        : 'Entendido — usted quiere solicitar Medicaid. La elegibilidad depende de su ingreso, sus recursos y su hogar, y en Nueva York el estado lo administra. Un asesor licenciado de ClearPoint puede revisar si usted podría calificar para Medicaid o para un Programa de Ahorro de Medicare (MSP) y ayudarle con la solicitud, sin costo. ¿Le gustaría que un asesor le contacte?')
+    : (repeat
+        ? 'As I mentioned, a licensed ClearPoint advisor can check whether you might qualify for Medicaid or a Medicare Savings Program (MSP) and help you apply, at no cost. Would you like an advisor to reach out?'
+        : 'Got it — you want to apply for Medicaid. Eligibility depends on your income, resources, and household, and in New York the state runs the program. A licensed ClearPoint advisor can check whether you might qualify for Medicaid or a Medicare Savings Program (MSP) and help you with the application, at no cost. Would you like an advisor to reach out?');
+  const newState: ConversationState = {
+    ...state,
+    serviceCategory: 'medicaid_application',
+    lastUserProblem: state.lastUserProblem || userMessage,
+    lastBotOfferedAdvisor: true,
+    lastBotIntent: 'medicaid_application',
+    quickReplies: [],
+  };
+  newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
+  return { response: out, newState, needsHuman: false };
+}
+
 function _handleDualEligible(
   userMessage: string,
   state: ConversationState,
@@ -3892,10 +3982,10 @@ function _handleDualEligible(
   const frustrated = /\b(ya te (lo )?dij|te dije|i already told you|i told you|you already asked|no sab[eé]s lo que (hablas|dices)|no sabes lo que (hablas|dices))/i.test(m);
 
   const dualNow = _statesDualEligible(m) || _statesQMBNow(m);
-  // Medicare-support context: a caller who mentions Medicaid is almost always
-  // already on Medicare too (this IS the Medicare assistant), so a Medicaid
-  // mention triggers dual reasoning even if they didn't also type "Medicare".
-  const medicaidWithMedicare = _statesMedicaidNow(m);
+  // Medicare-support context: a caller who STATES they have Medicaid is almost
+  // always dual. Use possession-gated detection so a bare source answer
+  // ("de medicaid" → "where's the letter from?") does NOT hijack into dual.
+  const medicaidWithMedicare = _statesHasMedicaid(m);
   const bothNow = _statesBothCoverage(m) && (knownDual || /medicare|medicaid/i.test(hist));
   const reinforceDual = knownDual && (_statesExtraHelpNow(m) || _statesBothCoverage(m) || _dualMentionsMedicalBill(m) || _dualMentionsPharmacy(m));
   // A frustration turn ("ya te dije" / "no sabes…") while dual eligibility is
@@ -4081,6 +4171,11 @@ function _runStructuralFirst(
   // Clara must infer automatic Extra Help (never ask it) and, for cost-sharing
   // bills, apply QMB billing-protection reasoning + advisor escalation. Owned
   // deterministically so it is verifiable and never slips to the LLM.
+  // 2026-06-17 — SEEKING MEDICAID must run BEFORE dual reasoning: "I need to
+  // apply for / qualify for Medicaid" means the user does NOT have it, so Clara
+  // must not claim dual-eligibility / automatic Extra Help (the live failure).
+  const _ms = _handleMedicaidSeeking(userMessage, state);
+  if (_ms) return _ms;
   const _de = _handleDualEligible(userMessage, state);
   if (_de) return _de;
   // 2026-06-17 — PROVIDER / HOSPITAL bill before the cost flow: a named-provider
@@ -4451,9 +4546,22 @@ function processMessageInner(
       && /^(ayuda|help|ya te dije|ya le dije|ya dije|no se|i don'?t know|que|qu[eé]|pue|pues|eso|esto|por favor|please|si|no)\.?$/i.test(_msgLow);
     const _isMetaFrust = /\b(no entiend|you don'?t understand|estas perdido|you'?re lost)\b/i.test(_msgLow);
     const _isBackRef = _isBackReference(userMessage);
+    // A bare yes/no right after Clara offered an advisor is a DIRECT ANSWER to
+    // that offer, not a "vague" message. Without this, Spanish "si" (which the
+    // _isVague regex lists, unlike English "yes") gets hijacked into a topic
+    // memory-replay ("Disculpe, retomo lo que mencionó antes…") instead of
+    // accepting the advisor — a bilingual-parity bug on the most common Spanish
+    // acceptance word. (processMessage resets lastBotOfferedAdvisor each turn,
+    // so we read the PRIOR bot message text, not the flag.) Let it fall through
+    // to the real acceptance handler — the same one "yes" already reaches.
+    const _isYesNoReply = /^(s[ií]|yes|yeah|yep|ok|okay|dale|claro|por favor|please|no|nope|nah)\.?$/i.test(_msgLow);
+    const _prevBotMsg = [...(newState.messages || [])].reverse().find((m) => m.role === 'bot');
+    const _prevOfferedAdvisor = /(asesor|advisor)[^?]*\?|¿le contactamos\?|want them to follow up\?|would you like.*\b(advisor|asesor)\b/i.test(_prevBotMsg?.content || '');
     // Only fire when the current turn is one of those scenarios AND we don't
-    // already have a serviceCategory established.
-    if ((_isVague || _isMetaFrust || _isBackRef) && !newState.serviceCategory) {
+    // already have a serviceCategory established AND it isn't a yes/no answer to
+    // a pending advisor offer.
+    if ((_isVague || _isMetaFrust || _isBackRef) && !newState.serviceCategory
+        && !(_prevOfferedAdvisor && _isYesNoReply)) {
       const hit = _findStrongestPriorIntent(newState.messages, {
         excludeIntents: ['general', 'casual'],
         minScore: 0.6,
@@ -4544,7 +4652,7 @@ function processMessageInner(
     // Look at the LAST 3 bot messages — advisor offer might be 1-2 turns back.
     const _recentBots = [...(newState.messages || [])].slice(0, -1).reverse().filter((m) => m.role === 'bot').slice(0, 3);
     const _recentBotText = _recentBots.map((m) => m.content || '').join(' ').toLowerCase();
-    const _prevWasAdvisorOffer = /asesor licenciado|licensed advisor|coordin[eo] eso|quiere que (un )?asesor|le contact|le gustar[ií]a que (un )?asesor|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso|llamar?(le)?|call you|advisor.{0,20}(call|review|help)|asesor.{0,20}(llame|revise|ayud)/i.test(_recentBotText);
+    const _prevWasAdvisorOffer = /asesor licenciado|licensed[\w ]{0,18}advisor|advisor to (reach out|follow up|contact|call|help|review|check)|would you like[\w ]{0,25}advisor|le gustar[ií]a[\w ]{0,25}asesor|coordin[eo] eso|quiere que (un )?asesor|le contact|want (them|an? advisor) to follow up|set (that|it) up|coordino eso|que coordine eso|llamar?(le)?|call you|advisor.{0,20}(call|review|help)|asesor.{0,20}(llame|revise|ayud)/i.test(_recentBotText);
     const _msgTrim = userMessage.trim();
     const _yesEqGlobal = /^(s[ií]|yes|yeah|yep|sure|ok|okay|of course|please|por favor|claro|adelante|h[aá]galo|dale|hagamoslo|hag[aá]moslo|perfecto|perfect|excelente|excellent|great|sounds good|sounds great|that works|that'?s perfect|seria perfecto|ser[ií]a perfecto|me parece (bien|perfecto)|esta bien|est[aá] bien|claro que si|por supuesto|go ahead|let'?s do it|do it|yes thanks|yes please|si gracias|s[ií] gracias|s[ií] por favor|s[ií] claro)\.?$/i.test(_msgTrim)
       || /^(s[ií]|yes)[,\s]+(por favor|please|gracias|thanks|dale|claro|adelante|go ahead|let'?s do it)\b/i.test(_msgTrim)
@@ -4758,6 +4866,30 @@ function processMessageInner(
   }
 
   const isSpanish = newState.language === 'es';
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GRACEFUL ADVISOR DECLINE (Sawil 2026-06-17). A bare "no" right after Clara
+  // offered an advisor is a polite decline — NOT frustration (the WAVE 19 block
+  // below would misread it as anger) and NOT a topic to memory-replay.
+  // Acknowledge warmly and leave the door open. Mirrors the bare-"si" accept.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (newState.step !== 'asking_language' && newState.step !== 'asking_zip_natural'
+      && newState.step !== 'asking_name' && newState.step !== 'collecting_identity'
+      && !newState.advisorHandoffStarted && !newState.recoveryMode) {
+    const _declineLow = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _isBareDecline = /^(no+|nope|nah|no gracias|no thanks|ahora no|now no|not now|todav[ií]a no|not yet|despu[eé]s|luego|later)\.?$/i.test(_declineLow);
+    const _pBot = [...(newState.messages || [])].reverse().find((mm) => mm.role === 'bot');
+    const _pOffered = /(asesor|advisor)[^?]*\?|¿le contactamos\?|want them to follow up\?|would you like.*\b(advisor|asesor)\b/i.test(_pBot?.content || '');
+    if (_isBareDecline && _pOffered) {
+      const out = isSpanish
+        ? 'Está bien, no hay problema. Si cambia de opinión, aquí estoy. ¿Hay algo más en que le pueda ayudar hoy?'
+        : "That's okay, no problem. If you change your mind, I'm right here. Is there anything else I can help you with today?";
+      newState.lastBotIntent = 'advisor_declined';
+      newState.quickReplies = [];
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
+    }
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // WAVE 19 — TOP PRIORITY: frustration / abuse / curse-word OVERRIDE
@@ -5724,8 +5856,10 @@ function processMessageInner(
     // ──────────────────────────────────────────────────────────────────────
     const inMedicationFlow = (newState.serviceCategory === 'drug')
       && (newState.subIssue === 'vague_report'
+          || newState.subIssue === 'drug_not_covered'
+          || newState.subIssue === 'drug_prior_auth'
           || !!newState.medicationIssueType
-          || (newState.askedQuestions || []).some((q) => q.startsWith('med_')));
+          || (newState.askedQuestions || []).some((q) => q.startsWith('med_') || q.startsWith('drug_')));
     if (problemType === 'drug' && (inMedicationFlow || newState.medicationIssueType)) {
       newState.askedQuestions = newState.askedQuestions || [];
       const medAns = detectMedicationAnswer(userMessage);
@@ -5870,6 +6004,21 @@ function processMessageInner(
           return { response: out, newState, needsHuman: true };
         }
         // Else: fall through to V29 logic which may catch it differently.
+      } else if (medAns.category === 'unknown'
+                 && (newState.medicationIssueType
+                     || newState.advisorHandoffReason
+                     || (newState.askedQuestions || []).some((q) => q.startsWith('med_')))) {
+        // Vague follow-up ("que hago", "y ahora", "ok") AFTER we already
+        // diagnosed the medication issue and offered help. Don't bounce to a
+        // generic topic menu — reaffirm the licensed-advisor handoff, which is
+        // the correct next step for a medication cost/coverage problem.
+        newState.advisorHandoffReason = newState.advisorHandoffReason
+          || `medication_${newState.medicationIssueType || 'unclear'}`;
+        const out = isSpanish
+          ? 'Para esto, lo mejor es que un asesor licenciado de ClearPoint lo revise directamente con la farmacia y el plan, sin costo. ¿Le contactamos?'
+          : 'For this, the best step is to have a licensed ClearPoint advisor review it directly with the pharmacy and the plan, at no cost. Want them to follow up?';
+        newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+        return { response: out, newState, needsHuman: false };
       }
     }
 
@@ -5932,6 +6081,14 @@ function processMessageInner(
         ? ['Alto costo', 'No me la cubren', 'Necesita autorización', 'Hablar con asesor']
         : ['High cost', 'Not covered', 'Needs authorization', 'Talk to advisor'];
       newState.askedQuestions = [...(newState.askedQuestions || []), 'drug_q1_cost_cover_auth'];
+      // STICKY medication context. Without this the follow-up ("es muy cara",
+      // "200 dolares", "no se") re-classifies as cost_basics/general and the
+      // generic Part-B-premium cost flow hijacks the conversation (asking for
+      // income). Pinning serviceCategory='drug' + subIssue='vague_report' lets
+      // the WAVE 31 override (problemType→drug) and the medication-triage block
+      // (inMedicationFlow) own every subsequent turn.
+      newState.serviceCategory = 'drug';
+      newState.subIssue = 'vague_report';
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
@@ -229,7 +230,7 @@ export function SmartMedicareReview() {
       lead_type: lt,
       best_time_to_contact: '',
       consent_to_contact: true,
-      consent_text: 'I agree to be contacted by Clear Point Senior Advisors.',
+      consent_text: 'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided, possibly using an automatic telephone dialing system; message and data rates may apply; consent is not a condition of purchase; I may revoke by replying STOP or calling 1-866-310-8702; message frequency may vary. See Privacy Policy.',
       lead_notes: buildSummary(),
       lead_quality_flags: flags.join('; '),
       bot_transcript_summary: '',
@@ -638,6 +639,7 @@ export function SmartMedicareReview() {
                 pattern="[0-9]*"
                 autoComplete="postal-code"
                 maxLength={5}
+                aria-label={t('ZIP Code', 'Código postal')}
                 aria-describedby={zip.length === 5 && (!zipInfo || !zipInfo.supported) ? 'zip-error' : undefined}
                 className="w-full px-4 py-4 sm:py-3.5 bg-cream-50 border border-cream-300 rounded-xl text-lg text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all"
               />
@@ -742,14 +744,14 @@ export function SmartMedicareReview() {
                 {t('Your contact information', 'Su información de contacto')}
               </p>
               <div className="space-y-3.5">
-                <input type="text" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                <input type="text" autoComplete="given-name" aria-label={t('First Name', 'Nombre')} value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {firstName.length > 1 && !validatePersonName(firstName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="text" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                <input type="text" autoComplete="family-name" aria-label={t('Last Name', 'Apellido')} value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                <input type="tel" aria-label={t('Phone Number', 'Teléfono')} value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
                 {phone.length === 10 && !validatePhone(phone).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>}
-                <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                <input type="email" autoComplete="email" aria-label={t('Email (optional)', 'Correo electrónico (opcional)')} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
@@ -891,14 +893,17 @@ export function SmartMedicareReview() {
                 </label>
               </div>
 
-              {/* Consent */}
+              {/* Consent — TCPA language matched to the main LeadForm (MED-01).
+                  Required: the Submit button is disabled until `consent` is true. */}
               <label className="flex items-start gap-3 cursor-pointer bg-cream-100 rounded-xl p-4 border border-cream-300 mb-4">
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-label={t('I agree to the contact consent', 'Acepto el consentimiento de contacto')} className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
                 <span className="text-sm text-earth-700 leading-relaxed">
                   {t(
-                    'By providing my phone number, I agree that Clear Point Senior Advisors may contact me by phone call or text message about Medicare plan review options. Consent is not required to use our services. Message and data rates may apply. I can opt out at any time.',
-                    'Al proporcionar mi número de teléfono, acepto que Clear Point Senior Advisors pueda contactarme por llamada o mensaje de texto sobre opciones de revisión de planes de Medicare. El consentimiento no es requerido para usar nuestros servicios. Pueden aplicar cargos por mensajes y datos. Puedo cancelar en cualquier momento.'
-                  )}
+                    'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided above. I understand that these calls may be made using an automatic telephone dialing system and that message and data rates may apply. I understand that I am not required to consent as a condition of purchasing any goods or services, and that I may revoke my consent at any time by replying STOP or calling 1-866-310-8702. Message frequency may vary. See our',
+                    'Acepto recibir llamadas de marketing y mensajes de texto de ClearPoint Senior Advisors en el número de teléfono proporcionado arriba. Entiendo que estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático y que pueden aplicarse tarifas de mensajes y datos. Entiendo que no estoy obligado a consentir como condición para comprar bienes o servicios, y que puedo revocar mi consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. La frecuencia de mensajes puede variar. Consulte nuestra'
+                  )}{' '}
+                  <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('Privacy Policy', 'Política de Privacidad')}</Link>{' '}
+                  {t('for more information.', 'para más información.')}
                 </span>
               </label>
 

@@ -9,6 +9,7 @@ import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
 import { callLLM, buildHistory } from '../lib/llmHandler';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
+import { containsSensitiveData } from '../lib/sensitiveGuard';
 import { MEDICARE_2026 } from '../data/medicare-figures-2026';
 
 type ChatLanguage = 'en' | 'es';
@@ -4551,6 +4552,16 @@ export function ChatBot() {
     if (safety.action !== 'none') {
       const reply = memory.language === 'es' ? safety.responseEs : safety.responseEn;
       enqueueBot([{ text: reply, pace: 'slow' }], true);
+      return;
+    }
+
+    // ── CLIENT-SIDE PHI / SENSITIVE-DATA FIREWALL ───────────────────────────
+    // Catches raw SSN / Medicare number / bank / card patterns that the
+    // keyword-based SENSITIVE intent misses (e.g. a bare "123-45-6789"). Runs
+    // BEFORE classification, memory write, and the /api/chat LLM call, so raw
+    // sensitive data is never stored or transmitted. scrubPHI is defense-in-depth.
+    if (containsSensitiveData(text)) {
+      showPrivacyReminder();
       return;
     }
 
