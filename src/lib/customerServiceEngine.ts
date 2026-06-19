@@ -114,6 +114,18 @@ export interface ConversationState {
   emailAsked?: boolean;
   /** PHASE A8 — bot asked "anything else?" already. */
   anythingElseAsked?: boolean;
+  /** Sawil 2026-06-18 — callback lead capture: extra advisor-prep fields. */
+  lastnameAsked?: boolean;
+  dobAsked?: boolean;
+  /** Date of birth as the user typed it (free-form, NOT validated PHI). '' if refused. */
+  dateOfBirth?: string;
+  dobRefused?: boolean;
+  bestTimeAsked?: boolean;
+  /** Best time to call, natural language ("mañana", "after 3"). */
+  bestTimeToCall?: string;
+  topicAsked?: boolean;
+  /** Short topic the advisor should know before calling. */
+  advisorTopic?: string;
   /** Set when ZIP + declared state disagree, or when name/ZIP/phone fail validation. */
   probableFakeLead?: boolean;
   /** Human-readable inconsistency list for the advisor to review. */
@@ -2941,6 +2953,83 @@ export function processMessage(
       //   2) If we haven't asked "anything else?" → ask
       //   3) Otherwise → final confirmation + close
       const fmt = `${finalPhone.slice(0, 3)}-${finalPhone.slice(3, 6)}-${finalPhone.slice(6)}`;
+      const _emitHandoff = (text: string, patch: Partial<ConversationState>) => {
+        const ns: ConversationState = {
+          ...state, turnCount: _currentTurnIdx, name: finalName, nameIsValid: true,
+          phoneNumber: finalPhone, quickReplies: [], ...patch,
+        };
+        ns.messages = [...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: text, timestamp: Date.now() }];
+        return { response: text, newState: ns, needsHuman: false };
+      };
+
+      // ── Sawil 2026-06-18 — CALLBACK LEAD CAPTURE (one question at a time) ──
+      // 0. ENSURE LAST NAME (the bug: single-name + phone in one message used to
+      //    skip the surname). Ask once; if they don't add one we proceed anyway.
+      // The new lead-capture asks run only while we are still BEFORE the email
+      // step. `!state.emailAsked` guards against any state that jumped ahead.
+      const _preEmail = !state.emailAsked;
+      const _nameWords = (finalName || '').trim().split(/\s+/).filter(Boolean);
+      if (_preEmail && _nameWords.length < 2 && state.lastBotIntent !== 'handoff_asking_lastname' && !state.lastnameAsked) {
+        return _emitHandoff(
+          isEs ? `Gracias, ${finalName}. ¿Y cuál es su apellido?` : `Thank you, ${finalName}. What is your last name?`,
+          { lastnameAsked: true, lastBotIntent: 'handoff_asking_lastname' },
+        );
+      }
+      // 1. DATE OF BIRTH (refusable, never blocks). Language/ZIP are NOT asked —
+      //    they already live in memory from the opening flow.
+      if (_preEmail && !state.dobAsked) {
+        return _emitHandoff(
+          isEs ? 'Para que el asesor pueda prepararse mejor antes de llamarle, ¿cuál es su fecha de nacimiento?' : 'To help the advisor prepare before calling you, what is your date of birth?',
+          { dobAsked: true, lastBotIntent: 'handoff_asking_dob' },
+        );
+      }
+      if (state.lastBotIntent === 'handoff_asking_dob') {
+        const refused = _refusesProvide(_msg);
+        const dob = refused ? '' : _extractDOB(_msg);
+        const ack = refused
+          ? (isEs ? 'No hay problema. Podemos continuar sin eso. ' : 'No problem. We can continue without that. ')
+          : '';
+        return _emitHandoff(
+          ack + (isEs ? '¿Cuál es el mejor horario para que el asesor le llame?' : 'What is the best time for the advisor to call you?'),
+          { dateOfBirth: dob, dobRefused: refused, bestTimeAsked: true, lastBotIntent: 'handoff_asking_besttime' },
+        );
+      }
+      // 2. BEST TIME TO CALL (accepts natural answers).
+      if (_preEmail && !state.bestTimeAsked) {
+        return _emitHandoff(
+          isEs ? '¿Cuál es el mejor horario para que el asesor le llame?' : 'What is the best time for the advisor to call you?',
+          { bestTimeAsked: true, lastBotIntent: 'handoff_asking_besttime' },
+        );
+      }
+      if (state.lastBotIntent === 'handoff_asking_besttime') {
+        return _emitHandoff(
+          isEs
+            ? '¿Hay algún tema específico que desea que el asesor sepa antes de llamarle? Por ejemplo: una factura, Medicaid, farmacia, doctor, carta del plan, plan inactivo o cambio de cobertura.'
+            : 'Is there any specific topic you want the advisor to know before calling you? For example: a bill, Medicaid, pharmacy, doctor, plan letter, inactive plan, or coverage change.',
+          { bestTimeToCall: _cleanShort(_msg, 60), topicAsked: true, lastBotIntent: 'handoff_asking_topic' },
+        );
+      }
+      // 3. TOPIC FOR ADVISOR (free text, no menu). Captured, then continue to
+      //    the existing optional-email step and the close.
+      if (_preEmail && !state.topicAsked) {
+        return _emitHandoff(
+          isEs
+            ? '¿Hay algún tema específico que desea que el asesor sepa antes de llamarle? Por ejemplo: una factura, Medicaid, farmacia, doctor, carta del plan, plan inactivo o cambio de cobertura.'
+            : 'Is there any specific topic you want the advisor to know before calling you? For example: a bill, Medicaid, pharmacy, doctor, plan letter, inactive plan, or coverage change.',
+          { topicAsked: true, lastBotIntent: 'handoff_asking_topic' },
+        );
+      }
+      if (state.lastBotIntent === 'handoff_asking_topic') {
+        const _topic = _cleanShort(_msg, 160);
+        return _emitHandoff(
+          isEs
+            ? `Gracias. ¿Tiene un correo electrónico donde el asesor también pueda enviarle información? Es opcional — puede decir "saltar" si prefiere.`
+            : `Thank you. Do you have an email address where the advisor can also send you information? It's optional — say "skip" if you prefer.`,
+          { advisorTopic: _topic || state.advisorTopic, emailAsked: true, lastBotIntent: 'handoff_asking_email' },
+        );
+      }
 
       // Step 1 — try to parse email from THIS message if email step is active
       const emailMatch = _msg.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
@@ -3087,10 +3176,16 @@ export function processMessage(
       const windowEn = window ? ` We'll call you ${window}.` : '';
       const emailLineEs = finalEmail || state.email ? ` También anotamos su correo ${finalEmail || state.email}.` : '';
       const emailLineEn = finalEmail || state.email ? ` We also have your email ${finalEmail || state.email}.` : '';
+      // Sawil 2026-06-18 — short lead summary (non-sensitive) + privacy reminder.
+      const _dobS = state.dateOfBirth ? (isEs ? `, fecha de nac. ${state.dateOfBirth}` : `, DOB ${state.dateOfBirth}`) : '';
+      const _bestS = state.bestTimeToCall ? (isEs ? `, mejor horario: ${state.bestTimeToCall}` : `, best time: ${state.bestTimeToCall}`) : '';
+      const _topicS = state.advisorTopic ? (isEs ? `, tema: ${state.advisorTopic}` : `, topic: ${state.advisorTopic}`) : '';
+      const summaryEs = `Le paso al asesor esta información: ${finalName}, ${fmt}${_dobS}${_bestS}${_topicS}. Por su seguridad, no envíe su Seguro Social, número de Medicare, información bancaria ni documentos por este chat.`;
+      const summaryEn = `I'll pass this to the advisor: ${finalName}, ${fmt}${_dobS}${_bestS}${_topicS}. For your protection, please do not send your Social Security number, Medicare number, bank information, or documents in this chat.`;
       const out = isEs
-        ? `Perfecto, ${finalName}. Antes de la llamada, **CMS requiere** que firme un formulario de 60 segundos llamado **Scope of Appointment** — confirma qué temas quiere discutir, sin obligación. Le voy a abrir el formulario ahora.\n\n` +
+        ? `Perfecto, ${finalName}. ${summaryEs}\n\nAntes de la llamada, **CMS requiere** que firme un formulario de 60 segundos llamado **Scope of Appointment** — confirma qué temas quiere discutir, sin obligación. Le voy a abrir el formulario ahora.\n\n` +
           `Una vez firmado, un asesor licenciado de ClearPoint lo contactará al ${fmt}.${emailLineEs}${windowEs}`
-        : `Perfect, ${finalName}. Before the call, **CMS requires** you to sign a 60-second form called the **Scope of Appointment** — it confirms what topics you'd like to discuss, with no obligation. I'll open the form for you now.\n\n` +
+        : `Perfect, ${finalName}. ${summaryEn}\n\nBefore the call, **CMS requires** you to sign a 60-second form called the **Scope of Appointment** — it confirms what topics you'd like to discuss, with no obligation. I'll open the form for you now.\n\n` +
           `Once signed, a licensed ClearPoint advisor will contact you at ${fmt}.${emailLineEn}${windowEn}`;
       const newState: ConversationState = {
         ...state,
@@ -3877,27 +3972,68 @@ function _statesDualEligible(m: string): boolean {
     || /\b(soy dual|plan dual|tengo (un )?plan dual|d-?snp|doble elegib|dually eligible|i'?m dual|i am dual)\b/i.test(m);
 }
 function _statesMedicaidNow(m: string): boolean {
-  return /\b(medicaid|medicaide|medicad|medicadi|medi-?cal)\b/i.test(m) || /ayuda del estado/i.test(m);
+  // Typo-tolerant (Sawil 2026-06-18 live: "mediciaid" fell through to a generic
+  // menu, then the LLM dumped everything). The fuzzy "medic…id" matches common
+  // misspellings (medicaid / mediciaid / medcaid / medicaide) but NOT medicare /
+  // medicamento / medical / medication (none end in "id" after "medic").
+  return /\bmed[i]?-?c[a-z]{0,3}id/i.test(m) || /\bmedikaid\b/i.test(m) || /ayuda del estado/i.test(m);
 }
-// States HAVING Medicaid (a coverage fact) — NOT a bare source answer like
-// "de medicaid" replying to "where did the letter come from?". This stops the
-// dual handler from hijacking a letter/bill source answer (Sawil 2026-06-17).
+// ── Medicaid INTENT classifier (Sawil 2026-06-18) ──────────────────────────
+// A Medicaid mention is NOT proof of possession. Separate the intents:
+//   HAS (possession) · SEEKING (apply/qualify) · LOST (lost/renewal/letter) ·
+//   DENIES (no Medicaid) · GENERAL-EDU. Only HAS may drive dual-eligible /
+//   Extra-Help inference. The shared signal regexes are mention-agnostic so the
+//   handler can read a follow-up like "lo perdí" while in a Medicaid context.
+// NOTE: NO trailing \b — accented endings ("perdí", "venció") and prefix tokens
+// ("qualif", "elig") fail an ASCII word-boundary at the end. Anchor only the
+// leading boundary (Sawil 2026-06-18).
+const _MEDICAID_APPLY_RE = /\b(apply|applying|aplicar|aplico|aplicando|solicitar|solicito|solicitud|sign[- ]?up|signup|enroll|inscrib|qualif|elig|c[oó]mo (obtengo|consigo|aplico|solicito|me inscribo|califico|puedo (obtener|conseguir|aplicar))|how (do|can) i (get|apply|qualify)|how to (get|apply|qualify)|get on medicaid|put me on medicaid|para medicaid|for medicaid|c[oó]mo califico|como califico)/i;
+const _MEDICAID_LOST_RE = /\b(perd[ií]|me lo quitaron|me quitaron|quitaron|cancelaron|cancel[oó]|me cancelaron|termin[oó]|venci[oó]|expir[oó]|ya no (tengo|tiene|cuento|est[aá] activ)|no (sigue|est[aá]) activ|no s[eé] si|sigue (activ|vigente)|lost|stopped|ended|terminated|cut off|cancell?ed|dropped|no longer (have|active|on)|expired|renewal|renovaci[oó]n|redetermina|recertif|redeterminaci[oó]n)/i;
+const _MEDICAID_LETTER_RE = /\b(carta|aviso|letter|notice)\b/i;
+const _MEDICAID_DENY_RE = /\b(no tengo|no tiene|nunca (lo |la )?(he )?tenido|no cuento con|sin medicaid|i don'?t have|i do not have|dont have|never had|not on medicaid|no soy elegible)\b/i;
+// States HAVING Medicaid (current possession). NOT seeking/lost/denied, and NOT
+// a bare source answer like "de medicaid". Bare "con" was REMOVED — it matched
+// "ayuda con medicaid" (help WITH) and falsely inferred possession (the live
+// "me pueden ayudar con medicaid → you already have Extra Help" bug).
 function _statesHasMedicaid(m: string): boolean {
   if (!_statesMedicaidNow(m)) return false;
-  // Someone APPLYING FOR / QUALIFYING FOR Medicaid does NOT have it yet — that
-  // is a seeking signal, not possession (see _seekingMedicaid). Never infer
-  // dual-eligibility from "apply for / qualify for medicaid".
-  if (_seekingMedicaid(m)) return false;
-  return /\b(tengo|tiene|tengo el|con|i have|i'?ve|estoy en|me dieron|recib[ií]|both|los dos|ambos|dual|d-?snp|tambi[eé]n|too)\b/i.test(m)
+  if (_seekingMedicaid(m) || _lostMedicaid(m) || _deniesMedicaid(m)) return false;
+  return /\b(tengo|tiene|ya tengo|tengo el|estoy en|i have|i'?ve|i am on|i'?m on|i already have|me dieron|me dio|recib[ií]|soy dual|plan dual|d-?snp|both|los dos|ambos)\b/i.test(m)
     || /\b(medicaid\s+(y|and|\+|m[aá]s)\s+medicare|medicare\s+(y|and|\+|m[aá]s)\s+medicaid)\b/i.test(m);
 }
-// States the user is SEEKING Medicaid (does not have it yet): applying for,
-// qualifying for, enrolling in, asking how to get it. This must block the
-// dual-eligible inference — "I need to apply for medicaid" is the opposite of
-// "I have medicaid". (Sawil live failure 2026-06-17.)
 function _seekingMedicaid(m: string): boolean {
+  return _statesMedicaidNow(m) && _MEDICAID_APPLY_RE.test(m);
+}
+function _lostMedicaid(m: string): boolean {
   if (!_statesMedicaidNow(m)) return false;
-  return /\b(apply|applying|aplicar|aplico|solicitar|solicito|solicitud|sign[- ]?up|signup|enroll|enrolling|inscrib|qualif|elig|how (do|can) i get|how to get|c[oó]mo (obtengo|consigo|aplico|solicito|me inscribo|califico|puedo (obtener|conseguir|aplicar))|get on|getting on|put me on|need medicaid|want medicaid|necesito medicaid|quiero medicaid|para medicaid|for medicaid|to medicaid)\b/i.test(m);
+  return _MEDICAID_LOST_RE.test(m) || _MEDICAID_LETTER_RE.test(m);
+}
+function _deniesMedicaid(m: string): boolean {
+  return _statesMedicaidNow(m) && _MEDICAID_DENY_RE.test(m) && !_MEDICAID_LOST_RE.test(m);
+}
+function _medicaidCorrection(m: string): boolean {
+  return /\b(est[aá]s asumiendo|estas asumiendo|no asumas|no debes asumir|no asuma|you'?re assuming|stop assuming|don'?t assume|do not assume|info de m[aá]s|informaci[oó]n de m[aá]s|dando (info|informaci[oó]n) de m[aá]s|too much info|asumiendo)\b/i.test(m);
+}
+// ── Callback lead-capture helpers (Sawil 2026-06-18) ──
+function _cleanShort(s: string, n: number): string {
+  return (s || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, n);
+}
+// User declines to give a requested non-required field (e.g. DOB). Never blocks.
+function _refusesProvide(m: string): boolean {
+  return /\b(prefiero no|no quiero (dar|decir|compartir)|no (la|lo|se la|se lo) (doy|dar[eé]|voy a dar)|es privado|privado|no es necesario|para qu[eé]|por qu[eé] (lo |la )?necesit|skip|salta\w*|prefer not|rather not|don'?t want to|do not want to|i'?d rather not|not comfortable|why do you need|no doy|no dar[eé]|no thanks?|no gracias)\b/i.test(m);
+}
+// Best-effort DOB extraction from free text. Returns '' if nothing date-like —
+// the flow then continues WITHOUT blocking the lead. Never treated as PHI: a DOB
+// (8 digits / month-name / 4-digit year) does not match the SSN/MBI/card patterns.
+function _extractDOB(m: string): string {
+  const t = (m || '').trim();
+  const num = t.match(/\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b/);
+  if (num) return num[0];
+  const mon = t.match(/\b(\d{1,2}\s*(de\s+)?)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|ene|abr|ago|dic|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)[a-z]*\.?\s*\d{0,2}(\s*(de\s+|,)?\s*\d{4})?/i);
+  if (mon) return _cleanShort(mon[0], 30);
+  const yr = t.match(/\b(19\d{2}|20[0-2]\d)\b/);
+  if (yr) return yr[0];
+  return '';
 }
 function _statesBothCoverage(m: string): boolean {
   return /\b(tengo los dos|tengo ambos|i have both|have both of them|los dos|ambos)\b/i.test(m);
@@ -3932,39 +4068,127 @@ function _dualBillSource(m: string): 'pharmacy' | 'hospital' | 'doctor' | 'lab' 
   return 'unknown';
 }
 
-// 2026-06-17 — SEEKING MEDICAID (apply / qualify / enroll). A user who wants to
-// APPLY for Medicaid does NOT have it, so Clara must NOT infer dual-eligibility
-// or claim "you already have Extra Help" (the live failure). Give a compliant,
-// helpful answer (eligibility depends on income/resources; NY runs Medicaid; a
-// licensed advisor can check MSP/Medicaid and help apply) + advisor offer.
-function _handleMedicaidSeeking(
+// 2026-06-18 — MEDICAID INTENT HANDLER. Decides which Medicaid intent the user
+// has and answers ONE of: SEEKING (apply/qualify) · LOST (lost/renewal/letter) ·
+// DENIES · GENERAL-EDU · ambiguous "help with Medicaid" (clarify). Runs BEFORE
+// the dual-eligible handler and returns null when the user clearly HAS Medicaid
+// (so dual owns it) or only gave a bare source answer ("de medicaid"). Never
+// infers dual / Extra Help here. States the ClearPoint scope rule (we do not
+// process Medicaid applications directly), asks ONE question, no menu, and
+// applies an apology when the user says Clara is assuming.
+function _handleMedicaid(
   userMessage: string,
   state: ConversationState,
 ): { response: string; newState: ConversationState; needsHuman: boolean } | null {
   const m = (userMessage || '').toLowerCase().trim();
   if (!m) return null;
-  // If we already KNOW they have Medicaid, this is dual territory, not seeking.
+  // Possession already established → dual-eligible reasoning owns the turn.
   if (state.dualEligible || state.hasMedicaid) return null;
-  if (!_seekingMedicaid(m)) return null;
+  const inCtx = state.serviceCategory === 'medicaid_support';
+  const mNow = _statesMedicaidNow(m);
+  if (!mNow && !inCtx) return null;
+  const generalEdu = /\b(qu[eé] es medicaid|what is medicaid|medicaid (y|and) medicare son lo mismo|is medicaid the same|son lo mismo|the same as medicare|diferencia entre medicaid y medicare|difference between medicaid and medicare)\b/i.test(m);
+  // Explicit current possession ("tengo Medicare y Medicaid") → let the dual
+  // handler infer. BUT a general-education question ("medicaid y medicare son lo
+  // mismo?") must NOT be read as possession just because both words co-occur.
+  if (mNow && _statesHasMedicaid(m) && !generalEdu) return null;
+
   const isEs = (state.language || 'es') === 'es';
-  const repeat = state.serviceCategory === 'medicaid_application' && !!state.lastBotOfferedAdvisor;
-  const out = isEs
-    ? (repeat
-        ? 'Como le mencioné, un asesor licenciado de ClearPoint puede revisar si usted podría calificar para Medicaid o para un Programa de Ahorro de Medicare (MSP) y ayudarle con la solicitud, sin costo. ¿Le gustaría que un asesor le contacte?'
-        : 'Entendido — usted quiere solicitar Medicaid. La elegibilidad depende de su ingreso, sus recursos y su hogar, y en Nueva York el estado lo administra. Un asesor licenciado de ClearPoint puede revisar si usted podría calificar para Medicaid o para un Programa de Ahorro de Medicare (MSP) y ayudarle con la solicitud, sin costo. ¿Le gustaría que un asesor le contacte?')
-    : (repeat
-        ? 'As I mentioned, a licensed ClearPoint advisor can check whether you might qualify for Medicaid or a Medicare Savings Program (MSP) and help you apply, at no cost. Would you like an advisor to reach out?'
-        : 'Got it — you want to apply for Medicaid. Eligibility depends on your income, resources, and household, and in New York the state runs the program. A licensed ClearPoint advisor can check whether you might qualify for Medicaid or a Medicare Savings Program (MSP) and help you with the application, at no cost. Would you like an advisor to reach out?');
-  const newState: ConversationState = {
-    ...state,
-    serviceCategory: 'medicaid_application',
-    lastUserProblem: state.lastUserProblem || userMessage,
-    lastBotOfferedAdvisor: true,
-    lastBotIntent: 'medicaid_application',
-    quickReplies: [],
+  const correction = _medicaidCorrection(m);
+  const lost = _MEDICAID_LOST_RE.test(m) || (mNow && _MEDICAID_LETTER_RE.test(m));
+  const apply = _MEDICAID_APPLY_RE.test(m);
+  const denies = mNow && _MEDICAID_DENY_RE.test(m) && !lost;
+  const wantsHelp = mNow && /\b(ayuda|ayudar|ayuden|me pueden ayudar|me ayudan|necesito|quiero saber|informaci[oó]n|info|help|orientar)\b/i.test(m);
+  // STANDALONE topic statement ("medicaid", "el medicaid", "sobre medicaid",
+  // "medicaid?") — give the short clarify instead of letting it fall to the LLM,
+  // which dumps everything (Sawil 2026-06-18 live). Excludes a letter-source
+  // answer ("de medicaid") and any active letter flow so those are not hijacked.
+  const _wordCount = m.split(/\s+/).filter(Boolean).length;
+  const _isSourceAnswer = /\bde(l)?\s+medic/i.test(m) || /\bvino de\b/i.test(m);
+  const _inLetterCtx = /letter|carta/i.test(String(state.lastBotIntent || ''))
+    || (state.askedQuestions || []).some((q) => q.startsWith('letter_'));
+  const standaloneMedicaid = mNow && _wordCount <= 3 && !_isSourceAnswer && !_inLetterCtx;
+
+  const SCOPE = isEs
+    ? 'ClearPoint no procesa solicitudes de Medicaid directamente'
+    : 'ClearPoint does not process Medicaid applications directly';
+  const apology = correction
+    ? (isEs
+        ? 'Tiene razón, disculpe. No debo asumir que usted tiene Medicaid activo. '
+        : "You're right, I apologize. I shouldn't assume you have active Medicaid. ")
+    : '';
+  const emit = (
+    text: string,
+    intent: string,
+    patch: Partial<ConversationState> = {},
+  ) => {
+    const newState: ConversationState = {
+      ...state,
+      serviceCategory: 'medicaid_support',
+      lastUserProblem: state.lastUserProblem || userMessage,
+      lastBotIntent: intent,
+      quickReplies: [],
+      ...patch,
+    };
+    newState.messages = [...(state.messages || []), { role: 'bot', content: apology + text, timestamp: Date.now() }];
+    return { response: apology + text, newState, needsHuman: false };
   };
-  newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
-  return { response: out, newState, needsHuman: false };
+
+  // DENIES — clear non-possession. No dual, no Extra Help.
+  if (denies) {
+    return emit(
+      isEs
+        ? 'Entendido, no tiene Medicaid — no asumiré eso. ¿En qué le puedo ayudar hoy con su Medicare?'
+        : "Understood, you don't have Medicaid — I won't assume that. How can I help you today with your Medicare?",
+      'medicaid_denied',
+      { hasMedicaid: false },
+    );
+  }
+  // LOST — possible loss / renewal / redetermination / letter.
+  if (lost) {
+    return emit(
+      isEs
+        ? (correction
+            ? `Entendí ahora: cree que pudo haber perdido Medicaid. ${SCOPE}, pero podemos orientarle sobre el próximo paso y revisar si eso afecta su Medicare. ¿Recibió una carta de Medicaid o del plan?`
+            : `Entiendo, puede que Medicaid se haya perdido o cambiado. ${SCOPE}, pero podemos orientarle sobre el próximo paso y revisar si eso afecta su cobertura de Medicare. ¿Recibió una carta de Medicaid o de su plan?`)
+        : (correction
+            ? `I understand now: you think you may have lost Medicaid. ${SCOPE}, but we can guide you on the next step and review whether it affects your Medicare. Did you receive a letter from Medicaid or your plan?`
+            : `I understand — Medicaid may have been lost or changed. ${SCOPE}, but we can guide you on the next step and review whether it affects your Medicare coverage. Did you receive a letter from Medicaid or your plan?`),
+      'medicaid_lost',
+    );
+  }
+  // SEEKING — explicit apply / qualify / enroll.
+  if (apply) {
+    return emit(
+      isEs
+        ? `Entendido, quiere solicitar o calificar para Medicaid. ${SCOPE}, pero podemos orientarle de forma general según su estado y, si también tiene Medicare, un asesor licenciado puede revisar cómo afecta su cobertura de Medicare. La elegibilidad final la decide la agencia estatal. ¿Le gustaría que un asesor licenciado le oriente?`
+        : `Got it, you'd like to apply or qualify for Medicaid. ${SCOPE}, but we can give you general guidance based on your state and, if you also have Medicare, a licensed advisor can review how it affects your Medicare coverage. Final eligibility is decided by the state agency. Would you like a licensed advisor to guide you?`,
+      'medicaid_application',
+      { lastBotOfferedAdvisor: true },
+    );
+  }
+  // GENERAL EDUCATION — "what is Medicaid".
+  if (generalEdu) {
+    return emit(
+      isEs
+        ? `Medicaid es un programa estatal y federal que ayuda con costos médicos a personas con ingresos y recursos limitados. Es diferente de Medicare, aunque algunas personas tienen ambos. ${SCOPE}, pero puedo orientarle de forma general. ¿Quiere saber cómo aplicar, o cómo afecta a su Medicare?`
+        : `Medicaid is a state and federal program that helps people with limited income and resources pay medical costs. It's different from Medicare, though some people have both. ${SCOPE}, but I can give general guidance. Would you like to know how to apply, or how it affects your Medicare?`,
+      'medicaid_education',
+    );
+  }
+  // AMBIGUOUS "help with Medicaid" or a STANDALONE "medicaid" — clarify apply
+  // vs lost (do NOT assume, do NOT dump). One short question.
+  if (wantsHelp || standaloneMedicaid) {
+    return emit(
+      isEs
+        ? `Sí, le puedo orientar de forma general. ${SCOPE}, pero si Medicaid se perdió o cambió, eso puede afectar su cobertura de Medicare. ¿Usted cree que perdió Medicaid o quiere saber cómo aplicar?`
+        : `Yes, I can give you general guidance. ${SCOPE}, but if Medicaid was lost or changed, that can affect your Medicare coverage. Do you think you lost Medicaid, or do you want to know how to apply?`,
+      'medicaid_clarify',
+    );
+  }
+  // Bare mention with no actionable intent ("de medicaid" letter source) → let
+  // the existing letter / source flow handle it. Do NOT hijack.
+  return null;
 }
 
 function _handleDualEligible(
@@ -4171,10 +4395,12 @@ function _runStructuralFirst(
   // Clara must infer automatic Extra Help (never ask it) and, for cost-sharing
   // bills, apply QMB billing-protection reasoning + advisor escalation. Owned
   // deterministically so it is verifiable and never slips to the LLM.
-  // 2026-06-17 — SEEKING MEDICAID must run BEFORE dual reasoning: "I need to
-  // apply for / qualify for Medicaid" means the user does NOT have it, so Clara
-  // must not claim dual-eligibility / automatic Extra Help (the live failure).
-  const _ms = _handleMedicaidSeeking(userMessage, state);
+  // 2026-06-18 — MEDICAID INTENT must run BEFORE dual reasoning. A generic
+  // Medicaid mention ("me pueden ayudar con Medicaid", "creo que lo perdí",
+  // "quiero aplicar") is NOT possession, so Clara must not claim dual-eligibility
+  // / automatic Extra Help. Only an explicit "tengo Medicare y Medicaid" falls
+  // through to the dual handler.
+  const _ms = _handleMedicaid(userMessage, state);
   if (_ms) return _ms;
   const _de = _handleDualEligible(userMessage, state);
   if (_de) return _de;

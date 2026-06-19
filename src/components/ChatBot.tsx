@@ -203,7 +203,7 @@ const TOPIC_GROUPS_EN: Option[][] = [
   // Group 1 of 3
   [
     { label: 'Lower my Medicare costs', value: 'edu_cost_help' },
-    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
+    { label: 'Medicaid / MSP / Extra Help', value: 'edu_assistance_menu' },
     { label: 'Medicare Advantage', value: 'edu_part_c' },
     { label: 'New to Medicare', value: 'edu_parts_ab' },
     { label: 'More options →', value: 'topic_page_2' },
@@ -233,7 +233,7 @@ const TOPIC_GROUPS_ES: Option[][] = [
   // Group 1 of 3
   [
     { label: 'Reducir costos de Medicare', value: 'edu_cost_help' },
-    { label: 'Medicaid / MSP / Extra Help', value: 'edu_extra_help' },
+    { label: 'Medicaid / MSP / Extra Help', value: 'edu_assistance_menu' },
     { label: 'Medicare Advantage', value: 'edu_part_c' },
     { label: 'Nuevo en Medicare', value: 'edu_parts_ab' },
     { label: 'Más opciones →', value: 'topic_page_2' },
@@ -278,7 +278,38 @@ const STATE_CONFIRMATION: Record<ChatLanguage, Record<string, QueuedBotMessage[]
 
 /* --- Detailed Medicare Education (calm, one topic at a time) --- */
 
-function getMedicareEducation(topic: string, language: ChatLanguage, state: string): QueuedBotMessage[] {
+// Sawil 2026-06-18 — Zara grouped-assistance SECOND-LEVEL SUBMENU. Instead of
+// dumping Medicaid + MSP + Extra Help (and QMB/QI-1/EPIC) all at once, offer a
+// menu so the user picks ONE program to learn about. Each option routes to an
+// EXISTING single-program educational handler (edu_medicaid / edu_msp /
+// edu_extra_help). Education only — "Talk to an advisor" uses Zara's
+// educational-review flow (request_review), never Clara's case handling.
+export function buildAssistanceSubmenu(language: ChatLanguage): QueuedBotMessage[] {
+  const es = language === 'es';
+  return [{
+    text: es
+      ? 'Hay varios programas que pueden ayudar con los costos de Medicare, y cada uno funciona diferente. Para no abrumarle, se los explico uno a la vez. ¿Cuál le gustaría conocer?'
+      : "There are a few programs that may help with Medicare costs, and each one works a little differently. So I don't overwhelm you, I'll explain them one at a time. Which would you like to learn about?",
+    options: es
+      ? [
+          { label: 'Medicaid', value: 'edu_medicaid' },
+          { label: 'Programa de Ahorro de Medicare (MSP)', value: 'edu_msp' },
+          { label: 'Ayuda Extra / LIS', value: 'edu_extra_help' },
+          { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Volver al menú principal', value: 'edu_back_to_topics' },
+        ]
+      : [
+          { label: 'Medicaid', value: 'edu_medicaid' },
+          { label: 'Medicare Savings Program (MSP)', value: 'edu_msp' },
+          { label: 'Extra Help / LIS', value: 'edu_extra_help' },
+          { label: 'Talk to an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          { label: 'Back to main menu', value: 'edu_back_to_topics' },
+        ],
+    pace: 'short',
+  }];
+}
+
+export function getMedicareEducation(topic: string, language: ChatLanguage, state: string): QueuedBotMessage[] {
   const isSupported = SUPPORTED_STATES.includes(state);
   const stateLabel = SUPPORTED_STATES_LABELS[state] || state;
   const D = MEDICARE_2026;
@@ -347,46 +378,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         pace: 'short',
       },
     ],
-    edu_cost_help: (() => {
-      const msgs: QueuedBotMessage[] = [
-        { text: 'Several programs can help lower Medicare costs if your income and resources are limited. Let me walk you through them.', pace: 'long' },
-      ];
-      if (state === 'NY') {
-        msgs.push({ text: 'New York Medicare Savings Program — NY does NOT use an asset/resource limit. Two main categories:', pace: 'long' });
-        msgs.push({ text: `• QMB (Qualified Medicare Beneficiary) — may help pay Part B premium, Part A premium if applicable, Medicare deductibles, coinsurance, and copayments. QMB is not retroactive in NY. 2026 income limit: about $${D.msp.NY.QMB.singleIncome.toLocaleString()}/mo single, $${D.msp.NY.QMB.coupleIncome.toLocaleString()}/mo couple (138% FPL with $20 disregard).`, pace: 'slow' });
-        msgs.push({ text: `• QI-1 (Qualifying Individual-1) — may help pay Part B premium only. May be retroactive up to 3 months within the same calendar year. Cannot be received with Medicaid. 2026 income limit: about $${D.msp.NY.QI1.singleIncome.toLocaleString()}/mo single, $${D.msp.NY.QI1.coupleIncome.toLocaleString()}/mo couple (186% FPL with $20 disregard).`, pace: 'slow' });
-        msgs.push({ text: '• EPIC (Elderly Pharmaceutical Insurance Coverage) — NY\'s SPAP. Helps eligible seniors 65+ with Part D drug costs. Income guidelines: up to about $75,000 single / $100,000 married. Separate from Extra Help.', pace: 'slow' });
-      } else if (state === 'NJ') {
-        msgs.push({ text: 'New Jersey Medicare Savings Programs — QMB, SLMB, and QI (annual limits):', pace: 'long' });
-        msgs.push({ text: `• QMB — may help pay Part A/B premiums, deductibles, coinsurance, copayments. Income: $15,960/yr single, $21,640/yr couple. Resources: $9,950 single, $14,910 couple.`, pace: 'slow' });
-        msgs.push({ text: `• SLMB — may help pay Part B premium only. Income: $19,152/yr single, $25,968/yr couple. Resources: $9,950 single, $14,910 couple.`, pace: 'slow' });
-        msgs.push({ text: `• QI — may help pay Part B premium only. Income: $21,546/yr single, $29,214/yr couple. First-come, first-served.`, pace: 'slow' });
-      } else if (state === 'CT') {
-        msgs.push({ text: 'Connecticut Medicare Savings Program — QMB, SLMB, and ALMB (effective March 1, 2026):', pace: 'long' });
-        msgs.push({ text: `• QMB — may help pay Part B premium, deductibles, coinsurance, copayments. Similar to a Medigap policy per CT description. Income: $2,807/mo single, $3,806/mo couple.`, pace: 'slow' });
-        msgs.push({ text: `• SLMB — may help pay Part B premium only. Income: $3,073/mo single, $4,166/mo couple.`, pace: 'slow' });
-        msgs.push({ text: `• ALMB (Additional Low-Income Medicare Beneficiary) — may help pay Part B premium only. Subject to funding. Not available with Medicaid. Income: $3,272/mo single, $4,437/mo couple.`, pace: 'slow' });
-      } else if (state === 'FL') {
-        msgs.push({ text: 'Florida Medicare Savings Programs — use 2026 federal baseline (verify with FL Medicaid/DCF):', pace: 'long' });
-        msgs.push({ text: `• QMB — may help pay Part A/B premiums, deductibles, coinsurance. Income: $${D.msp.FL.QMB.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.QMB.coupleIncome.toLocaleString()}/mo couple. Resources: $${D.msp.FL.QMB.singleAsset.toLocaleString()} single, $${D.msp.FL.QMB.coupleAsset.toLocaleString()} couple.`, pace: 'slow' });
-        msgs.push({ text: `• SLMB — may help pay Part B premium. Income: $${D.msp.FL.SLMB.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.SLMB.coupleIncome.toLocaleString()}/mo couple.`, pace: 'slow' });
-        msgs.push({ text: `• QI — may help pay Part B premium. Income: $${D.msp.FL.QI.singleIncome.toLocaleString()}/mo single, $${D.msp.FL.QI.coupleIncome.toLocaleString()}/mo couple. First-come, first-served.`, pace: 'slow' });
-      } else {
-        msgs.push({ text: 'Medicare Savings Programs (MSP) help pay Medicare premiums and sometimes deductibles and coinsurance. 2026 federal income guidelines:', pace: 'long' });
-        msgs.push({ text: `• QMB (Qualified Medicare Beneficiary) — may help pay Part A/B premiums, deductibles, coinsurance. Federal baseline: $1,350/mo single, $1,824/mo couple. Resources: $9,950 single, $14,910 couple.\n• SLMB (Specified Low-Income Medicare Beneficiary) — may help pay Part B premium. Federal baseline: $1,616/mo single, $2,184/mo couple.\n• QI (Qualifying Individual) — may help pay Part B premium. Federal baseline: $1,816/mo single, $2,455/mo couple.\n• QDWI (Qualified Disabled and Working Individual) — may help pay Part A premium for certain disabled working individuals under 65.`, pace: 'slow' });
-      }
-      msgs.push({ text: `Medicaid is a separate program administered by each state. It can provide additional help — from paying Part B premiums to covering services Medicare does not. Some people qualify for both Medicare and Medicaid (dual eligible).`, pace: 'long' });
-      msgs.push({
-        text: 'Would you like me to explain any of these programs in more detail?',
-        options: [
-          { label: 'Extra Help', value: 'edu_extra_help' },
-          { label: 'Request a review', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Ask another question', value: 'edu_back_to_topics' },
-        ],
-        pace: 'short',
-      });
-      return msgs;
-    })(),
+    // Grouped assistance entry points now open the SECOND-LEVEL submenu instead
+    // of dumping every program at once (Sawil 2026-06-18). Per-program detail
+    // lives in edu_medicaid / edu_msp / edu_extra_help / edu_spap.
+    edu_assistance_menu: buildAssistanceSubmenu('en'),
+    edu_cost_help: buildAssistanceSubmenu('en'),
     edu_extra_help: [
       { text: 'Extra Help - also called the Low-Income Subsidy or LIS - is a federal program that helps pay for Medicare Part D prescription drug costs.', pace: 'long' },
       { text: `In 2026, the income limit is about $${D.extraHelp.incomeLimitSingle.toLocaleString()}/month for a single person and $${D.extraHelp.incomeLimitCouple.toLocaleString()}/month for a couple. The asset limit is about $${D.extraHelp.assetLimitSingle.toLocaleString()} for a single person and $${D.extraHelp.assetLimitCouple.toLocaleString()} for a couple (does not count your home, one car, or burial funds).`, pace: 'slow' },
@@ -889,46 +885,11 @@ function getMedicareEducation(topic: string, language: ChatLanguage, state: stri
         pace: 'short',
       },
     ],
-    edu_cost_help: (() => {
-      const msgs: QueuedBotMessage[] = [
-        { text: 'Varios programas pueden ayudar a reducir los costos de Medicare si sus ingresos y recursos son limitados. Déjeme explicarle.', pace: 'long' },
-      ];
-      if (state === 'NY') {
-        msgs.push({ text: 'Programa de Ahorros de Medicare de New York — NY NO usa límite de assets/recursos. Dos categorías principales:', pace: 'long' });
-        msgs.push({ text: `• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar prima de Parte B, prima de Parte A si aplica, deducibles, coaseguros y copagos de Medicare. QMB no es retroactivo en NY. Límite de ingreso 2026: alrededor de $${D.msp.NY.QMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.NY.QMB.coupleIncome.toLocaleString()}/mes pareja (138% FPL con disregard de $20).`, pace: 'slow' });
-        msgs.push({ text: `• QI-1 (Individuo Calificado-1) — puede ayudar a pagar solo la prima de Parte B. Puede ser retroactivo hasta 3 meses dentro del mismo año calendario. No se puede recibir junto con Medicaid. Límite de ingreso 2026: alrededor de $${D.msp.NY.QI1.singleIncome.toLocaleString()}/mes soltero, $${D.msp.NY.QI1.coupleIncome.toLocaleString()}/mes pareja (186% FPL con disregard de $20).`, pace: 'slow' });
-        msgs.push({ text: '• EPIC (Cobertura de Seguro Farmacéutico para Personas Mayores) — SPAP de NY. Ayuda a seniors elegibles 65+ con costos de medicamentos de Parte D. Guía de ingresos: hasta $75,000 soltero / $100,000 casado. Separado de Extra Help.', pace: 'slow' });
-      } else if (state === 'NJ') {
-        msgs.push({ text: 'Programas de Ahorros de Medicare de New Jersey — QMB, SLMB y QI (límites anuales):', pace: 'long' });
-        msgs.push({ text: '• QMB — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros, copagos. Ingreso: $15,960/año soltero, $21,640/año pareja. Recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' });
-        msgs.push({ text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Ingreso: $19,152/año soltero, $25,968/año pareja. Recursos: $9,950 soltero, $14,910 pareja.', pace: 'slow' });
-        msgs.push({ text: '• QI — puede ayudar a pagar solo la prima de Parte B. Ingreso: $21,546/año soltero, $29,214/año pareja. Por orden de llegada.', pace: 'slow' });
-      } else if (state === 'CT') {
-        msgs.push({ text: 'Programa de Ahorros de Medicare de Connecticut — QMB, SLMB y ALMB (efectivo 1 de marzo de 2026):', pace: 'long' });
-        msgs.push({ text: '• QMB — puede ayudar a pagar prima de Parte B, deducibles, coaseguros, copagos. Similar a póliza Medigap según CT. Ingreso: $2,807/mes soltero, $3,806/mes pareja.', pace: 'slow' });
-        msgs.push({ text: '• SLMB — puede ayudar a pagar solo la prima de Parte B. Ingreso: $3,073/mes soltero, $4,166/mes pareja.', pace: 'slow' });
-        msgs.push({ text: '• ALMB (Beneficiario de Medicare de Bajos Ingresos Adicional) — puede ayudar a pagar solo la prima de Parte B. Sujeto a fondos. No disponible con Medicaid. Ingreso: $3,272/mes soltero, $4,437/mes pareja.', pace: 'slow' });
-      } else if (state === 'FL') {
-        msgs.push({ text: 'Programas de Ahorros de Medicare de Florida — use la base federal 2026 (verifique con FL Medicaid/DCF):', pace: 'long' });
-        msgs.push({ text: `• QMB — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros. Ingreso: $${D.msp.FL.QMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.QMB.coupleIncome.toLocaleString()}/mes pareja. Recursos: $${D.msp.FL.QMB.singleAsset.toLocaleString()} soltero, $${D.msp.FL.QMB.coupleAsset.toLocaleString()} pareja.`, pace: 'slow' });
-        msgs.push({ text: `• SLMB — puede ayudar a pagar prima de Parte B. Ingreso: $${D.msp.FL.SLMB.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.SLMB.coupleIncome.toLocaleString()}/mes pareja.`, pace: 'slow' });
-        msgs.push({ text: `• QI — puede ayudar a pagar prima de Parte B. Ingreso: $${D.msp.FL.QI.singleIncome.toLocaleString()}/mes soltero, $${D.msp.FL.QI.coupleIncome.toLocaleString()}/mes pareja. Por orden de llegada.`, pace: 'slow' });
-      } else {
-        msgs.push({ text: 'Los Programas de Ahorros de Medicare (MSP) ayudan a pagar las primas de Medicare y a veces deducibles y coaseguros. Pautas federales 2026:', pace: 'long' });
-        msgs.push({ text: '• QMB (Beneficiario de Medicare Calificado) — puede ayudar a pagar primas de Parte A/B, deducibles, coaseguros. Base federal: $1,350/mes soltero, $1,824/mes pareja. Recursos: $9,950 soltero, $14,910 pareja.\n• SLMB (Beneficiario de Medicare de Bajos Ingresos Especificado) — puede ayudar a pagar prima de Parte B. Base federal: $1,616/mes soltero, $2,184/mes pareja.\n• QI (Individuo Calificado) — puede ayudar a pagar prima de Parte B. Base federal: $1,816/mes soltero, $2,455/mes pareja.\n• QDWI (Individuo Discapacitado y Trabajador Calificado) — puede ayudar a pagar prima de Parte A para ciertos trabajadores discapacitados menores de 65.', pace: 'slow' });
-      }
-      msgs.push({ text: 'Medicaid es un programa separado administrado por cada estado. Puede ofrecer ayuda adicional — desde pagar primas de Parte B hasta cubrir servicios que Medicare no cubre. Algunas personas califican para ambos, Medicare y Medicaid (elegibilidad dual).', pace: 'long' });
-      msgs.push({
-        text: '¿Quiere que le explique alguno de estos programas en más detalle?',
-        options: [
-          { label: 'Ayuda Extra', value: 'edu_extra_help' },
-          { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
-        ],
-        pace: 'short',
-      });
-      return msgs;
-    })(),
+    // Las entradas agrupadas de asistencia ahora abren el SUBMENÚ de segundo
+    // nivel en vez de volcar todos los programas a la vez (Sawil 2026-06-18).
+    // El detalle por programa vive en edu_medicaid / edu_msp / edu_extra_help.
+    edu_assistance_menu: buildAssistanceSubmenu('es'),
+    edu_cost_help: buildAssistanceSubmenu('es'),
     edu_extra_help: [
       { text: 'Ayuda Extra - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'long' },
       { text: `En 2026, el límite de ingresos es aproximadamente $${D.extraHelp.incomeLimitSingle.toLocaleString()}/mes para una persona soltera y $${D.extraHelp.incomeLimitCouple.toLocaleString()}/mes para una pareja. El límite de recursos es aproximadamente $${D.extraHelp.assetLimitSingle.toLocaleString()} para soltero y $${D.extraHelp.assetLimitCouple.toLocaleString()} para pareja (no cuenta su casa, un auto ni fondos funerarios).`, pace: 'slow' },
@@ -2525,12 +2486,41 @@ function detectState(text: string): string {
   return '';
 }
 
-function detectMedicareTopic(text: string, language: ChatLanguage): string {
+export function detectMedicareTopic(text: string, language: ChatLanguage): string {
   const low = text.toLowerCase();
   const keywords = language === 'es' ? MEDICARE_TOPIC_KEYWORDS_ES : MEDICARE_TOPIC_KEYWORDS_EN;
   for (const [keyword, topic] of keywords) {
     if (low.includes(keyword)) return topic;
   }
+  return '';
+}
+
+// Sawil 2026-06-18 — map a free-text ASSISTANCE question to a deterministic
+// single-program handler (Medicaid / MSP / Extra Help), or to the grouped
+// second-level submenu when it is ambiguous OR names more than one program.
+// Returns '' for anything that is not an assistance question (those keep the
+// existing LLM fallback). `label` is the detectMedicareTopic() result.
+export function assistanceTopicToEdu(text: string, label: string, _language: ChatLanguage): string {
+  const t = (text || '').toLowerCase();
+  const grouped =
+    /\b(help (with|paying)\s+(medicare\s+)?costs?|lower (my )?(medicare\s+)?costs?|what programs|which programs|programs that (help|can help)|financial help|help paying medicare|all (three|the programs)|every program)\b/i.test(t)
+    || /\b(ayuda con (los )?(costos|gastos)|reducir (mis )?costos|qu[eé] programas|cu[aá]les programas|programas de ayuda|ayuda financiera|ayuda para pagar medicare|los tres programas|todos los programas)\b/i.test(t);
+  // Specific-program signals.
+  const isMedicaid = /\bmedicaid\b|\bmedicaide\b|\bmedi-?cal\b/i.test(t)
+    && !/\b(medicare (and|&|y|\+)\s+medicaid|medicaid (and|&|y|\+)\s+medicare|both|los dos|ambos|dual|d-?snp)\b/i.test(t);
+  const isMSP = label === 'Medicare Savings Programs' || label === 'MSP'
+    || /\b(msp|medicare savings|qmb|slmb|qi-?1?|qdwi|almb)\b/i.test(t)
+    || /\b(stop|stopping|reduce|lower)\b[^.?!]{0,30}\b(social security|seguro social)\b/i.test(t)
+    || /\b(taking|takes|taken|coming out|deducted|sacan|quitan|descuent|me sacan|me quitan|me descuent)\b[^.?!]{0,30}\b(social security|seguro social|cheque|check)\b/i.test(t)
+    || /\b(help (with|paying)( the)? part b premium|ayuda (con|para|pagar)[^.?!]{0,15}prima[^.?!]{0,10}(parte b|\bb\b))\b/i.test(t);
+  const isExtraHelp = label === 'Extra Help / LIS'
+    || /\b(extra help|low[- ]income subsidy|\blis\b|ayuda extra|subsidio)\b/i.test(t)
+    || /\b(help (with )?(my )?(prescriptions?|medications?|drug costs?|rx costs?)|ayuda con (los )?(medicamentos|recetas|costos de medicamentos))\b/i.test(t);
+  const specifics = [isMedicaid, isMSP, isExtraHelp].filter(Boolean).length;
+  if (grouped || specifics > 1) return 'edu_assistance_menu';
+  if (isMedicaid) return 'edu_medicaid';
+  if (isMSP) return 'edu_msp';
+  if (isExtraHelp) return 'edu_extra_help';
   return '';
 }
 
@@ -4672,6 +4662,26 @@ export function ChatBot() {
     //     question behind showMedicareIntake().
     if (intent === 'MEDICARE_EDUCATION') {
       const medicareTopic = detectMedicareTopic(text, memory.language);
+      // Sawil 2026-06-18 — assistance programs are answered DETERMINISTICALLY:
+      // one program (Medicaid / MSP / Extra Help), or the grouped submenu when
+      // the question is broad or names more than one. This avoids an LLM dump
+      // and keeps the one-program-at-a-time behavior. Everything else keeps the
+      // LLM fallback. The edu_* handlers already carry the official-agency
+      // eligibility disclaimer and the licensed-advisor offer.
+      const assistEdu = assistanceTopicToEdu(text, medicareTopic, memory.language);
+      if (assistEdu) {
+        setStepSync('medicare_education');
+        updateMemory({
+          educationTopic: assistEdu,
+          lastEducationTopic: assistEdu,
+          lastTopic: medicareTopic || 'Assistance Programs',
+          interestType: medicareTopic || 'Assistance Programs',
+        });
+        if (medicareTopic) trackTopic(medicareTopic);
+        setMode('education');
+        enqueueBot(getMedicareEducation(assistEdu, memory.language, memory.state));
+        return;
+      }
       if (medicareTopic) {
         updateMemory({ lastTopic: medicareTopic, interestType: medicareTopic, lastEducationTopic: medicareTopic });
         trackTopic(medicareTopic);

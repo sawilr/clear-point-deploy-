@@ -604,6 +604,13 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
     `Source: Customer Service Assistant`,
     `Language: ${ghlLang}`,
     `State: ${stateLabel}`,
+    // Sawil 2026-06-18 — callback lead fields (name/phone/DOB/best time/topic).
+    `Name: ${state.name || 'not provided'}`,
+    `Phone: ${state.phoneNumber || 'not provided'}`,
+    `Date of birth: ${state.dateOfBirth || (state.dobRefused ? 'declined by user' : 'not provided')}`,
+    `ZIP code: ${state.zipCode || 'not provided'}`,
+    `Best callback time: ${state.bestTimeToCall || 'not provided'}`,
+    `Topic for advisor: ${state.advisorTopic || 'not provided'}`,
     `Customer status: ${customerStatus}`,
     `Main issue: ${interestType}`,
     `What the user said: ${whatUserSaid}`,
@@ -631,6 +638,9 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
     `probable_fake_lead: ${probableFakeLead ? 'true' : 'false'}`,
     `emotion_tag: ${emotionTag}`,
     `PHI_scrubbed: ${phiScrubbed ? 'true' : 'false'}`,
+    `date_of_birth: ${state.dateOfBirth || (state.dobRefused ? 'declined' : '')}`,
+    `best_callback_time: ${state.bestTimeToCall || ''}`,
+    `advisor_topic: ${state.advisorTopic || ''}`,
     `transcript_summary: ${transcriptSummary}`,
   ].join('\n');
 

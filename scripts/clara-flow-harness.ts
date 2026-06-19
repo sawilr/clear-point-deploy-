@@ -54,7 +54,7 @@ lines.push('A. Nombre simple');
 lines.push('B. Email inválido/válido');
 {
   // walk to email step
-  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const atEmail = w.st;
   check('B0 llegó al paso de email', atEmail.lastBotIntent === 'handoff_asking_email', `intent=${atEmail.lastBotIntent}`);
   // user opts to give email
@@ -73,24 +73,24 @@ lines.push('B. Email inválido/válido');
 // ---- C. Email opcional: skip / "no tengo email" continúa
 lines.push('C. Email opcional');
 {
-  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const skip = processMessage('no tengo email', w.st);
   check('C1 "no tengo email" continúa sin error', !!skip.response && !/error|undefined/i.test(skip.response), skip.response.slice(0, 60));
   check('C2 email queda vacío (opcional)', !(skip.newState as Any).email, `email=${(skip.newState as Any).email}`);
-  const w2 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w2 = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const sk2 = processMessage('saltar', w2.st);
   check('C3 "saltar" continúa', !!sk2.response, sk2.response.slice(0, 60));
   // C4 — "salta" (typo, missing r) must be treated as skip, not loop
-  const w4 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w4 = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const sk4 = processMessage('salta', w4.st);
   check('C4 "salta" (typo) NO re-pregunta email', !/escribe un correo v[aá]lido|puede decir "saltar"|type a valid email/i.test(sk4.response), sk4.response.slice(0, 70));
   // C5 — unrecognized input on the 2nd email attempt auto-skips (no infinite loop)
-  const w5 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w5 = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const r5a = processMessage('xyz', w5.st);
   const r5b = processMessage('xyz', (r5a as Any).newState);
   check('C5 input raro repetido -> auto-skip (no loop)', !/escribe un correo v[aá]lido|type a valid email/i.test(r5b.response), r5b.response.slice(0, 70));
   // C6 — "saltart'" (typo + trailing apostrophe, live case) must skip, not re-ask
-  const w6 = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w6 = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   const sk6 = processMessage("saltart'", w6.st);
   check('C6 "saltart\'" (typo+apóstrofo) NO re-pregunta email', !/escribe un correo v[aá]lido|type a valid email|puede decir "saltar"/i.test(sk6.response), sk6.response.slice(0, 70));
 }
@@ -98,7 +98,7 @@ lines.push('C. Email opcional');
 // ---- D. Consentimiento: el collector no auto-marca consentimiento
 lines.push('D. Consentimiento (no auto-consent)');
 {
-  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', 'marioto@gmail.com']);
+  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura', 'marioto@gmail.com']);
   check('D1 collector NO setea consent_to_contact=true solo', (w.st as Any).consent_to_contact !== true, `consent_to_contact=${(w.st as Any).consent_to_contact}`);
 }
 
@@ -113,7 +113,7 @@ lines.push('E. Cierre sin chips');
 // ---- F. Flujo de recolección completo (porción en alcance)
 lines.push('F. Recolección completa');
 {
-  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', 'marioto@gmail.com']);
+  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura', 'marioto@gmail.com']);
   check('F1 nombre completo capturado', /Mario Rossi/i.test(String((w.st as Any).name)));
   check('F2 teléfono capturado', String((w.st as Any).phoneNumber || '').replace(/\D/g, '').includes('6463125847'));
   check('F3 email capturado', (w.st as Any).email === 'marioto@gmail.com');
@@ -140,7 +140,7 @@ lines.push('Cambio 2 — corrección');
 // ---- Change 3: email-ask sin chips
 lines.push('Cambio 3 — email sin chips');
 {
-  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847']);
+  const w = run(seedAskName(), ['Mario', 'Rossi', '6463125847', '1950', 'mañana', 'una factura']);
   check('Email-ask sin chips', ((w.st as Any).quickReplies || []).length === 0, `chips=${JSON.stringify((w.st as Any).quickReplies)}`);
 }
 
