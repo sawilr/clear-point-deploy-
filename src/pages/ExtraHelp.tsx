@@ -79,7 +79,7 @@ export default function ExtraHelp() {
                     'La solicitud de Ayuda Extra se presenta a través de la Administración del Seguro Social. Un asesor licenciado puede explicarle qué documentos podría necesitar y responder preguntas sobre la cobertura de Medicare Parte D.'
                   )}
                 </p>
-                <a href="tel:18663108702" className="inline-flex items-center gap-2 bg-gold-400 text-earth-900 font-bold text-sm px-5 py-2.5 rounded-lg hover:bg-gold-300 transition-all">
+                <a href="tel:18663108702" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
                   {t('Call 1-866-310-8702', 'Llame al 1-866-310-8702')}
                 </a>
               </div>
@@ -100,7 +100,7 @@ export default function ExtraHelp() {
                   href="https://www.ssa.gov/medicare/part-d-extra-help"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 bg-earth-800 text-cream-50 font-semibold text-sm px-5 py-2.5 rounded-lg hover:bg-earth-900 transition-all"
+                  className="cp-btn-sm bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all"
                 >
                   {t('Apply for Extra Help through Social Security', 'Solicitar Extra Help a través del Seguro Social')}
                 </a>

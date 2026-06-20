@@ -271,7 +271,7 @@ export function Header() {
               </a>
               <button
                 onClick={handleFreeReview}
-                className="bg-earth-800 text-cream-50 text-base font-semibold px-4 lg:px-5 xl:px-6 rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap inline-flex items-center justify-center min-h-[44px]"
+                className="cp-btn-sm bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all hover:shadow-soft active:scale-[0.98]"
               >
                 {t('Free Review', 'Revisión Gratis')}
               </button>
@@ -320,7 +320,7 @@ export function Header() {
             </div>
             {/* Mobile primary CTA — single button, matches desktop. Smart Review is
                 reachable via the nav scroll link above; no duplicate colored button. */}
-            <button onClick={handleFreeReview} className="block w-full text-center bg-earth-800 text-cream-50 font-semibold px-5 py-3 rounded-lg mt-4">
+            <button onClick={handleFreeReview} className="cp-btn w-full bg-earth-800 text-cream-50 mt-4">
               {t('Free Review', 'Revisión Gratis')}
             </button>
           </div>

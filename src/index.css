@@ -61,6 +61,40 @@
        4K" ceiling (audit #6). */
     --measure-legal: 68ch;
     --measure-max: 800px;
+
+    /* ── PREMIUM RESPONSIVE LAYOUT SYSTEM (Sawil 2026-06-19) ──
+       ONE source of truth for the visual layout, replacing three drifting
+       container patterns that coexisted across the site:
+         1. .cp-section                                   → 1152/1400/1600
+         2. inline max-w-6xl 2xl:max-w-[1400px] 3xl:…     → 1152/1400/1600
+         3. bare max-w-6xl (service pages) → 1152 ONLY, never widened
+       (3) was the real bug: on ≥1920px the homepage band was 1600px but every
+       service page was stuck at 1152px, so the site visibly changed width
+       page-to-page. These tokens + the .cp-section / .max-w-6xl.mx-auto rule
+       below normalize ALL THREE to one responsive band, and add the reading
+       measure + vertical rhythm the site never had a token for. */
+    /* Sawil 2026-06-19 (v2) — pulled BACK from 1500/1760/2040. Real-device 34"
+       photos showed the wide band broke the 2-column content+form pages: prose
+       caps at ~795px (reading measure) but the column stretched to ~1417px, so
+       the form sidebar floated ~620px away with a dead gap in the middle
+       ("sidebar detached / se ve un desastre"). A cohesive ~1280–1400 band keeps
+       text + sidebar TOGETHER and centered; the empty space lives as balanced
+       OUTER margins (intentional/premium) instead of an inner void. */
+    --container-max: 72rem;        /* 1152px — content band ≤1535px */
+    --container-2xl: 1280px;       /* 1536–1919px */
+    --container-3xl: 1340px;       /* 1920–2559px */
+    --container-4xl: 1400px;       /* ≥2560px ultrawide — cohesive, not stretched */
+    --ultrawide-content-max: var(--container-4xl);
+    --content-max: 768px;          /* a centered single-column text block */
+    --text-measure: 70ch;          /* prose reading measure (~70 chars/line) */
+    --legal-text-max: 640px;       /* legal / disclaimer measure */
+    /* Fluid vertical rhythm: 80px → 112px, smooth, no hard breakpoint steps.
+       Floor (5rem) == the current mobile py-20, so phones never lose space;
+       ceiling (7rem) == the current desktop lg:py-28. */
+    --section-pad-y: clamp(5rem, 3.5rem + 2.4vw, 7rem);
+    --section-pad-y-short: 4.5rem; /* short viewports (≤820px tall) */
+    --section-pad-x: clamp(1.25rem, 0.9rem + 1vw, 2rem); /* gutter token */
+    --card-gap: clamp(1rem, 0.6rem + 1.2vw, 1.75rem);
   }
 
   html {
@@ -247,27 +281,203 @@
   .support-main { flex: none; min-height: 0; overflow: visible; }
 }
 
-/* Sawil 2026-06 — PREMIUM CONTENT WIDTH (the "4K/TV layer").
-   ONE control point for how wide page sections sit. On phones, tablets and
-   laptops it behaves EXACTLY like the old max-w-6xl (1152px) — readable line
-   lengths, zero change. Only at very large screens does it widen so a 4K
-   monitor / big TV is filled instead of leaving big empty margins. Gated to
-   ≥1536px and ≥1920px, so mobile/laptop are untouched. Matches the width the
-   hero, header and carriers already use. To tune the 4K feel later, change
-   these two numbers in one place. */
-.cp-section {
+/* ── UNIFIED CONTENT CONTAINER (Sawil 2026-06-19) ──
+   THE single responsive band for the whole site. It normalizes all three
+   legacy container patterns to one width curve by also matching the Tailwind
+   `max-w-6xl mx-auto` wrappers the service pages, hero, header and footer use.
+   Because this rule is UNLAYERED it deterministically wins over Tailwind's
+   layered `max-w-6xl` / `2xl:max-w-[1400px]` / `3xl:max-w-[1600px]` utilities,
+   so a single place controls how wide content sits on every page and breakpoint
+   — no more service pages stuck at 1152px while the homepage widened to 1600px.
+   Values are tokens (see :root) so the whole site retunes from one spot. */
+.cp-section,
+.max-w-6xl.mx-auto {
   width: 100%;
-  max-width: 72rem; /* 1152px — same as Tailwind max-w-6xl */
+  max-width: var(--container-max);
   margin-left: auto;
   margin-right: auto;
 }
-@media (min-width: 1536px) { .cp-section { max-width: 1400px; } }
-@media (min-width: 1920px) { .cp-section { max-width: 1600px; } }
+@media (min-width: 1536px) {
+  .cp-section,
+  .max-w-6xl.mx-auto { max-width: var(--container-2xl); }
+}
+@media (min-width: 1920px) {
+  .cp-section,
+  .max-w-6xl.mx-auto { max-width: var(--container-3xl); }
+}
+@media (min-width: 2560px) {
+  .cp-section,
+  .max-w-6xl.mx-auto { max-width: var(--container-4xl); }
+}
+
+/* ── ULTRAWIDE "FILL + SCALE" (Sawil 2026-06-19) ──
+   On 27"/34" screens the 1600px band + 16px type read as a small island in a
+   sea of empty margin ("tiny / lost / empty"). Two coordinated levers fix it:
+   (1) the wider container tokens above, and (2) a modest root font-size bump so
+   ALL rem-based type, padding, gaps and buttons scale up together — the page
+   fills the screen and reads at the right size for the viewing distance.
+   Gated ≥1920px, so laptops/desktops/tablets/phones are byte-identical. The ch
+   reading measure scales with font-size, so prose stays ~70 chars (never
+   stretched), and the vw-based section rhythm is unaffected. */
+/* Sawil 2026-06-19 (v2) — REMOVED the ≥1920 root font-size bump (17/18px) AND
+   the ≥1920 hero "deepening" (home hit 1080px = 75% of a 1440-tall screen). On a
+   real 34" both made the page read OVERSIZED ("el hero está muy grande / todo
+   grande"). Root font stays 16px on every screen; heroes use ONE sane clamp
+   (defined below) that holds the lead form on the home hero without dominating
+   the viewport on ultrawide. Ultrawide "fill" is handled by layout (container +
+   sidebar width), never by inflating type. */
+
+/* Content + form/CTA sidebar split (7 service/contact pages all use the exact
+   same `grid lg:grid-cols-[1fr_380px] gap-12`). On ultrawide the 1fr content
+   column ballooned while the 380px sidebar stayed tiny and detached. Widen the
+   sidebar and tighten the gap so the form reads as a substantial, connected
+   panel. Pure CSS via the Tailwind class — no page markup changes. */
+@media (min-width: 1920px) {
+  .lg\:grid-cols-\[1fr_380px\] { grid-template-columns: minmax(0, 1fr) 440px !important; gap: 3rem !important; }
+}
+@media (min-width: 2560px) {
+  .lg\:grid-cols-\[1fr_380px\] { grid-template-columns: minmax(0, 1fr) 440px !important; gap: 3rem !important; }
+}
 
 /* Sawil 2026-06 — hide the floating Zara "Ayuda" launcher while the mobile
    menu is open (Header.tsx toggles .cp-menu-open on <html>) so the pill never
    overlaps the menu items. */
 .cp-menu-open .cp-zara-fab { opacity: 0; pointer-events: none; }
+
+/* ── UNIFIED CTA BUTTON SYSTEM (Sawil 2026-06-19) ──
+   Root cause of "buttons change size weirdly across the site / look choppy":
+   the SAME CTA was hand-sized differently on every page (header px-4 py-2,
+   hero px-6 py-3.5, final CTA px-7 py-3.5, service pages px-5 py-3/py-2.5,
+   smart review px-6 py-3) and NONE scaled with the viewport. This is the one
+   shared geometry: consistent padding, font, height, radius, icon gap and
+   alignment, FLUID from 320px phones to 34" ultrawide. Colors, text, hover and
+   width utilities stay inline on each button, so brand identity is untouched —
+   this only standardizes geometry. min-height keeps the 44px a11y touch target
+   on small screens and grows to 56px on big ones. */
+.cp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  line-height: 1.15;
+  font-size: clamp(1rem, 0.95rem + 0.25vw, 1.125rem);   /* 16 → 18px */
+  padding-block: clamp(0.7rem, 0.58rem + 0.35vw, 1rem);
+  padding-inline: clamp(1.25rem, 1rem + 0.9vw, 2rem);
+  min-height: clamp(44px, 41px + 0.45vw, 56px);
+  border-radius: 0.75rem;
+  text-align: center;
+  /* No nowrap — a long label (e.g. ES "Revisar Mis Opciones de Inscripción")
+     must be allowed to wrap to 2 lines on a 320px phone instead of forcing its
+     grid column wider than the viewport (caused 22px horizontal scroll at 320).
+     On desktop there's room, so labels stay on one line anyway. */
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+/* Secondary / smaller CTAs (outline, "learn more", inline actions). */
+.cp-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  font-weight: 600;
+  line-height: 1.15;
+  font-size: clamp(0.9rem, 0.86rem + 0.2vw, 1rem);      /* 14.4 → 16px */
+  padding-block: clamp(0.55rem, 0.48rem + 0.25vw, 0.8rem);
+  padding-inline: clamp(1rem, 0.85rem + 0.5vw, 1.5rem);
+  min-height: clamp(40px, 38px + 0.35vw, 48px);
+  border-radius: 0.625rem;
+  text-align: center;
+  /* No nowrap — a long label (e.g. ES "Revisar Mis Opciones de Inscripción")
+     must be allowed to wrap to 2 lines on a 320px phone instead of forcing its
+     grid column wider than the viewport (caused 22px horizontal scroll at 320).
+     On desktop there's room, so labels stay on one line anyway. */
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+
+/* ── HERO IMAGE FOCAL SYSTEM (Sawil 2026-06-19) ──
+   Every hero uses <img class="cp-hero-img object-cover"> with NO object-position,
+   so it center-cropped at 50% 50% and cut off subjects' heads on short/wide
+   banners and ultrawide. These per-photo focal points keep each subject in frame
+   at ALL crop ratios. Keyed by the image `src` so NO page files change and the
+   photo files themselves are untouched. Values reflect where the subject sits in
+   each photo (see audit): faces/heads kept ~22–30% from top so a short hero crop
+   never guillotines them. */
+.cp-hero-img                             { object-position: 50% 30%; } /* safe default */
+.cp-hero-img[src="/hero-bg.jpg"]         { object-position: 45% 28%; } /* woman + tablet, left-center */
+.cp-hero-img[src="/service-advisor.jpg"] { object-position: 58% 30%; } /* 3 people, center-right */
+.cp-hero-img[src="/service-phone.jpg"]   { object-position: 56% 26%; } /* man on phone, center-right, high head */
+.cp-hero-img[src="/service-drugs.jpg"]   { object-position: 50% 42%; } /* hands + bottle, center, no face */
+.cp-hero-img[src="/service-family.jpg"]  { object-position: 50% 22%; } /* 2 women walking, heads sit high */
+/* Ultrawide widens the crop window → subjects drift; nudge focal to rebalance. */
+@media (min-width: 1920px) {
+  .cp-hero-img[src="/hero-bg.jpg"]         { object-position: 42% 30%; }
+  .cp-hero-img[src="/service-advisor.jpg"] { object-position: 56% 32%; }
+  .cp-hero-img[src="/service-phone.jpg"]   { object-position: 54% 30%; }
+}
+
+/* ── STABLE HERO HEIGHTS (clamp, Sawil 2026-06-19) ──
+   Replaces stepped min-heights (home 520/660/720/820/900; page 260/360/440/520)
+   that jumped the crop aspect at every breakpoint. The clamp slopes reproduce the
+   SAME height curve smoothly, so the hero is the same size at each old breakpoint
+   but transitions continuously between them — predictable crop, no jump. */
+.cp-hero-home          { min-height: clamp(560px, 34rem + 9vw, 720px); }  /* holds the form, never dominates the screen */
+.cp-hero-page          { min-height: clamp(260px, 16rem + 7vw, 420px); }  /* banner — substantial, not huge */
+.cp-hero-compact       { min-height: clamp(200px, 10.3rem + 6vw, 250px); }
+.cp-hero-compact-tight { min-height: clamp(180px, 9.1rem + 6vw, 230px); }
+
+/* ── READING MEASURE — body prose, EVERY width (Sawil 2026-06-19) ──
+   The site never had a systematic measure: some blocks used cp-measure/cp-legal,
+   some used ad-hoc max-w-[760px]/max-w-3xl, and the rest (carrier + testimonial
+   disclaimers, section intros) had NO cap and ran the full band width — ~1560px
+   on ultrawide AND ~1240px at 1280–1440. This one rule gives every body
+   paragraph a controlled reading measure at ALL widths. It is IDEMPOTENT: the
+   cap only lowers width when a paragraph is already wider than the measure, so
+   card/grid/constrained paragraphs (all narrower) are untouched. Paragraphs
+   with their own max-w-* utility, cp-measure or cp-legal are explicitly
+   excluded. Chat is unaffected by construction — Clara/Zara bubbles are <div
+   class="max-w-[85%]/[88%]">, never <p>. Centered prose stays centered; left
+   prose stays left. Unlayered so it wins over Tailwind's layered utilities. */
+p:not([class*="max-w"]):not(.cp-measure):not(.cp-measure-lg):not(.cp-legal) {
+  max-width: var(--text-measure);
+}
+p.text-center:not([class*="max-w"]) {
+  margin-inline: auto;
+}
+/* Chat surfaces own their widths — the page reading measure must NEVER enter a
+   bot UI. .support-main = embedded Clara on /support; [role="dialog"] = the
+   floating Clara/Zara panels. Guarantees the chat experience is byte-identical
+   to before this layout system (requirement: chat behavior unaffected). */
+.support-main p,
+[role="dialog"] p {
+  max-width: none !important; /* beats the 4×:not() measure selector's specificity */
+  margin-inline: 0 !important;
+}
+
+/* ── FLUID + HEIGHT-AWARE SECTION RHYTHM (Sawil 2026-06-19) ──
+   Replaces the hardcoded py-20 lg:py-28 / py-16 lg:py-20 steps with one smooth
+   token (80px → 112px). Gated to ≥768px so phones keep their exact current
+   rhythm; the clamp floor equals the old mobile/tablet value so nothing shrinks
+   there. Targets sections that already declare the rhythm utilities, so it only
+   normalizes existing padding (never adds it to the hero, which has none). */
+@media (min-width: 768px) {
+  section[class*="lg:py-28"],
+  section[class*="lg:py-20"] {
+    padding-top: var(--section-pad-y);
+    padding-bottom: var(--section-pad-y);
+  }
+}
+/* WIDE-but-SHORT screens (1366×768, 1280×720): tighten so the next section is
+   not pushed below the fold. Height-gated, so normal-height laptops/desktops
+   (1440×900, 1920×1080) keep the full fluid rhythm. */
+@media (min-width: 1024px) and (max-height: 820px) {
+  section[class*="lg:py-28"],
+  section[class*="lg:py-20"] {
+    padding-top: var(--section-pad-y-short);
+    padding-bottom: var(--section-pad-y-short);
+  }
+}
 
 @layer utilities {
   .font-serif {

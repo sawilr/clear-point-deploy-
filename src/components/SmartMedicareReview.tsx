@@ -358,7 +358,7 @@ export function SmartMedicareReview() {
               </div>
               <a
                 href={soaUrl}
-                className="inline-block w-full sm:w-auto text-center px-6 py-3 bg-gold-500 text-white font-bold rounded-full hover:bg-gold-600 transition-colors min-h-[48px]"
+                className="cp-btn w-full sm:w-auto bg-gold-500 text-white hover:bg-gold-600 transition-colors"
               >
                 {t('Sign Scope of Appointment', 'Firmar Scope of Appointment')} →
               </a>
@@ -576,7 +576,7 @@ export function SmartMedicareReview() {
                     setLeadType('LOW_PRIORITY_EDUCATION_REQUEST');
                     setStep(s => Math.min(s + 1, TOTAL_STEPS + 1));
                   }}
-                  className="w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 rounded-xl hover:bg-earth-900 transition-all flex items-center justify-center gap-2"
+                  className="cp-btn w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all"
                 >
                   {t('Yes — please have an advisor call me', 'Sí — que un asesor me llame')} <ChevronRight className="w-4 h-4" />
                 </button>
@@ -659,7 +659,7 @@ export function SmartMedicareReview() {
               <button
                 onClick={nextStep}
                 disabled={!canAdvanceStep()}
-                className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="cp-btn mt-5 w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
               </button>
@@ -731,7 +731,7 @@ export function SmartMedicareReview() {
                     : t('Please select a valid date of birth.', 'Por favor seleccione una fecha de nacimiento válida.')}
                 </p>
               )}
-              <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              <button onClick={nextStep} disabled={!canAdvanceStep()} className="cp-btn mt-5 w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -750,11 +750,20 @@ export function SmartMedicareReview() {
                 {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <input type="tel" aria-label={t('Phone Number', 'Teléfono')} value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
-                {phone.length === 10 && !validatePhone(phone).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>}
+                {phone.length === 10 && !validatePhone(phone).valid && (() => {
+                  // Sawil 2026-06-19 — clearer error for reserved-fictional "555"
+                  // numbers (the anti-fake-lead reject), so the generic "valid
+                  // 10-digit" wording does not confuse a real user/QA. Validation
+                  // itself is unchanged — 555 numbers are still rejected.
+                  const is555 = /555|fictional/i.test(validatePhone(phone).flags.join(' '));
+                  return <p role="alert" className="text-xs text-red-500">{is555
+                    ? t('Please enter a real phone number. Numbers with 555 are commonly used for testing and cannot be accepted.', 'Ingrese un número de teléfono real. Los números con 555 suelen usarse para pruebas y no se pueden aceptar.')
+                    : t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>;
+                })()}
                 <input type="email" autoComplete="email" aria-label={t('Email (optional)', 'Correo electrónico (opcional)')} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
-              <button onClick={nextStep} disabled={!canAdvanceStep()} className="mt-5 w-full bg-earth-800 text-cream-50 font-semibold px-5 py-4 sm:py-3.5 rounded-xl hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+              <button onClick={nextStep} disabled={!canAdvanceStep()} className="cp-btn mt-5 w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
               </button>
             </div>

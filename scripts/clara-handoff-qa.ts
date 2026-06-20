@@ -20,30 +20,30 @@ console.log('── 2. Only first name → asks last name ──');
 console.log('── name+phone one message still asks last name (the live bug) ──');
 { const r=walk('es',['Mario 6463125847']); ok('bug single-name+phone → asks apellido', /apellido/i.test(r.log[0].bot) && r.st.phoneNumber==='6463125847'); }
 
-console.log('── 4/5/6/7/8/9/10/11. Full flow checks ──');
-{ const r=walk('es',['Mario','Rossi','6463125847','05/12/1950','en la mañana','tengo una factura del hospital']); const bots=allBots(r.log);
+console.log('── 4/5/6/7/8/9/10/11. Full flow checks (DOB removed, audit A4) ──');
+{ const r=walk('es',['Mario','Rossi','6463125847','en la mañana','tengo una factura del hospital']); const bots=allBots(r.log);
   ok('4 never re-asks preferred language', !/idioma|prefiere (espa|ingl)|preferred language|english or spanish/i.test(bots));
   ok('5 never re-asks ZIP', !/c[oó]digo postal|zip code|su zip/i.test(bots));
-  ok('6 asks DOB with purpose', /fecha de nacimiento/i.test(bots) && /prepararse/i.test(bots));
+  ok('6 callback does NOT ask DOB (ES)', !/fecha de nacimiento|date of birth/i.test(bots));
   ok('8 asks best time to call', /mejor horario/i.test(bots));
   ok('9 asks topic for advisor', /tema espec[ií]fico que desea que el asesor sepa/i.test(bots));
   ok('10 no buttons/menus during capture', noChips(r.log));
   ok('11 no SSN/MBI/bank/doc asks', !/(d[eé]me|env[ií]e|cu[aá]l es su)[^.?!]{0,20}(seguro social|n[uú]mero de medicare|bancari|tarjeta|documento)/i.test(bots));
-  ok('captures all fields', r.st.dateOfBirth==='05/12/1950' && /ma[ñn]ana/i.test(r.st.bestTimeToCall) && /factura/i.test(r.st.advisorTopic)); }
-console.log('── 7. Refuse DOB → continues ──');
-{ const r=walk('en',['John','Smith','3104826537','I prefer not to say']); const bots=allBots(r.log);
-  ok('7 DOB refusal acknowledged + continues to best time', /no problem.*continue without/i.test(bots) && /best time/i.test(bots) && r.st.dobRefused===true); }
+  ok('captures fields (no DOB)', r.st.dateOfBirth===undefined && /ma[ñn]ana/i.test(r.st.bestTimeToCall) && /factura/i.test(r.st.advisorTopic)); }
+console.log('── 7. EN callback also does not ask DOB ──');
+{ const r=walk('en',['John','Smith','3104826537','after 3','a bill from my doctor']); const bots=allBots(r.log);
+  ok('7 callback does NOT ask DOB (EN)', !/date of birth|fecha de nacimiento/i.test(bots) && /best time/i.test(bots)); }
 
 console.log('── 12. CRM summary fields ──');
-{ const r=walk('es',['Mario','Rossi','6463125847','05/12/1950','en la mañana','una factura del hospital','saltar','no']);
+{ const r=walk('es',['Mario','Rossi','6463125847','en la mañana','una factura del hospital','saltar','no']);
   const note = buildLeadNote({ state:r.st, transcript:(r.st.messages||[]).map((m:Any)=>({sender:m.role==='bot'?'bot':'user',text:m.content})) }).noteText;
   ok('12 note has Name', /Name: Mario Rossi/.test(note));
   ok('12 note has Phone', /Phone: 6463125847/.test(note));
-  ok('12 note has DOB', /Date of birth: 05\/12\/1950/.test(note));
   ok('12 note has best time', /Best callback time: en la mañana/i.test(note));
   ok('12 note has topic', /Topic for advisor: una factura/i.test(note));
   ok('12 note has language (memory)', /Language: Spanish/.test(note));
   ok('12 note has ZIP (memory)', /ZIP code: 10550/.test(note));
+  ok('12 note DOB not collected in chat', /Date of birth: not provided/.test(note));
   ok('12 note states sensitive data avoided', /SSN.*Medicare ID.*MBI.*banking|do NOT confirm|not requested for safety/i.test(note));
   ok('12 note has NO raw SSN/MBI', !/\b\d{3}-\d{2}-\d{4}\b/.test(note)); }
 

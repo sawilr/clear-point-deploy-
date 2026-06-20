@@ -62,7 +62,7 @@ export function CTASection({
     requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
 
-  const primaryBtnClass = `inline-flex items-center justify-center gap-2 font-bold text-base px-5 sm:px-7 py-3.5 min-h-[48px] rounded-xl transition-all hover:shadow-soft active:scale-[0.98] whitespace-nowrap ${
+  const primaryBtnClass = `cp-btn transition-all hover:shadow-soft active:scale-[0.98] ${
     variant === 'gold'
       ? 'bg-earth-800 text-cream-50 hover:bg-earth-900'
       : 'bg-gold-400 text-earth-900 hover:bg-gold-300'
@@ -96,7 +96,7 @@ export function CTASection({
           )}
           <a
             href="tel:18663108702"
-            className={`inline-flex items-center justify-center gap-2 font-bold text-base px-5 sm:px-7 py-3.5 min-h-[48px] rounded-xl border transition-all active:scale-[0.98] whitespace-nowrap ${
+            className={`cp-btn border transition-all active:scale-[0.98] ${
               variant === 'gold'
                 ? 'bg-cream-50 text-earth-900 border-earth-800/15 hover:border-earth-800'
                 : 'border-cream-50/30 text-cream-50 hover:bg-cream-50/10'

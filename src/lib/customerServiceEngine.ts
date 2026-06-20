@@ -2977,26 +2977,11 @@ export function processMessage(
           { lastnameAsked: true, lastBotIntent: 'handoff_asking_lastname' },
         );
       }
-      // 1. DATE OF BIRTH (refusable, never blocks). Language/ZIP are NOT asked —
-      //    they already live in memory from the opening flow.
-      if (_preEmail && !state.dobAsked) {
-        return _emitHandoff(
-          isEs ? 'Para que el asesor pueda prepararse mejor antes de llamarle, ¿cuál es su fecha de nacimiento?' : 'To help the advisor prepare before calling you, what is your date of birth?',
-          { dobAsked: true, lastBotIntent: 'handoff_asking_dob' },
-        );
-      }
-      if (state.lastBotIntent === 'handoff_asking_dob') {
-        const refused = _refusesProvide(_msg);
-        const dob = refused ? '' : _extractDOB(_msg);
-        const ack = refused
-          ? (isEs ? 'No hay problema. Podemos continuar sin eso. ' : 'No problem. We can continue without that. ')
-          : '';
-        return _emitHandoff(
-          ack + (isEs ? '¿Cuál es el mejor horario para que el asesor le llame?' : 'What is the best time for the advisor to call you?'),
-          { dateOfBirth: dob, dobRefused: refused, bestTimeAsked: true, lastBotIntent: 'handoff_asking_besttime' },
-        );
-      }
-      // 2. BEST TIME TO CALL (accepts natural answers).
+      // DOB removed from the callback CHAT flow (Sawil 2026-06-19, competitive
+      // audit A4): unnecessary PII for a callback — name + phone is sufficient.
+      // Smart Review may still collect DOB for review logic; chat callback does
+      // not. Language/ZIP are NOT asked here — already in memory.
+      // 1. BEST TIME TO CALL (accepts natural answers).
       if (_preEmail && !state.bestTimeAsked) {
         return _emitHandoff(
           isEs ? '¿Cuál es el mejor horario para que el asesor le llame?' : 'What is the best time for the advisor to call you?',
@@ -4018,23 +4003,8 @@ function _medicaidCorrection(m: string): boolean {
 function _cleanShort(s: string, n: number): string {
   return (s || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, n);
 }
-// User declines to give a requested non-required field (e.g. DOB). Never blocks.
-function _refusesProvide(m: string): boolean {
-  return /\b(prefiero no|no quiero (dar|decir|compartir)|no (la|lo|se la|se lo) (doy|dar[eé]|voy a dar)|es privado|privado|no es necesario|para qu[eé]|por qu[eé] (lo |la )?necesit|skip|salta\w*|prefer not|rather not|don'?t want to|do not want to|i'?d rather not|not comfortable|why do you need|no doy|no dar[eé]|no thanks?|no gracias)\b/i.test(m);
-}
-// Best-effort DOB extraction from free text. Returns '' if nothing date-like —
-// the flow then continues WITHOUT blocking the lead. Never treated as PHI: a DOB
-// (8 digits / month-name / 4-digit year) does not match the SSN/MBI/card patterns.
-function _extractDOB(m: string): string {
-  const t = (m || '').trim();
-  const num = t.match(/\b\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}\b/);
-  if (num) return num[0];
-  const mon = t.match(/\b(\d{1,2}\s*(de\s+)?)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|ene|abr|ago|dic|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre|january|february|march|april|june|july|august|september|october|november|december)[a-z]*\.?\s*\d{0,2}(\s*(de\s+|,)?\s*\d{4})?/i);
-  if (mon) return _cleanShort(mon[0], 30);
-  const yr = t.match(/\b(19\d{2}|20[0-2]\d)\b/);
-  if (yr) return yr[0];
-  return '';
-}
+// (DOB helpers removed 2026-06-19 — DOB is no longer collected in the callback
+// chat flow per competitive audit A4.)
 function _statesBothCoverage(m: string): boolean {
   return /\b(tengo los dos|tengo ambos|i have both|have both of them|los dos|ambos)\b/i.test(m);
 }
@@ -4066,6 +4036,52 @@ function _dualBillSource(m: string): 'pharmacy' | 'hospital' | 'doctor' | 'lab' 
   if (/doctor|m[eé]dic|provider|proveedor|consultorio|cl[ií]nica|especialista|specialist/i.test(m)) return 'doctor';
   if (/\bplan\b|aseguradora|carrier|del plan/i.test(m)) return 'plan';
   return 'unknown';
+}
+
+// 2026-06-19 — ASSUMPTION CHALLENGE (competitive audit A1 / Clara EN-6). When the
+// caller pushes back on an inference ("you are assuming too much", "that's not
+// what I said", "you misunderstood", "no, you are wrong", "stop assuming"),
+// Clara must NOT double down on dual-eligible / Medicaid / Extra Help. Clear the
+// inferred status, apologize, reset, and ask ONE open question. Runs BEFORE the
+// dual/medicaid/cost handlers so it always wins.
+function _handleAssumptionChallenge(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const m = (userMessage || '').toLowerCase().trim();
+  if (!m) return null;
+  const challenge = /\b(you('?re| are) assuming|stop assuming|don'?t assume|do not assume|too many assumptions|assuming too much|that'?s not what i (said|meant)|i didn'?t say that|you misunderstood|you (mis)?understood me wrong|you('?re| are) wrong|no,? you('?re| are) wrong)\b/i.test(m)
+    || /\b(est[aá]s? asumiendo|asumiendo (de )?(m[aá]s|demasiado)|asume de m[aá]s|no asuma|deja de asumir|no es lo que (dije|quise decir)|eso no (es lo que|fue lo que) dije|no dije eso|me malinterpret|me entendi[oó] mal|entendi[oó] mal|est[aá] equivocad)\b/i.test(m);
+  if (!challenge) return null;
+  // If the SAME message ALSO carries a concrete intent (a Medicaid mention, or a
+  // bill/cost/provider/letter topic), let the specific handler own it — those
+  // already apologize on correction AND preserve the corrected intent (e.g.
+  // "creo que lo perdí pero estás asumiendo" → Medicaid-lost workflow). The full
+  // reset is only for a BARE challenge ("you are assuming too much").
+  const hasOtherIntent = _statesMedicaidNow(m)
+    || /\b(factura|bill|cobr|copay|copago|doctor|m[eé]dic[oa]|hospital|farmacia|pharmacy|medicament|medicina|medication|carta|letter|parte b|part b|prima|premium|inscrib|enroll|plan)\b/i.test(m);
+  if (hasOtherIntent) return null;
+  // Only meaningful when there is actually an inferred status / active framing to
+  // walk back. If nothing was inferred, let the session-loss recovery / normal
+  // flow handle it (so a bare "you're wrong" at turn 1 isn't hijacked).
+  const hadAssumption = !!(state.dualEligible || state.hasMedicaid || state.extraHelpInferred
+    || state.possibleQMB || state.serviceCategory || state.activeCaseTopic || state.costFlowStage);
+  if (!hadAssumption) return null;
+  const isEs = (state.language || 'es') === 'es';
+  const out = isEs
+    ? 'Tiene razón, disculpe. Empecemos de nuevo. ¿Qué situación específica desea que revisemos?'
+    : "You're right, I'm sorry. Let me start fresh. What specifically can I help you with today?";
+  const newState: ConversationState = {
+    ...state,
+    // Clear every INFERRED status (keep facts: language, ZIP, state, name, phone).
+    dualEligible: undefined, hasMedicaid: undefined, extraHelpInferred: undefined,
+    possibleQMB: undefined, dualFlowStage: undefined, serviceCategory: undefined,
+    costFlowStage: undefined, costChargeSource: undefined, activeCaseTopic: undefined,
+    lastUserProblem: undefined, medicationIssueType: undefined,
+    lastBotIntent: 'assumption_reset', quickReplies: [],
+  };
+  newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
+  return { response: out, newState, needsHuman: false };
 }
 
 // 2026-06-18 — MEDICAID INTENT HANDLER. Decides which Medicaid intent the user
@@ -4395,6 +4411,11 @@ function _runStructuralFirst(
   // Clara must infer automatic Extra Help (never ask it) and, for cost-sharing
   // bills, apply QMB billing-protection reasoning + advisor escalation. Owned
   // deterministically so it is verifiable and never slips to the LLM.
+  // 2026-06-19 — ASSUMPTION CHALLENGE runs FIRST (competitive audit A1): "you are
+  // assuming too much" / "estás asumiendo" must clear inferred dual/Medicaid/Extra
+  // Help and reset — never double down.
+  const _ac = _handleAssumptionChallenge(userMessage, state);
+  if (_ac) return _ac;
   // 2026-06-18 — MEDICAID INTENT must run BEFORE dual reasoning. A generic
   // Medicaid mention ("me pueden ayudar con Medicaid", "creo que lo perdí",
   // "quiero aplicar") is NOT possession, so Clara must not claim dual-eligibility
@@ -5475,9 +5496,34 @@ function processMessageInner(
       if (allDigitsConcat && allDigitsConcat.length >= 3) {
         newState.rejectedZipNumbers = [...(newState.rejectedZipNumbers || []), allDigitsConcat];
       }
+      const _n = allDigitsConcat.length;
+      const _attempts = newState.failedZipAttempts || 1;
+      // Sawil 2026-06-18 live bug: the user typed digits ("0852253" / "020055")
+      // — a GENUINE ZIP attempt with the wrong digit count — but the retry text
+      // was IDENTICAL each time, so the duplicate loop-guard pivoted to "advisor"
+      // / gave up on the 2nd try. Now each retry is DISTINCT + specific (digit
+      // count + example) so the loop-guard never misfires, and we stay patient
+      // for 3 genuine numeric attempts before continuing (advisor confirms later).
+      if (_attempts >= 3) {
+        newState.zipRefused = true;
+        newState.step = 'asking_topic';
+        const out3 = isSpanish
+          ? 'No se preocupe — seguimos sin el código postal por ahora; su asesor licenciado lo puede confirmar después. ¿En qué le puedo ayudar hoy?'
+          : "No worries — let's continue without the ZIP for now; your licensed advisor can confirm it later. How can I help you today?";
+        newState.messages.push({ role: 'bot', content: out3, timestamp: Date.now() });
+        return { response: out3, newState, needsHuman: false };
+      }
       const out = isSpanish
-        ? 'Ese ZIP no parece correcto. Por favor escriba un ZIP de 5 dígitos para mantener la información relacionada con su área.'
-        : "That ZIP code doesn't look right. Please enter a 5-digit ZIP code so I can keep the information relevant to your area.";
+        ? (_attempts <= 1
+            ? (zipRejectReason === 'too_long'
+                ? `Parece que escribió ${_n} dígitos — un código postal de EE. UU. tiene 5, por ejemplo 10550. ¿Cuáles son sus 5 dígitos?`
+                : `Un código postal tiene 5 dígitos (por ejemplo 10550). ¿Me lo confirma?`)
+            : `Casi — necesito exactamente 5 dígitos, como 10550 o 07030. Si no lo tiene a la mano, dígame "no" y seguimos sin él.`)
+        : (_attempts <= 1
+            ? (zipRejectReason === 'too_long'
+                ? `That looks like ${_n} digits — a U.S. ZIP code has 5, for example 10550. What are your 5 digits?`
+                : `A ZIP code has 5 digits (for example 10550). Could you confirm it?`)
+            : `Almost — I need exactly 5 digits, like 10550 or 07030. If you don't have it handy, just say "no" and we'll continue without it.`);
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

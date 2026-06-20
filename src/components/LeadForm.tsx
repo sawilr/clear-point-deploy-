@@ -318,11 +318,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             <label className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
             <div className="flex gap-3">
               <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer">
-                <input type="radio" name="preferred_language" value="en" checked={formData.preferred_language === 'en'} onChange={handleChange} className="accent-earth-800" />
+                <input type="radio" name="preferred_language" value="en" aria-label={t('English', 'Inglés')} checked={formData.preferred_language === 'en'} onChange={handleChange} className="accent-earth-800" />
                 English
               </label>
               <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer">
-                <input type="radio" name="preferred_language" value="es" checked={formData.preferred_language === 'es'} onChange={handleChange} className="accent-earth-800" />
+                <input type="radio" name="preferred_language" value="es" aria-label={t('Spanish', 'Español')} checked={formData.preferred_language === 'es'} onChange={handleChange} className="accent-earth-800" />
                 Español
               </label>
             </div>
@@ -359,12 +359,13 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 name="tcpa_consent"
                 required
                 aria-required="true"
+                aria-labelledby={fid('tcpa_text')}
                 aria-describedby={errors.consent ? fid('consent_err') : undefined}
                 checked={formData.tcpa_consent}
                 onChange={handleChange}
                 className="mt-0.5 w-4 h-4 accent-earth-800 flex-shrink-0"
               />
-              <span className="text-sm text-earth-700 leading-relaxed">
+              <span id={fid('tcpa_text')} className="text-sm text-earth-700 leading-relaxed">
                 {t(
                   'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided above. I understand that these calls may be made using an automatic telephone dialing system and that message and data rates may apply. I understand that I am not required to consent as a condition of purchasing any goods or services, and that I may revoke my consent at any time by replying STOP or calling 1-866-310-8702. Message frequency may vary. See our',
                   'Acepto recibir llamadas de marketing y mensajes de texto de ClearPoint Senior Advisors en el número de teléfono proporcionado arriba. Entiendo que estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático y que pueden aplicarse tarifas de mensajes y datos. Entiendo que no estoy obligado a consentir como condición para comprar bienes o servicios, y que puedo revocar mi consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. La frecuencia de mensajes puede variar. Consulte nuestra'
@@ -392,7 +393,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-earth-800 text-cream-50 font-bold text-base py-3.5 min-h-[48px] rounded-lg hover:bg-earth-900 transition-all hover:shadow-soft mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
+            className="cp-btn w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all hover:shadow-soft mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {submitting
               ? t('Sending...', 'Enviando...')

@@ -47,9 +47,9 @@ export function Hero({
 
   if (variant === 'page') {
     return (
-      <section className={`relative overflow-hidden flex ${compact ? tighter ? 'min-h-[180px] lg:min-h-[240px] items-start' : 'min-h-[200px] lg:min-h-[260px] items-start' : 'min-h-[260px] lg:min-h-[360px] 2xl:min-h-[440px] 3xl:min-h-[520px] items-center'}`}>
+      <section className={`relative overflow-hidden flex ${compact ? tighter ? 'cp-hero-compact-tight items-start' : 'cp-hero-compact items-start' : 'cp-hero-page items-center'}`}>
         <div className="absolute inset-0" aria-hidden="true">
-          <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="w-full h-full object-cover" />
+          <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         </div>
         <div className={`relative z-10 max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5 w-full ${compact ? tighter ? 'pt-3 pb-8 lg:pt-4 lg:pb-10' : 'pt-8 pb-8 lg:pt-10 lg:pb-10' : 'pt-10 pb-12 lg:pt-14 lg:pb-16'}`}>
@@ -71,9 +71,9 @@ export function Hero({
   }
 
   return (
-    <section className="relative min-h-[520px] md:min-h-[660px] lg:min-h-[720px] 2xl:min-h-[820px] 3xl:min-h-[900px] flex items-center overflow-hidden">
+    <section className="cp-hero-home relative flex items-center overflow-hidden">
       <div className="absolute inset-0" aria-hidden="true">
-        <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="w-full h-full object-cover" />
+        <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         <div className="absolute inset-0 bg-gradient-to-t from-earth-900/50 via-transparent to-earth-900/20" />
       </div>
@@ -84,16 +84,16 @@ export function Hero({
               <div className="w-2 h-2 rounded-full bg-gold-400" />
               <span className="text-xs font-bold tracking-[0.15em] uppercase text-gold-300">{t(eyebrow, eyebrowEs)}</span>
             </div>
-            <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.4rem] 2xl:text-[4rem] 3xl:text-[4.5rem] font-medium leading-[1.2] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
+            <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.25rem] 2xl:text-[3.4rem] 3xl:text-[3.6rem] font-medium leading-[1.2] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
             <p className="text-cream-100/80 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
               {t(subheadline, subheadlineEs)}
             </p>
             <div className="flex flex-col sm:flex-row gap-3 mb-10">
-              <button type="button" onClick={handleFreeReview} className="inline-flex items-center justify-center gap-2 bg-gold-400 text-earth-900 font-bold text-base px-6 py-3.5 rounded-xl hover:bg-gold-300 transition-all hover:shadow-lifted active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
+              <button type="button" onClick={handleFreeReview} className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all hover:shadow-lifted active:scale-[0.98] w-full sm:w-auto">
                 <CalendarIcon className="w-4 h-4" />
                 {t('Schedule Free Consultation', 'Agendar Consulta Gratis')}
               </button>
-              <a href="tel:18663108702" className="inline-flex items-center justify-center gap-2 border border-cream-50/30 text-cream-50 font-semibold text-base px-6 py-3.5 rounded-xl hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto min-h-[44px]">
+              <a href="tel:18663108702" className="cp-btn border border-cream-50/30 text-cream-50 hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto">
                 <PhoneIcon className="w-4 h-4" />
                 1-866-310-8702
               </a>

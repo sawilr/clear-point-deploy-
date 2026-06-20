@@ -77,7 +77,7 @@ export default function MedicareAdvantage() {
                 </p>
                 <a
                   href="tel:18663108702"
-                  className="inline-flex items-center gap-2 bg-gold-400 text-earth-900 font-bold text-sm px-5 py-2.5 rounded-lg hover:bg-gold-300 transition-colors"
+                  className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-colors"
                 >
                   {t('Call to Schedule Your SOA', 'Llame para Programar su SOA')}
                 </a>

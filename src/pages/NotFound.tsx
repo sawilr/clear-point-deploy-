@@ -20,13 +20,13 @@ export default function NotFound() {
         <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
           <Link
             to="/"
-            className="inline-flex items-center justify-center bg-earth-800 text-cream-50 font-semibold px-6 py-3 rounded-lg hover:bg-earth-900 transition-colors min-h-[48px]"
+            className="cp-btn bg-earth-800 text-cream-50 hover:bg-earth-900 transition-colors"
           >
             {t('Return Home', 'Volver al Inicio')}
           </Link>
           <a
             href="tel:+18663108702"
-            className="inline-flex items-center justify-center bg-gold-400 text-earth-900 font-semibold px-6 py-3 rounded-lg hover:bg-gold-500 transition-colors min-h-[48px]"
+            className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-500 transition-colors"
           >
             {t('Call 1-866-310-8702', 'Llamar 1-866-310-8702')}
           </a>

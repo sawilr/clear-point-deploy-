@@ -55,6 +55,16 @@ const ONE_Q = (s:string)=>(s.match(/\?/g)||[]).length<=1;
   ];
   for (const c of cases) { console.log(`\n── ${c.id} ──`); const o = await run(c.lang, c.turns); console.log('🤖', o[o.length-1].r.response.replace(/\n+/g,' ').slice(0,170)); c.check(o); }
 
+  console.log('\n── A1 ASSUMPTION CHALLENGE (competitive audit EN-6) ──');
+  { const o = await run('en', ['i have medicare and medicaid and i got bills', 'you are assuming too much']);
+    const s = o[1].r.response;
+    ok('A1-EN bare challenge resets (no double-down)', /start fresh|i'?m sorry|you'?re right/i.test(s) && NO_DUAL_FACT(o[1].st) && NO_EXTRA(s)); }
+  { const o = await run('es', ['tengo medicare y medicaid', 'no, estás asumiendo demasiado']);
+    const s = o[1].r.response;
+    ok('A1-ES bare challenge resets', /empecemos de nuevo|tiene raz[oó]n|disculpe/i.test(s) && NO_DUAL_FACT(o[1].st) && NO_EXTRA(s)); }
+  { const o = await run('en', ['i have medicare and medicaid', 'no you are wrong']);
+    ok('A1 "no you are wrong" resets', NO_DUAL_FACT(o[1].st)); }
+
   console.log(`\n═══════════════════════════════`);
   console.log(`TOTAL: ${PASS} PASS / ${FAIL} FAIL`);
   if (FAIL) console.log('FAILS: ' + fails.join(' | '));
