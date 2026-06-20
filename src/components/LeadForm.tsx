@@ -301,7 +301,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(555) 000-0000" />
+            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
             {errors.phone && <p role="alert" className="text-xs text-red-500 mt-1">{errors.phone}</p>}
           </div>
           <div>
