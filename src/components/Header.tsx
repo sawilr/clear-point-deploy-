@@ -162,7 +162,11 @@ export function Header() {
           <span className="flex items-center gap-1.5 min-w-0 truncate">
             <PhoneIcon className="w-3.5 h-3.5 text-gold-400 flex-shrink-0" />
             <span className="hidden sm:inline whitespace-nowrap">{t('Call us free: ', 'Llámenos gratis: ')}</span>
-            <a href="tel:18663108702" className="text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-866-310-8702</a>
+            {/* Sawil 2026-06-21 (a11y audit): top-bar phone link was ~16px tall
+                (text-only inline). inline-flex + min-h-[44px] gives a 44px tap
+                target; -my-1 absorbs the growth so the top bar's visual height
+                is unchanged. Width (~95px) already exceeds 44px. */}
+            <a href="tel:18663108702" className="inline-flex items-center min-h-[44px] -my-1 text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-866-310-8702</a>
             <span className="hidden md:inline whitespace-nowrap">&nbsp;|&nbsp; TTY: 711 &nbsp;|&nbsp; {t('Mon–Fri 9am–6pm ET', 'Lun–Vie 9am–6pm ET')}</span>
           </span>
           <div className="flex-shrink-0">
