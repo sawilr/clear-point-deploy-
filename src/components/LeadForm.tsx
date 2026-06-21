@@ -317,11 +317,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <div>
             <label className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
             <div className="flex gap-3">
-              <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer min-h-[44px]">
                 <input type="radio" name="preferred_language" value="en" aria-label={t('English', 'Inglés')} checked={formData.preferred_language === 'en'} onChange={handleChange} className="accent-earth-800" />
                 English
               </label>
-              <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer min-h-[44px]">
                 <input type="radio" name="preferred_language" value="es" aria-label={t('Spanish', 'Español')} checked={formData.preferred_language === 'es'} onChange={handleChange} className="accent-earth-800" />
                 Español
               </label>
@@ -352,7 +352,10 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
 
           {/* TCPA Consent — UNCHECKED BY DEFAULT (COMPLIANCE REQUIRED) */}
           <div className="bg-cream-100 rounded-lg p-3.5 border border-cream-300">
-            <label className="flex items-start gap-3 cursor-pointer">
+            {/* Sawil 2026-06-21 (combined audit Phase 1 #1B): the whole label is
+                the tap target (input + text); min-h-[44px] guarantees WCAG 2.5.5
+                target size even if the consent text is short in some locale. */}
+            <label className="flex items-start gap-3 cursor-pointer min-h-[44px]">
               <input
                 id={fid('tcpa_consent')}
                 type="checkbox"

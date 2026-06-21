@@ -186,7 +186,9 @@ export function Header() {
               </div>
               <div className="flex flex-col leading-tight whitespace-nowrap">
                 <span className="font-serif text-lg font-bold text-earth-900 tracking-tight whitespace-nowrap leading-[1.1]">Clear Point</span>
-                <span className="text-[10px] font-semibold tracking-[0.18em] uppercase text-gold-500 mt-1 whitespace-nowrap">{t('Senior Advisors', 'Senior Advisors')}</span>
+                {/* Sawil 2026-06-21 (combined audit Phase 1 #1C): 10px all-caps
+                    tagline was below legible size for a 65+ audience. 12px min. */}
+                <span className="text-[12px] font-semibold tracking-[0.18em] uppercase text-gold-500 mt-1 whitespace-nowrap">{t('Senior Advisors', 'Senior Advisors')}</span>
               </div>
             </a>
 

@@ -2207,9 +2207,13 @@ export function detectProblemType(text: string): string {
     }
   } catch { /* fall through to legacy */ }
   const normalized = normalizeText(text);
-  // Wave 19: explicit "talk to advisor" trumps every topic so the user can
-  // bail out at any moment.
-  if (/\b(hablar con (un |una )?(asesor|asesora|agente|persona|humano)|necesito (un |una )?(asesor|asesora|agente)|qu[ie]ero (un |una )?(asesor|asesora|agente)|talk to (a |an )?(advisor|agent|representative|person|human|live person)|speak (to|with) (a |an )?(advisor|agent|representative|person|human)|get me (a |an )?(advisor|agent|representative|human)|live agent|real person)\b/i.test(normalized)) return 'advisor';
+  // Wave 19 + 2026-06-21 combined-audit Phase 1 #1A: explicit "talk to advisor"
+  // OR a callback request trumps every topic so the user can bail out at any
+  // moment. Spanish variants the prior regex missed (confirmed FAIL in the
+  // advisor-escalation harness): "necesito hablar con alguien", "conéctame con
+  // un asesor", "(quiero|prefiero) que me llamen". EN parity: "talk to someone",
+  // "call me back".
+  if (/\b(hablar con (un |una )?(asesor|asesora|agente|persona|humano|alguien)|necesito (un |una )?(asesor|asesora|agente)|qu[ie]ero (un |una )?(asesor|asesora|agente)|con[eé]ct(a|e)(me|nme|enme)|que me llamen|ll[aá]menme|talk to (a |an )?(advisor|agent|representative|person|human|live person|someone)|speak (to|with) (a |an )?(advisor|agent|representative|person|human|someone)|get me (a |an )?(advisor|agent|representative|human)|call me( back)?|have (someone|somebody) call me|someone call me|live agent|real person)\b/i.test(normalized)) return 'advisor';
   // V25 — best plan question (no-recommendation compliance guard).
   if (/\b(best plan|mejor plan|what plan should|qu[eé] plan (me|debo) (escoger|elegir|recomienda|recomendar[ií]a)|which plan (is best|do you recommend)|recommend a plan|recomi[eé]nde(me)? un plan|cu[aá]l plan es mejor|qu[eé] plan es el mejor)\b/i.test(normalized)) return 'best_plan_question';
   // V26 — doctor / provider / network issues. Higher priority than coverage.
@@ -3718,6 +3722,13 @@ function _handleCostFlow(
   const inFlow = !!stage && stage !== 'done';
   const attempts = state.costFlowAttempts || 0;
   const haveContact = !!(state.name && state.phoneNumber && (state.advisorHandoffStarted || (state as { consent_to_contact?: boolean }).consent_to_contact === true));
+
+  // Sawil 2026-06-21 (combined-audit Phase 1 #1A): an explicit advisor / callback
+  // request OVERRIDES the in-progress copay/income cost flow. Defer to the normal
+  // engine so the advisor-handoff handler (collects name + phone) owns the turn —
+  // never keep re-asking income. Without this, ES "pago muchos copagos" →
+  // "quiero hablar con un asesor" looped back to the income question (audit FAIL).
+  if (inFlow && detectProblemType(userMessage) === 'advisor') return null;
 
   const emit = (
     text: string,
