@@ -4345,7 +4345,16 @@ function _handleDualEligible(
 // ════════════════════════════════════════════════════════════════════════════
 function _statesProviderBill(m: string): boolean {
   if (!_dualMentionsProvider(m)) return false;
-  const billWord = /\b(factura|facturas|me mandaron|me lleg[oó]|me enviaron|me cobr|cobraron|bill|billed|invoice|cuenta)\b/i.test(m);
+  // Sawil 2026-06-20 — a plan LETTER about a doctor/PCP/network change is NOT a
+  // bill. Live bug: "me llegó una carta ... me cambiaron mi doctor" was misrouted
+  // here because the bare receipt verb "me llegó" counted as a bill. A letter
+  // with no real charge word / amount is not a provider bill.
+  if (/\b(carta|letter|aviso|notice)\b/i.test(m)
+      && !/\b(factura|facturas|bill|billed|invoice|cobr|cobraron|cuenta)\b/i.test(m)
+      && !/\$\s?\d{2,}/.test(m)) return false;
+  // Receipt verbs alone (me llegó / me mandaron / me enviaron) no longer imply a
+  // bill — require an explicit charge word or a dollar amount.
+  const billWord = /\b(factura|facturas|me cobr|cobraron|bill|billed|invoice|cuenta)\b/i.test(m);
   const amount = /\$\s?\d{2,}|\b\d{3,6}\b/.test(m);
   return billWord || amount;
 }
@@ -4375,6 +4384,53 @@ function _handleProviderBill(
     costFlowStage: undefined,
     lastBotOfferedAdvisor: true,
     lastBotIntent: 'provider_bill_review',
+    quickReplies: [],
+  };
+  newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
+  return { response: out, newState, needsHuman: false };
+}
+
+// Sawil 2026-06-20 — PLAN LETTER / PROVIDER (PCP / network) CHANGE. A letter
+// saying the plan changed/assigned the doctor, or that the doctor left the
+// network, is NOT a bill. Live bug: "me llegó una carta de mi plan q me
+// cambiaron mi doctor" was answered as a hospital/doctor bill. Classify by
+// intent, not by isolated words. Acknowledge + classify + ONE clarifying
+// question (PCP changed vs. out of network). Runs BEFORE _handleProviderBill.
+function _statesPlanLetterProviderChange(m: string): boolean {
+  // A clear bill takes precedence (the bill handler / multi-issue owns those).
+  if (/\b(factura|facturas|bill|billed|invoice)\b/i.test(m) || /\$\s?\d{2,}/.test(m)) return false;
+  const provider = /\b(doctor|doctora|m[eé]dic[oa]|pcp|primario|cabecera|primary care|primary|proveedor|provider)\b/i.test(m);
+  const changeWord = /\b(cambiaron|cambi[oó]|cambio|me asignaron|asign[oó]|asignaron|quitaron|otro m[eé]dico|otra doctora?|nuevo (doctor|m[eé]dico|pcp)|changed|reassigned|assign(ed)?|switch(ed)?|new (doctor|pcp|primary))\b/i.test(m);
+  const outOfNetwork = /\b(fuera de (la )?red|out[- ]of[- ]network|ya no (lo |me )?(acepta|acept[ae]n|est[aá])|no longer (in[- ]network|accepts?|takes?)|no acepta mi (plan|seguro|medicare)|dropped (from )?(the )?network)\b/i.test(m);
+  const planLetterDoctor = /\b(carta|letter|aviso|notice)\b/i.test(m) && /\b(plan|doctor|m[eé]dico|pcp|red|network|primario)\b/i.test(m);
+  return (provider && changeWord) || outOfNetwork || (provider && planLetterDoctor);
+}
+function _handlePlanLetterProviderChange(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  const m = (userMessage || '').toLowerCase().trim();
+  if (!m) return null;
+  if (state.serviceCategory === 'provider_change' && state.lastBotOfferedAdvisor) return null;
+  if (!_statesPlanLetterProviderChange(m)) return null;
+  const isEs = (state.language || 'es') === 'es';
+  // Multiple issues in one message (e.g. medication cost + doctor change) → don't
+  // answer everything at once; ask which is most urgent first.
+  const alsoMed = /\b(medicin|medicament|medicina|farmacia|pharmacy|receta|prescription|pastilla|pill)\b/i.test(m);
+  const out = alsoMed
+    ? (isEs
+        ? 'Entiendo, y veo que hay más de un tema aquí. Vamos paso a paso para no confundirnos. Primero, ¿cuál es el más urgente para usted: el cambio de su doctor, o el costo de su medicina?'
+        : "I understand, and I can see there's more than one thing here. Let's go step by step so we don't mix things up. First, which is most urgent for you: the change to your doctor, or your medication cost?")
+    : (isEs
+        ? 'Entiendo. Eso suena a una carta del plan sobre un cambio de doctor o médico primario, no a una factura. Para orientarle bien: ¿la carta dice que le cambiaron su médico primario (PCP), o que su doctor ya no está en la red del plan?'
+        : "I understand. That sounds like a plan letter about a doctor or primary care provider change, not a bill. To guide you correctly: does the letter say your primary doctor (PCP) was changed, or that your doctor is no longer in the plan's network?");
+  const newState: ConversationState = {
+    ...state,
+    serviceCategory: 'provider_change',
+    activeCaseTopic: state.activeCaseTopic || 'provider_change',
+    lastUserProblem: state.lastUserProblem || userMessage,
+    costFlowStage: undefined,
+    lastBotIntent: 'provider_change_clarify',
     quickReplies: [],
   };
   newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
@@ -4445,6 +4501,11 @@ function _runStructuralFirst(
   // bill (hospital/doctor/lab/ambulance) is a billing dispute for advisor review,
   // not the premium/income diagnosis. Prevents the "$3,500 hospital bill mistaken
   // for a monthly premium + source loop" failure.
+  // 2026-06-20 — PLAN LETTER / PROVIDER (PCP / network) CHANGE before the bill
+  // handler: "carta del plan ... me cambiaron mi doctor" is a provider-change
+  // issue, NOT a hospital/doctor bill. Classify by intent, ask ONE question.
+  const _plc = _handlePlanLetterProviderChange(userMessage, state);
+  if (_plc) return _plc;
   const _pb = _handleProviderBill(userMessage, state);
   if (_pb) return _pb;
   // Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7), never the
