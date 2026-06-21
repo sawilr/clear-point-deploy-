@@ -210,7 +210,13 @@ export default async function handler(req, res) {
       210,214,254,281,325,346,361,409,430,432,469,512,682,713,
       726,737,806,817,830,832,903,915,936,940,945,956,972,979,
       385,435,801,802,276,434,540,571,703,757,804,
-      206,253,360,425,509,564,304,681,262,414,534,608,715,920,307
+      206,253,360,425,509,564,304,681,262,414,534,608,715,920,307,
+      // Sawil 2026-06-20 — U.S. TERRITORIES (must mirror src/lib/validation.ts).
+      // Puerto Rico 787/939 etc. are valid U.S. phone numbers. Without these the
+      // client accepted a 787 but THIS server 400'd it → "No pudimos enviar su
+      // solicitud" (live lead-loss). Service area stays ZIP-gated (NY/NJ/CT),
+      // never by phone area code.
+      787,939,340,671,670,684
     ]);
     function serverValidatePhone(raw) {
       if (!raw) return { valid: false, reason: 'Phone missing' };
