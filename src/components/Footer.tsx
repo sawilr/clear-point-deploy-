@@ -174,7 +174,7 @@ export function Footer() {
         </div>
 
         {/* Licensing disclosure — CMS-required for MA marketing. */}
-        <div className="border-t border-cream-50/10 pt-4 pb-3 text-center sm:text-left text-[13px] text-cream-50/80 leading-relaxed">
+        <div className="border-t border-cream-50/10 pt-4 pb-3 text-center sm:text-left text-[14px] text-cream-50/80 leading-relaxed">
           <span className="font-semibold">NPN: 17261494</span>
           <span className="mx-2 text-cream-50/40">|</span>
           <span>{t('Licensed in NY · NJ · CT', 'Licenciado en NY · NJ · CT')}</span>
@@ -183,7 +183,7 @@ export function Footer() {
         </div>
 
         {/* Bottom */}
-        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[13px] text-cream-50/70">
+        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[14px] text-cream-50/70">
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center gap-3 flex-wrap">
             <Link to="/privacy-policy" className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
