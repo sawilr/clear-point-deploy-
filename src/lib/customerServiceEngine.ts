@@ -126,6 +126,10 @@ export interface ConversationState {
   topicAsked?: boolean;
   /** Short topic the advisor should know before calling. */
   advisorTopic?: string;
+  /** Sawil 2026-06-20 — counts failed phone attempts in the advisor handoff so
+   *  Clara can escape the re-ask loop (offer the direct line) instead of
+   *  repeating the same question forever. */
+  phoneAttempts?: number;
   /** Set when ZIP + declared state disagree, or when name/ZIP/phone fail validation. */
   probableFakeLead?: boolean;
   /** Human-readable inconsistency list for the advisor to review. */
@@ -3220,22 +3224,34 @@ export function processMessage(
       // PHASE A9 — was the user attempting to give a phone that failed
       // validation? If so, gently re-ask with explicit reason.
       const _userAttemptedPhone = /\d{5,}/.test(_msg.replace(/[\s\-().]/g, ''));
-      const wasRetry = state.lastBotIntent === 'handoff_asking_phone' || state.lastBotIntent === 'handoff_asking_phone_retry';
+      const wasRetry = state.lastBotIntent === 'handoff_asking_phone' || state.lastBotIntent === 'handoff_asking_phone_retry' || state.lastBotIntent === 'handoff_phone_escape';
       const isInvalidRetry = _userAttemptedPhone && wasRetry;
+      // Sawil 2026-06-20 — ANTI-LOOP / FRUSTRATION ESCAPE. Never repeat the same
+      // phone question forever. Count failed attempts; if the caller failed 2+
+      // times OR shows frustration ("ya te dije", "no entiendes", profanity),
+      // stop the robotic re-ask: acknowledge, name the one thing still needed,
+      // and offer the direct line (advisor escalation) so they are never trapped.
+      const _phoneAttempts = (state.phoneAttempts || 0) + (isInvalidRetry ? 1 : 0);
+      const _phoneEscape = wasRetry && (detectAbuseOrFrustration(_msg).detected || _phoneAttempts >= 2);
       // Have name — ask for phone next
-      const out = isEs
-        ? (isInvalidRetry
-          ? `Disculpe, ese número no parece tener 10 dígitos correctos. ¿Me lo puede dar de nuevo? (10 dígitos, sin guiones — por ejemplo, 3475551234)`
-          : `Gracias, ${finalName}. ¿Cuál es un teléfono donde le puedan llamar? (10 dígitos)`)
-        : (isInvalidRetry
-          ? `Sorry — that doesn't look like a 10-digit phone number. Could you try again? (10 digits, no dashes — e.g., 3475551234)`
-          : `Thanks, ${finalName}. What's a phone number where they can reach you? (10 digits)`);
+      const out = _phoneEscape
+        ? (isEs
+          ? `Tiene toda la razón y le pido disculpas — no quiero repetir lo mismo. Lo único que me falta para que un asesor licenciado le devuelva la llamada es un teléfono de 10 dígitos. Si prefiere, puede llamarnos directo ahora al 1-866-310-8702 y con gusto le ayudamos, sin costo.`
+          : `You're absolutely right, and I'm sorry — I don't want to keep repeating myself. The only thing I still need so a licensed advisor can call you back is a 10-digit phone. If you'd rather, you can call us directly right now at 1-866-310-8702 and we'll gladly help, at no cost.`)
+        : (isEs
+          ? (isInvalidRetry
+            ? `Disculpe, ese número no parece válido. ¿Me lo puede dar de nuevo? (solo los 10 dígitos, sin guiones)`
+            : `Gracias, ${finalName}. ¿Cuál es un teléfono donde le puedan llamar? (10 dígitos)`)
+          : (isInvalidRetry
+            ? `Sorry — that doesn't look like a valid number. Could you try again? (just the 10 digits, no dashes)`
+            : `Thanks, ${finalName}. What's a phone number where they can reach you? (10 digits)`));
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
         name: finalName,
         nameIsValid: true,
-        lastBotIntent: isInvalidRetry ? 'handoff_asking_phone_retry' : 'handoff_asking_phone',
+        phoneAttempts: _phoneAttempts,
+        lastBotIntent: _phoneEscape ? 'handoff_phone_escape' : (isInvalidRetry ? 'handoff_asking_phone_retry' : 'handoff_asking_phone'),
         quickReplies: [],
         messages: [
           ...(state.messages || []),

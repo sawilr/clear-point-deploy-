@@ -68,6 +68,17 @@ const US_AREA_CODES = new Set<number>([
   304,681,                                                      // West Virginia
   262,414,534,608,715,920,                                      // Wisconsin
   307,                                                          // Wyoming
+  // Sawil 2026-06-20 — U.S. TERRITORIES (NANPA, residents are U.S. citizens/
+  // nationals and Medicare-eligible). LIVE BUG: Maria Torres (ZIP 10550, NY)
+  // gave a valid 787 Puerto Rico cell and Clara rejected it 3x as "not 10
+  // digits", trapping a real bilingual lead in a loop. PR (787/939) is essential
+  // for this Spanish-speaking Medicare clientele. The anti-fake guards
+  // (sequential / 555 / repetitive / exchange) still apply to these areas.
+  787,939,                                                      // Puerto Rico
+  340,                                                          // U.S. Virgin Islands
+  671,                                                          // Guam
+  670,                                                          // Northern Mariana Islands
+  684,                                                          // American Samoa
 ]);
 
 // ─── Phone Validation ──────────────────────────────────────────────────────

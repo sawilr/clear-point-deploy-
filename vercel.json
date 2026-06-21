@@ -4,6 +4,7 @@
     { "source": "/education", "destination": "/resources", "permanent": true },
     { "source": "/enrollment-periods", "destination": "/resources", "permanent": true },
     { "source": "/medicare-basics", "destination": "/resources", "permanent": true },
+    { "source": "/medicare-supplement", "destination": "/resources", "permanent": true },
     {
       "source": "/(.*)",
       "has": [{ "type": "host", "value": "www.clearpointsenioradvisors.com" }],
