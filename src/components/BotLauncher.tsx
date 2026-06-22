@@ -78,7 +78,7 @@ export function BotLauncher() {
           ref={popoverRef}
           role="dialog"
           aria-labelledby="cp-launcher-title"
-          className="fixed z-[60] bottom-[calc(env(safe-area-inset-bottom)+148px)] right-4 md:bottom-[100px] md:right-6 w-[min(360px,calc(100vw-2rem))] bg-white rounded-2xl shadow-lifted border border-cream-200 overflow-hidden animate-fade-in"
+          className="fixed z-[60] bottom-[calc(env(safe-area-inset-bottom)+168px)] right-4 md:bottom-[100px] md:right-6 w-[min(360px,calc(100vw-2rem))] bg-white rounded-2xl shadow-lifted border border-cream-200 overflow-hidden animate-fade-in"
         >
           <header className="px-5 py-4 border-b border-cream-200 bg-cream-50">
             <p className="text-[10px] font-bold tracking-[0.2em] uppercase text-gold-600 mb-1">ClearPoint</p>
@@ -134,7 +134,7 @@ export function BotLauncher() {
         // button. Below 360px the launcher collapses to an icon-only 56px
         // circle so it tucks into the corner without covering the CTA label.
         // Position/behavior unchanged at 361px+ and on tablet/desktop.
-        className="cp-zara-fab fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 active:scale-95 transition-all min-h-[56px] max-[360px]:w-14 max-[360px]:gap-0 max-[360px]:px-0 max-[360px]:justify-center max-[360px]:rounded-full"
+        className="cp-zara-fab fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+88px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 active:scale-95 transition-all min-h-[56px] max-[360px]:w-14 max-[360px]:gap-0 max-[360px]:px-0 max-[360px]:justify-center max-[360px]:rounded-full"
       >
         <MessageCircle aria-hidden className="w-5 h-5" />
         <span className="text-sm font-medium pr-1 max-[360px]:hidden">
