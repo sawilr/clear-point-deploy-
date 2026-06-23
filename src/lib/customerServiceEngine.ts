@@ -3829,6 +3829,19 @@ function _handleCostFlow(
     const eAmtStr = eAmt != null ? String(eAmt) : undefined;
     const eSrc = _classifyCostSource(m);
     const base: Partial<ConversationState> = { activeCaseTopic: 'medicare_cost', lastUserProblem: raw, costFlowAttempts: 0, costMonthlyAmount: eAmtStr };
+    // Sawil 2026-06-23 — MULTI-ISSUE: a recurring Medicare charge AND a plan-change
+    // suggestion in one breath ("me cobran de Medicare y mi doctor me pidió cambiar
+    // el plan"). A human names BOTH, then handles the charge first by its source
+    // (income-first reads abrupt here). Don't silently drop the plan issue.
+    const _planChange = /\bcambiar\b[^.]{0,25}\b(de |el |mi )?plan\b/.test(m) || /\bcambie\b[^.]{0,15}\bplan\b/.test(m) || /\bchange\b[^.]{0,20}\bplan\b/.test(m);
+    if (_planChange) {
+      return emit(
+        isEs
+          ? 'Entiendo, y me menciona dos cosas: que le están cobrando de Medicare, y que su doctor le sugirió cambiar de plan. Empecemos por el cobro para no perderlo, y enseguida vemos lo del plan. ¿Ese cobro sale de su cheque del Seguro Social (la prima de la Parte B), de una farmacia, de un doctor u hospital, o de una factura que recibió?'
+          : "I understand, and you mention two things: that you're being charged by Medicare, and that your doctor suggested changing your plan. Let's start with the charge so we don't lose it, then we'll look at the plan. Does that charge come from your Social Security check (the Part B premium), a pharmacy, a doctor or hospital, or a bill you received?",
+        { ...base, costFlowStage: 'ask_source', lastBotIntent: 'costflow_ask_source' },
+      );
+    }
     if (_mentionsMedicaid(m)) return goEducate({ ...base, dualEligible: true, costChargeSource: eSrc === 'unknown' ? undefined : eSrc });
     if (eSrc === 'pharmacy') return goEducate({ ...base, costChargeSource: 'pharmacy' });
     if (eSrc === 'provider' || eSrc === 'bill') {
