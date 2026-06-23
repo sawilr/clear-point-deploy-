@@ -4363,6 +4363,16 @@ function _statesProviderBill(m: string): boolean {
   if (/\b(carta|letter|aviso|notice)\b/i.test(m)
       && !/\b(factura|facturas|bill|billed|invoice|cobr|cobraron|cuenta)\b/i.test(m)
       && !/\$\s?\d{2,}/.test(m)) return false;
+  // Sawil 2026-06-23 — "me cobran de Medicare" is a RECURRING charge (Part B
+  // premium / plan cost) and "cambiar de plan" is a plan-change request — neither
+  // is a one-time provider/hospital bill. Without an explicit bill noun, these
+  // belong in the cost / multi-issue flow, not the bill handler. (Live: a senior
+  // mixing "me cobran $200 de Medicare y mi doctor me pidió cambiar el plan" was
+  // misread as a hospital bill and then looped on the wrong track.)
+  const recurringMedicareCharge = /\bcobr\w*\b[^.]{0,40}\bde\s+medicare\b/i.test(m);
+  const planChange = /\bcambiar\b[^.]{0,25}\b(de\s+|el\s+|mi\s+)?plan\b/i.test(m) || /\bchange\b[^.]{0,25}\bplan\b/i.test(m);
+  const explicitBillNoun = /\b(factura|facturas|recibo|invoice|statement|hospital bill|doctor bill)\b/i.test(m);
+  if ((recurringMedicareCharge || planChange) && !explicitBillNoun) return false;
   // Receipt verbs alone (me llegó / me mandaron / me enviaron) no longer imply a
   // bill — require an explicit charge word or a dollar amount.
   const billWord = /\b(factura|facturas|me cobr|cobraron|bill|billed|invoice|cuenta)\b/i.test(m);
