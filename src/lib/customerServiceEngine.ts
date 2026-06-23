@@ -3939,9 +3939,19 @@ function _handleCostFlow(
   }
 
   if (stage === 'offered_advisor') {
-    if (isPushback) {
-      const body = buildEducation(state.costChargeSource, state.dualEligible);
-      return emit(body + (haveContact ? '' : offerText()), { lastBotOfferedAdvisor: !haveContact, lastBotIntent: 'costflow_educate' });
+    // Sawil 2026-06-23 — a senior pushing back / confused after the education is NOT
+    // a cue to re-dump the same wall (robot repeat). Acknowledge briefly like a
+    // human and reaffirm the advisor offer. Catches both "ya te dije" pushback and
+    // frustration ("de qué hablas, te dije, me das mucha info").
+    if (isPushback
+        || detectAbuseOrFrustration(userMessage).detected
+        || /no te estoy pidiendo|mucha informacion|de que (estas|esta) hablando|ya te (dije|habia dicho)|te dije/i.test(m)) {
+      return emit(
+        isEs
+          ? 'Tiene toda la razón y le pido disculpas — me extendí de más. En corto: con esos costos, lo mejor es que un asesor licenciado de ClearPoint lo revise con usted con calma, sin costo. ¿Le parece bien que le contacte?'
+          : "You're absolutely right, and I apologize — I gave you too much. In short: with those costs, the best step is to have a licensed ClearPoint advisor review it with you calmly, at no cost. Is it okay if they reach out?",
+        { lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_educate' },
+      );
     }
     // The user keeps describing the cost (an amount / "cada mes") instead of
     // answering the advisor offer. Acknowledge the detail and reaffirm the
