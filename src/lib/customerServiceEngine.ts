@@ -3365,9 +3365,11 @@ export function processMessage(
         ? `Disculpe que no me esté explicando bien. Esto a veces es complicado de hablar por chat. ¿Quiere que un asesor licenciado le llame para explicárselo con calma — sin costo? O agendamos una llamada para más tarde si prefiere.`
         : `I'm sorry I'm not explaining this well. This can be hard to handle over chat. Would you like a licensed advisor to call you to walk through it — at no cost? Or we can schedule a call for later if you prefer.`;
     } else if (wasAskingProvider) {
+      // Sawil 2026-06-23 — non-presumptive: do NOT assert "a doctor told you to
+      // switch plans" unless the caller said so. Keep it short and ask.
       out = isEs
-        ? `Claro, le explico más sencillo. Cuando un doctor le dice "cambie de plan" puede ser por **una** de cuatro razones comunes: (1) el doctor está saliendo de la red del plan, (2) el plan está terminando o cambiando, (3) hay problemas con autorizaciones previas, o (4) cambió el formulario de medicamentos. Yo no puedo confirmar cuál de estas es su caso — un asesor licenciado sí puede revisar el plan y el área. ¿Cuál de estas se parece más a lo que le pasó, o prefiere que le llame un asesor?`
-        : `Sure, let me explain more simply. When a doctor tells you "switch plans" it's usually for **one** of four common reasons: (1) the doctor is leaving the plan's network, (2) the plan is terminating or changing, (3) there are prior-authorization problems, or (4) the drug formulary changed. I can't confirm which one applies to your case — a licensed advisor can review the plan and your area. Which of these sounds closest to your situation, or would you prefer an advisor to call?`;
+        ? `Claro, se lo explico más sencillo. Cuando hay algo entre su doctor y su plan, casi siempre es que el doctor está saliendo de la red del plan, o que el plan cambió o terminó. ¿Es algo así, o es otra cosa con su plan? Un asesor licenciado se lo puede revisar con calma, sin costo.`
+        : `Sure, let me explain it more simply. When something comes up between your doctor and your plan, it's almost always that the doctor is leaving the plan's network, or the plan is changing or terminating. Is it something like that, or something else about your plan? A licensed advisor can review it with you, at no cost.`;
     } else if (wasAskingBill) {
       out = isEs
         ? `Claro. Una factura puede ser de tres tipos: (a) le dicen que **usted** debe pagar una cantidad ("amount due"), (b) es una **explicación de beneficios** del plan (EOB — no es factura, no se paga), o (c) es un cobro de la farmacia. Para ayudarle mejor, ¿cuál parece que tiene? Si no está claro, un asesor licenciado puede revisarla.`
@@ -3760,14 +3762,30 @@ function _handleCostFlow(
     : 'Does that charge come from your Social Security check (the Part B premium), a pharmacy, a doctor or hospital, or a bill you received?';
 
   // restate on "ya te dije" → re-ask the CURRENT question, never reset
-  const restate = (question: string, intent: string) => emit(
-    (isEs ? 'Tiene razón, disculpe. ' : "You're right, sorry. ")
-    + (isEs
-        ? `Usted me dijo que le están cobrando${state.costMonthlyAmount ? ` como $${state.costMonthlyAmount}` : ''} de Medicare. `
-        : `You told me Medicare is charging you${state.costMonthlyAmount ? ` about $${state.costMonthlyAmount}` : ''}. `)
-    + question,
-    { lastBotIntent: intent },
-  );
+  const restate = (question: string, intent: string) => {
+    // Sawil 2026-06-23 — restate ONCE, then stop. A human acknowledges and re-asks
+    // the first time you push back; the SECOND consecutive push on the same step,
+    // they stop repeating and hand you to someone who can resolve it. We mark a
+    // restate with a `__restated` suffix on lastBotIntent so we can tell a fresh
+    // restate (prev intent was the original ask) from a repeat one (prev intent
+    // was already a restate of THIS step).
+    if (state.lastBotIntent === `${intent}__restated`) {
+      return emit(
+        isEs
+          ? 'Disculpe, mejor no le hago repetir más. Un asesor licenciado de ClearPoint puede revisar su caso con calma, sin costo. ¿Le parece bien que le contacte?'
+          : "Sorry — I won't make you repeat again. A licensed ClearPoint advisor can review your case calmly, at no cost. Is it okay if they reach out?",
+        { costFlowStage: 'offered_advisor', lastBotIntent: 'costflow_educate', lastBotOfferedAdvisor: true },
+      );
+    }
+    return emit(
+      (isEs ? 'Tiene razón, disculpe. ' : "You're right, sorry. ")
+      + (isEs
+          ? `Usted me dijo que le están cobrando${state.costMonthlyAmount ? ` como $${state.costMonthlyAmount}` : ''} de Medicare. `
+          : `You told me Medicare is charging you${state.costMonthlyAmount ? ` about $${state.costMonthlyAmount}` : ''}. `)
+      + question,
+      { lastBotIntent: `${intent}__restated` },
+    );
+  };
 
   // MSP / Extra Help education — conditional, compliance-safe, names QMB/SLMB/QI.
   // Pure of state: takes THIS-turn values so flags set in the same patch show up.
@@ -6343,6 +6361,7 @@ function processMessageInner(
       } else if (medAns.category === 'cost_too_high') {
         newState.medicationIssueType = 'cost_too_high';
         newState.advisorHandoffReason = 'medication_cost_too_high';
+        newState.lastBotIntent = 'med_cost_review';
         const out = isSpanish
           ? 'Anotado — costo alto. No puedo confirmar el copago aquí, pero un asesor licenciado puede revisar el formulario del plan, opciones en otra farmacia, si aplica Extra Help, o una alternativa cubierta. ¿Le gustaría que un asesor le contacte?'
           : "Got it — cost too high. I can't confirm the copay here, but a licensed advisor can review the plan formulary, pharmacy options, whether Extra Help applies, or a covered alternative. Would you like an advisor to follow up?";
@@ -6412,6 +6431,7 @@ function processMessageInner(
         // the correct next step for a medication cost/coverage problem.
         newState.advisorHandoffReason = newState.advisorHandoffReason
           || `medication_${newState.medicationIssueType || 'unclear'}`;
+        newState.lastBotIntent = 'med_advisor_offer';
         const out = isSpanish
           ? 'Para esto, lo mejor es que un asesor licenciado de ClearPoint lo revise directamente con la farmacia y el plan, sin costo. ¿Le contactamos?'
           : 'For this, the best step is to have a licensed ClearPoint advisor review it directly with the pharmacy and the plan, at no cost. Want them to follow up?';
@@ -6479,6 +6499,7 @@ function processMessageInner(
         ? ['Alto costo', 'No me la cubren', 'Necesita autorización', 'Hablar con asesor']
         : ['High cost', 'Not covered', 'Needs authorization', 'Talk to advisor'];
       newState.askedQuestions = [...(newState.askedQuestions || []), 'drug_q1_cost_cover_auth'];
+      newState.lastBotIntent = 'med_triage';
       // STICKY medication context. Without this the follow-up ("es muy cara",
       // "200 dolares", "no se") re-classifies as cost_basics/general and the
       // generic Part-B-premium cost flow hijacks the conversation (asking for
@@ -7139,8 +7160,8 @@ function processMessageInner(
         const keepEs = keptKind === 'specialist' ? ' ni de especialista' : keptKind === 'doctor' ? ' ni de doctor' : '';
         const keepEn = keptKind === 'specialist' ? ' or specialist' : keptKind === 'doctor' ? ' or doctor' : '';
         const out = isSpanish
-          ? `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta. Cuando un doctor o el plan menciona un cambio, casi siempre es porque el proveedor podría estar saliendo de la red o el plan cambió — eso se puede revisar antes de cualquier decisión. No puedo verificar la red de un plan específico desde aquí, pero un asesor licenciado de ClearPoint puede revisarlo con su plan, explicarle sus opciones y ver si aplica un Período Especial de Inscripción, sin costo. ¿Quiere que un asesor lo revise con usted?`
-          : `I understand, and we won't assume changing your plan${keepEn} is the answer. When a doctor or the plan mentions a change, it's almost always because the provider may be leaving the network or the plan changed — that can be reviewed before any decision. I can't verify a specific plan's network from here, but a licensed ClearPoint advisor can review it with your plan, explain your options, and check whether a Special Enrollment Period applies — at no cost. Would you like an advisor to review it with you?`;
+          ? `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta. Casi siempre es que el proveedor está saliendo de la red o el plan cambió, y eso se revisa antes de decidir nada. Yo no puedo verificar la red desde aquí, pero un asesor licenciado de ClearPoint sí, y le dirá si aplica un Período Especial de Inscripción, sin costo. ¿Quiere que lo revise con usted?`
+          : `I understand, and we won't assume changing your plan${keepEn} is the answer. It's almost always that the provider is leaving the network or the plan changed, and that gets reviewed before deciding anything. I can't verify the network from here, but a licensed ClearPoint advisor can, and will tell you whether a Special Enrollment Period applies — at no cost. Want them to review it with you?`;
         newState.planChangeAcknowledged = true;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };

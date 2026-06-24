@@ -54,7 +54,8 @@ const SC: Array<{ id: string; lang: 'es' | 'en'; turns: string[] }> = [
       if (intents[li] >= 3) f.push(`ASK-SAME-3x(${li})`);
       if (f.length) { robotMoments += f.length; offenders.push(`${sc.id} T${i + 1}: ${f.join(',')}`); }
       console.log(`  T${i + 1} «${t.slice(0, 42)}» ${f.length ? '⚠ ' + f.join(',') : 'ok'}`);
-      console.log(`     → ${b.replace(/\n+/g, ' ').slice(0, 140)}`);
+      const wallDump = f.some(x => x.startsWith('WALL'));
+      console.log(`     → ${b.replace(/\n+/g, ' ').slice(0, wallDump ? 999 : 140)}`);
       prev = b;
     }
   }
