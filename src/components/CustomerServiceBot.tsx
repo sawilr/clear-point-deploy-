@@ -30,6 +30,7 @@ import {
 } from './chat/MobileScrollController';
 import { Phone, RotateCcw, Send, User, Mic, MicOff } from 'lucide-react';
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
+import { normalizeSpokenNumbers } from '../lib/spokenNumbers';
 import { getOfficeStatus } from '../lib/afterHours';
 import { readVisitorMemory, writeVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
 import { buildConsentReceipt } from '../lib/disclaimerVersion';
@@ -148,6 +149,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   const [voiceListening, setVoiceListening] = useState(false);
   const voiceSupported = isVoiceSupported();
   const voiceRecognizerRef = useRef<ReturnType<typeof createVoiceRecognizer> | null>(null);
+  // Sawil 2026-06-24 — true only while actively dictating. Used to drop any late
+  // onInterim/onFinal that fires AFTER the user sends, so dictated text can never
+  // reappear in the (now-cleared) input box.
+  const voiceActiveRef = useRef(false);
   // PHASE 9E — after-hours awareness (Mon-Fri 9-6 ET)
   const officeStatus = getOfficeStatus();
   // PHASE 10 — Clara outer flow (Path A/B/C) sits ABOVE the engine.
@@ -342,6 +347,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     if (!state.needsHuman) return;
     if (!state.name) return;
     if (!state.phoneNumber) return;
+    // Sawil 2026-06-24 — REGRESSION FIX (lead data loss). needsHuman turns on at
+    // the handoff START, so this effect used to POST the instant name+phone were
+    // captured — BEFORE best-time/topic/email were collected. GHL received a
+    // name+phone-only lead and everything after was lost (single-fire). HOLD the
+    // POST while we are still collecting (handoff_asking_* / anything_else /
+    // paused). It fires once collection settles (handoff_captured_contact or any
+    // settled state), so the FULL payload is sent. Verified: scripts/verify-submit-gate.ts
+    if (/^handoff_(asking_|anything_else|paused)/.test(String(state.lastBotIntent || ''))) return;
     if (submitState !== 'idle') return;
     hasSubmittedRef.current = true;
     // Brief delay so the bot's "thank you" bubble finishes paint first.
@@ -482,7 +495,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         medicare_status: '',
         // PHASE F — controlled interest_type label (advisor-readable).
         interest_type: note.interestType,
-        best_time_to_contact: '',
+        // Sawil 2026-06-24 — REGRESSION FIX. Was hardcoded ''. Now carries the
+        // captured callback day/time. The full topic/concern is in lead_notes
+        // (buildLeadNote) and, now that the POST fires after collection settles,
+        // both best time and topic are present in state at submit time.
+        best_time_to_contact: s.bestTimeToCall || s.scheduledCallbackWindow || '',
         // PHASE F + 9A — consent NOT collected by this bot; never claim 'yes'.
         // This is INTENTIONAL TCPA safety. Sawil's GHL workflows must NOT
         // auto-dial leads with consent_to_contact=false; they should queue
@@ -518,6 +535,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
   ) {
     if (!text.trim() || isTyping) return;
+    // Sawil 2026-06-24 — voice clear fix. Stop dictation and flip the active flag
+    // OFF before this message is processed, so any late onInterim/onFinal from the
+    // speech recognizer cannot re-populate the input after we clear it below.
+    voiceActiveRef.current = false;
+    if (voiceListening) { voiceRecognizerRef.current?.stop(); setVoiceListening(false); }
     // PHASE 11 — Safety router runs BEFORE all routing (outer + engine).
     // Federal liability table-stakes: 988 crisis / 911 emergency must
     // short-circuit Clara's entire pipeline, mirror of Zara's wiring.
@@ -1866,15 +1888,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               type="button"
               onClick={() => {
                 if (voiceListening) {
+                  voiceActiveRef.current = false;
                   voiceRecognizerRef.current?.stop();
                   setVoiceListening(false);
                   return;
                 }
+                voiceActiveRef.current = true;
                 voiceRecognizerRef.current = createVoiceRecognizer(isSpanish ? 'es' : 'en', {
-                  onInterim: (t) => setInputValue(t),
-                  onFinal: (t) => { setInputValue((prev) => (prev ? prev + ' ' : '') + t); },
-                  onEnd: () => setVoiceListening(false),
-                  onError: () => setVoiceListening(false),
+                  onInterim: (t) => { if (!voiceActiveRef.current) return; setInputValue(normalizeSpokenNumbers(t, isSpanish)); },
+                  onFinal: (t) => {
+                    if (!voiceActiveRef.current) return;
+                    const norm = normalizeSpokenNumbers(t, isSpanish);
+                    setInputValue((prev) => (prev ? prev + ' ' : '') + norm);
+                  },
+                  onEnd: () => { voiceActiveRef.current = false; setVoiceListening(false); },
+                  onError: () => { voiceActiveRef.current = false; setVoiceListening(false); },
                 });
                 voiceRecognizerRef.current?.start();
                 setVoiceListening(true);
