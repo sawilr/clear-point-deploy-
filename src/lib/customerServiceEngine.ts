@@ -4647,6 +4647,14 @@ export function _looksLikeStatedProblem(msg: string): boolean {
  *  deterministic engine (which knows the ZIP and classifies the real topic) so
  *  the caller never gets a generic menu. NEVER repeats the ZIP. */
 export function _buildPostZipReaskReplacement(userMessage: string, isEs: boolean): string | null {
+  // Sawil 2026-06-24 (caught in LIVE verification) — a ClearPoint business question
+  // ("cuánto cobran") or a fraud report superficially matches the cost-complaint
+  // regex (cobran/charge) but must NOT get the Part-B cost triage on the LLM
+  // ZIP-re-ask path. Yield (null) so the caller delegates to the deterministic
+  // engine, which answers "free" / routes to fraud. The offline harness missed
+  // this because the LLM (and thus this replacement) never runs without an API key.
+  const _pt = detectProblemType(userMessage);
+  if (_pt === 'about_clearpoint' || _pt === 'fraud_scam') return null;
   if (_isMedicareCostComplaint(userMessage)) {
     return isEs
       ? 'Entiendo. Cuando dice que le están cobrando mucho de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos del doctor, o una factura médica. Para ubicarlo mejor: ¿ese cobro sale de su cheque del Seguro Social, de una farmacia, de un doctor u hospital, o de una factura que recibió?'
