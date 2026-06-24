@@ -3729,6 +3729,11 @@ function _handleCostFlow(
   // never keep re-asking income. Without this, ES "pago muchos copagos" →
   // "quiero hablar con un asesor" looped back to the income question (audit FAIL).
   if (inFlow && detectProblemType(userMessage) === 'advisor') return null;
+  // Sawil 2026-06-23 — once the advisor handoff / identity collection has begun,
+  // the cost flow must FULLY yield, even if costFlowStage lingers. Otherwise a
+  // post-escalation "sí" was recaptured as an income answer (stress: advisor-midflow
+  // → name ask → "sí" → reverted to income).
+  if (['asking_name', 'asking_zip', 'asking_zip_natural', 'collecting_identity', 'asking_language'].includes(String(state.step))) return null;
 
   const emit = (
     text: string,
@@ -7944,6 +7949,18 @@ function processMessageInner(
       newState.messages.push({ role: 'bot', content: categoryFollowup, timestamp: Date.now() });
       newState.lastFallbackResponse = categoryFollowup;
       return { response: categoryFollowup, newState, needsHuman: false };
+    }
+    // Sawil 2026-06-23 — never dump the generic topic menu when we already know
+    // the user's topic (active case / stated problem / category). That reads as
+    // Clara forgetting the conversation (stress: MENU-DUMP). De-escalate to the
+    // advisor instead of asking what it's about all over again.
+    if (newState.serviceCategory || newState.activeCaseTopic || newState.lastUserProblem) {
+      const out = isSpanish
+        ? 'Disculpe, no quiero hacerle repetir. Lo más simple es que un asesor licenciado de ClearPoint revise su caso con usted, sin costo. ¿Le parece bien que le contacte?'
+        : "Sorry, I don't want to make you repeat yourself. The simplest is to have a licensed ClearPoint advisor review your case with you, at no cost. Is it okay if they reach out?";
+      newState.lastFallbackResponse = out;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
     }
     newState.lastFallbackResponse = defaultOut;
     newState.messages.push({ role: 'bot', content: defaultOut, timestamp: Date.now() });
