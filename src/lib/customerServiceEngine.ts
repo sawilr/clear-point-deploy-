@@ -4792,7 +4792,15 @@ export async function processMessageAsync(
   // LLM. The advisor SUBMIT stays consent-gated (consent_to_contact defaults
   // false), so this does NOT bypass explicit consent.
   if (!newState.name && newState.lastBotIntent === 'llm_response'
-      && /\b(su nombre|cu[aá]l es su nombre|nombre completo|your name|your full name|what'?s your name)\b/i.test(_resp)) {
+      && /(su (primer |[uú]ltimo )?nombre|cu[aá]l es su nombre|nombre completo|primer nombre|c[oó]mo se llama|me (da|dice|puede dar|podr[ií]a dar)[^.?!]{0,14}nombre|your (first |full |last )?name|what(?:'?s| is) your (first |full )?name|may i (have|get|ask)[^.?!]{0,10}name|can i (get|have)[^.?!]{0,10}name|tell me your name)/i.test(_resp)) {
+    // Sawil 2026-06-24 — REGRESSION FIX (messy/looping live handoff). The live
+    // LLM asks "What is your FIRST name?" with wantHandoff=false; the old regex
+    // only matched "your name" (no "first"), so the deterministic collector never
+    // took over and the LLM freelanced the whole collection (re-asking, looping,
+    // thin lead). This broadened match hands the NEXT turn to the structural
+    // collector for ANY name request, EN+ES, so phone/best-time/topic/recap run
+    // deterministically and the lead submits complete. Confirmed against the live
+    // /api/chat response.
     newState.advisorHandoffStarted = true;
     newState.lastBotIntent = 'handoff_asking_name';
   }
