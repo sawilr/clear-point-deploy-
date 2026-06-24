@@ -2439,7 +2439,7 @@ export function detectProblemType(text: string): string {
   if (/\b(c[oó]mo (est[aá]|esta)|qu[eé] tal)\b.{0,5}\b(el )?(tiempo|clima)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
   if (/\b(how'?s the weather|hows the weather|what'?s the weather)\b/i.test(normalized) && normalized.length < 100) return 'off_topic';
   // About ClearPoint / agent identity.
-  if (/\b(who (are|is) (clearpoint|clear point)|qui[eé]nes? (son|es) (clearpoint|clear point)|son ustedes medicare|are you medicare|are you the government|son del gobierno|do you charge|(ustedes|uds|clearpoint) cobran|c[oó]mo (tienen|consiguieron) mi (info|n[uú]mero)|how do you have my (info|number)|qu[eé] planes venden|what plans do you sell|son (asesores )?licenciados|are you licensed)\b/i.test(normalized)) return 'about_clearpoint';
+  if (/\b(who (are|is) (clearpoint|clear point)|qui[eé]nes? (son|es) (clearpoint|clear point)|son ustedes medicare|are you medicare|are you the government|son del gobierno|do you charge|how much do you (charge|cost)|cu[aá]nto cobran|cu[aá]nto cobra clear ?point|(ustedes|uds|clearpoint) cobran|c[oó]mo (tienen|consiguieron) mi (info|n[uú]mero)|how do you have my (info|number)|qu[eé] planes venden|what plans do you sell|son (asesores )?licenciados|are you licensed)\b/i.test(normalized)) return 'about_clearpoint';
   // Doctor change / search request (NOT "doctor doesn't accept" — that's
   // provider_access_issue). This is "I want a new doctor", "find me a doctor".
   if (/\b(find (me )?a (new )?doctor|buscar (un )?doctor|quiero (un )?(nuevo |otro )?doctor( nuevo| otro)?|need (a )?new (doctor|pcp|primary)|cambiar de doctor|change my (doctor|pcp|primary)|my doctor (retired|left|moved|closed)|mi doctor (se )?(jubil[oó]|cerr[oó]|se mud[oó]|se fue))\b/i.test(normalized)) return 'doctor_change_request';
@@ -3236,7 +3236,13 @@ export function processMessage(
       // stop the robotic re-ask: acknowledge, name the one thing still needed,
       // and offer the direct line (advisor escalation) so they are never trapped.
       const _phoneAttempts = (state.phoneAttempts || 0) + (isInvalidRetry ? 1 : 0);
-      const _phoneEscape = wasRetry && (detectAbuseOrFrustration(_msg).detected || _phoneAttempts >= 2);
+      // Sawil 2026-06-23 — a senior who DECLINES the phone ("no", "no gracias",
+      // "skip", "saltar", "olvídelo") must never be looped on the same ask. Treat
+      // an explicit decline while we're asking for the phone as an escape so we
+      // offer the direct line instead of re-asking forever.
+      const _phoneDeclined = !_userAttemptedPhone && wasRetry
+        && /^(no|no,?\s*(thanks|gracias)|nada|paso|skip|saltar|olv[ií]del?o|d[eé]jelo|forget it|never\s*mind)\b/i.test(_msg.trim());
+      const _phoneEscape = wasRetry && (detectAbuseOrFrustration(_msg).detected || _phoneAttempts >= 2 || _phoneDeclined);
       // Have name — ask for phone next
       const out = _phoneEscape
         ? (isEs
@@ -3842,6 +3848,14 @@ function _handleCostFlow(
     if (state.serviceCategory === 'drug'
         && !/\b(parte b|part b|prima|del cheque|seguro social|social security|premium)\b/.test(m)) {
       return null;
+    }
+    // Sawil 2026-06-23 — a fraud/scam report ("a charge I don't recognize") or a
+    // ClearPoint business question ("cuánto cobran") superficially matches the
+    // cost-complaint regex (charge/cobran) but is NOT a Part-B cost diagnosis.
+    // Yield so the fraud handler / business-question answer (or LLM) owns it.
+    {
+      const _pt = detectProblemType(userMessage);
+      if (_pt === 'fraud_scam' || _pt === 'about_clearpoint') return null;
     }
     if (!_isMedicareCostComplaint(userMessage)) return null;
     // A one-time BILL ("me llegó una factura del hospital") belongs to the
