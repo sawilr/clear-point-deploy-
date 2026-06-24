@@ -3888,6 +3888,13 @@ function _handleCostFlow(
       );
     }
     if (eSrc === 'social_security' || /\b(parte b|part b|la b|prima|del cheque|seguro social)\b/.test(m)) {
+      // Sawil 2026-06-23 — if the senior already named the Part B premium AND asks
+      // how to SAVE / reduce it ("la prima de medicare, cómo puedo salvar eso"),
+      // don't re-confirm the source — go straight to the MSP / Extra Help education
+      // that names the savings programs and offers a licensed advisor.
+      if (/\b(salvar|ahorr|reducir|rebajar|bajar(le|lo|la)?|como (le |me )?ayud|que (puedo|hago) para|save|lower|reduce|help with)\b/i.test(m)) {
+        return goEducate({ costChargeSource: 'social_security', costMonthlyAmount: eAmtStr });
+      }
       return emit(
         isEs ? `Suena como la prima de la Parte B, que se descuenta del Seguro Social cada mes. Para confirmar: ¿esos ${eAmtStr ? '$' + eAmtStr : 'cargos'} se los descuentan del cheque del Seguro Social cada mes?` : `That sounds like the Part B premium, which comes out of Social Security each month. To confirm: are those ${eAmtStr ? '$' + eAmtStr : 'charges'} taken from your Social Security check every month?`,
         { ...base, costChargeSource: 'social_security', costFlowStage: 'confirm_part_b', lastBotIntent: 'costflow_confirm_part_b' },
@@ -4016,6 +4023,22 @@ function _handleCostFlow(
           : `I understand, about $${_amtFollow}. With that cost, the best step is to have a licensed ClearPoint advisor review it with the pharmacy and plan, at no cost. Want them to follow up?`,
         { lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_educate' },
       );
+    }
+    // Sawil 2026-06-23 — the senior answers the advisor offer by giving their NAME
+    // ("mario perez") instead of "sí". That's an implicit yes + contact, not an
+    // unrecognized reply. Route it into the deterministic handoff name-collector
+    // (which strictly validates the name and asks for the phone) so the lead is
+    // captured rather than dropped into a de-escalation.
+    const _nameish = !_yesNoFollow && _amtFollow == null && !isPushback
+      && /^[a-zà-ÿ'.\s]{3,40}$/i.test(raw.trim())
+      && raw.trim().split(/\s+/).length >= 2
+      && raw.trim().split(/\s+/).length <= 3
+      && !/\b(gracias|thanks|hola|hello|por favor|please|no se|no quiero|quiero|necesito|tengo|hablar|llamar|saber|pregunta|preguntar|doctor|medicina|medicamento|factura|carta|plan|cobertura|asesor|medicare|medicaid|mencion|dijiste|dijo|explica|explic|lis|msp|extra|prima|copago|deducible|seguro|social|parte|beneficio|programa|ahorro|salvar|reducir|bajar|costo|cobr)\b/i.test(m);
+    if (_nameish) {
+      return processMessage(userMessage, {
+        ...state, costFlowStage: 'done',
+        advisorHandoffStarted: true, lastBotIntent: 'handoff_asking_name',
+      });
     }
     // Any real answer (yes / no / new topic) exits the flow to the deterministic
     // engine, which owns consent→collection and graceful declines. Stage cleared.

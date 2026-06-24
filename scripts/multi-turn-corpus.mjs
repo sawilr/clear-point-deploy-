@@ -794,9 +794,9 @@ export const MULTI_TURN_SCENARIOS = [
       { msg: 'mario perez',
         mustMatch: /Mario Perez|tel[eé]fono|phone|10 d[ií]gitos/i,
         mustNotMatch: /Perd[oó]n por la repetici[oó]n|sorry for the repeat|noté que ya le dije/i },
-      { msg: '3458742345',
-        // Then bot asks for email (A8)
-        mustMatch: /Mario Perez|correo|email|opcional/i },
+      { msg: '3478742345',
+        // Phone captured → rich handoff asks best time next
+        mustMatch: /Mario Perez|mejor horario|best time|horario/i },
     ],
   },
   // Progressive collection scenarios removed from sync test corpus —
@@ -814,17 +814,19 @@ export const MULTI_TURN_SCENARIOS = [
   // ═══════════════════════════════════════════════════════════════════════
   {
     id: 'sawil-ramona-full-flow-close-with-comma',
-    description: 'Full handoff: name → phone → email → anything-else → close. "No, gracias" with comma MUST close.',
+    description: 'Full rich handoff: name → lastname → phone → besttime → topic → email → anything-else → close. "No, gracias" with comma MUST close.',
     turns: [
       { msg: 'español' },
       { msg: '32828' },
       { msg: 'perdi mi plan y no se porque' },
       // bot probably offers advisor
       { msg: 'si por favor' },
-      { msg: 'ramona' },
-      { msg: '3205639632' },
-      { msg: 'Sí, le doy mi correo' },
-      { msg: 'ramona@gmail.com' },
+      { msg: 'ramona' },            // first name → bot asks last name
+      { msg: 'Diaz' },              // last name → asks phone
+      { msg: '3205639632' },        // phone → best time
+      { msg: 'en la mañana' },      // best time → topic
+      { msg: 'plan inactivo' },     // topic → email
+      { msg: 'ramona@gmail.com' },  // email → anything else
       // Bot asks "anything else?"
       { msg: 'No, gracias',
         mustNotMatch: /Claro, d[ií]game|hay algo m[aá]s/i,
@@ -833,7 +835,7 @@ export const MULTI_TURN_SCENARIOS = [
   },
   {
     id: 'close-variants-es-comma-no-thanks',
-    description: 'Various ES "no" closing variants all must close warmly',
+    description: 'ES rich handoff then bare "No" at anything-else closes (handoff recap)',
     turns: [
       { msg: 'español' },
       { msg: '10550' },
@@ -841,10 +843,13 @@ export const MULTI_TURN_SCENARIOS = [
       { msg: 'si por favor' },
       { msg: 'Maria Lopez' },
       { msg: '3478742345' },
-      { msg: 'Saltar' },
+      { msg: 'en la mañana' },   // best time
+      { msg: 'mi doctor' },      // topic
+      { msg: 'Saltar' },         // email
       // anything else?
       { msg: 'No',
-        mustMatch: /placer|excelente d[ií]a|que tenga|disposici[oó]n/i },
+        mustMatch: /Maria Lopez|asesor|le paso|paso (su|al)|placer|excelente d[ií]a|que tenga|disposici[oó]n/i,
+        mustNotMatch: /cu[aá]l es un tel[eé]fono|10 d[ií]gitos|no parece v[aá]lido|tiene un correo/i },
     ],
   },
   {
@@ -866,56 +871,61 @@ export const MULTI_TURN_SCENARIOS = [
   },
   {
     id: 'close-variants-en-no-thanks',
-    description: 'EN "No thanks" / "Nothing else" close',
+    description: 'EN rich handoff (name→phone→besttime→topic→email→anything-else) then "No thanks" closes',
     turns: [
       { msg: 'english' },
       { msg: '10550' },
       { msg: 'my plan denied my surgery' }, // appeal flow → existing-client gate → handoff
       { msg: 'yes I am a client' },         // handoff confirmed, asks for name
       { msg: 'John Smith' },
-      { msg: '5169999999' },
-      { msg: 'skip' },
-      { msg: 'No thanks',
-        mustMatch: /pleasure|great day|here whenever/i,
-        mustNotMatch: /Sure, go ahead|tell me/i },
+      { msg: '5162048837' },                // valid 10-digit phone
+      { msg: 'in the morning' },            // best time
+      { msg: 'a bill' },                    // topic
+      { msg: 'skip' },                      // email (optional)
+      { msg: 'No thanks',                   // anything else? → close + handoff recap
+        mustMatch: /John Smith|advisor|forward|pass (this|along)|pleasure|great day|here whenever/i,
+        mustNotMatch: /what'?s a phone|10 digits|valid number|Sure, go ahead/i },
     ],
   },
   {
     id: 'anything-else-yes-then-no',
-    description: 'User opens new question, then closes',
+    description: 'Rich handoff → anything-else YES (new question) → then closes',
     turns: [
       { msg: 'español' },
       { msg: '10550' },
       { msg: 'mi plan no aprueba mi cirugia' },
       { msg: 'si soy cliente' },
       { msg: 'Pedro Garcia' },
-      { msg: '3475551234' },
-      { msg: 'saltar' },
+      { msg: '3472059614' },          // valid phone
+      { msg: 'en la mañana' },         // best time
+      { msg: 'una apelación' },        // topic
+      { msg: 'saltar' },               // email
       // Anything else?
       { msg: 'Sí, tengo otra pregunta' },
-      // LLM/handler handles next question
+      // handler answers next question
       { msg: 'quiero saber del programa Extra Help' },
       // After that, user closes
       { msg: 'No, gracias',
-        mustMatch: /placer|excelente d[ií]a|disposici[oó]n/i },
+        mustMatch: /placer|excelente d[ií]a|disposici[oó]n|asesor|Pedro Garcia/i },
     ],
   },
   {
     id: 'email-skip-chip-then-no-close',
-    description: 'Skip email chip → No to anything else → close',
+    description: 'Rich handoff, skip email → No to anything else → close (recap)',
     turns: [
       { msg: 'español' },
       { msg: '10550' },
       { msg: 'mi plan no aprueba mi cirugia' },
       { msg: 'si soy cliente' },
       { msg: 'Ana Rodriguez' },
-      { msg: '7185556789' },
-      // Email asked
-      { msg: 'Saltar' },
+      { msg: '7182063391' },        // valid phone
+      { msg: 'en la tarde' },        // best time
+      { msg: 'una apelación' },      // topic
+      { msg: 'Saltar' },             // email skipped
       // Anything else?
       { msg: 'No, gracias',
-        mustMatch: /placer|excelente|disposici[oó]n/i,
-        mustNotMatch: /Claro, d[ií]game/i },
+        mustMatch: /Ana Rodriguez|asesor|le paso|paso (su|al)|placer|excelente|disposici[oó]n/i,
+        mustNotMatch: /Claro, d[ií]game|tel[eé]fono.*10 d[ií]gitos|no parece v[aá]lido|tiene un correo/i },
     ],
   },
 
