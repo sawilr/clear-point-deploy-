@@ -4792,12 +4792,15 @@ export async function processMessageAsync(
   // LLM. The advisor SUBMIT stays consent-gated (consent_to_contact defaults
   // false), so this does NOT bypass explicit consent.
   const _asksUserName = (
-    // any "<your/first/last/full> ... name/nombre" within a short window
-    /\b(your|primer|[uú]ltimo|full|first|last)\b[^.?!]{0,20}\b(name|nombre)\b/i.test(_resp)
+    // any "<your/su/first/last/full> ... name/nombre" within a short window.
+    // Sawil 2026-06-24 — added "su" so the ES LLM phrasing "necesito SU nombre
+    // completo" / "para contactarle, SU nombre" engages the deterministic
+    // collector (which validates the phone/email/name the LLM would not).
+    /\b(your|su|primer|[uú]ltimo|full|first|last)\b[^.?!]{0,20}\b(name|nombre)\b/i.test(_resp)
     // "name/nombre please?" or "name?" trailing a request
     || /\b(name|nombre)\b[^.?!]{0,8}(please|por favor|\?)/i.test(_resp)
     // explicit ES/EN name-asks the window above might miss
-    || /(cu[aá]l es su nombre|c[oó]mo se llama|me (da|dice|puede dar|podr[ií]a dar)[^.?!]{0,14}nombre|tell me your[^.?!]{0,12}name|what(?:'?s| is) your[^.?!]{0,18}name|may i (have|get|ask)[^.?!]{0,10}name|can i (get|have)[^.?!]{0,10}name)/i.test(_resp)
+    || /(cu[aá]l es su nombre|c[oó]mo se llama|necesito[^.?!]{0,14}nombre|me (da|dice|puede dar|podr[ií]a dar)[^.?!]{0,14}nombre|tell me your[^.?!]{0,12}name|what(?:'?s| is) your[^.?!]{0,18}name|may i (have|get|ask)[^.?!]{0,10}name|can i (get|have)[^.?!]{0,10}name)/i.test(_resp)
   )
     // NOT a plan/doctor/drug/etc. "name" — only the CALLER's name triggers handoff.
     && !/\b(plan|doctor|m[eé]dic|carrier|drug|medication|provider|hospital|pharmacy|farmacia)\b[^.?!]{0,12}\b(name|nombre)\b/i.test(_resp);
