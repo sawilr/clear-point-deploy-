@@ -301,6 +301,8 @@ export interface ConversationState {
   /** True once the bot has actually handed the user off to an advisor flow
    *  (e.g. the user typed "sí" after the stage-3 advisor offer). */
   advisorHandoffStarted?: boolean;
+  /** TCPA consent captured (caller affirmed the consent ask). */
+  consent_to_contact?: boolean;
   // ─── Wave 47: lead qualification (not a charity bot) ───
   /** Has the user told us they are already a ClearPoint client?
    *    true  → route to "your advisor will call back"
@@ -4608,6 +4610,43 @@ function _runStructuralFirst(
   // Closing intent — sync engine handles warmly.
   if (isClosingIntent(userMessage) && !state.conversationClosed) {
     return processMessage(userMessage, state);
+  }
+  // Sawil 2026-06-25 — CONSENT → CAPTURE. If OUR last message asked for TCPA
+  // consent ("¿autoriza que un asesor licenciado de ClearPoint le contacte?")
+  // and the caller AFFIRMS (sí / yes / acepto / autorizo / dale), START the
+  // deterministic contact capture. Without this the LLM sometimes reset on a
+  // bare "Sí" ("¿en qué le puedo ayudar hoy?") and dropped a consented lead
+  // (Sawil live transcript 2026-06-25). Only fires when we don't already have
+  // name+phone and the conversation is still open.
+  if (!(state.name && state.phoneNumber) && !state.conversationClosed) {
+    const _lastBot = [...(state.messages || [])].reverse().find((mm) => mm.role === 'bot');
+    const _lastBotText = (_lastBot?.content || '').toLowerCase();
+    // accent-stripped so "Sí" matches (JS \b does not handle accented chars)
+    const _lastBotPlain = _lastBotText.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _userPlain = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const _wasConsentAsk = /(autoriza|autorizar)\b[^.?!]{0,70}(asesor|advisor|clear ?point)[^.?!]{0,45}(contact|llam)|responda si para autorizar|reply yes to authorize|do you authorize a licensed/i.test(_lastBotPlain);
+    const _affirms = /^(si|sip|yes|yeah|yep|claro|ok|okay|dale|por favor|please|acepto|autorizo|de acuerdo|esta bien|adelante|correcto|seguro|hagalo|si por favor)\b[.!]*$/i.test(_userPlain);
+    if (_wasConsentAsk && _affirms) {
+      const isEs = (state.language || 'es') === 'es';
+      const out = isEs
+        ? 'Perfecto. Para que un asesor licenciado de ClearPoint le contacte, ¿cuál es su nombre completo?'
+        : 'Perfect. So a licensed ClearPoint advisor can contact you, what is your full name?';
+      const newState: ConversationState = {
+        ...state,
+        turnCount: (state.turnCount || 0) + 1,
+        advisorHandoffStarted: true,
+        consent_to_contact: true,
+        needsHuman: true,
+        lastBotIntent: 'handoff_asking_name',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: true };
+    }
   }
   // 2026-06-17 — DUAL-ELIGIBLE reasoning (Sawil mission). Runs BEFORE the cost
   // flow and the LLM: when the user states Medicare + Medicaid (dual-eligible),
