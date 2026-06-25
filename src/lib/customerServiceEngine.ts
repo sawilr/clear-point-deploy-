@@ -598,6 +598,30 @@ export function validateEmail(raw: string): { isValid: boolean; cleaned: string;
   return { isValid: true, cleaned };
 }
 
+// Sawil 2026-06-25 — VOICE email join (EMAIL FIELD ONLY). Whisper transcribes a
+// dictated email WITH SPACES ("antonio banderas 21@gmail.com"); the token-before-@
+// match used to keep only "21@gmail.com". This joins the local part into one piece
+// ("todo de corrido"), turns spoken "arroba/at"→@ and "punto/dot"→".", collapses
+// spaces around @ and ., and drops a leading filler ("sí", "mi correo es", …).
+// Returns the raw input unchanged when there is no recognizable email, so a typed
+// address like "maria.lopez@gmail.com" passes through untouched.
+export function normalizeSpokenEmail(raw: string): string {
+  // Emails are ASCII — strip accents up front so "sí"/"josé" normalize and the
+  // leading-filler match works (JS \b does not handle accented characters).
+  let s = (raw || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  s = s.replace(/\s*\b(arroba|at)\b\s*/g, '@').replace(/\s*\b(punto|dot)\b\s*/g, '.');
+  s = s.replace(/\s*@\s*/g, '@').replace(/\s*\.\s*/g, '.');
+  const at = s.lastIndexOf('@');
+  if (at < 1) return (raw || '').trim();
+  let local = s.slice(0, at);
+  const domain = s.slice(at + 1).replace(/\s+/g, '');
+  // drop a leading filler run before the actual local part
+  local = local.replace(/^(?:\b(s[ií]|si|yes|yeah|claro|ok|okay|mi|el|la|correo|email|e-?mail|es|de|son|y|le doy|aqu[ií]|mi correo es)\b[\s,]*)+/i, '');
+  local = local.replace(/\s+/g, ''); // JOIN
+  if (!local) return (raw || '').trim();
+  return `${local}@${domain}`;
+}
+
 // Sawil 2026-06-15 — profanity / slur blocklist for the NAME field (EN + ES),
 // accent- and ñ-normalized so "cabrón", "coño", "maricón" are caught. EXACT
 // whole-word match only (never substring) so real surnames like "Dickson" or
@@ -3025,7 +3049,10 @@ export function processMessage(
       }
 
       // Step 1 — try to parse email from THIS message if email step is active
-      const emailMatch = _msg.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+      // Sawil 2026-06-25 — normalize a VOICE-dictated email (join spaced local
+      // part, spoken arroba/punto) BEFORE matching, ONLY on the email field.
+      const _emailNorm = normalizeSpokenEmail(_msg);
+      const emailMatch = _emailNorm.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
       let emailCandidate = emailMatch?.[0] || '';
       // Sawil 2026-06-15 — the email step was storing ANY @-shaped string with
       // no validation (fuckyou@gmail.com, test@test.com got captured into GHL).
