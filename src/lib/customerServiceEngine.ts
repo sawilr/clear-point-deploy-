@@ -4791,8 +4791,17 @@ export async function processMessageAsync(
   // email + corrections are handled deterministically — never freelanced by the
   // LLM. The advisor SUBMIT stays consent-gated (consent_to_contact defaults
   // false), so this does NOT bypass explicit consent.
-  if (!newState.name && newState.lastBotIntent === 'llm_response'
-      && /(su (primer |[uú]ltimo )?nombre|cu[aá]l es su nombre|nombre completo|primer nombre|c[oó]mo se llama|me (da|dice|puede dar|podr[ií]a dar)[^.?!]{0,14}nombre|your (first |full |last )?name|what(?:'?s| is) your (first |full )?name|may i (have|get|ask)[^.?!]{0,10}name|can i (get|have)[^.?!]{0,10}name|tell me your name)/i.test(_resp)) {
+  const _asksUserName = (
+    // any "<your/first/last/full> ... name/nombre" within a short window
+    /\b(your|primer|[uú]ltimo|full|first|last)\b[^.?!]{0,20}\b(name|nombre)\b/i.test(_resp)
+    // "name/nombre please?" or "name?" trailing a request
+    || /\b(name|nombre)\b[^.?!]{0,8}(please|por favor|\?)/i.test(_resp)
+    // explicit ES/EN name-asks the window above might miss
+    || /(cu[aá]l es su nombre|c[oó]mo se llama|me (da|dice|puede dar|podr[ií]a dar)[^.?!]{0,14}nombre|tell me your[^.?!]{0,12}name|what(?:'?s| is) your[^.?!]{0,18}name|may i (have|get|ask)[^.?!]{0,10}name|can i (get|have)[^.?!]{0,10}name)/i.test(_resp)
+  )
+    // NOT a plan/doctor/drug/etc. "name" — only the CALLER's name triggers handoff.
+    && !/\b(plan|doctor|m[eé]dic|carrier|drug|medication|provider|hospital|pharmacy|farmacia)\b[^.?!]{0,12}\b(name|nombre)\b/i.test(_resp);
+  if (!newState.name && newState.lastBotIntent === 'llm_response' && _asksUserName) {
     // Sawil 2026-06-24 — REGRESSION FIX (messy/looping live handoff). The live
     // LLM asks "What is your FIRST name?" with wantHandoff=false; the old regex
     // only matched "your name" (no "first"), so the deterministic collector never
