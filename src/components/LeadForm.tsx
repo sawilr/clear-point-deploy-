@@ -5,6 +5,7 @@ import { Link, useLocation } from 'react-router';
 import { submitLeadToGHL } from '../lib/ghl';
 import { validatePersonName, validatePhone, validateEmail } from '../lib/validation';
 import { getZipInfo } from '../lib/zipLookup';
+import { track, Events } from '../lib/analytics';
 
 // Spec-required messages — Free Review form
 const FREE_REVIEW_SUCCESS_EN = 'Thank you — your review request was sent successfully. A licensed Clear Point Senior Advisors advisor will review your information and contact you during business hours.';
@@ -30,6 +31,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
   const uid = useId();
   const fid = (name: string) => `${uid}-${name}`;
   const firstNameRef = useRef<HTMLInputElement>(null);
+  const formStartedRef = useRef(false);
   const [submitted, setSubmitted] = useState(false);
 
   // Cursor-on-first-name autofocus — triggered when any Free Review CTA
@@ -89,7 +91,15 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     };
   };
 
+  // Generic, PII-free form_start (fires once on first interaction).
+  const markStarted = () => {
+    if (formStartedRef.current) return;
+    formStartedRef.current = true;
+    track(Events.FORM_START, { event_category: 'lead', event_label: `${source}_form`, language: lang });
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    markStarted();
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
@@ -227,6 +237,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     const success = await submitLeadToGHL(payload);
     setSubmitting(false);
     if (success) {
+      // Generic, PII-free conversion event (no name/phone/email/ZIP).
+      track(Events.FORM_SUBMIT_SUCCESS, { event_category: 'lead', event_label: `${source}_form`, language: lang });
       setSubmitted(true);
     } else {
       setError(true);

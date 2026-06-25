@@ -1,5 +1,6 @@
 {
   "redirects": [
+    { "source": "/privacy", "destination": "/privacy-policy", "permanent": true },
     { "source": "/annual-review", "destination": "/#annual-review", "permanent": true },
     { "source": "/education", "destination": "/resources", "permanent": true },
     { "source": "/enrollment-periods", "destination": "/resources", "permanent": true },

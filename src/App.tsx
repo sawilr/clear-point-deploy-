@@ -12,6 +12,7 @@ import Contact from './pages/Contact'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import Accessibility from './pages/Accessibility'
 import Terms from './pages/Terms'
+import ThankYou from './pages/ThankYou'
 import SignSOA from './pages/SignSOA'
 import NotFound from './pages/NotFound'
 import { Header } from './components/Header'
@@ -24,6 +25,8 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { ChatBot } from './components/ChatBot'
 import { BotLauncher } from './components/BotLauncher'
 import { LanguageProvider } from './hooks/useLanguage'
+import { useEffect } from 'react'
+import { track, Events } from './lib/analytics'
 
 export default function App() {
   // Sawil 2026-06 — MobileStickyBar (the bottom CTA) is suppressed on
@@ -32,6 +35,10 @@ export default function App() {
   // mounted inside <BrowserRouter> (see main.tsx), so useLocation() is safe.
   const location = useLocation();
   const isSupportPage = location.pathname === '/support';
+  // Generic, PII-free page_view on every route change (no-ops until GTM is set).
+  useEffect(() => {
+    track(Events.PAGE_VIEW, { event_category: 'navigation', page_path: location.pathname });
+  }, [location.pathname]);
   return (
     <ErrorBoundary>
     <LanguageProvider>
@@ -62,6 +69,7 @@ export default function App() {
           <Route path="/privacy-policy" element={<PrivacyPolicy />} />
           <Route path="/accessibility" element={<Accessibility />} />
           <Route path="/terms" element={<Terms />} />
+          <Route path="/thank-you" element={<ThankYou />} />
           {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
           <Route path="/soa/:token" element={<SignSOA />} />
           {/* PHASE 7 — Branded 404 fallback. */}
