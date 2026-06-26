@@ -4002,7 +4002,12 @@ function _handleCostFlow(
     const isNet = /\b(limpio|neto|despu[eé]s|me queda|me sacan|me quitan|ya descont|after|net|take ?home)\b/.test(m);
     const isGross = /\b(antes|bruto|total|completo|before|gross)\b/.test(m);
     const incomeIsNet = isNet ? true : (isGross ? false : state.incomeIsNet);
-    const inc = state.incomeMonthly ? parseInt(state.incomeMonthly, 10) : null;
+    // Sawil 2026-06-25 — if the caller CORRECTS the amount in this net/gross turn
+    // ("no, el total eran $1,857 no $1,650"), re-parse and use the NEW amount,
+    // replacing the previously stored one. Falls back to the stored income when
+    // this turn has no number (e.g. just "antes"/"después").
+    const _correctedInc = _costMoney(raw);
+    const inc = _correctedInc != null ? _correctedInc : (state.incomeMonthly ? parseInt(state.incomeMonthly, 10) : null);
     // HIGH-INCOME GUARD (Sawil 2026-06-15) — clearly above the usual NY MSP
     // individual income guidance (~$2,400/mo single). Do NOT suggest MSP as
     // likely, NEVER compute gross from net, pivot to a full advisor plan review.
@@ -4014,14 +4019,14 @@ function _handleCostFlow(
       const body = isEs
         ? `Gracias. Si esos $${inc} son ingresos${incomeIsNet ? ' limpios' : ''} al mes, podría estar por encima de los límites usuales de algunos programas de ayuda como MSP. No puedo confirmar elegibilidad por chat.${netClause} Pero si paga muchos copagos, un asesor autorizado puede revisar su plan actual, doctores, medicamentos, farmacia, red y opciones disponibles para reducir costos cuando haya un período válido.`
         : `Thank you. If that $${inc} is your monthly${incomeIsNet ? ' net' : ''} income, you may be above the usual income limits for some assistance programs like MSP. I can't confirm eligibility by chat.${netClause} But if you're paying many copays, a licensed advisor can review your current plan, doctors, medications, pharmacy, network, and available options to reduce costs when there is a valid enrollment period.`;
-      if (haveContact) return emit(body + (isEs ? ' El asesor licenciado ya tiene sus datos y le ayudará con esto cuando le llame.' : ' The licensed advisor already has your info and will help with this on the call.'), { incomeIsNet, costFlowStage: 'done', lastBotIntent: 'costflow_high_income' });
-      return emit(body + (isEs ? ' ¿Quiere que le conecte con un asesor de Clear Point sin costo?' : ' Would you like me to connect you with a Clear Point advisor at no cost?'), { incomeIsNet, costFlowStage: 'offered_advisor', lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_high_income' });
+      if (haveContact) return emit(body + (isEs ? ' El asesor licenciado ya tiene sus datos y le ayudará con esto cuando le llame.' : ' The licensed advisor already has your info and will help with this on the call.'), { incomeIsNet, incomeMonthly: inc != null ? String(inc) : state.incomeMonthly, costFlowStage: 'done', lastBotIntent: 'costflow_high_income' });
+      return emit(body + (isEs ? ' ¿Quiere que le conecte con un asesor de Clear Point sin costo?' : ' Would you like me to connect you with a Clear Point advisor at no cost?'), { incomeIsNet, incomeMonthly: inc != null ? String(inc) : state.incomeMonthly, costFlowStage: 'offered_advisor', lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_high_income' });
     }
     // Lower income — conditional MSP/Extra Help (no gross math, no QMB/SLMB/QI dump).
     const prefix = (incomeIsNet && inc != null)
       ? (isEs ? `Anotado — alrededor de $${inc} al mes (después de descuentos). No puedo calcular su ingreso bruto exacto aquí; un asesor puede revisarlo. ` : `Noted — about $${inc}/month (after deductions). I can't calculate your exact gross income here; an advisor can review it. `)
       : (isGross && inc != null ? (isEs ? `Anotado — alrededor de $${inc} al mes (antes de descuentos). ` : `Noted — about $${inc}/month (before deductions). `) : '');
-    return goEducate({ incomeIsNet }, prefix);
+    return goEducate({ incomeIsNet, incomeMonthly: inc != null ? String(inc) : state.incomeMonthly }, prefix);
   }
 
   if (stage === 'offered_advisor') {
