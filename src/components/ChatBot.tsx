@@ -2820,6 +2820,9 @@ export function ChatBot() {
   const [zaraVoiceListening, setZaraVoiceListening] = useState(false);
   const zaraVoiceSupported = isVoiceSupported();
   const zaraVoiceRecognizerRef = useRef<ReturnType<typeof createVoiceRecognizer> | null>(null);
+  // Sawil 2026-06-25 — when true, ignore any in-flight voice onInterim/onFinal
+  // so a late final transcript can never re-populate the box AFTER a send.
+  const zaraVoiceSuppressRef = useRef(false);
   const zaraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const zaraOfficeStatus = getOfficeStatus();
   // Tracks previous messages.length so we know when a brand-new message
@@ -4530,7 +4533,13 @@ export function ChatBot() {
     const input = e.currentTarget.elements.namedItem('chatInput') as HTMLInputElement;
     const text = input.value.trim();
     if (!text) return;
+    // Sawil 2026-06-25 — stop voice + suppress any in-flight transcript BEFORE
+    // clearing, so a late onFinal can't write the just-sent text back into the box.
+    zaraVoiceSuppressRef.current = true;
+    zaraVoiceRecognizerRef.current?.stop();
+    setZaraVoiceListening(false);
     input.value = '';
+    if (zaraTextareaRef.current) zaraTextareaRef.current.value = '';
     addUserMessage(text);
     cancelBotQueue();
 
@@ -5039,9 +5048,10 @@ export function ChatBot() {
                       setZaraVoiceListening(false);
                       return;
                     }
+                    zaraVoiceSuppressRef.current = false;
                     zaraVoiceRecognizerRef.current = createVoiceRecognizer(displayLanguage === 'es' ? 'es' : 'en', {
-                      onInterim: (t) => { if (zaraTextareaRef.current) zaraTextareaRef.current.value = t; },
-                      onFinal: (t) => { if (zaraTextareaRef.current) zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + t; },
+                      onInterim: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = t; },
+                      onFinal: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + t; },
                       onEnd: () => setZaraVoiceListening(false),
                       onError: () => setZaraVoiceListening(false),
                     });
