@@ -3138,8 +3138,12 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
-      // Step 2 — "anything else?" not asked yet → ask
-      if (!state.anythingElseAsked) {
+      // Step 2 — "anything else?" — ONLY after the caller confirmed the summary
+      // (Sawil 2026-06-29). Before confirmation this is skipped so the confirmation
+      // gate below always runs FIRST and can never be bypassed by a question asked
+      // at this step (the live Maria Rojas bug: she asked "¿cuándo me llaman?" here,
+      // which handed control to the LLM and skipped the confirmation entirely).
+      if (state.contactConfirmed && !state.anythingElseAsked) {
         const out = isEs
           ? `Perfecto. Antes de cerrar — ¿hay algo más sobre Medicare que quiera consultar?`
           : `Perfect. Before we close — is there anything else about Medicare you'd like to ask?`;
@@ -3265,7 +3269,15 @@ export function processMessage(
               { lastBotIntent: 'handoff_asking_confirm' },
             );
           }
-          // _yes → fall through to the close + submit below (contactConfirmed set there).
+          // _yes → CONFIRMED. Set contactConfirmed and ask "anything else?" AFTER
+          // confirmation (Sawil 2026-06-29). Because confirmation now happens BEFORE
+          // this step, a question asked at "anything else?" can never skip it.
+          return _emitHandoff(
+            isEs
+              ? `Perfecto, gracias. Antes de cerrar — ¿hay algo más sobre Medicare que quiera consultar?`
+              : `Perfect, thank you. Before we close — is there anything else about Medicare you'd like to ask?`,
+            { contactConfirmed: true, anythingElseAsked: true, lastBotIntent: 'handoff_anything_else' },
+          );
         } else {
           // (C) First time we reach the close → show the SUMMARY + confirm.
           const _em = finalEmail || state.email || '';

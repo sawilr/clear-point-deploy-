@@ -118,21 +118,54 @@ function runFlow(lang, data) {
   t = turn(st, data.goodPhone2); st = t.st;
   ok(`${lang}: new valid phone accepted`, !!st.phoneNumber, `phoneNumber="${st.phoneNumber}"`);
 
-  // Walk back to the confirmation again.
-  guard = 0;
-  while (guard < 8 && !/¿está todo correcto\?|is everything correct\?/i.test(t.resp) && !st.soaPending) {
-    guard++; t = turn(st, data.no); st = t.st;
-  }
-  ok(`${lang}: re-confirmation appears after correction`,
-     /¿está todo correcto\?|is everything correct\?/i.test(t.resp) || !st.soaPending);
+  // After the correction, the confirmation re-appears with the NEW phone.
+  const _fmtNew = `${st.phoneNumber.slice(0, 3)}-${st.phoneNumber.slice(3, 6)}-${st.phoneNumber.slice(6)}`;
+  ok(`${lang}: re-confirmation appears after correction (new phone)`,
+     /¿está todo correcto\?|is everything correct\?/i.test(t.resp) && t.resp.includes(_fmtNew),
+     t.resp.replace(/\n/g, ' | ').slice(0, 120));
+  ok(`${lang}: still NOT submitted during correction`, !st.soaPending);
 
-  // Turn: say "YES" → NOW it should settle to submit (soaPending + captured).
+  // Turn: say "YES" → CONFIRMED. New order: asks "anything else?" AFTER confirm,
+  // not yet submitted.
   t = turn(st, data.yes); st = t.st;
-  ok(`${lang}: explicit "yes" → contact confirmed`, st.contactConfirmed === true);
-  ok(`${lang}: explicit "yes" → submit signalled (soaPending + handoff_captured_contact)`,
-     st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact',
-     `soaPending=${st.soaPending} intent=${st.lastBotIntent}`);
+  ok(`${lang}: "yes" → contactConfirmed set`, st.contactConfirmed === true);
+  ok(`${lang}: confirmation happens BEFORE "anything else?" (asked only after yes)`,
+     /algo m[aá]s|anything else/i.test(t.resp) && !st.soaPending, t.resp.slice(0, 80));
+
+  // Turn: "no" to anything-else → close + submit signal, confirmation intact.
+  t = turn(st, data.no); st = t.st;
+  ok(`${lang}: final "no" → submit signalled (soaPending + captured) WITH confirmation`,
+     st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact' && st.contactConfirmed === true,
+     `soaPending=${st.soaPending} intent=${st.lastBotIntent} confirmed=${st.contactConfirmed}`);
   ok(`${lang}: needsHuman true at submit`, t.needsHuman === true);
+}
+
+// ── Maria Rojas regression: a QUESTION at "anything else?" must NOT skip or lose
+//    the confirmation. Live bug: she asked "¿cuándo me llaman?" there, the LLM
+//    closed, and the lead submitted WITHOUT confirmation. ──
+function runDivert(lang, d) {
+  let st = {
+    ...baseState(lang), advisorHandoffStarted: true, needsHuman: true,
+    lastBotIntent: 'handoff_asking_name', name: '', phoneNumber: '',
+    messages: [{ role: 'bot', content: 'name?', timestamp: 1 }],
+  };
+  let t;
+  t = turn(st, d.name); st = t.st;
+  t = turn(st, d.goodPhone); st = t.st;
+  t = turn(st, d.bestTime); st = t.st;
+  t = turn(st, d.topic); st = t.st;
+  t = turn(st, d.email); st = t.st;
+  ok(`${lang}/divert: confirmation shown right after email, BEFORE any "anything else?"`,
+     /¿está todo correcto\?|is everything correct\?/i.test(t.resp) && !/algo m[aá]s|anything else/i.test(t.resp),
+     t.resp.replace(/\n/g, ' | ').slice(0, 110));
+  ok(`${lang}/divert: not yet confirmed/submitted at the summary`, !st.contactConfirmed && !st.soaPending);
+  t = turn(st, d.yes); st = t.st;
+  ok(`${lang}/divert: yes → confirmed + asks "anything else?"`,
+     st.contactConfirmed === true && /algo m[aá]s|anything else/i.test(t.resp));
+  // The Maria move — a question instead of "no".
+  t = turn(st, lang === 'es' ? '¿cuándo me llaman?' : 'when will you call me?'); st = t.st;
+  ok(`${lang}/divert: question at "anything else?" PRESERVES confirmation (not reset)`,
+     st.contactConfirmed === true, `confirmed=${st.contactConfirmed}`);
 }
 
 runFlow('en', {
@@ -151,6 +184,9 @@ runFlow('es', {
   goodPhone2: '718 444 5566', bestTime: 'tomorrow afternoon', topic: 'mi plan coverage',
   email: 'carlos.g@outlook.com', no: 'no', yes: 'yes',
 });
+
+runDivert('en', { name: 'Maria Rojas', goodPhone: '212-639-5620', bestTime: 'after 11 am', topic: 'medications', email: 'maria.r@yahoo.com', yes: 'yes' });
+runDivert('es', { name: 'Maria Rojas', goodPhone: '2126395620', bestTime: 'despues de las 11', topic: 'los medicamentos', email: 'maria.r@yahoo.com', yes: 'sí' });
 
 console.log(`\n${fail ? '❌' : '✅'}  ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

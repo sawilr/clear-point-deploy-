@@ -347,6 +347,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     if (!state.needsHuman) return;
     if (!state.name) return;
     if (!state.phoneNumber) return;
+    // Sawil 2026-06-29 — NEVER submit an unconfirmed lead. The deterministic
+    // collector sets contactConfirmed ONLY after the caller says "yes" to the
+    // summary. Belt-and-suspenders so no close path (LLM or deterministic) can
+    // POST a lead the caller didn't confirm — root cause of the live Maria Rojas
+    // miss, where a question at "anything else?" let the LLM close + submit.
+    if (!(state as { contactConfirmed?: boolean }).contactConfirmed) return;
     // Sawil 2026-06-24 — REGRESSION FIX (lead data loss). needsHuman turns on at
     // the handoff START, so this effect used to POST the instant name+phone were
     // captured — BEFORE best-time/topic/email were collected. GHL received a
