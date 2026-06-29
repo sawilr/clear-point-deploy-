@@ -9,6 +9,7 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 // BEFORE it lands in GHL. Graceful: returns null on failure, GHL still gets
 // the raw notes.
 import { analyzeLeadIntelligence, formatIntelForGhlNotes } from './_lib/lead-intel.js';
+import { noStorePII } from './_lib/security-headers.js';
 
 export default async function handler(req, res) {
   // ── A15.1 CORS — allowlist ──────────────────────────────────────────────
@@ -17,6 +18,7 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'Origin not allowed' });
   }
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache lead/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -77,6 +79,22 @@ export default async function handler(req, res) {
   var token = process.env.HIGHLEVEL_TOKEN;
   var locationId = process.env.HIGHLEVEL_LOCATION_ID;
   if (!token || !locationId) return res.status(500).json({ error: 'Server configuration error' });
+
+  // ── CONSENT GATE (Sawil 2026-06-29 SECURITY HOTFIX, finding 02) ───────────
+  // No GHL operation of ANY kind (contact, opportunity, note, workflow) and no
+  // lead-intel LLM call unless the lead carries EXPLICIT affirmative TCPA
+  // consent. ONLY the literal boolean `true` passes — false / missing / null /
+  // undefined / "false" / "0" / "" are ALL rejected here, before any downstream
+  // work. The producing surfaces (Clara confirmation, Zara, web forms, Smart
+  // Review) each send consent_to_contact=true only after the user agrees to the
+  // displayed TCPA authorization, with a versioned consent receipt.
+  if (body.consent_to_contact !== true) {
+    console.warn('[CONSENT] Lead rejected — explicit consent_to_contact=true required (type=' + (typeof body.consent_to_contact) + ')');
+    return res.status(400).json({
+      error: 'CONSENT_REQUIRED',
+      message: 'Consent to be contacted is required before we can submit your request.',
+    });
+  }
 
   try {
     var first_name = body.first_name; var last_name = body.last_name; var phone = body.phone;
@@ -232,6 +250,14 @@ export default async function handler(req, res) {
       if (/^(\d)\1{9}$/.test(national)) return { valid: false, reason: 'Phone appears fake' };
       if (['1234567890','0987654321','9876543210','0123456789'].includes(national)) return { valid: false, reason: 'Phone appears fake' };
       if (/(\d)\1{6,}/.test(national)) return { valid: false, reason: 'Phone appears fake' };
+      // Sawil 2026-06-29 SECURITY HOTFIX (finding 03) — mirror the client
+      // validator (src/lib/validation.ts) for 555, PLUS known fictional numbers
+      // the audit flagged that pass NANP structure. The server was missing all
+      // of these, so 212-555-0100 and 212-867-5309 reached the CRM.
+      if (/^\d{3}555(1234|9999|0000|1212|5555|4321|1111|2222|3333|4444|6666|7777|8888|0100|0199)$/.test(national)) return { valid: false, reason: 'Phone appears fake (555 hollywood)' };
+      if (/^\d{3}55501\d\d$/.test(national)) return { valid: false, reason: 'Phone appears fake (555 fictional 0100-0199)' };
+      if (/^555/.test(national)) return { valid: false, reason: 'Phone appears fake (555 area code)' };
+      if (national.slice(3) === '8675309') return { valid: false, reason: 'Phone appears fake (867-5309)' };
       return { valid: true, national: national };
     }
     var phoneValidation = serverValidatePhone(phone);
@@ -314,10 +340,24 @@ export default async function handler(req, res) {
     }
     void usedExisting; // available for downstream conditional logic if needed
     if (!ghlRes.ok) {
-      // Privacy: log HTTP status only — never the GHL response body (may echo
-      // the contact payload we just sent, which contains PII).
-      console.error('[GHL] Contact creation failed: HTTP ' + ghlRes.status);
-      return res.status(502).json({ error: 'CRM error', detail: ghlRes.status });
+      // Sawil 2026-06-29 SECURITY HOTFIX (finding 19) — sanitize CRM errors and
+      // handle duplicates. NEVER leak the upstream status/detail/body to the
+      // client. Detect GHL's duplicate-contact rejection and return a clean 409.
+      var _ghlErrBody = '';
+      try { _ghlErrBody = await ghlRes.text(); } catch (e) { _ghlErrBody = ''; }
+      var _isDuplicate = ghlRes.status === 400 && /duplicat/i.test(_ghlErrBody);
+      // Privacy: log status + duplicate-flag ONLY — never the body (may echo PII).
+      console.error('[GHL] Contact creation failed: HTTP ' + ghlRes.status + (_isDuplicate ? ' (duplicate)' : ''));
+      if (_isDuplicate) {
+        return res.status(409).json({
+          error: 'DUPLICATE_LEAD',
+          message: 'We already have your request on file. A licensed advisor will follow up.',
+        });
+      }
+      return res.status(502).json({
+        error: 'CRM_UNAVAILABLE',
+        message: 'We could not submit your request right now. Please call us at 1-866-310-8702.',
+      });
     }
     var ghlData = await ghlRes.json(); var contactId = ghlData.contact && ghlData.contact.id;
     // Privacy: log only contactId + source + language. Never log first_name,

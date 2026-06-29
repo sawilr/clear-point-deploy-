@@ -162,6 +162,11 @@ export function validatePhone(rawInput: string): {
   // e.g. 212-212-2122 or 717-717-7177 — without touching any real number.
   if (new Set(national).size <= 2) return FAIL('Phone appears fake (too few distinct digits)');
 
+  // Sawil 2026-06-29 SECURITY HOTFIX (finding 03) — 867-5309 ("Jenny") is a
+  // structurally-valid NANP number but a famous fictional one. Reject it in any
+  // area code so Clara, Zara, and the server (api/submit-lead.js) all refuse it.
+  if (national.slice(3) === '8675309') return FAIL('Phone appears fake (867-5309)');
+
   const e164 = '+1' + national;
   return { valid: true, cleaned: national, e164, flags: [] };
 }

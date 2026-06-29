@@ -16,6 +16,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
+import { noStorePII } from './_lib/security-headers.js';
+
+// Sawil 2026-06-29 SECURITY HOTFIX (audit finding 01 — unauthenticated CRM
+// enumeration). The public name+last4 lookup let anyone confirm whether a person
+// is a client and harvest internal CRM identifiers (contactId, assignedUserId,
+// advisorName). It is DISABLED until rebuilt behind a verified, single-use
+// channel. While disabled the endpoint returns ONE uniform response for every
+// caller — it never reveals existence (no found:true/false) and never touches
+// the CRM.
+const LOOKUP_ENABLED = false;
 
 const GHL_LOCATION_ID = process.env.HIGHLEVEL_LOCATION_ID;
 const GHL_TOKEN = process.env.HIGHLEVEL_TOKEN;
@@ -29,6 +39,20 @@ function badResponse(res, status, error) {
 
 function notFound(res) {
   return res.status(200).json({ found: false });
+}
+
+// Sawil 2026-06-29 — uniform, non-revealing response. Never includes `found`,
+// any CRM id, advisor name, or existence signal, so it cannot be used to
+// enumerate or confirm a contact. Same output for known and unknown people.
+function genericLookup(req, res) {
+  noStorePII(res);
+  const isEs = !!(req && req.headers && /^es/i.test(String(req.headers['accept-language'] || '')));
+  return res.status(200).json({
+    status: 'received',
+    message: isEs
+      ? 'Si podemos verificar su perfil, un asesor licenciado de ClearPoint le dará seguimiento.'
+      : 'If we can verify your profile, a licensed ClearPoint advisor will follow up.',
+  });
 }
 
 function maskPhoneLast4(phone) {
@@ -52,17 +76,26 @@ export default async function handler(req, res) {
   const allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) return res.status(403).json({ error: 'Origin not allowed' });
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 — never cache lookup responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // ── Rate limit (10 lookups per hour per IP) — anti-enumeration ─────────
+  // ── Rate limit BEFORE any lookup — REAL 429 (Sawil 2026-06-29, finding 04).
+  // Previously returned 200 found:false on limit, which gave legitimate users a
+  // false negative while still allowing N enumerations per window.
   const ip = clientId(req);
   const rl = await rateLimit(ip, { max: 10, windowMs: 60 * 60 * 1000, prefix: 'lookup' });
   if (!rl.ok) {
     res.setHeader('Retry-After', String(rl.retryAfter));
-    // Always 200 with found:false to deny enumeration via 429.
-    return notFound(res);
+    return res.status(429).json({ error: 'rate_limited', message: 'Too many requests. Please try again later.' });
   }
+
+  // ── Public CRM lookup is DISABLED (Sawil 2026-06-29, finding 01). Return one
+  //    uniform response for everyone; never reveal existence; never call GHL.
+  //    The block below is DEAD until LOOKUP_ENABLED is rebuilt behind a verified
+  //    single-use channel — and it must NOT return contactId/assignedUserId/
+  //    advisorName or any existence signal when it is.
+  if (!LOOKUP_ENABLED) return genericLookup(req, res);
 
   // ── Read body (cap 8 KB) ────────────────────────────────────────────────
   let body = {};

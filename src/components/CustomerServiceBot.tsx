@@ -487,6 +487,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           text: m.text,
         })),
       });
+      // Sawil 2026-06-29 SECURITY HOTFIX (Option A / finding 02) — versioned TCPA
+      // consent receipt. The submit only fires after contactConfirmed, i.e. after
+      // the caller said "yes" to the confirmation summary that now carries the TCPA
+      // authorization. That affirmative act is the consent; the receipt documents it.
+      const _consentReceipt = await buildConsentReceipt(s.language === 'es' ? 'es' : 'en');
       const payload = {
         source: 'customer_service_bot',
         page_url: typeof window !== 'undefined' ? window.location.href : '',
@@ -508,14 +513,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // (buildLeadNote) and, now that the POST fires after collection settles,
         // both best time and topic are present in state at submit time.
         best_time_to_contact: s.bestTimeToCall || s.scheduledCallbackWindow || '',
-        // PHASE F + 9A — consent NOT collected by this bot; never claim 'yes'.
-        // This is INTENTIONAL TCPA safety. Sawil's GHL workflows must NOT
-        // auto-dial leads with consent_to_contact=false; they should queue
-        // for a human licensed advisor to call back manually.
-        // If we ever add an explicit in-chat consent question, also persist
-        // the TCPA receipt (see src/lib/disclaimerVersion.ts buildConsentReceipt).
-        consent_to_contact: false,
-        consent_text: '',
+        // Sawil 2026-06-29 SECURITY HOTFIX (Option A / finding 02) — Clara shows the
+        // TCPA authorization in the confirmation summary; the caller's explicit
+        // "yes" (contactConfirmed, required before this submit fires) is affirmative
+        // consent. Record it with a versioned receipt. The server gate
+        // (api/submit-lead.js) now REQUIRES consent_to_contact=true before any CRM
+        // call. NOTE for Sawil: Clara leads now carry consent=true — confirm your
+        // GHL workflow routing (previously these queued for manual call-back).
+        consent_to_contact: true,
+        consent_text: _consentReceipt.consentText,
+        consent_receipt_hash: _consentReceipt.consentTextHash,
+        disclaimer_version: _consentReceipt.disclaimerVersion,
+        signer_user_agent: _consentReceipt.userAgent || '',
         // PHASE F — advisor-friendly note (top) + machine fields + transcript.
         lead_notes: note.noteText,
         // PHASE F — short scannable summary for GHL list view.

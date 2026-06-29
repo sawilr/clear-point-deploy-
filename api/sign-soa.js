@@ -19,6 +19,7 @@
 import crypto from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
+import { noStorePII } from './_lib/security-headers.js';
 import { getSoaToken, setSoaToken } from './_lib/soa-store.js';
 
 const AGENT_NAME = 'Sawil Reyes';
@@ -49,6 +50,7 @@ export default async function handler(req, res) {
   var allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) return res.status(403).json({ error: 'Origin not allowed' });
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache SOA/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 

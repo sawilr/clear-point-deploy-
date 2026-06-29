@@ -3295,9 +3295,16 @@ export function processMessage(
             state.advisorTopic ? _line('Topic', state.advisorTopic) : null,
             _loc ? _line('Location', _loc) : null,
           ].filter(Boolean).join('\n');
+          // Sawil 2026-06-29 SECURITY HOTFIX (Option A / finding 02) — the
+          // confirmation carries the TCPA authorization, so the caller's explicit
+          // "sí/yes" is affirmative consent. CustomerServiceBot then sends
+          // consent_to_contact=true + a versioned receipt, which the server gate
+          // (api/submit-lead.js) now REQUIRES before any CRM call.
+          const _tcpaEs = 'Al confirmar, usted autoriza a un asesor licenciado de ClearPoint a llamarle o enviarle mensajes de texto sobre Medicare al número indicado (puede usarse marcación automática). No es requisito para comprar; puede cancelar respondiendo STOP o llamando al 1-866-310-8702.';
+          const _tcpaEn = "By confirming, you authorize a licensed ClearPoint advisor to call or text you about Medicare at the number above (automated dialing may be used). It isn't required to buy anything; you can opt out by replying STOP or calling 1-866-310-8702.";
           const _outS = isEs
-            ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n¿Está todo correcto?`
-            : `Before I send this, let's confirm your details:\n${_linesEn}\n\nIs everything correct?`;
+            ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n${_tcpaEs}\n\n¿Está todo correcto?`
+            : `Before I send this, let's confirm your details:\n${_linesEn}\n\n${_tcpaEn}\n\nIs everything correct?`;
           return _emitHandoff(_outS, { lastBotIntent: 'handoff_asking_confirm' });
         }
       }

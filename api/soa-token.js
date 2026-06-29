@@ -15,6 +15,7 @@
 
 import crypto from 'node:crypto';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
+import { noStorePII } from './_lib/security-headers.js';
 import { setSoaToken, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
 
 // PHASE 7 — SOA gate. Mirror of src/lib/soaContent.ts SOA_ENABLED.
@@ -27,6 +28,7 @@ export default async function handler(req, res) {
   var allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) return res.status(403).json({ error: 'Origin not allowed' });
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache SOA-token/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 

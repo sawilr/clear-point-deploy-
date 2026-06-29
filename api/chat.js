@@ -16,6 +16,7 @@ import { checkPromptInjection } from './_lib/prompt-guard.js';
 import { scrubPHI } from './_lib/phi-scrub.js';
 import { complianceFilter } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
+import { noStorePII } from './_lib/security-headers.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -288,6 +289,7 @@ export default async function handler(req, res) {
     return res.status(403).json({ error: 'Origin not allowed' });
   }
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache chat/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 

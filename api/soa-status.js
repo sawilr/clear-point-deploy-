@@ -12,11 +12,13 @@
 
 import { getSoaToken } from './_lib/soa-store.js';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
+import { noStorePII } from './_lib/security-headers.js';
 
 export default async function handler(req, res) {
   var allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) return res.status(403).json({ error: 'Origin not allowed' });
   applyCors(req, res, allowedOrigin);
+  noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache SOA-status/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
 
