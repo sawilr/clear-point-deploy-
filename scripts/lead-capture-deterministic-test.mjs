@@ -125,24 +125,19 @@ function runFlow(lang, data) {
      t.resp.replace(/\n/g, ' | ').slice(0, 120));
   ok(`${lang}: still NOT submitted during correction`, !st.soaPending);
 
-  // Turn: say "YES" → CONFIRMED. New order: asks "anything else?" AFTER confirm,
-  // not yet submitted.
+  // Turn: say "YES" → CONFIRMED → deterministic close + submit IMMEDIATELY.
+  // No "anything else?" step (it was the divert/lead-loss vector).
   t = turn(st, data.yes); st = t.st;
   ok(`${lang}: "yes" → contactConfirmed set`, st.contactConfirmed === true);
-  ok(`${lang}: confirmation happens BEFORE "anything else?" (asked only after yes)`,
-     /algo m[aá]s|anything else/i.test(t.resp) && !st.soaPending, t.resp.slice(0, 80));
-
-  // Turn: "no" to anything-else → close + submit signal, confirmation intact.
-  t = turn(st, data.no); st = t.st;
-  ok(`${lang}: final "no" → submit signalled (soaPending + captured) WITH confirmation`,
-     st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact' && st.contactConfirmed === true,
-     `soaPending=${st.soaPending} intent=${st.lastBotIntent} confirmed=${st.contactConfirmed}`);
+  ok(`${lang}: "yes" → submit signalled immediately (soaPending + captured), NO "anything else?"`,
+     st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact' && !/algo m[aá]s|anything else/i.test(t.resp),
+     `soaPending=${st.soaPending} intent=${st.lastBotIntent}`);
   ok(`${lang}: needsHuman true at submit`, t.needsHuman === true);
 }
 
-// ── Maria Rojas regression: a QUESTION at "anything else?" must NOT skip or lose
-//    the confirmation. Live bug: she asked "¿cuándo me llaman?" there, the LLM
-//    closed, and the lead submitted WITHOUT confirmation. ──
+// ── Maria Rojas regression: there is NO LONGER an "anything else?" step to divert
+//    at — confirmation → "yes" → close+submit, deterministically. A question can
+//    no longer skip confirmation OR drop the (confirmed) lead. ──
 function runDivert(lang, d) {
   let st = {
     ...baseState(lang), advisorHandoffStarted: true, needsHuman: true,
@@ -159,13 +154,12 @@ function runDivert(lang, d) {
      /¿está todo correcto\?|is everything correct\?/i.test(t.resp) && !/algo m[aá]s|anything else/i.test(t.resp),
      t.resp.replace(/\n/g, ' | ').slice(0, 110));
   ok(`${lang}/divert: not yet confirmed/submitted at the summary`, !st.contactConfirmed && !st.soaPending);
+  // "yes" → immediate close+submit. There is NO "anything else?" window to divert at.
   t = turn(st, d.yes); st = t.st;
-  ok(`${lang}/divert: yes → confirmed + asks "anything else?"`,
-     st.contactConfirmed === true && /algo m[aá]s|anything else/i.test(t.resp));
-  // The Maria move — a question instead of "no".
-  t = turn(st, lang === 'es' ? '¿cuándo me llaman?' : 'when will you call me?'); st = t.st;
-  ok(`${lang}/divert: question at "anything else?" PRESERVES confirmation (not reset)`,
-     st.contactConfirmed === true, `confirmed=${st.contactConfirmed}`);
+  ok(`${lang}/divert: "yes" → submitted (soaPending + captured), NO "anything else?" window`,
+     st.contactConfirmed === true && st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact'
+     && !/algo m[aá]s|anything else/i.test(t.resp),
+     `soaPending=${st.soaPending} intent=${st.lastBotIntent}`);
 }
 
 runFlow('en', {

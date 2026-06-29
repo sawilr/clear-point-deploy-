@@ -344,14 +344,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // pudimos confirmar el envío" + the call button before contact existed.
   useEffect(() => {
     if (hasSubmittedRef.current) return;
-    if (!state.needsHuman) return;
     if (!state.name) return;
     if (!state.phoneNumber) return;
-    // Sawil 2026-06-29 — NEVER submit an unconfirmed lead. The deterministic
-    // collector sets contactConfirmed ONLY after the caller says "yes" to the
-    // summary. Belt-and-suspenders so no close path (LLM or deterministic) can
-    // POST a lead the caller didn't confirm — root cause of the live Maria Rojas
-    // miss, where a question at "anything else?" let the LLM close + submit.
+    // Sawil 2026-06-29 — submit ONLY confirmed leads, and submit EVERY confirmed
+    // lead. contactConfirmed is set exclusively after the deterministic summary +
+    // the caller's "yes", so it is the authoritative gate: a confirmed, complete
+    // lead. We intentionally do NOT also require needsHuman. On the divert path (a
+    // question at "anything else?") the conversation ends on an LLM 'llm_response'
+    // close where needsHuman is never re-set — which silently DROPPED the
+    // already-confirmed lead (the live Maria Rojas lead-loss). Confirmation is the
+    // contract; fire the POST on it regardless of how the conversation closes.
     if (!(state as { contactConfirmed?: boolean }).contactConfirmed) return;
     // Sawil 2026-06-24 — REGRESSION FIX (lead data loss). needsHuman turns on at
     // the handoff START, so this effect used to POST the instant name+phone were

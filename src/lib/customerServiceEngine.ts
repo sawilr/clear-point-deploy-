@@ -3269,15 +3269,12 @@ export function processMessage(
               { lastBotIntent: 'handoff_asking_confirm' },
             );
           }
-          // _yes → CONFIRMED. Set contactConfirmed and ask "anything else?" AFTER
-          // confirmation (Sawil 2026-06-29). Because confirmation now happens BEFORE
-          // this step, a question asked at "anything else?" can never skip it.
-          return _emitHandoff(
-            isEs
-              ? `Perfecto, gracias. Antes de cerrar — ¿hay algo más sobre Medicare que quiera consultar?`
-              : `Perfect, thank you. Before we close — is there anything else about Medicare you'd like to ask?`,
-            { contactConfirmed: true, anythingElseAsked: true, lastBotIntent: 'handoff_anything_else' },
-          );
+          // _yes → CONFIRMED. Fall straight through to the deterministic close +
+          // submit below (which sets contactConfirmed + needsHuman + soaPending +
+          // lastBotIntent='handoff_captured_contact'). Sawil 2026-06-29: we do NOT
+          // ask "anything else?" here. That step was the divert vector — a question
+          // there handed the close to the LLM, which dropped the confirmed lead (the
+          // Maria Rojas lead-loss). Confirm → close → submit, deterministically.
         } else {
           // (C) First time we reach the close → show the SUMMARY + confirm.
           const _em = finalEmail || state.email || '';
