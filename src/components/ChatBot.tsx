@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
+import { getNextMissingStep, buildZaraSummary } from '../lib/zaraReview';
 import { Calendar, ChevronRight, Mic, MicOff, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
 import { getOfficeStatus } from '../lib/afterHours';
@@ -31,6 +32,7 @@ type ChatStep =
   | 'lead_preferred_language'
   | 'lead_time'
   | 'lead_email'
+  | 'lead_review'
   | 'complete';
 type MessagePace = 'short' | 'long' | 'slow';
 
@@ -110,6 +112,10 @@ interface ChatMemory {
   educationStep: number;
   submitted: boolean;
   skippedEmail: boolean;
+  // Sawil 2026-06-29 SECURITY HOTFIX (Zara parity, findings 06/07) — the caller
+  // confirmed the final review summary ("¿Está todo correcto?" → yes) before the
+  // TCPA consent + submit. Submit cannot fire until this AND consentGiven are true.
+  reviewConfirmed: boolean;
   discussedTopics: string[];
   // ── Enterprise Navigation + Mode Memory ──
   navStack: string[];
@@ -2387,6 +2393,7 @@ const DEFAULT_MEMORY: ChatMemory = {
   educationStep: 0,
   submitted: false,
   skippedEmail: false,
+  reviewConfirmed: false,
   discussedTopics: [],
   // ── Enterprise Navigation + Mode Memory ──
   navStack: [],
@@ -3167,7 +3174,7 @@ export function ChatBot() {
       zip: '', city: '', county: '', derivedState: '',
       dob: '', calculatedAge: 0,
       currentCoverage: '', preferredLanguage: '', preferredContactTime: '',
-      email: '', consentGiven: false, skippedEmail: false, submitted: false,
+      email: '', consentGiven: false, skippedEmail: false, reviewConfirmed: false, submitted: false,
     };
     updateMemory(leadReset);
     const freshMem = { ...memory, ...leadReset };
@@ -4035,6 +4042,38 @@ export function ChatBot() {
       return;
     }
 
+    // ── Sawil 2026-06-29 (findings 06/07) — Zara final review confirmation ──
+    if (value === 'review_yes') {
+      updateMemory({ reviewConfirmed: true });
+      askNextQuestion({ ...memory, reviewConfirmed: true });
+      return;
+    }
+    if (value === 'review_no') {
+      const es = memory.language === 'es';
+      setStepSync('lead_review');
+      enqueueBot([{ text: es ? '¿Qué dato desea corregir?' : 'Which detail would you like to fix?', options: [
+        { label: es ? 'Nombre' : 'Name', value: 'fix_name' },
+        { label: es ? 'Teléfono' : 'Phone', value: 'fix_phone' },
+        { label: es ? 'Correo' : 'Email', value: 'fix_email' },
+        { label: es ? 'Código postal' : 'ZIP code', value: 'fix_zip' },
+        { label: es ? 'Mejor horario' : 'Best time', value: 'fix_time' },
+      ], pace: 'short' }]);
+      return;
+    }
+    if (value.startsWith('fix_')) {
+      const patch: Partial<ChatMemory> = {};
+      if (value === 'fix_name') { patch.firstName = ''; patch.lastName = ''; }
+      else if (value === 'fix_phone') { patch.phone = ''; }
+      else if (value === 'fix_email') { patch.email = ''; patch.skippedEmail = false; }
+      else if (value === 'fix_zip') { patch.zip = ''; patch.city = ''; patch.county = ''; patch.derivedState = ''; }
+      else if (value === 'fix_time') { patch.preferredContactTime = ''; }
+      updateMemory(patch);
+      // reviewConfirmed stays false → after re-collecting the cleared field, the
+      // sequencer returns to 'review' and re-shows the summary.
+      askNextQuestion({ ...memory, ...patch });
+      return;
+    }
+
     if (value === 'call_now') {
       window.location.href = CHATBOT_CONTEXT.phoneHref;
       return;
@@ -4102,20 +4141,10 @@ export function ChatBot() {
 
   /* ---------- Text handler ---------- */
 
-  function getNextMissingStep(mem: ChatMemory): string {
-    if (!mem.firstName) return 'firstName';
-    if (!mem.lastName) return 'lastName';
-    if (!mem.phone) return 'phone';
-    if (!mem.state || mem.state === 'other') return 'leadState';
-    if (!mem.zip) return 'zipCode';
-    if (!mem.dob) return 'dob';
-    if (!mem.currentCoverage) return 'currentCoverage';
-    if (!mem.preferredLanguage) return 'preferredLanguage';
-    if (!mem.preferredContactTime) return 'bestTime';
-    if (!mem.email && !mem.skippedEmail) return 'emailOptional';
-    if (!mem.consentGiven) return 'consent';
-    return 'readyToSubmit';
-  }
+  // getNextMissingStep + buildZaraSummary are imported from ../lib/zaraReview
+  // (Sawil 2026-06-29 — extracted pure so the review→consent→submit ordering and
+  // the masked summary are unit-tested in scripts/sec-fix-zara-review.test.mjs).
+  // ChatMemory is structurally compatible with ZaraLeadFields.
 
   function isEmail(text: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text.trim()) && text.length < 100;
@@ -4187,6 +4216,15 @@ export function ChatBot() {
         setStepSync('lead_email');
         enqueueBot([{ text: mem.language === 'es' ? 'Si quiere, puede compartir un correo electrónico. También puede escribir "saltar".' : 'If you would like, you can share an email address. You can also type "skip".', options: [{ label: mem.language === 'es' ? 'Saltar' : 'Skip', value: 'skip_email' }], pace: 'short' }]);
         break;
+      case 'review': {
+        setStepSync('lead_review');
+        const es = mem.language === 'es';
+        enqueueBot([{ text: buildZaraSummary(mem), options: [
+          { label: es ? 'Sí, todo correcto' : 'Yes, all correct', value: 'review_yes' },
+          { label: es ? 'No, corregir un dato' : 'No, fix something', value: 'review_no' },
+        ], pace: 'long' }]);
+        break;
+      }
       case 'consent':
         setStepSync('lead_consent');
         enqueueBot([{ text: mem.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent, options: [{ label: mem.language === 'es' ? 'Sí, acepto' : 'Yes, I agree', value: 'consent_yes' }, { label: mem.language === 'es' ? 'Ahora no' : 'Not now', value: 'consent_no' }], pace: 'long' }]);
@@ -4300,6 +4338,30 @@ export function ChatBot() {
         ? 'Guardé su correo electrónico.'
         : 'Got your email address.', pace: 'short' };
       enqueueBot([ack, ...repromptMsgs]);
+      return true;
+    }
+
+    // Sawil 2026-06-29 (findings 06/07) — typed yes/no at the final review step.
+    if (currentStep === 'lead_review') {
+      const es = memory.language === 'es';
+      const t = text.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if (/^(si+|yes+|correcto|todo (bien|correcto)|ok|okay|asi es|perfecto|confirmo|all (good|correct))\b/.test(t)) {
+        updateMemory({ reviewConfirmed: true });
+        askNextQuestion({ ...memory, reviewConfirmed: true });
+        return true;
+      }
+      if (/^(no|nop|corr|fix|cambi|edit|mal|incorrect)\b/.test(t)) {
+        setStepSync('lead_review');
+        enqueueBot([{ text: es ? '¿Qué dato desea corregir? Puede tocar una opción.' : 'Which detail would you like to fix? You can tap an option.', options: [
+          { label: es ? 'Nombre' : 'Name', value: 'fix_name' },
+          { label: es ? 'Teléfono' : 'Phone', value: 'fix_phone' },
+          { label: es ? 'Correo' : 'Email', value: 'fix_email' },
+          { label: es ? 'Código postal' : 'ZIP code', value: 'fix_zip' },
+          { label: es ? 'Mejor horario' : 'Best time', value: 'fix_time' },
+        ], pace: 'short' }]);
+        return true;
+      }
+      enqueueBot([{ text: es ? 'Por favor confirme: ¿está todo correcto? Puede tocar "Sí, todo correcto" o "No, corregir un dato".' : 'Please confirm: is everything correct? You can tap "Yes, all correct" or "No, fix something".', pace: 'short' }]);
       return true;
     }
 
