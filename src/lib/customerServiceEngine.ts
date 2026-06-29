@@ -126,6 +126,10 @@ export interface ConversationState {
   topicAsked?: boolean;
   /** Short topic the advisor should know before calling. */
   advisorTopic?: string;
+  /** Sawil 2026-06-28 — contact captured + user EXPLICITLY confirmed the
+   *  summary ("¿Está todo correcto?" → "sí"). The GHL submit is gated on this:
+   *  no POST until the caller confirms their own data. */
+  contactConfirmed?: boolean;
   /** Sawil 2026-06-20 — counts failed phone attempts in the advisor handoff so
    *  Clara can escape the re-ask loop (offer the direct line) instead of
    *  repeating the same question forever. */
@@ -3188,6 +3192,107 @@ export function processMessage(
         return { response: out, newState, needsHuman: false };
       }
 
+      // ── CONFIRMATION GATE (Sawil 2026-06-28) ───────────────────────────────
+      // World-class lead capture: the caller must CONFIRM their own data before
+      // anything is submitted. The GHL POST in CustomerServiceBot is held while
+      // lastBotIntent matches /^handoff_(asking_|anything_else|paused)/, so
+      // 'handoff_asking_confirm' / 'handoff_asking_correct_field' keep the lead
+      // un-submitted until the caller explicitly says it is correct. On "no" we
+      // correct exactly ONE field and re-show the summary. Only an explicit "yes"
+      // falls through to the close + submit below.
+      if (!state.contactConfirmed) {
+        const _ans = _msg.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+        const _line = (label: string, val: string): string => `• ${label}: ${val}`;
+
+        // (B) We asked WHICH field to fix → clear that ONE field and re-ask it.
+        if (state.lastBotIntent === 'handoff_asking_correct_field') {
+          const _fixName = /(nombre|apellido|\bname\b|last ?name|first ?name)/.test(_ans);
+          const _fixPhone = /(telefono|numero|\bphone\b|\bnumber\b|\bcel)/.test(_ans);
+          const _fixEmail = /(correo|email|e-?mail|\bmail\b)/.test(_ans);
+          const _fixTime = /(horario|hora|tiempo|\btime\b)/.test(_ans);
+          const _fixTopic = /(tema|motivo|razon|asunto|\btopic\b|reason)/.test(_ans);
+          if (_fixName) {
+            return _emitHandoff(
+              isEs ? 'Claro. ¿Cuál es su nombre completo (nombre y apellido)?' : 'Of course. What is your full name (first and last)?',
+              { name: '', nameIsValid: false, lastnameAsked: false, lastBotIntent: 'handoff_asking_name' },
+            );
+          }
+          if (_fixPhone) {
+            return _emitHandoff(
+              isEs ? 'Claro. ¿Cuál es el número de teléfono correcto? (10 dígitos)' : 'Of course. What is the correct phone number? (10 digits)',
+              { phoneNumber: '', phoneAttempts: 0, lastBotIntent: 'handoff_asking_phone' },
+            );
+          }
+          if (_fixEmail) {
+            return _emitHandoff(
+              isEs ? 'Claro. ¿Cuál es el correo correcto? (sin espacios, ej: nombre@correo.com)' : 'Of course. What is the correct email? (no spaces, e.g. name@email.com)',
+              { email: '', emailAsked: true, lastBotIntent: 'handoff_asking_email_retry' },
+            );
+          }
+          if (_fixTime) {
+            return _emitHandoff(
+              isEs ? '¿Cuál es el mejor horario para que el asesor le llame?' : 'What is the best time for the advisor to call you?',
+              { bestTimeToCall: '', bestTimeAsked: true, lastBotIntent: 'handoff_asking_besttime' },
+            );
+          }
+          if (_fixTopic) {
+            return _emitHandoff(
+              isEs ? '¿Cuál es el tema que desea que el asesor sepa antes de llamarle?' : 'What is the topic you want the advisor to know before calling?',
+              { advisorTopic: '', topicAsked: true, lastBotIntent: 'handoff_asking_topic' },
+            );
+          }
+          // Couldn't tell which field → list the options again (still gated).
+          return _emitHandoff(
+            isEs ? 'Dígame cuál dato corrijo: su nombre, su teléfono o su correo.' : 'Tell me which detail to fix: your name, your phone, or your email.',
+            { lastBotIntent: 'handoff_asking_correct_field' },
+          );
+        }
+
+        // (A) We asked "is everything correct?" → interpret yes / no.
+        if (state.lastBotIntent === 'handoff_asking_confirm') {
+          const _yes = /^(si+|s\b|yes+|yeah|yep|claro|correcto|exacto|asi es|todo (bien|correcto|ok)|esta bien|perfecto|de acuerdo|confirmo|ok|okay|all (good|correct|right)|that'?s (right|correct)|looks good|perfect|confirm)\b/.test(_ans);
+          const _no = /^(no|nop|nope|negativo|incorrect|esta mal|mal\b|equivocad|hay un error|cambiar|cambie|corrij|correg|fix|wrong|change|edit)\b/.test(_ans);
+          if (_no) {
+            return _emitHandoff(
+              isEs ? '¿Qué dato desea corregir: su nombre, su teléfono o su correo?' : 'Which would you like to fix: your name, your phone, or your email?',
+              { lastBotIntent: 'handoff_asking_correct_field' },
+            );
+          }
+          if (!_yes) {
+            // Unclear answer → re-ask the confirm once (no submit).
+            return _emitHandoff(
+              isEs ? 'Disculpe, ¿está todo correcto? Puede responder "sí", o decirme qué dato corregir.' : 'Sorry — is everything correct? You can reply "yes", or tell me which detail to fix.',
+              { lastBotIntent: 'handoff_asking_confirm' },
+            );
+          }
+          // _yes → fall through to the close + submit below (contactConfirmed set there).
+        } else {
+          // (C) First time we reach the close → show the SUMMARY + confirm.
+          const _em = finalEmail || state.email || '';
+          const _loc = state.state || state.zipCode || '';
+          const _linesEs = [
+            _line('Nombre', finalName),
+            _line('Teléfono', fmt),
+            _line('Correo', _em || '(no proporcionado)'),
+            state.bestTimeToCall ? _line('Mejor horario', state.bestTimeToCall) : null,
+            state.advisorTopic ? _line('Tema', state.advisorTopic) : null,
+            _loc ? _line('Ubicación', _loc) : null,
+          ].filter(Boolean).join('\n');
+          const _linesEn = [
+            _line('Name', finalName),
+            _line('Phone', fmt),
+            _line('Email', _em || '(not provided)'),
+            state.bestTimeToCall ? _line('Best time', state.bestTimeToCall) : null,
+            state.advisorTopic ? _line('Topic', state.advisorTopic) : null,
+            _loc ? _line('Location', _loc) : null,
+          ].filter(Boolean).join('\n');
+          const _outS = isEs
+            ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n¿Está todo correcto?`
+            : `Before I send this, let's confirm your details:\n${_linesEn}\n\nIs everything correct?`;
+          return _emitHandoff(_outS, { lastBotIntent: 'handoff_asking_confirm' });
+        }
+      }
+
       // PHASE A16 — Final close + SOA request.
       // CMS 422.2264 requires a signed Scope of Sales Appointment before
       // the advisor can discuss MA/PDP products with the beneficiary.
@@ -3218,6 +3323,7 @@ export function processMessage(
         email: finalEmail || state.email,
         advisorHandoffStarted: true,
         needsHuman: true,
+        contactConfirmed: true,     // Sawil 2026-06-28 — caller confirmed the summary
         conversationClosed: false, // keep open so React can append SOA link
         soaPending: true,           // signal to React: request a signing token
         lastBotIntent: 'handoff_captured_contact',
@@ -4575,7 +4681,7 @@ function _handlePlanLetterProviderChange(
   return { response: out, newState, needsHuman: false };
 }
 
-function _runStructuralFirst(
+export function _runStructuralFirst(
   userMessage: string,
   state: ConversationState,
 ): { response: string; newState: ConversationState; needsHuman: boolean } | null {
@@ -4600,10 +4706,21 @@ function _runStructuralFirst(
   // is mid-conversation (llm_response). The structural close ONLY runs
   // when (a) we're still collecting fields, or (b) the user explicitly
   // closes — which is handled by the closing-intent check below.
+  // Sawil 2026-06-28 — LLM CANNOT collect contact. Root cause of three live
+  // bugs (name+phone asked together, foreign 829 accepted, no confirmation):
+  // every LLM turn sets lastBotIntent='llm_response', and the gate below used to
+  // let the LLM keep driving in that state — so it freelanced the whole contact
+  // collection. Fix: while a handoff/schedule is active and we do NOT yet have
+  // BOTH name and phone in STATE (the LLM never writes those fields — only the
+  // deterministic collector does), force the deterministic collector EVEN on an
+  // 'llm_response' turn. This is the hard guarantee that the LLM can never own
+  // contact collection. Once name+phone are captured, the original behavior is
+  // preserved (paused Q&A / LLM continuation still allowed).
+  const _coreContactMissing = !(state.name && state.phoneNumber);
   if ((state.advisorHandoffStarted || state.schedulingCallback)
       && !state.conversationClosed
       && state.lastBotIntent !== 'handoff_paused_for_question'
-      && state.lastBotIntent !== 'llm_response') {
+      && (state.lastBotIntent !== 'llm_response' || _coreContactMissing)) {
     return processMessage(userMessage, state);
   }
   // Crisis (self-harm → 988) and medical emergency (chest pain/infarto → 911)
