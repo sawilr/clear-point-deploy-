@@ -3261,7 +3261,9 @@ export function ChatBot() {
       phone: finalMemory.phone,
       email: finalMemory.email,
       age: String(finalMemory.calculatedAge),
-      date_of_birth: finalMemory.dob,
+      // Sawil 2026-06-29 (finding 08) — DOB is no longer collected in public chat;
+      // never send a date of birth from Zara. Advisor verifies identity securely.
+      date_of_birth: '',
       calculated_age: finalMemory.calculatedAge,
       zip_code: finalMemory.zip,
       city: finalMemory.city,

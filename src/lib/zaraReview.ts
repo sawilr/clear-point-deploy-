@@ -29,7 +29,10 @@ export function getNextMissingStep(mem: ZaraLeadFields): string {
   if (!mem.phone) return 'phone';
   if (!mem.state || mem.state === 'other') return 'leadState';
   if (!mem.zip) return 'zipCode';
-  if (!mem.dob) return 'dob';
+  // Sawil 2026-06-29 SECURITY HOTFIX (finding 08, PHASE 3) — full DOB is NO LONGER
+  // collected in public chat during beta (privacy-policy mismatch + sensitive
+  // identity data). Identity/eligibility is verified securely by the advisor.
+  // Medicare status (currentCoverage) + ZIP/state already cover routing needs.
   if (!mem.currentCoverage) return 'currentCoverage';
   if (!mem.preferredLanguage) return 'preferredLanguage';
   if (!mem.preferredContactTime) return 'bestTime';

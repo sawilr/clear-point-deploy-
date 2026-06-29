@@ -50,5 +50,21 @@ ok('Spanglish (es lang): review before consent', getNextMissingStep({ ...full, l
 ok('summary: skipped email shows (not provided)', /\(not provided\)/.test(buildZaraSummary({ ...full, email: '', skippedEmail: true })));
 ok('phone format helper', formatZaraPhone('2123880188') === '212-388-0188');
 
+// ── PHASE 3 — DOB is NEVER collected in public Zara chat (finding 08) ──
+ok('after zip → coverage (NOT dob)', getNextMissingStep({ ...base, firstName: 'A', lastName: 'B', phone: '2123880188', state: 'NY', zip: '10550' }) === 'currentCoverage');
+{
+  const fillers = { firstName: 'A', lastName: 'B', phone: '2123880188', state: 'NY', zip: '10550', currentCoverage: 'X', preferredLanguage: 'English', preferredContactTime: 'AM', email: 'a@b.com', reviewConfirmed: true, consentGiven: true };
+  const stepToField = { firstName: 'firstName', lastName: 'lastName', phone: 'phone', leadState: 'state', zipCode: 'zip', currentCoverage: 'currentCoverage', preferredLanguage: 'preferredLanguage', bestTime: 'preferredContactTime', emailOptional: 'email', review: 'reviewConfirmed', consent: 'consentGiven' };
+  let m = { ...base }; const seq = [];
+  for (let i = 0; i < 15; i++) {
+    const s = getNextMissingStep(m); seq.push(s);
+    if (s === 'readyToSubmit') break;
+    const f = stepToField[s]; if (f) m = { ...m, [f]: fillers[f] };
+  }
+  ok('full collection sequence NEVER asks dob', !seq.includes('dob'), seq.join(' → '));
+  ok('sequence order: …zipCode → currentCoverage … review → consent → readyToSubmit',
+     /zipCode → currentCoverage.*review → consent → readyToSubmit/.test(seq.join(' → ')), seq.join(' → '));
+}
+
 console.log(`\n${fail ? '❌' : '✅'}  ${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);
