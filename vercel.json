@@ -14,7 +14,21 @@
     }
   ],
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/about", "destination": "/index.html" },
+    { "source": "/medicare-advantage", "destination": "/index.html" },
+    { "source": "/part-d", "destination": "/index.html" },
+    { "source": "/extra-help", "destination": "/index.html" },
+    { "source": "/help-paying-costs", "destination": "/index.html" },
+    { "source": "/otc-benefits", "destination": "/index.html" },
+    { "source": "/support", "destination": "/index.html" },
+    { "source": "/resources", "destination": "/index.html" },
+    { "source": "/contact", "destination": "/index.html" },
+    { "source": "/privacy-policy", "destination": "/index.html" },
+    { "source": "/accessibility", "destination": "/index.html" },
+    { "source": "/terms", "destination": "/index.html" },
+    { "source": "/thank-you", "destination": "/index.html" },
+    { "source": "/soa/:token", "destination": "/index.html" }
   ],
   "headers": [
     {

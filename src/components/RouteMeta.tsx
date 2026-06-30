@@ -127,14 +127,25 @@ export function RouteMeta() {
     }
     el.setAttribute('content', desc);
 
-    // canonical POR RUTA (nunca global al home)
+    // Sawil 2026-06-29 SECURITY HOTFIX (findings 11/12) — a path not in our route
+    // map (and not /thank-you or /soa/:token) is the SPA 404 page. Do NOT
+    // self-canonicalize an invalid URL, and mark it noindex so search engines and
+    // monitoring don't treat soft-404s as real pages. Known routes keep a
+    // per-route canonical and are indexable.
+    const isKnownRoute = !!PAGE_META[pathname] || pathname === '/thank-you' || pathname.startsWith('/soa/');
     let link = document.head.querySelector('link[rel="canonical"]');
-    if (!link) {
-      link = document.createElement('link');
-      link.setAttribute('rel', 'canonical');
-      document.head.appendChild(link);
+    if (isKnownRoute) {
+      if (!link) {
+        link = document.createElement('link');
+        link.setAttribute('rel', 'canonical');
+        document.head.appendChild(link);
+      }
+      link.setAttribute('href', url);
+      upsertMeta('name', 'robots', 'index, follow');
+    } else {
+      if (link) link.remove(); // omit canonical on a 404 (finding 12)
+      upsertMeta('name', 'robots', 'noindex, follow');
     }
-    link.setAttribute('href', url);
 
     // OG / Twitter por ruta (reusa el title/description únicos que ya existen).
     // og:image / twitter:image quedan como base en index.html (misma imagen).
