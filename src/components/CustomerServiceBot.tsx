@@ -1572,7 +1572,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={resetConversation}
-            className="px-2.5 py-1.5 hover:bg-cream-50/10 rounded-lg transition-colors inline-flex items-center gap-1.5 text-[12px] min-h-[44px] min-w-[44px] justify-center"
+            className="px-2.5 py-1.5 hover:bg-cream-50/10 rounded-lg transition-colors inline-flex items-center gap-1.5 text-[12px] min-h-[36px]"
             aria-label={isSpanish ? 'Empezar de nuevo' : 'Start over'}
             title={isSpanish ? 'Empezar de nuevo' : 'Start over'}
           >
@@ -1584,7 +1584,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           {state.step === 'conversation' && submitState === 'idle' && (
             <button
               onClick={handleEscalateManually}
-              className="p-1.5 min-h-[44px] min-w-[44px] inline-flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors"
+              className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors"
               aria-label={isSpanish ? 'Hablar con un asesor' : 'Talk to an advisor'}
               title={isSpanish ? 'Hablar con un asesor' : 'Talk to an advisor'}
             >

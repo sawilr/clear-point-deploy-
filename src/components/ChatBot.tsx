@@ -4983,13 +4983,13 @@ export function ChatBot() {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={resetChat} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={resetLabel} title={resetLabel}>
+              <button onClick={resetChat} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={resetLabel} title={resetLabel}>
                 <RotateCcw className="w-4 h-4" />
               </button>
-              <button onClick={() => setIsMinimized(true)} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
+              <button onClick={() => setIsMinimized(true)} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
                 <Minus className="w-4 h-4" />
               </button>
-              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
+              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
                 <X className="w-5 h-5" />
               </button>
             </div>
