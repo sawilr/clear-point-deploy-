@@ -17,6 +17,7 @@ import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler
 // patterns, low-entropy phones, area-code allowlist). Clara delegates to these
 // so the bot and the Smart Review form enforce the SAME junk-lead rules.
 import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailStrict } from './validation.ts';
+import { TCPA_CONSENT_TEXT_EN as _TCPA_EN, TCPA_CONSENT_TEXT_ES as _TCPA_ES } from './disclaimerVersion.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -3300,8 +3301,11 @@ export function processMessage(
           // "sí/yes" is affirmative consent. CustomerServiceBot then sends
           // consent_to_contact=true + a versioned receipt, which the server gate
           // (api/submit-lead.js) now REQUIRES before any CRM call.
-          const _tcpaEs = 'Al confirmar, usted autoriza a un asesor licenciado de ClearPoint a llamarle o enviarle mensajes de texto sobre Medicare al número indicado (puede usarse marcación automática). No es requisito para comprar; puede cancelar respondiendo STOP o llamando al 1-866-310-8702.';
-          const _tcpaEn = "By confirming, you authorize a licensed ClearPoint advisor to call or text you about Medicare at the number above (automated dialing may be used). It isn't required to buy anything; you can opt out by replying STOP or calling 1-866-310-8702.";
+          // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the EXACT
+          // canonical TCPA text that CustomerServiceBot records + SHA-256 hashes, so the
+          // shown confirmation == the receipted/hashed consent (was a shorter paraphrase).
+          const _tcpaEs = _TCPA_ES;
+          const _tcpaEn = _TCPA_EN;
           const _outS = isEs
             ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n${_tcpaEs}\n\n¿Está todo correcto?`
             : `Before I send this, let's confirm your details:\n${_linesEn}\n\n${_tcpaEn}\n\nIs everything correct?`;
@@ -7618,8 +7622,8 @@ function processMessageInner(
     if (problemType === 'about_clearpoint') {
       newState.serviceCategory = 'about_clearpoint';
       const out = isSpanish
-        ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno. Nuestros asesores son **licenciados** y el servicio es **gratis**. No vendemos su información. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
-        : "ClearPoint Senior Advisors is an independent agency — we are NOT Medicare or the government. Our advisors are **licensed** and the service is **free**. We don't sell your information. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
+        ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno. Nuestros asesores son **licenciados** y el servicio **no tiene costo para usted**. No vendemos su información. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
+        : "ClearPoint Senior Advisors is an independent agency — we are NOT Medicare or the government. Our advisors are **licensed** and the service is **at no cost to you**. We don't sell your information. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

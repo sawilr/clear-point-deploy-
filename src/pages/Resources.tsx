@@ -464,7 +464,7 @@ export default function Resources() {
                 <span className="inline-block text-[10px] font-bold tracking-wider uppercase text-gold-500 bg-gold-100 px-2.5 py-1 rounded-full mb-3 self-start">{t(r.tag, r.tagEs)}</span>
                 <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">{t(r.title, r.titleEs)}</h3>
                 <p className="text-earth-600 text-sm leading-relaxed mb-4 flex-1">{t(r.desc, r.descEs)}</p>
-                <button onClick={() => setActiveGuide(i)} className="text-sm font-semibold text-gold-600 hover:text-gold-700 transition-colors self-start cursor-pointer px-3 py-2 min-h-[44px] inline-flex items-center -ml-3 rounded-lg">{t('Read guide →', 'Leer guía →')}</button>
+                <button onClick={() => setActiveGuide(i)} aria-label={t(`Read guide: ${r.title}`, `Leer guía: ${r.titleEs}`)} className="text-sm font-semibold text-gold-600 hover:text-gold-700 transition-colors self-start cursor-pointer px-3 py-2 min-h-[44px] inline-flex items-center -ml-3 rounded-lg">{t('Read guide →', 'Leer guía →')}</button>
               </div>
             ))}
           </div>

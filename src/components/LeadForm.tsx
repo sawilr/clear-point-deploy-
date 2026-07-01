@@ -4,6 +4,7 @@ import { LockIcon, CheckIcon } from './icons';
 import { Link, useLocation } from 'react-router';
 import { submitLeadToGHL } from '../lib/ghl';
 import { validatePersonName, validatePhone, validateEmail } from '../lib/validation';
+import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
 import { getZipInfo } from '../lib/zipLookup';
 import { track, Events } from '../lib/analytics';
 
@@ -209,6 +210,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     setError(false);
 
     const utm = getUtmParams();
+    // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — record the EXACT
+    // canonical TCPA text shown above, in the language it was displayed, plus a
+    // SHA-256 receipt + disclaimer version. Was a short English-only string that
+    // matched neither the displayed checkbox nor the user's language.
+    const consentReceipt = await buildConsentReceipt(lang === 'es' ? 'es' : 'en');
     const payload = {
       source: 'ClearPoint Senior Advisors Website',
       page_url: window.location.href,
@@ -224,7 +230,10 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
       interest_type: '',
       best_time_to_contact: formData.best_time_to_contact,
       consent_to_contact: formData.tcpa_consent,
-      consent_text: 'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors. Message and data rates may apply. Reply STOP to opt out.',
+      consent_text: consentReceipt.consentText,
+      consent_receipt_hash: consentReceipt.consentTextHash,
+      disclaimer_version: consentReceipt.disclaimerVersion,
+      signer_user_agent: consentReceipt.userAgent || '',
       lead_notes: `Source: ${source}. Status: ${formData.medicare_status || 'not specified'}.`,
       bot_transcript_summary: '',
       tags: ['Website Lead', 'Medicare Lead', 'ClearPoint Website', 'Form Lead', 'Consent Captured'],
@@ -380,13 +389,12 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 onChange={handleChange}
                 className="mt-0.5 w-4 h-4 accent-earth-800 flex-shrink-0"
               />
+              {/* Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the
+                  EXACT canonical TCPA text that gets recorded + SHA-256 hashed, so the
+                  audit receipt always matches verbatim what the user saw (EN/ES). */}
               <span id={fid('tcpa_text')} className="text-sm text-earth-700 leading-relaxed">
-                {t(
-                  'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided above. I understand that these calls may be made using an automatic telephone dialing system and that message and data rates may apply. I understand that I am not required to consent as a condition of purchasing any goods or services, and that I may revoke my consent at any time by replying STOP or calling 1-866-310-8702. Message frequency may vary. See our',
-                  'Acepto recibir llamadas de marketing y mensajes de texto de ClearPoint Senior Advisors en el número de teléfono proporcionado arriba. Entiendo que estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático y que pueden aplicarse tarifas de mensajes y datos. Entiendo que no estoy obligado a consentir como condición para comprar bienes o servicios, y que puedo revocar mi consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. La frecuencia de mensajes puede variar. Consulte nuestra'
-                )}{' '}
-                <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('Privacy Policy', 'Política de Privacidad')}</Link>{' '}
-                {t('for more information.', 'para más información.')}
+                {lang === 'es' ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
+                <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
               </span>
             </label>
             {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-500 mt-2">{errors.consent}</p>}

@@ -14,6 +14,14 @@ const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 const KV_AVAILABLE = !!(KV_URL && KV_TOKEN);
 
+// Sawil 2026-06-30 AUDIT FIX (security HIGH) — if KV is NOT configured on a
+// deployed (Vercel) environment, the limiter silently degrades to PER-INSTANCE
+// memory, which distributed serverless concurrency multiplies (a weak cap). Emit
+// a loud, PII-free alert once per cold start so ops provision the shared store.
+if (!KV_AVAILABLE && (process.env.VERCEL || process.env.VERCEL_ENV)) {
+  console.error('[rate-limit][ALERT] KV_NOT_CONFIGURED on Vercel — rate limits are per-instance only (weak). Set KV_REST_API_URL + KV_REST_API_TOKEN.');
+}
+
 // ── In-memory store (fallback) ──────────────────────────────────────────
 // Per-Vercel-instance. Resets when the function cold-starts, but at
 // least caps a single hot instance from being abused.
@@ -85,8 +93,12 @@ export async function rateLimit(identifier, opts) {
       count = memoryIncr(key, windowMs);
     }
   } catch (e) {
-    // KV unavailable mid-flight — fall back to memory
-    console.warn('[rate-limit] kv error, falling back to memory:', e && e.message);
+    // Sawil 2026-06-30 AUDIT FIX (security HIGH) — do NOT silently fail open. KV
+    // down drops us to PER-INSTANCE memory limits (distributed concurrency
+    // multiplies the effective cap). We keep the memory backstop so real leads/chat
+    // still flow (Phase 1: never drop a consented lead), but emit a LOUD, PII-free
+    // alert so ops see the degraded mode and repair KV.
+    console.error('[rate-limit][ALERT] KV_UNAVAILABLE — degraded to per-instance memory limits. err=' + (e && e.message ? e.message : 'unknown'));
     count = memoryIncr(key, windowMs);
   }
   if (count > max) {
@@ -104,10 +116,22 @@ export async function rateLimit(identifier, opts) {
 var IP_RE = /^[0-9a-f:.]{3,45}$/i;
 export function clientId(req) {
   if (!req || !req.headers) return 'unknown';
+  var onVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV);
+  // Sawil 2026-06-30 AUDIT FIX (security HIGH) — on Vercel, ONLY
+  // x-vercel-forwarded-for is trustworthy: Vercel's edge sets it and the client
+  // cannot forge it. x-forwarded-for / x-real-ip ARE client-influenceable, so on
+  // Vercel we must NOT fall back to them (that let an attacker mint a fresh
+  // rate-limit quota per forged value). Off Vercel (local dev / other hosts) the
+  // usual proxy headers are accepted.
   var vercelIp = req.headers['x-vercel-forwarded-for'];
   if (vercelIp) {
     var v = String(vercelIp).split(',')[0].trim();
     if (IP_RE.test(v)) return v;
+  }
+  if (onVercel) {
+    // On Vercel but the trusted header is absent/invalid — bucket together (shared
+    // conservative quota) rather than trust a spoofable header. Fail closed here.
+    return 'vercel-untrusted';
   }
   var fwd = req.headers['x-forwarded-for'];
   if (fwd) {

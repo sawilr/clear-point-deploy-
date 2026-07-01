@@ -11,6 +11,39 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 import { analyzeLeadIntelligence, formatIntelForGhlNotes } from './_lib/lead-intel.js';
 import { noStorePII } from './_lib/security-headers.js';
 
+// Sawil 2026-06-30 AUDIT FIX C1 (no lost leads) — a CONSENTED lead must never be
+// lost to a transient GHL failure. Retry the GHL call on network errors and on
+// 5xx/429 (transient) with short exponential backoff. 4xx responses (validation,
+// duplicate) are deterministic and are NOT retried. Bounded (3 attempts, ~300/600ms
+// backoff) so total time stays well under the serverless function timeout. Only the
+// CONTACT create/update is retried — notes/opportunities run once after, so a retry
+// cannot duplicate them. Never logs PII.
+async function ghlFetchRetry(url, options, opts) {
+  var retries = (opts && opts.retries != null) ? opts.retries : 2;
+  var baseDelayMs = (opts && opts.baseDelayMs != null) ? opts.baseDelayMs : 300;
+  var lastErr = null;
+  for (var attempt = 0; attempt <= retries; attempt++) {
+    try {
+      var resp = await fetch(url, options);
+      if ((resp.status >= 500 || resp.status === 429) && attempt < retries) {
+        console.warn('[GHL] transient ' + resp.status + ' — retry ' + (attempt + 1) + '/' + retries);
+        await new Promise(function (r) { setTimeout(r, baseDelayMs * Math.pow(2, attempt)); });
+        continue;
+      }
+      return resp;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        console.warn('[GHL] network error — retry ' + (attempt + 1) + '/' + retries);
+        await new Promise(function (r) { setTimeout(r, baseDelayMs * Math.pow(2, attempt)); });
+        continue;
+      }
+      throw lastErr;
+    }
+  }
+  throw (lastErr || new Error('ghlFetchRetry exhausted'));
+}
+
 export default async function handler(req, res) {
   // ── A15.1 CORS — allowlist ──────────────────────────────────────────────
   var allowedOrigin = checkOrigin(req);
@@ -198,7 +231,13 @@ export default async function handler(req, res) {
     var allTags = ['Status-NewLead'];
     for (var j = 0; j < frontendTags.length; j++) { if (allTags.indexOf(frontendTags[j]) === -1) allTags.push(frontendTags[j]); }
 
-    if (!first_name || !phone) return res.status(400).json({ error: 'Missing required fields' });
+    // Sawil 2026-06-30 AUDIT FIX C2 — Clara's "verified existing client" path
+    // (Path A matched) submits with phone:'' because the phone is already on file
+    // in GHL; it carries a sanitized ghl_contact_id and updates that contact via
+    // PUT. The old check 400'd it → every highest-intent verified-client inquiry
+    // was silently dropped while the UI showed success. Require name+phone ONLY
+    // when there is NO verified contact id to update.
+    if (!ghl_contact_id && (!first_name || !phone)) return res.status(400).json({ error: 'Missing required fields' });
 
     // ── Server-side U.S. phone validation (mirrors src/lib/validation.ts) ────────
     // Inline JS version — cannot import TypeScript modules in Vercel serverless functions
@@ -260,19 +299,26 @@ export default async function handler(req, res) {
       if (national.slice(3) === '8675309') return { valid: false, reason: 'Phone appears fake (867-5309)' };
       return { valid: true, national: national };
     }
-    var phoneValidation = serverValidatePhone(phone);
-    if (!phoneValidation.valid) {
-      // Privacy: log validation reason only — never the raw phone number.
-      // The phone is rejected before any further processing, so no contact is created.
-      console.warn('[VALIDATION] Phone rejected: ' + phoneValidation.reason);
-      return res.status(400).json({ error: 'Invalid U.S. phone number', reason: phoneValidation.reason });
+    // Sawil 2026-06-30 AUDIT FIX C2 — validate phone ONLY when one was provided.
+    // A verified-client update (ghl_contact_id present, phone:'') legitimately has
+    // no phone in the payload; the existing GHL contact already holds it. Any phone
+    // that IS provided is still fully validated (territories + 555/867-5309 fakes).
+    var phone10 = '';
+    var phoneE164 = '';
+    if (phone) {
+      var phoneValidation = serverValidatePhone(phone);
+      if (!phoneValidation.valid) {
+        // Privacy: log validation reason only — never the raw phone number.
+        console.warn('[VALIDATION] Phone rejected: ' + phoneValidation.reason);
+        return res.status(400).json({ error: 'Invalid U.S. phone number', reason: phoneValidation.reason });
+      }
+      phone10 = phoneValidation.national;
+      phoneE164 = '+1' + phone10;
     }
-    var phone10 = phoneValidation.national;
-    var phoneE164 = '+1' + phone10;
 
     var contact = {
       locationId, firstName: first_name, lastName: last_name || '',
-      phone: phoneE164, email: email || undefined,
+      phone: phoneE164 || undefined, email: email || undefined,
       city: city || undefined,
       state: derived_state || undefined,
       postalCode: zip || undefined,
@@ -323,7 +369,7 @@ export default async function handler(req, res) {
     var ghlRes;
     var usedExisting = false;
     if (ghl_contact_id) {
-      ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/' + ghl_contact_id, {
+      ghlRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/' + ghl_contact_id, {
         method: 'PUT',
         headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
         body: JSON.stringify(contact)
@@ -332,7 +378,7 @@ export default async function handler(req, res) {
       // If PUT 404s (stale id), fall through to POST create below.
     }
     if (!ghlRes || !ghlRes.ok) {
-      ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
+      ghlRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/', {
         method: 'POST',
         headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
         body: JSON.stringify(contact)
@@ -359,7 +405,17 @@ export default async function handler(req, res) {
         message: 'We could not submit your request right now. Please call us at 1-866-310-8702.',
       });
     }
-    var ghlData = await ghlRes.json(); var contactId = ghlData.contact && ghlData.contact.id;
+    // Sawil 2026-06-30 AUDIT FIX C3/BUG-003 — GHL can return a 2xx with an empty
+    // or non-JSON body (gateway 204, truncated proxy response). An unguarded
+    // .json() would THROW, fall to the outer catch, return 500, and tell the user
+    // it failed — while the contact was already created (orphaned + a retry then
+    // duplicates). Guard the parse: a 2xx with no parseable contact id is still a
+    // SUCCESS (the contact exists); we just skip the note we can't attach.
+    var ghlData = await ghlRes.json().catch(function () { return {}; });
+    var contactId = ghlData && ghlData.contact && ghlData.contact.id;
+    if (!contactId) {
+      console.warn('[GHL] 2xx with no contact id in body — treating as created, skipping note (no PII logged)');
+    }
     // Privacy: log only contactId + source + language. Never log first_name,
     // last_name, phone, email, ZIP, DOB, or any other PII. Vercel runtime logs
     // are accessible via the dashboard and may be exported — keeping logs

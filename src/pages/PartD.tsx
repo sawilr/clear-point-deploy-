@@ -18,8 +18,8 @@ export default function PartD() {
         eyebrowEs="Planes de Medicamentos Parte D"
         headline="Affordable Prescription Drug Coverage"
         headlineEs="Cobertura Asequible de Medicamentos"
-        subheadline="Medicare Part D helps cover the cost of prescription drugs. We compare plans based on your specific medications to find the best fit."
-        subheadlineEs="Medicare Parte D ayuda a cubrir el costo de medicamentos con receta. Comparamos planes según sus medicamentos específicos para encontrar el mejor ajuste."
+        subheadline="Medicare Part D helps cover the cost of prescription drugs. We compare plans based on your specific medications so you can review your options."
+        subheadlineEs="Medicare Parte D ayuda a cubrir el costo de medicamentos con receta. Comparamos planes según sus medicamentos específicos para que pueda revisar sus opciones."
         variant="page"
         compact
       />
@@ -42,8 +42,8 @@ export default function PartD() {
                 </h2>
                 <p className="text-earth-600 text-base leading-relaxed">
                   {t(
-                    'Medicare Part D is prescription drug coverage available to anyone with Medicare. These plans are offered by private insurance companies approved by Medicare. Each plan has its own list of covered drugs (called a formulary), its own network of pharmacies, and its own cost structure. Choosing the right Part D plan can save you thousands of dollars each year.',
-                    'Medicare Parte D es cobertura de medicamentos con receta disponible para cualquier persona con Medicare. Estos planes son ofrecidos por compañías de seguros privadas aprobadas por Medicare. Cada plan tiene su propia lista de medicamentos cubiertos (llamada formulario), su propia red de farmacias y su propia estructura de costos. Elegir el plan Parte D correcto puede ahorrarle miles de dólares cada año.'
+                    'Medicare Part D is prescription drug coverage available to anyone with Medicare. These plans are offered by private insurance companies approved by Medicare. Each plan has its own list of covered drugs (called a formulary), its own network of pharmacies, and its own cost structure. Choosing a suitable Part D plan can make a meaningful difference in your yearly prescription costs.',
+                    'Medicare Parte D es cobertura de medicamentos con receta disponible para cualquier persona con Medicare. Estos planes son ofrecidos por compañías de seguros privadas aprobadas por Medicare. Cada plan tiene su propia lista de medicamentos cubiertos (llamada formulario), su propia red de farmacias y su propia estructura de costos. Elegir un plan Parte D adecuado puede hacer una diferencia importante en sus costos anuales de medicamentos.'
                   )}
                 </p>
               </div>

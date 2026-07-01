@@ -4,6 +4,7 @@ import { CTASection } from '../components/CTASection';
 import { useScrollReveal } from '../components/ScrollReveal';
 import { ShieldIcon, CheckIcon, UsersIcon, StarIcon } from '../components/icons';
 import { LogoSvg } from '../components/LogoSvg';
+import { DisclaimerBlock } from '../components/DisclaimerBlock';
 
 export default function About() {
   const { t } = useLanguage();
@@ -44,8 +45,8 @@ export default function About() {
                 </p>
                 <p>
                   {t(
-                    'Clear Point was built on one simple idea: every senior deserves clear, honest guidance from a team that works for them — not for an insurance company. As an independent agency, we have the freedom to compare plans across the entire market and recommend what is truly best for each person.',
-                    'Clear Point se construyó sobre una idea simple: cada adulto mayor merece orientación clara y honesta de un equipo que trabaja para ellos — no para una aseguradora. Como agencia independiente, tenemos la libertad de comparar planes en todo el mercado y recomendar lo que es verdaderamente mejor para cada persona.'
+                    'Clear Point was built on one simple idea: every senior deserves clear, honest guidance from a team that works for them — not for an insurance company. As an independent agency, we have the freedom to compare plans across many carriers and help each person review the options that may fit.',
+                    'Clear Point se construyó sobre una idea simple: cada adulto mayor merece orientación clara y honesta de un equipo que trabaja para ellos — no para una aseguradora. Como agencia independiente, tenemos la libertad de comparar planes de muchas aseguradoras y ayudar a cada persona a revisar las opciones que puedan ajustarse.'
                   )}
                 </p>
                 <p>
@@ -61,8 +62,8 @@ export default function About() {
               <h3 className="font-serif text-xl mb-3">{t('Why Choose Clear Point', 'Por Qué Elegir Clear Point')}</h3>
               <p className="text-cream-100/70 text-sm leading-relaxed mb-4">
                 {t(
-                  'Every senior deserves clear, honest guidance from a team that works for them — not for an insurance company. We are an independent agency with the freedom to compare plans across the entire market and recommend what is truly best for each person.',
-                  'Cada adulto mayor merece orientación clara y honesta de un equipo que trabaja para ellos — no para una aseguradora. Somos una agencia independiente con la libertad de comparar planes en todo el mercado y recomendar lo que es verdaderamente mejor para cada persona.'
+                  'Every senior deserves clear, honest guidance from a team that works for them — not for an insurance company. We are an independent agency with the freedom to compare plans across many carriers and help each person review the options that may fit.',
+                  'Cada adulto mayor merece orientación clara y honesta de un equipo que trabaja para ellos — no para una aseguradora. Somos una agencia independiente con la libertad de comparar planes de muchas aseguradoras y ayudar a cada persona a revisar las opciones que puedan ajustarse.'
                 )}
               </p>
               <p className="text-cream-100/70 text-sm leading-relaxed">
@@ -90,7 +91,11 @@ export default function About() {
             {[
               // HIDDEN per Sawil 2026-06: FL pending authorization. Original: 'Licensed in NY, FL, CT, NJ' / 'Licenciado en NY, FL, CT, NJ'.
               { icon: <ShieldIcon className="w-7 h-7" />, title: 'Licensed Insurance Agent', titleEs: 'Agente de Seguros Licenciado', desc: 'Licensed in NY, CT, NJ', descEs: 'Licenciado en NY, CT, NJ' },
-              { icon: <CheckIcon className="w-7 h-7" />, title: 'Medicare Certified', titleEs: 'Certificado en Medicare', desc: 'Annual CMS training completed', descEs: 'Capacitación anual de CMS completada' },
+              // Sawil 2026-06-30 AUDIT FIX C6 — a bare "Medicare Certified" badge + "Annual
+              // CMS training completed" can imply the government/CMS endorses the agency
+              // (42 CFR 422.2262). Reworded to the industry certification agents actually
+              // complete (Medicare/AHIP), with no implication of CMS endorsement.
+              { icon: <CheckIcon className="w-7 h-7" />, title: 'Annually Certified', titleEs: 'Certificación Anual', desc: 'Completes annual Medicare/AHIP certification', descEs: 'Completa la certificación anual Medicare/AHIP' },
               { icon: <UsersIcon className="w-7 h-7" />, title: 'Bilingual Service', titleEs: 'Servicio Bilingüe', desc: 'English & Spanish fluently', descEs: 'Inglés y español con fluidez' },
               { icon: <StarIcon className="w-7 h-7" />, title: 'Independent Agent', titleEs: 'Agente Independiente', desc: 'Works for you, not carriers', descEs: 'Trabaja para usted, no aseguradoras' },
             ].map((c, i) => (
@@ -164,6 +169,13 @@ export default function About() {
                 {t('Clear Point Senior Advisors and our licensed advisory team are compensated directly by Medicare Advantage and Part D plan sponsors when you enroll in a plan through us. There is no cost to you for our services.', 'Clear Point Senior Advisors y nuestro equipo asesor licenciado son compensados directamente por los patrocinadores de planes de Medicare Advantage y Parte D cuando se inscribe en un plan a través de nosotros. No hay costo para usted por nuestros servicios.')}
               </span>
             </p>
+          </div>
+          {/* Sawil 2026-06-30 AUDIT FIX C5 — the About page makes plan/credential/
+              compensation claims but carried NO standardized TPMO disclaimer near them
+              (only the global footer). Add the not-affiliated + "we don't offer every
+              plan" / Medicare.gov disclaimer contextually (TPMO 422.2267). */}
+          <div className="mt-8 border-t border-cream-200 pt-6">
+            <DisclaimerBlock variant="compact" />
           </div>
         </div>
       </section>

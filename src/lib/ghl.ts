@@ -26,6 +26,30 @@ export interface GHLLeadPayload {
   utm_campaign?: string;
   tags?: string[];
   created_at: string;
+  // Sawil 2026-06-30 AUDIT FIX (CODE-005) — the lead surfaces (Zara, Smart Review,
+  // Clara, LeadForm) build these optional fields and submitLeadToGHL forwards them.
+  // They were previously read via `(payload as any)` — 28 casts on the revenue path,
+  // where a typo or shape change would pass silently. Model them so the compiler checks.
+  zip?: string;
+  date_of_birth?: string;
+  calculated_age?: number;
+  city?: string;
+  county?: string;
+  state?: string;
+  derived_state?: string;
+  source_component?: string;
+  lead_type?: string;
+  lead_quality_flags?: string;
+  website_url?: string;
+  ghl_contact_id?: string;
+  ghl_assigned_user_id?: string;
+  consent?: boolean | string;
+  consent_sms?: boolean | string;
+  consent_call?: boolean | string;
+  consent_receipt_hash?: string;
+  disclaimer_version?: string;
+  signer_user_agent?: string;
+  signer_ip?: string;
 }
 
 const API_ROUTE = '/api/submit-lead';
@@ -39,7 +63,7 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
       last_name: payload.last_name || '',
       phone: payload.phone,
       email: payload.email,
-      zip: (payload as any).zip || payload.zip_code || '',
+      zip: payload.zip || payload.zip_code || '',
       preferred_language: payload.preferred_language === 'Spanish' ? 'es'
         : payload.preferred_language === 'English' ? 'en'
         : payload.preferred_language || 'en',
@@ -53,46 +77,46 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     // Forward rich fields when present (arrays preserved, long text preserved)
     if (payload.lead_notes) { body.lead_notes = payload.lead_notes; }
     if (payload.bot_transcript_summary) { body.conversation_summary = payload.bot_transcript_summary; }
-    if ((payload as any).lead_quality_flags) { body.lead_quality_flags = (payload as any).lead_quality_flags; }
-    if ((payload as any).interest_type) { body.interest_type = (payload as any).interest_type; }
-    if ((payload as any).date_of_birth) { body.date_of_birth = (payload as any).date_of_birth; }
-    if ((payload as any).calculated_age != null) { body.calculated_age = (payload as any).calculated_age; }
-    if ((payload as any).city) { body.city = (payload as any).city; }
-    if ((payload as any).county) { body.county = (payload as any).county; }
+    if (payload.lead_quality_flags) { body.lead_quality_flags = payload.lead_quality_flags; }
+    if (payload.interest_type) { body.interest_type = payload.interest_type; }
+    if (payload.date_of_birth) { body.date_of_birth = payload.date_of_birth; }
+    if (payload.calculated_age != null) { body.calculated_age = payload.calculated_age; }
+    if (payload.city) { body.city = payload.city; }
+    if (payload.county) { body.county = payload.county; }
     // derived_state → state mapping
-    if ((payload as any).derived_state) {
-      body.state = (payload as any).derived_state;
-    } else if ((payload as any).state) {
-      body.state = (payload as any).state;
+    if (payload.derived_state) {
+      body.state = payload.derived_state;
+    } else if (payload.state) {
+      body.state = payload.state;
     }
-    if ((payload as any).source_component) { body.source_component = (payload as any).source_component; }
+    if (payload.source_component) { body.source_component = payload.source_component; }
     // Forward the unified TCPA consent (consent_to_contact). Smart Review, Zara,
     // and LeadForm each build this as a real boolean and gate submission on it.
     // The api/submit-lead.js consent derivation treats consent_to_contact as the
     // umbrella TCPA signal covering marketing calls + SMS.
-    if ((payload as any).consent_to_contact != null) { body.consent_to_contact = (payload as any).consent_to_contact; }
-    if ((payload as any).consent != null) { body.consent = (payload as any).consent; }
-    if ((payload as any).consent_sms != null) { body.consent_sms = (payload as any).consent_sms; }
-    if ((payload as any).consent_call != null) { body.consent_call = (payload as any).consent_call; }
+    if (payload.consent_to_contact != null) { body.consent_to_contact = payload.consent_to_contact; }
+    if (payload.consent != null) { body.consent = payload.consent; }
+    if (payload.consent_sms != null) { body.consent_sms = payload.consent_sms; }
+    if (payload.consent_call != null) { body.consent_call = payload.consent_call; }
     // Tags: preserve array as-is
     if (Array.isArray(payload.tags) && payload.tags.length > 0) { body.tags = payload.tags; }
     // Honeypot anti-bot field — forward to API so the server-side gate can
     // discard bot submissions. Real users never see or fill this field; it
     // arrives empty (''). The API discards any submission where it's non-empty.
-    if ((payload as any).website_url !== undefined) { body.website_url = (payload as any).website_url; }
+    if (payload.website_url !== undefined) { body.website_url = payload.website_url; }
     // PHASE 11 — Phase 10 (Clara) outer-flow audit/identity fields. These
     // are built client-side and must reach the server intact: existing-client
     // routing (ghl_contact_id/ghl_assigned_user_id) avoids duplicate contacts,
     // and the TCPA receipt (consent_text/hash/version/UA) is the auditable
     // record CMS requires.
-    if ((payload as any).lead_type) { body.lead_type = (payload as any).lead_type; }
-    if ((payload as any).ghl_contact_id) { body.ghl_contact_id = (payload as any).ghl_contact_id; }
-    if ((payload as any).ghl_assigned_user_id) { body.ghl_assigned_user_id = (payload as any).ghl_assigned_user_id; }
-    if ((payload as any).consent_text) { body.consent_text = (payload as any).consent_text; }
-    if ((payload as any).consent_receipt_hash) { body.consent_receipt_hash = (payload as any).consent_receipt_hash; }
-    if ((payload as any).disclaimer_version) { body.disclaimer_version = (payload as any).disclaimer_version; }
-    if ((payload as any).signer_user_agent) { body.signer_user_agent = (payload as any).signer_user_agent; }
-    if ((payload as any).signer_ip) { body.signer_ip = (payload as any).signer_ip; }
+    if (payload.lead_type) { body.lead_type = payload.lead_type; }
+    if (payload.ghl_contact_id) { body.ghl_contact_id = payload.ghl_contact_id; }
+    if (payload.ghl_assigned_user_id) { body.ghl_assigned_user_id = payload.ghl_assigned_user_id; }
+    if (payload.consent_text) { body.consent_text = payload.consent_text; }
+    if (payload.consent_receipt_hash) { body.consent_receipt_hash = payload.consent_receipt_hash; }
+    if (payload.disclaimer_version) { body.disclaimer_version = payload.disclaimer_version; }
+    if (payload.signer_user_agent) { body.signer_user_agent = payload.signer_user_agent; }
+    if (payload.signer_ip) { body.signer_ip = payload.signer_ip; }
 
     const response = await fetch(API_ROUTE, {
       method: 'POST',
@@ -102,6 +126,14 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
 
     const data = await response.json().catch(() => null);
 
+    // Sawil 2026-06-30 AUDIT FIX (adversarial verify) — a 409 DUPLICATE_LEAD means
+    // the contact already exists in GHL: the lead IS on file. Treat it as success so
+    // the user sees the reassuring "your info is with an advisor" closing instead of
+    // an alarming "we couldn't send it" failure for a lead that actually landed.
+    if (response.status === 409) {
+      console.info('[GHL] Lead already on file (duplicate) — treated as success');
+      return true;
+    }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${data?.error || response.statusText}`);
     }

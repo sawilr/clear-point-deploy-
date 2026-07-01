@@ -1,32 +1,41 @@
 import { Routes, Route, useLocation } from 'react-router'
+import { lazy, Suspense, useEffect } from 'react'
 import Home from './pages/Home'
-import About from './pages/About'
-import MedicareAdvantage from './pages/MedicareAdvantage'
-import PartD from './pages/PartD'
-import ExtraHelp from './pages/ExtraHelp'
-import HelpPayingCosts from './pages/HelpPayingCosts'
-import OtcBenefits from './pages/OtcBenefits'
-import Support from './pages/Support'
-import Resources from './pages/Resources'
-import Contact from './pages/Contact'
-import PrivacyPolicy from './pages/PrivacyPolicy'
-import Accessibility from './pages/Accessibility'
-import Terms from './pages/Terms'
-import ThankYou from './pages/ThankYou'
-import SignSOA from './pages/SignSOA'
-import NotFound from './pages/NotFound'
 import { Header } from './components/Header'
 import { Footer } from './components/Footer'
 import { MobileStickyBar } from './components/MobileStickyBar'
 import { ScrollToTop } from './components/ScrollToTop'
 import { RouteMeta } from './components/RouteMeta'
 import { ErrorBoundary } from './components/ErrorBoundary'
-
-import { ChatBot } from './components/ChatBot'
 import { BotLauncher } from './components/BotLauncher'
 import { LanguageProvider } from './hooks/useLanguage'
-import { useEffect } from 'react'
 import { track, Events } from './lib/analytics'
+
+// Sawil 2026-06-30 AUDIT FIX (perf) — code-split every route except the homepage
+// (the LCP / first-paint page). This moves the /support route — which statically
+// pulls in CustomerServiceBot + the ~595 KB customerServiceEngine — and every other
+// page into its own chunk, off the initial payload that every visitor downloads.
+const About = lazy(() => import('./pages/About'))
+const MedicareAdvantage = lazy(() => import('./pages/MedicareAdvantage'))
+const PartD = lazy(() => import('./pages/PartD'))
+const ExtraHelp = lazy(() => import('./pages/ExtraHelp'))
+const HelpPayingCosts = lazy(() => import('./pages/HelpPayingCosts'))
+const OtcBenefits = lazy(() => import('./pages/OtcBenefits'))
+const Support = lazy(() => import('./pages/Support'))
+const Resources = lazy(() => import('./pages/Resources'))
+const Contact = lazy(() => import('./pages/Contact'))
+const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'))
+const Accessibility = lazy(() => import('./pages/Accessibility'))
+const Terms = lazy(() => import('./pages/Terms'))
+const ThankYou = lazy(() => import('./pages/ThankYou'))
+const SignSOA = lazy(() => import('./pages/SignSOA'))
+const NotFound = lazy(() => import('./pages/NotFound'))
+
+// Zara's chat logic (~308 KB) is split into its own chunk and loaded lazily so it
+// is NOT in the initial payload on every page. The floating launcher stays eager
+// (it must appear instantly); Zara's chunk loads in the background right after
+// first paint, well before the user opens it via the launcher.
+const ChatBot = lazy(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot })))
 
 export default function App() {
   // Sawil 2026-06 — MobileStickyBar (the bottom CTA) is suppressed on
@@ -55,38 +64,38 @@ export default function App() {
       <RouteMeta />
       <Header />
       <main id="main-content" className={isSupportPage ? 'support-main' : undefined}>
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/about" element={<About />} />
-          <Route path="/medicare-advantage" element={<MedicareAdvantage />} />
-          <Route path="/part-d" element={<PartD />} />
-          <Route path="/extra-help" element={<ExtraHelp />} />
-          <Route path="/help-paying-costs" element={<HelpPayingCosts />} />
-          <Route path="/otc-benefits" element={<OtcBenefits />} />
-          <Route path="/support" element={<Support />} />
-          <Route path="/resources" element={<Resources />} />
-          <Route path="/contact" element={<Contact />} />
-          <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-          <Route path="/accessibility" element={<Accessibility />} />
-          <Route path="/terms" element={<Terms />} />
-          <Route path="/thank-you" element={<ThankYou />} />
-          {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
-          <Route path="/soa/:token" element={<SignSOA />} />
-          {/* PHASE 7 — Branded 404 fallback. */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        {/* Suspense holds the layout height while a lazily-loaded route chunk
+            arrives (same-origin, typically &lt;100 ms), preventing a jump. */}
+        <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" aria-live="polite" />}>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/about" element={<About />} />
+            <Route path="/medicare-advantage" element={<MedicareAdvantage />} />
+            <Route path="/part-d" element={<PartD />} />
+            <Route path="/extra-help" element={<ExtraHelp />} />
+            <Route path="/help-paying-costs" element={<HelpPayingCosts />} />
+            <Route path="/otc-benefits" element={<OtcBenefits />} />
+            <Route path="/support" element={<Support />} />
+            <Route path="/resources" element={<Resources />} />
+            <Route path="/contact" element={<Contact />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/accessibility" element={<Accessibility />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/thank-you" element={<ThankYou />} />
+            {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
+            <Route path="/soa/:token" element={<SignSOA />} />
+            {/* PHASE 7 — Branded 404 fallback. */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </main>
       {!isSupportPage && <Footer />}
       {!isSupportPage && <MobileStickyBar />}
-      {/* PHASE A18 — BotLauncher renders the floating button. ChatBot is
-          still mounted (it holds Zara's logic); its own button is hidden
-          while the launcher is active. Launcher dispatches an event to
-          open Zara, or routes to /support for Customer Service. */}
-      {/* Sawil 2026-06 — Suppress Zara's floating launcher + chat on /support.
-          That page is Clara's surface in page-mode; a floating Zara pill
-          would collide and double-route the user. */}
+      {/* PHASE A18 — BotLauncher renders the floating button (eager, instant).
+          Sawil 2026-06 — Zara's launcher + chat are suppressed on /support
+          (Clara's surface); a floating Zara pill would collide there. */}
       {!isSupportPage && <BotLauncher />}
-      {!isSupportPage && <ChatBot />}
+      {!isSupportPage && <Suspense fallback={null}><ChatBot /></Suspense>}
     </div>
     </LanguageProvider>
     </ErrorBoundary>

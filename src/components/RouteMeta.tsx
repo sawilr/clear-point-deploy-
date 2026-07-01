@@ -27,12 +27,9 @@ const PAGE_META: Record<string, Meta> = {
     description: 'Understand Medicare Advantage (Part C): how it works, networks, extra benefits and costs. Free bilingual help comparing plans in NY, NJ and CT — no pressure.',
     descriptionEs: 'Entienda Medicare Advantage (Parte C): cómo funciona, redes, beneficios extra y costos. Ayuda bilingüe gratis para comparar planes en NY, NJ y CT — sin presión.',
   },
-  '/medicare-supplement': {
-    title: 'Medicare Supplement (Medigap) Explained | Clear Point Senior Advisors',
-    titleEs: 'Suplemento Medicare (Medigap) Explicado | Clear Point Senior Advisors',
-    description: 'Learn how Medicare Supplement (Medigap) works with Original Medicare to help with out-of-pocket costs. Free bilingual guidance for NY, NJ and CT.',
-    descriptionEs: 'Aprenda cómo el Suplemento Medicare (Medigap) funciona con Medicare Original para ayudar con costos de bolsillo. Orientación bilingüe gratis para NY, NJ y CT.',
-  },
+  // Sawil 2026-06-30 AUDIT FIX (SEO) — /medicare-supplement is 301-redirected to
+  // /resources (ClearPoint does not currently broker Medigap) and its route is out
+  // of the app router. Its PAGE_META was orphaned dead meta for an unreachable URL.
   '/part-d': {
     title: 'Medicare Part D Drug Plans Explained | Clear Point Senior Advisors',
     titleEs: 'Planes de Medicamentos Parte D Explicados | Clear Point Senior Advisors',
@@ -132,7 +129,16 @@ export function RouteMeta() {
     // self-canonicalize an invalid URL, and mark it noindex so search engines and
     // monitoring don't treat soft-404s as real pages. Known routes keep a
     // per-route canonical and are indexable.
-    const isKnownRoute = !!PAGE_META[pathname] || pathname === '/thank-you' || pathname.startsWith('/soa/');
+    // Sawil 2026-06-30 AUDIT FIX (security HIGH + SEO) — /soa/:token are per-user,
+    // 24h-expiring secure Scope-of-Appointment links. They must NEVER be indexed or
+    // self-canonicalized (that would invite crawling/caching of tokenized secure URLs
+    // and thin soft-404s once tokens expire). Force noindex + no canonical for /soa/*.
+    const isSoa = pathname.startsWith('/soa/');
+    // Sawil 2026-06-30 AUDIT FIX (SEO) — /thank-you is a post-submit confirmation
+    // page. It has no PAGE_META, so indexing it served the homepage's title/description
+    // as duplicate content. Treat it like /soa: noindex + no canonical.
+    const isThankYou = pathname === '/thank-you';
+    const isKnownRoute = !isSoa && !isThankYou && !!PAGE_META[pathname];
     let link = document.head.querySelector('link[rel="canonical"]');
     if (isKnownRoute) {
       if (!link) {
@@ -143,8 +149,8 @@ export function RouteMeta() {
       link.setAttribute('href', url);
       upsertMeta('name', 'robots', 'index, follow');
     } else {
-      if (link) link.remove(); // omit canonical on a 404 (finding 12)
-      upsertMeta('name', 'robots', 'noindex, follow');
+      if (link) link.remove(); // omit canonical on a 404 (finding 12) or secure /soa page
+      upsertMeta('name', 'robots', isSoa ? 'noindex, nofollow' : 'noindex, follow');
     }
 
     // OG / Twitter por ruta (reusa el title/description únicos que ya existen).

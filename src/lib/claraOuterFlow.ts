@@ -606,11 +606,12 @@ export function buildGhlPayload(
     medicare_status: s.medicareStatus || '',
     interest_type: s.topic || '',
     best_time_to_contact: '',
-    // FASE 2 audit J (TCPA) — NEVER claim a consent the bot did not explicitly
-    // collect from the user. There is no visible in-chat consent step yet, so
-    // consent_to_contact is FALSE: every Clara lead queues for a manual licensed
-    // advisor callback (NO auto-dial), matching the other lead path. Once a
-    // visible consent confirmation is added, set this from that explicit accept.
+    // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — consent IS collected
+    // now: the phone-ask message displays the canonical TCPA authorization, and the
+    // user sharing their phone after that disclosure is the affirmative accept.
+    // submitOuterLead passes consentGiven=true ONLY on paths that showed it, and the
+    // receipt (consent_text + hash + version) documents exactly what was shown. This
+    // is never true unless that disclosure was displayed and accepted.
     consent_to_contact: opts.consentGiven === true,
     consent_text: opts.consentText || '',
     lead_notes: noteParts.join(' · '),

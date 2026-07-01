@@ -182,6 +182,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // "tell me your name and phone", which used to fire an empty lead at GHL
   // immediately. Use a ref so we POST exactly once per session.
   const hasSubmittedRef = useRef(false);
+  // Sawil 2026-06-30 AUDIT FIX C1/BUG-002 — bounds the post-failure recovery of the
+  // engine-path GHL submit (one auto-retry max) so a failed consented lead is
+  // recoverable WITHOUT an infinite re-fire loop.
+  const submitRetryRef = useRef(0);
   // Latest-escalateHandler ref so the submit effect can call it without a
   // forward-declaration error (escalateHandler depends on onEscalate which
   // is defined further below).
@@ -537,8 +541,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       };
       const ok = await submitLeadToGHL(payload as any);
       setSubmitState(ok ? 'submitted' : 'failed');
+      // Sawil 2026-06-30 AUDIT FIX C1/BUG-002 — hasSubmittedRef is set true BEFORE the
+      // POST (gate effect), so a failed submit used to lock the session forever. On
+      // failure: release the lock and allow ONE bounded auto-retry (server already
+      // retried transient GHL errors). After that, settle to 'failed' (the call-us
+      // banner shows). Bounded by submitRetryRef → no infinite loop.
+      if (ok) {
+        submitRetryRef.current = 0;
+      } else {
+        hasSubmittedRef.current = false;
+        if (submitRetryRef.current < 1) { submitRetryRef.current += 1; setTimeout(() => setSubmitState('idle'), 1500); }
+      }
     } catch {
       setSubmitState('failed');
+      hasSubmittedRef.current = false;
+      if (submitRetryRef.current < 1) { submitRetryRef.current += 1; setTimeout(() => setSubmitState('idle'), 1500); }
     }
   }
 
@@ -892,8 +909,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         pushUserMessageDirect(trimmed);
         setInputValue('');
         const phoneFromMatch = ''; // we don't expose phone; advisor knows it
-        await submitOuterLead({ phone: phoneFromMatch, summary: trimmed });
-        setOuterState((s) => ({ ...s, problemSummary: trimmed, step: 'A_done' }));
+        // Sawil 2026-06-30 AUDIT FIX C2/BUG-001 — advance to A_done ONLY if the
+        // submit actually succeeded. Verified-client leads now go through (server
+        // relaxes phone when ghl_contact_id is present); on failure we keep the
+        // step so the next message retries and the user is told (no false success).
+        const okAmatched = await submitOuterLead({ phone: phoneFromMatch, summary: trimmed });
+        setOuterState((s) => ({ ...s, problemSummary: trimmed, ...(okAmatched ? { step: 'A_done' as const } : {}) }));
         return;
       }
       // Path A unmatched — collect phone + summary
@@ -914,8 +935,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             : 'Apologies — I need a valid 10-digit U.S. phone number so an advisor can call you back. For example: "(917) 432-1098 — my bill went up".');
           return;
         }
-        await submitOuterLead({ phone, summary });
-        setOuterState((s) => ({ ...s, phone, problemSummary: summary, step: 'A_done' }));
+        const okAunmatched = await submitOuterLead({ phone, summary });
+        setOuterState((s) => ({ ...s, phone, problemSummary: summary, ...(okAunmatched ? { step: 'A_done' as const } : {}) }));
         return;
       }
       // Path C opt-in capture — name + phone + summary
@@ -944,8 +965,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         const nameCheck = validateFullName(candidateName);
         const fullName = nameCheck.ok ? nameCheck.cleaned! : '';
         setOuterState((s) => ({ ...s, fullName, phone, problemSummary: nameAndSummary }));
-        await submitOuterLead({ phone, summary: nameAndSummary });
-        setOuterState((s) => ({ ...s, step: 'C_done' }));
+        const okCoptin = await submitOuterLead({ phone, summary: nameAndSummary });
+        if (okCoptin) setOuterState((s) => ({ ...s, step: 'C_done' }));
         return;
       }
       // For other outer-flow steps, ignore free-text (chips drive these).
@@ -1241,8 +1262,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
     setTimeout(() => pushBotTyped(isEs
-      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
-      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time."), 300);
+      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
+      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply."), 300);
   }
 
   // Path A identity capture: parses single text input "Name | last4" or split flow.
@@ -1294,22 +1315,25 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       } else {
         setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
         pushBotMessageDirect(isEs
-          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
-          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time.");
+          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
+          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply.");
       }
     } catch {
       clearTimeout(timer);
       setIsTyping(false);
       setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
       pushBotMessageDirect(isEs
-        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl compartir su teléfono, usted autoriza que un asesor licenciado de ClearPoint le llame o le envíe mensajes de texto sobre Medicare. No es condición para comprar nada, y puede pedir que dejen de contactarle cuando quiera.'
-        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy sharing your phone, you authorize a licensed ClearPoint advisor to call or text you about Medicare. This is not a condition of any purchase, and you can opt out at any time.");
+        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
+        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply.");
     }
   }
 
   // Path A/C final capture submit.
-  async function submitOuterLead(extras: { phone?: string; summary?: string } = {}) {
+  async function submitOuterLead(extras: { phone?: string; summary?: string } = {}): Promise<boolean> {
     const isEs = outerState.language === 'es';
+    const failMsg = isEs
+      ? 'Disculpe, no pude enviar su información en este momento. Por favor inténtelo de nuevo, o llámenos directamente al 1-866-310-8702 y un asesor licenciado le ayudará.'
+      : "I'm sorry, I couldn't send your information right now. Please try again, or call us directly at 1-866-310-8702 and a licensed advisor will help you.";
     setSubmitState('submitting');
     try {
       const receipt = await buildConsentReceipt(outerState.language);
@@ -1345,9 +1369,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           ? "All set, thank you. Your information is now with a licensed advisor. If you'd rather speak right now, you can call us at 1-866-310-8702; otherwise, an advisor will reach out to you shortly."
           : "All set, thank you. Your information is now with a licensed advisor. We're currently after hours, so an advisor will call you back on the next business day. Have a good evening.";
         setTimeout(() => pushBotTyped(isEs ? closingEs : closingEn), 200);
+      } else {
+        // Sawil 2026-06-30 AUDIT FIX C1/BUG-001 — NEVER advance to a "done" step or
+        // go silent on a failed submit. Tell the user plainly; the caller keeps the
+        // step so their next message retries. (The server already retried transient
+        // GHL failures, so reaching here means a genuine outage.)
+        setTimeout(() => pushBotTyped(failMsg), 200);
       }
+      return ok;
     } catch {
       setSubmitState('failed');
+      setTimeout(() => pushBotTyped(failMsg), 200);
+      return false;
     }
   }
 
@@ -1418,6 +1451,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // next conversation can submit again and ask the follow-up question.
     hasSubmittedRef.current = false;
     askedFollowupRef.current = false;
+    // Sawil 2026-06-30 AUDIT FIX (adversarial verify) — reset the retry budget on
+    // "start over" so a 2nd conversation in the same session keeps its one bounded
+    // auto-retry (was stuck at the prior conversation's exhausted count).
+    submitRetryRef.current = 0;
     // Sawil 2026-06 — greet in the PREVIOUSLY chosen language (not bilingual).
     // The language chips stay visible (step is still asking_language) so the
     // user can keep their language or switch with one tap.
@@ -1535,7 +1572,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         <div className="flex items-center gap-1 flex-shrink-0">
           <button
             onClick={resetConversation}
-            className="px-2.5 py-1.5 hover:bg-cream-50/10 rounded-lg transition-colors inline-flex items-center gap-1.5 text-[12px] min-h-[36px]"
+            className="px-2.5 py-1.5 hover:bg-cream-50/10 rounded-lg transition-colors inline-flex items-center gap-1.5 text-[12px] min-h-[44px] min-w-[44px] justify-center"
             aria-label={isSpanish ? 'Empezar de nuevo' : 'Start over'}
             title={isSpanish ? 'Empezar de nuevo' : 'Start over'}
           >
@@ -1547,7 +1584,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           {state.step === 'conversation' && submitState === 'idle' && (
             <button
               onClick={handleEscalateManually}
-              className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors"
+              className="p-1.5 min-h-[44px] min-w-[44px] inline-flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors"
               aria-label={isSpanish ? 'Hablar con un asesor' : 'Talk to an advisor'}
               title={isSpanish ? 'Hablar con un asesor' : 'Talk to an advisor'}
             >
@@ -1568,6 +1605,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // PHASE E — aria-live polite so screen readers announce bot turns
         // but do not get spammed by typing indicator (which is aria-hidden).
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain relative"
+        role="log"
         aria-live="polite"
         aria-atomic="false"
       >

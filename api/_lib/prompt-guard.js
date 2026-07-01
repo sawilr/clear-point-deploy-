@@ -16,9 +16,12 @@
 // and base64 / zero-width-character handling in the normalizer.
 const INJECTION_PATTERNS = [
   // Direct override attempts (EN)
-  /\bignore\s+(all|the|your|previous|prior|above|earlier|any)\s+(instructions?|rules?|prompts?|directives?|messages?)\b/i,
-  /\bdisregard\s+(all|the|your|previous|prior|above|any)\s+(instructions?|rules?|prompts?)\b/i,
-  /\bforget\s+(your|all|previous|prior|the|any)\s+(instructions?|prompt|rules?|training)\b/i,
+  // Sawil 2026-06-30 AUDIT FIX (security HIGH) — allow 0-4 filler words between the
+  // verb and the noun (was exactly ONE), so the #1 jailbreak "ignore all previous
+  // instructions" (two fillers) can no longer bypass. Mirrors the ES pattern below.
+  /\bignore\s+(?:\w+\s+){0,4}(instructions?|rules?|prompts?|directives?|messages?|guidelines?|everything\s+above|the\s+above)\b/i,
+  /\bdisregard\s+(?:\w+\s+){0,4}(instructions?|rules?|prompts?|directives?|messages?|guidelines?|everything\s+above|the\s+above)\b/i,
+  /\bforget\s+(?:\w+\s+){0,4}(instructions?|prompts?|rules?|directives?|training|guidelines?|everything\s+above)\b/i,
   /\boverride\s+(your|the|all)?\s*(instructions?|system|safety|guard)/i,
   // Direct override attempts (ES) — allow up to 3 fillers between verb and noun
   // ("ignora todas tus reglas", "olvida tu prompt anterior", etc.)

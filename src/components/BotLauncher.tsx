@@ -35,12 +35,21 @@ export function BotLauncher() {
     return () => { delete document.body.dataset.cpLauncherActive; };
   }, []);
 
-  // Close on Escape
+  // Close on Escape (and restore focus to the launcher for keyboard users).
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); buttonRef.current?.focus(); } };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  // Sawil 2026-06-30 AUDIT FIX (a11y L-1) — move focus INTO the dialog on open so a
+  // keyboard / screen-reader user lands on the first option instead of being left on
+  // the launcher behind the popover. Focus returns to the launcher on Escape/close.
+  useEffect(() => {
+    if (!open) return;
+    const first = popoverRef.current?.querySelector('button');
+    (first as HTMLElement | null)?.focus();
   }, [open]);
 
   // Close on outside click
@@ -77,7 +86,19 @@ export function BotLauncher() {
         <div
           ref={popoverRef}
           role="dialog"
+          aria-modal="true"
           aria-labelledby="cp-launcher-title"
+          // Sawil 2026-06-30 AUDIT FIX (a11y L-1/L-2) — aria-modal + a Tab focus trap
+          // so keyboard focus cycles between the two options instead of leaking to the
+          // page behind the popover.
+          onKeyDown={(e) => {
+            if (e.key !== 'Tab') return;
+            const f = popoverRef.current?.querySelectorAll<HTMLElement>('button');
+            if (!f || f.length === 0) return;
+            const firstEl = f[0], lastEl = f[f.length - 1];
+            if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
+            else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+          }}
           className="fixed z-[60] bottom-[calc(env(safe-area-inset-bottom)+168px)] right-4 md:bottom-[100px] md:right-6 w-[min(360px,calc(100vw-2rem))] bg-white rounded-2xl shadow-lifted border border-cream-200 overflow-hidden animate-fade-in"
         >
           <header className="px-5 py-4 border-b border-cream-200 bg-cream-50">

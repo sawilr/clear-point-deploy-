@@ -291,12 +291,14 @@ function deriveRecommendedStage(
 
 // ── CONSENT STATUS derivation ──────────────────────────────────────────────
 //
-// The current CSA flow does NOT collect an explicit TCPA consent checkbox.
-// If the user requested contact (clicked advisor chip / said yes) we mark
-// "pending / user requested contact". Never mark "yes" — that would
-// overstate consent.
-
+// Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — since the Option A
+// hotfix, Clara SHOWS the TCPA authorization in the confirmation summary and the
+// caller's explicit "yes" sets contactConfirmed. That IS affirmative consent, so
+// the note must report "yes" to match the consent_to_contact=true the payload
+// sends — previously the note said "pending", contradicting the same lead. An
+// in-progress handoff that the caller has NOT yet confirmed stays "pending".
 function deriveConsentStatus(state: ConversationState): ConsentStatus {
+  if (state.contactConfirmed) return 'yes';
   if (state.advisorHandoffStarted || state.needsHuman) return 'pending';
   return 'unknown';
 }

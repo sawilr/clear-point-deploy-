@@ -4,6 +4,8 @@ import { submitLeadToGHL } from '../lib/ghl';
 import { getNextMissingStep, buildZaraSummary } from '../lib/zaraReview';
 import { Calendar, ChevronRight, Mic, MicOff, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
+import { normalizeSpokenNumbers } from '../lib/spokenNumbers';
+import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
 import { getOfficeStatus } from '../lib/afterHours';
 
 import { getZipInfo } from '../lib/zipLookup';
@@ -1567,8 +1569,10 @@ const DISCLAIMERS = {
       'Privacy note: Please do not enter Social Security, Medicare ID, banking, or medical record information in this chat. This chat is for general Medicare education and basic pre-screening only. We are not Medicare, Medicaid, Social Security, or a government agency.',
     general:
       'Final eligibility and plan availability depend on official rules, location, providers, medications, and carrier approval.',
-    consent:
-      'By providing your phone number, you agree that Clear Point Senior Advisors may contact you by phone or text about Medicare plan review options. Consent is not required to use our services. Message and data rates may apply. You can opt out at any time.',
+    // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — canonical TCPA text
+    // (autodialer + "not required to purchase" + reply STOP) is now both SHOWN here
+    // and recorded/SHA-256-hashed at submit, so the receipt matches what was displayed.
+    consent: TCPA_CONSENT_TEXT_EN,
     eligibility:
       'This is only a pre-check. Final eligibility is determined by the state, Medicare, or Social Security Administration.',
     consentContact:
@@ -1581,8 +1585,7 @@ const DISCLAIMERS = {
       'Nota de privacidad: No envíes Seguro Social, número de Medicare, información bancaria ni récords médicos por este chat. Este chat es solo para educación general sobre Medicare y pre-evaluación básica. No somos Medicare, Medicaid, Seguro Social ni una agencia del gobierno.',
     general:
       'La elegibilidad final y disponibilidad de planes dependen de reglas oficiales, ubicación, doctores, medicinas y aprobación del carrier.',
-    consent:
-      'Al proporcionar su número de teléfono, aceptas que Clear Point Senior Advisors pueda contactarle por llamada o mensaje de texto sobre opciones de revisión de planes de Medicare. El consentimiento no es requerido para usar nuestros servicios. Pueden aplicar cargos por mensajes y datos. Puede cancelar en cualquier momento.',
+    consent: TCPA_CONSENT_TEXT_ES,
     eligibility:
       'Esto es solo una revisión preliminar. La elegibilidad final la determina el estado, Medicare o la Administración del Seguro Social.',
     consentContact:
@@ -3251,6 +3254,10 @@ export function ChatBot() {
   async function submitLead(finalMemory: ChatMemory) {
     setStepSync('complete');
     const conversationSummary = buildConversationSummary(finalMemory);
+    // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — record the canonical
+    // TCPA text shown in chat (DISCLAIMERS.consent is now canonical), in the user's
+    // language, + SHA-256 receipt + disclaimer version. Was consent_text only, no hash.
+    const consentReceipt = await buildConsentReceipt(finalMemory.language === 'es' ? 'es' : 'en');
     const payload = {
       source: 'Website Chatbot',
       page_url: window.location.href,
@@ -3274,7 +3281,10 @@ export function ChatBot() {
       interest_type: finalMemory.interestType || 'Plan Review',
       best_time_to_contact: finalMemory.preferredContactTime,
       consent_to_contact: finalMemory.consentGiven,
-      consent_text: finalMemory.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent,
+      consent_text: consentReceipt.consentText,
+      consent_receipt_hash: consentReceipt.consentTextHash,
+      disclaimer_version: consentReceipt.disclaimerVersion,
+      signer_user_agent: consentReceipt.userAgent || '',
       lead_notes: conversationSummary,
       bot_transcript_summary: `Language: ${finalMemory.language}. State: ${finalMemory.state || 'not provided'}. ZIP: ${finalMemory.zip}. Coverage: ${finalMemory.currentCoverage || 'not provided'}. Topics: ${finalMemory.discussedTopics.join(', ') || 'none'}.`,
       tags: ['Website Lead', 'Medicare Lead', 'Chat Lead', 'Chatbot'],
@@ -4973,13 +4983,13 @@ export function ChatBot() {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <button onClick={resetChat} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={resetLabel} title={resetLabel}>
+              <button onClick={resetChat} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={resetLabel} title={resetLabel}>
                 <RotateCcw className="w-4 h-4" />
               </button>
-              <button onClick={() => setIsMinimized(true)} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
+              <button onClick={() => setIsMinimized(true)} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
                 <Minus className="w-4 h-4" />
               </button>
-              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
+              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -5040,7 +5050,10 @@ export function ChatBot() {
             ))}
 
             {isTyping && (
-              <div className="flex justify-start">
+              // Sawil 2026-06-30 AUDIT FIX (a11y Z-1) — aria-hidden so the "Zara is
+              // typing" pill (inside the role=log live region) isn't announced before
+              // every bot turn, matching Clara's behavior.
+              <div className="flex justify-start" aria-hidden="true">
                 <div className="bg-white rounded-xl px-4 py-3 shadow-sm border border-cream-200">
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] text-earth-500 italic">
@@ -5081,6 +5094,7 @@ export function ChatBot() {
               <textarea
                 ref={zaraTextareaRef}
                 name="chatInput"
+                aria-label={displayLanguage === 'es' ? 'Escriba su mensaje' : 'Type your message'}
                 rows={1}
                 autoComplete="off"
                 autoCorrect="off"
@@ -5114,8 +5128,13 @@ export function ChatBot() {
                     }
                     zaraVoiceSuppressRef.current = false;
                     zaraVoiceRecognizerRef.current = createVoiceRecognizer(displayLanguage === 'es' ? 'es' : 'en', {
-                      onInterim: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = t; },
-                      onFinal: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + t; },
+                      // Sawil 2026-06-30 AUDIT FIX C4/BUG-004 — normalize spoken
+                      // numbers ("seven eight seven..." / "siete ocho siete...") to
+                      // digits, mirroring Clara (CustomerServiceBot.tsx). Without this,
+                      // a voice-dictated phone/ZIP arrives as words, validatePhone
+                      // strips them to "" and the senior is trapped on the phone step.
+                      onInterim: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = normalizeSpokenNumbers(t, displayLanguage === 'es'); },
+                      onFinal: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; const norm = normalizeSpokenNumbers(t, displayLanguage === 'es'); zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + norm; },
                       onEnd: () => setZaraVoiceListening(false),
                       onError: () => setZaraVoiceListening(false),
                     });

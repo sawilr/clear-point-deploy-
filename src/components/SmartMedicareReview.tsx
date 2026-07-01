@@ -4,6 +4,7 @@ import { useLanguage } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validateEmail, validatePersonName } from '../lib/validation';
+import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
 import { CheckIcon, ChevronRight } from './icons';
 import {
   type LeadType,
@@ -208,6 +209,11 @@ export function SmartMedicareReview() {
     if (!email) flags.push('Email not provided');
     if (!isQualifiedSalesRoute(lt)) flags.push('Special-situation education request — do NOT work as a normal sales lead');
 
+    // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — record the EXACT
+    // canonical TCPA text shown, in the displayed language, + SHA-256 receipt +
+    // disclaimer version. Was a hardcoded English string with no hash/version.
+    const consentReceipt = await buildConsentReceipt(isEs ? 'es' : 'en');
+
     const payload = {
       source: 'Clear Point Senior Advisors Website',
       page_url: typeof window !== 'undefined' ? window.location.href : '',
@@ -223,14 +229,22 @@ export function SmartMedicareReview() {
       city: zipInfo?.city || '',
       county: zipInfo?.county || '',
       derived_state: zipInfo?.stateCode || '',
-      preferred_language: prefLang === 'es' || prefLang === 'Español' ? 'Spanish' : prefLang === 'either' || prefLang === 'Cualquiera' ? 'Either' : 'English',
+      // Sawil 2026-06-30 AUDIT FIX (F3) — never send the literal 'Either' to GHL
+      // (it tagged Lang-EITHER and advisors filtering Lang-ES/EN missed those leads).
+      // "Either" → the language the form was displayed in (a concrete en/es).
+      preferred_language: (prefLang === 'es' || prefLang === 'Español') ? 'Spanish'
+        : (prefLang === 'either' || prefLang === 'Cualquiera' || prefLang === 'Either') ? (isEs ? 'Spanish' : 'English')
+        : 'English',
       medicare_status: '',
       interest_type: interestType,
       // Precise lead taxonomy — never a generic hot bucket (Sawil 2026-06-15).
       lead_type: lt,
       best_time_to_contact: '',
-      consent_to_contact: true,
-      consent_text: 'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided, possibly using an automatic telephone dialing system; message and data rates may apply; consent is not a condition of purchase; I may revoke by replying STOP or calling 1-866-310-8702; message frequency may vary. See Privacy Policy.',
+      consent_to_contact: consent,
+      consent_text: consentReceipt.consentText,
+      consent_receipt_hash: consentReceipt.consentTextHash,
+      disclaimer_version: consentReceipt.disclaimerVersion,
+      signer_user_agent: consentReceipt.userAgent || '',
       lead_notes: buildSummary(),
       lead_quality_flags: flags.join('; '),
       bot_transcript_summary: '',
@@ -906,13 +920,12 @@ export function SmartMedicareReview() {
                   Required: the Submit button is disabled until `consent` is true. */}
               <label className="flex items-start gap-3 cursor-pointer bg-cream-100 rounded-xl p-4 border border-cream-300 mb-4">
                 <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-label={t('I agree to the contact consent', 'Acepto el consentimiento de contacto')} className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
+                {/* Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the
+                    EXACT canonical TCPA text that gets recorded + SHA-256 hashed (EN/ES),
+                    so the audit receipt matches verbatim what the user saw. */}
                 <span className="text-sm text-earth-700 leading-relaxed">
-                  {t(
-                    'I agree to receive marketing calls and text messages from ClearPoint Senior Advisors at the phone number provided above. I understand that these calls may be made using an automatic telephone dialing system and that message and data rates may apply. I understand that I am not required to consent as a condition of purchasing any goods or services, and that I may revoke my consent at any time by replying STOP or calling 1-866-310-8702. Message frequency may vary. See our',
-                    'Acepto recibir llamadas de marketing y mensajes de texto de ClearPoint Senior Advisors en el número de teléfono proporcionado arriba. Entiendo que estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático y que pueden aplicarse tarifas de mensajes y datos. Entiendo que no estoy obligado a consentir como condición para comprar bienes o servicios, y que puedo revocar mi consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. La frecuencia de mensajes puede variar. Consulte nuestra'
-                  )}{' '}
-                  <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('Privacy Policy', 'Política de Privacidad')}</Link>{' '}
-                  {t('for more information.', 'para más información.')}
+                  {isEs ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
+                  <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
                 </span>
               </label>
 

@@ -62,8 +62,8 @@ const faqItems = [
   {
     q: "What's the difference between Medicare Advantage and a Supplement?",
     qEs: '¿Cuál es la diferencia entre Medicare Advantage y un Suplemento?',
-    a: "Medicare Advantage replaces Original Medicare with a private plan (often $0 premium, includes extras). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
-    aEs: 'Medicare Advantage reemplaza al Medicare Original con un plan privado (frecuentemente prima de $0, incluye extras). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
+    a: "Medicare Advantage replaces Original Medicare with a private plan (often available with a $0 premium and may include extra benefits, which vary by plan and area). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
+    aEs: 'Medicare Advantage reemplaza al Medicare Original con un plan privado (frecuentemente con prima de $0 y puede incluir beneficios extra, que varían por plan y área). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
   },
   {
     q: 'When can I enroll or change my Medicare plan?',
@@ -80,14 +80,14 @@ const faqItems = [
   {
     q: 'What if I already have Medicare?',
     qEs: '¿Qué pasa si ya tengo Medicare?',
-    a: 'We can still help. Many seniors are enrolled in plans that no longer fit their needs — or that have better, cheaper alternatives available. An annual review costs you nothing and could save you hundreds.',
-    aEs: 'Aún podemos ayudar. Muchos adultos mayores están inscritos en planes que ya no se ajustan a sus necesidades — o que tienen mejores alternativas disponibles. Una revisión anual no le cuesta nada y podría ahorrarle cientos.',
+    a: 'We can still help. Many seniors are enrolled in plans that no longer fit their needs — or that have better, cheaper alternatives available. An annual review costs you nothing and may help you find a plan that better fits your needs and budget.',
+    aEs: 'Aún podemos ayudar. Muchos adultos mayores están inscritos en planes que ya no se ajustan a sus necesidades — o que tienen mejores alternativas disponibles. Una revisión anual no le cuesta nada y puede ayudarle a encontrar un plan que se ajuste mejor a sus necesidades y presupuesto.',
   },
   {
     q: 'Is my personal information safe?',
     qEs: '¿Está segura mi información personal?',
-    a: 'Absolutely. We do not sell, share, or distribute your personal information. We use it only to help you find the right plan. Our systems use industry-standard security protocols.',
-    aEs: 'Absolutamente. No vendemos, compartimos ni distribuimos su información personal. La usamos únicamente para ayudarle a encontrar el plan correcto. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
+    a: 'Absolutely. We do not sell, share, or distribute your personal information. We use it only to help you review your plan options. Our systems use industry-standard security protocols.',
+    aEs: 'Absolutamente. No vendemos, compartimos ni distribuimos su información personal. La usamos únicamente para ayudarle a revisar sus opciones de plan. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
   },
 ];
 
@@ -288,7 +288,7 @@ export default function Home() {
                   { title: 'Annual Enrollment Period', titleEs: 'Período de Inscripción Anual', en: 'From October 15 to December 7, people with Medicare can review or change certain Medicare Advantage and Part D prescription drug coverage for the following year.', es: 'Del 15 de octubre al 7 de diciembre, las personas con Medicare pueden revisar o cambiar ciertos planes Medicare Advantage y cobertura de medicamentos Parte D para el año siguiente.' },
                   { title: 'Medicare Advantage Open Enrollment', titleEs: 'Inscripción Abierta de Medicare Advantage', en: 'From January 1 to March 31, people already enrolled in a Medicare Advantage plan may be able to switch to another Medicare Advantage plan or return to Original Medicare.', es: 'Del 1 de enero al 31 de marzo, las personas ya inscritas en un plan Medicare Advantage pueden cambiarse a otro plan Medicare Advantage o regresar a Medicare Original.' },
                   { title: 'General Enrollment Period', titleEs: 'Período de Inscripción General', en: 'From January 1 to March 31, this period may apply if someone missed their first chance to sign up for Medicare Part A or Part B and does not qualify for a Special Enrollment Period. Penalties may apply.', es: 'Del 1 de enero al 31 de marzo, este período puede aplicar si alguien perdió su primera oportunidad de inscribirse en la Parte A o B de Medicare y no califica para un Período de Inscripción Especial. Pueden aplicar penalidades.' },
-                  { title: 'Special Enrollment Period', titleEs: 'Período de Inscripción Especial', en: 'Certain life events may allow you to enroll or make changes outside the usual enrollment periods. Examples may include moving, losing coverage, qualifying for Medicaid, or getting Extra Help. Timing depends on the situation.', es: 'Ciertos eventos de vida pueden permitirle inscribirse o hacer cambios fuera de los períodos de inscripción habituales. Ejemplos incluyen mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Extra. El tiempo depende de la situación.' },
+                  { title: 'Special Enrollment Period', titleEs: 'Período de Inscripción Especial', en: 'Certain life events may allow you to enroll or make changes outside the usual enrollment periods. Examples may include moving, losing coverage, qualifying for Medicaid, or getting Extra Help. Timing depends on the situation.', es: 'Ciertos eventos de vida pueden permitirle inscribirse o hacer cambios fuera de los períodos de inscripción habituales. Ejemplos pueden incluir mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Extra. El tiempo depende de la situación.' },
                 ].map((p, i) => (
                   <div key={i} className="bg-white rounded-xl p-5 border border-cream-200 shadow-xs">
                     <h3 className="font-serif text-base font-semibold text-earth-900 mb-1.5">{t(p.title, p.titleEs)}</h3>
@@ -323,12 +323,16 @@ export default function Home() {
             </div>
 
             <div className="hidden lg:block">
+              {/* Sawil 2026-06-30 AUDIT FIX — perf: this image is hidden on mobile
+                  (hidden lg:block); loading="lazy" skips the download on phones and
+                  still loads it on desktop where it's in-viewport. i18n: alt was
+                  English-only; now bilingual for Spanish screen-reader users. */}
               <img
                 src="/enrollment-advisor.jpg"
-                alt="Senior couple reviewing Medicare enrollment options with a trusted advisor."
+                alt={t('Senior couple reviewing Medicare enrollment options with a trusted advisor.', 'Pareja mayor revisando opciones de inscripción de Medicare con un asesor de confianza.')}
                 className="rounded-2xl shadow-lifted w-full object-cover bg-cream-100"
                 style={{ maxHeight: '600px' }}
-                loading="eager"
+                loading="lazy"
                 decoding="async"
               />
             </div>
@@ -394,7 +398,7 @@ export default function Home() {
             </p>
             <div className="space-y-4">
               {[
-                { icon: <ShieldIcon className="w-5 h-5 text-gold-500" />, title: 'Unbiased Advice', titleEs: 'Asesoría Imparcial', desc: 'No quotas, no company targets. Our only goal is to find the right plan for you.', descEs: 'Sin cuotas, sin metas corporativas. Nuestro único objetivo es encontrar el plan correcto para usted.' },
+                { icon: <ShieldIcon className="w-5 h-5 text-gold-500" />, title: 'Unbiased Advice', titleEs: 'Asesoría Imparcial', desc: 'No quotas, no company targets. Our only goal is to help you review the options that fit you.', descEs: 'Sin cuotas, sin metas corporativas. Nuestro único objetivo es ayudarle a revisar las opciones que se ajusten a usted.' },
                 { icon: <LockIcon className="w-5 h-5 text-gold-500" />, title: 'Your Data Is Protected', titleEs: 'Sus Datos Están Protegidos', desc: 'We never sell your personal information. Period.', descEs: 'Nunca vendemos su información personal. Punto.' },
                 { icon: <UsersIcon className="w-5 h-5 text-gold-500" />, title: 'We Stay With You After Enrollment', titleEs: 'Permanecemos Con Usted Después de la Inscripción', desc: "Questions, claims, or billing issues — we're your point of contact, not a call center.", descEs: 'Preguntas, reclamaciones o problemas de facturación — somos su contacto, no un centro de llamadas.' },
               ].map((r, i) => (
@@ -520,8 +524,8 @@ export default function Home() {
 
       {/* CTA */}
       <CTASection
-        headline="Ready to Find the Right Plan?"
-        headlineEs="¿Listo para Encontrar el Plan Correcto?"
+        headline="Ready to Review Your Options?"
+        headlineEs="¿Listo para Revisar Sus Opciones?"
         subheadline="No obligation. No pressure. Just clear, honest guidance from a licensed Medicare advisor who works for you."
         subheadlineEs="Sin compromiso. Sin presión. Solo orientación clara y honesta de un asesor de Medicare licenciado que trabaja para usted."
       />
