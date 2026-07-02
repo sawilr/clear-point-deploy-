@@ -5,10 +5,18 @@ import { LeadForm } from '../components/LeadForm';
 import { CTASection } from '../components/CTASection';
 import { DisclaimerBlock } from '../components/DisclaimerBlock';
 import { useScrollReveal } from '../components/ScrollReveal';
+import { MEDICARE_2026 } from '../data/medicare-figures-2026';
 
 export default function ExtraHelp() {
   const { t } = useLanguage();
   const eduReveal = useScrollReveal();
+  // Sawil 2026-07-02 — drive Extra Help eligibility figures from the SINGLE source
+  // of truth (MEDICARE_2026.extraHelp) so this page can never again drift from what
+  // Clara states (api/chat.js:200) or the data file. Audit found the page showed
+  // stale prior-year numbers (~$22k income / ~$17k resources) that contradicted the
+  // bot's $1,995·$2,705/mo income and $18,090·$36,100 resources in the same session.
+  const eh = MEDICARE_2026.extraHelp;
+  const usd = (n: number) => '$' + n.toLocaleString('en-US');
 
   return (
     <div className="min-h-screen bg-cream-50">
@@ -61,8 +69,8 @@ export default function ExtraHelp() {
                 <div className="bg-white rounded-lg p-4 mb-4">
                   <h4 className="font-semibold text-earth-800 text-sm mb-2">{t('Rough Eligibility Guidelines (2026):', 'Pautas Aproximadas de Elegibilidad (2026):')}</h4>
                   <ul className="text-earth-600 text-sm space-y-1">
-                    <li>{t('Individual: income below ~$22,000/year; resources below ~$17,000', 'Individual: ingresos menores a ~$22,000/año; recursos menores a ~$17,000')}</li>
-                    <li>{t('Married: income below ~$30,000/year; resources below ~$34,000', 'Casado: ingresos menores a ~$30,000/año; recursos menores a ~$34,000')}</li>
+                    <li>{t(`Individual: monthly income around ${usd(eh.incomeLimitSingle)}; resources below ${usd(eh.assetLimitSingle)}`, `Individual: ingreso mensual alrededor de ${usd(eh.incomeLimitSingle)}; recursos menores a ${usd(eh.assetLimitSingle)}`)}</li>
+                    <li>{t(`Married: monthly income around ${usd(eh.incomeLimitCouple)}; resources below ${usd(eh.assetLimitCouple)}`, `Casado: ingreso mensual alrededor de ${usd(eh.incomeLimitCouple)}; recursos menores a ${usd(eh.assetLimitCouple)}`)}</li>
                   </ul>
                 </div>
                 <p className="text-[13px] text-earth-700">

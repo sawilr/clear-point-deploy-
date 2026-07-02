@@ -2771,14 +2771,26 @@ export function ChatBot() {
   // Zara's own panel is open, so it never affects Clara or other components.
   useEffect(() => {
     if (!(isOpen && !isMinimized)) return;
+    // Sawil 2026-07-01 REGRESSION FIX — locking `body { overflow: hidden }`
+    // breaks the iOS soft keyboard inside Zara's position:fixed panel: focusing
+    // the composer dismisses/loses the keyboard ("el teclado se pierde"). This
+    // lock arrived with the modal-backdrop commit (22fb90d) and did NOT exist on
+    // the prior working prod (c63e7d5), which relied on the zKbBottom lift alone.
+    // On mobile the full-screen backdrop (z-[55]) already blocks background
+    // scroll+clicks and the visualViewport lift keeps the composer above the
+    // keyboard, so we apply the body lock on DESKTOP ONLY (≥768px, no soft
+    // keyboard) — restoring the mobile behavior that worked before.
+    const lockBody = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(min-width: 768px)').matches;
     const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
+    if (lockBody) document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setIsOpen(false); setIsMinimized(false); resetChat(); }
     };
     document.addEventListener('keydown', onKey);
     return () => {
-      document.body.style.overflow = prevOverflow;
+      if (lockBody) document.body.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKey);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4951,7 +4963,13 @@ export function ChatBot() {
         <div
           aria-hidden="true"
           onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }}
-          className="fixed inset-0 z-[55] bg-earth-900/30 animate-fade-in"
+          // Sawil 2026-07-02 REGRESSION FIX — desktop-only backdrop. On mobile the
+          // working prod (c63e7d5) had NO backdrop; its full-screen fixed inset-0 with
+          // 8px side margins meant a stray tap next to the panel WHILE TYPING closed the
+          // whole chat, and the extra fixed layer compounded the iOS keyboard jank. On
+          // mobile Zara is now the compact card + keyboard lift only, exactly like the
+          // prod that worked. Desktop keeps the dim + click-to-close modal behavior.
+          className="hidden md:block fixed inset-0 z-[55] bg-earth-900/30 animate-fade-in"
         />
       )}
 
@@ -5074,7 +5092,14 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center justify-between gap-2">
+          {/* Sawil 2026-07-02 — while the iOS keyboard is open (zVvHeight set) the
+              lifted panel is very short; this Call/Advisor row + the after-hours hint
+              below were stealing the height the composer needs, clipping the input
+              UNDER the keyboard at 320px (verified: composer bottom 327 vs keyboard
+              308). Hide this non-essential chrome while typing so the composer is
+              always reachable. It reappears when the keyboard closes and on desktop
+              (zVvHeight is undefined there). */}
+          <div className={`px-3 py-2 border-t border-cream-200 flex-shrink-0 items-center justify-between gap-2 ${zVvHeight ? 'hidden' : 'flex'}`}>
             <a href={CHATBOT_CONTEXT.phoneHref} className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 hover:bg-cream-200 transition-colors">
               <Phone className="w-4 h-4" />
               {displayLanguage === 'es' ? 'Llamar' : 'Call'}
@@ -5157,7 +5182,7 @@ export function ChatBot() {
               </button>
             </div>
             {/* PHASE 9E — after-hours hint to set expectation */}
-            {!zaraOfficeStatus.isOpen && (
+            {!zaraOfficeStatus.isOpen && !zVvHeight && (
               <p className="mt-2 text-[11px] text-earth-600 text-center">
                 {displayLanguage === 'es'
                   ? `Fuera de horario. Llamada de regreso ${zaraOfficeStatus.nextOpenLabelEs}.`
