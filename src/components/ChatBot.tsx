@@ -14,6 +14,7 @@ import { callLLM, buildHistory } from '../lib/llmHandler';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
 import { containsSensitiveData } from '../lib/sensitiveGuard';
 import { MEDICARE_2026 } from '../data/medicare-figures-2026';
+import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight';
 
 type ChatLanguage = 'en' | 'es';
 type MessageType = 'bot' | 'user';
@@ -2691,15 +2692,20 @@ export function ChatBot() {
 
   const [isOpen, setIsOpen] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  // Sawil 2026-07-02 REAL-DEVICE FIX — publish --svh / --kb-offset / --vv-offset-top
+  // on the homepage while Zara lives here. This hook was ONLY called by Clara
+  // (CustomerServiceBot, on /support), so on the homepage --vv-offset-top was never
+  // written and Zara's fixed panel could not compensate for iOS's visual-viewport
+  // offset when the keyboard opens (the composer floated up, detached from the
+  // keyboard — the exact bug in Sawil's real iPhone screenshot). Clara consumes the
+  // same vars via .support-shell and works; Zara now consumes --vv-offset-top too.
+  useVisualViewportHeight();
   // Mobile keyboard handling. When the OS keyboard opens the visualViewport
   // height shrinks; we use that to cap the chat surface and add space below
   // the last message so it isn't hidden under the keyboard.
+  // zVvHeight is used only as the "keyboard is open on mobile" flag now; the panel
+  // geometry comes from the --svh / --vv-offset-top CSS vars (see the panel style).
   const [zVvHeight, setZVvHeight] = useState<number | undefined>(undefined);
-  // Sawil 2026-06 — keyboard offset for Zara: how many px the on-screen
-  // keyboard covers. Used to lift the bottom-anchored floating panel ABOVE
-  // the keyboard so the composer is never hidden behind it (capping the
-  // height alone left the input under the keyboard — the "desorganizada" bug).
-  const [zKbBottom, setZKbBottom] = useState<number | undefined>(undefined);
   useEffect(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return;
     const vv = window.visualViewport;
@@ -2715,10 +2721,8 @@ export function ChatBot() {
         const diff = baseline - vv.height;
         if (diff > 100) {
           setZVvHeight(vv.height);
-          setZKbBottom(diff);
         } else {
           setZVvHeight((cur) => (cur === undefined ? cur : undefined));
-          setZKbBottom((cur) => (cur === undefined ? cur : undefined));
         }
       });
     };
@@ -4980,7 +4984,18 @@ export function ChatBot() {
           aria-modal="true"
           aria-labelledby="zara-chat-title"
           className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-[60] md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
-          style={zVvHeight ? { maxHeight: `${Math.max(160, zVvHeight - 24)}px`, bottom: `${(zKbBottom || 0) + 8}px` } : undefined}
+          // Sawil 2026-07-02 REAL-DEVICE FIX — when the keyboard is open on mobile,
+          // adopt Clara's PROVEN .support-shell geometry (index.css) instead of the
+          // old offsetTop-blind `bottom`/`maxHeight` math. position:fixed anchors to
+          // the LAYOUT viewport, so on real iOS (visualViewport.offsetTop > 0 when a
+          // field is focused) the panel floated up and the composer detached from the
+          // keyboard. height:var(--svh) makes the panel exactly the visible height and
+          // translateY(var(--vv-offset-top)) re-pins it to the visible window every
+          // frame — identical to the shell that already works for Clara on-device.
+          // Emulators keep offsetTop=0, so this looks unchanged in Playwright but is
+          // the real fix on hardware. Desktop keeps the floating card (zVvHeight is
+          // only ever set on a mobile keyboard open).
+          style={zVvHeight ? { top: 0, bottom: 'auto', height: 'var(--svh, 100dvh)', maxHeight: 'none', transform: 'translateY(var(--vv-offset-top, 0px))', willChange: 'transform' } : undefined}
         >
           <div className="bg-earth-800 text-cream-50 px-4 py-3 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-2.5">
