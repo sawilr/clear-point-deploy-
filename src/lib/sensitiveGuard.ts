@@ -9,7 +9,11 @@
 // "my SSN is…" / "mi número de Medicare es…" phrasings — already tuned NOT to
 // flag a 10-digit phone number, which Clara legitimately collects), and adds
 // the intent-to-send-a-card phrases that carry no digits yet.
-import { detectPHILeak } from './customerServiceEngine';
+// AUDIT 2026-07-03 Phase 4 — import from the zero-dependency phiPatterns module
+// instead of the 8,000-line engine: this import chain is what shipped a 405 KB
+// chunk on every homepage visit (Zara → sensitiveGuard → engine). Same function,
+// same behavior, no heavy dependency.
+import { detectPHILeak } from './phiPatterns';
 
 /** True when a message likely contains, or is about to send, sensitive data. */
 export function containsSensitiveData(text: string): boolean {

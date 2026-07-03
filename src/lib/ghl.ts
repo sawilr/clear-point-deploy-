@@ -79,6 +79,12 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     if (payload.bot_transcript_summary) { body.conversation_summary = payload.bot_transcript_summary; }
     if (payload.lead_quality_flags) { body.lead_quality_flags = payload.lead_quality_flags; }
     if (payload.interest_type) { body.interest_type = payload.interest_type; }
+    // AUDIT 2026-07-03 Phase 3 — best_time_to_contact was declared on the payload
+    // and populated by every surface (LeadForm dropdown, Zara intake, Clara engine)
+    // but never copied into the request body, so the senior's chosen callback
+    // window died here and never reached the CRM. Forward it; the server persists
+    // it as a structured note line + CallTime-* tag.
+    if (payload.best_time_to_contact) { body.best_time_to_contact = payload.best_time_to_contact; }
     if (payload.date_of_birth) { body.date_of_birth = payload.date_of_birth; }
     if (payload.calculated_age != null) { body.calculated_age = payload.calculated_age; }
     if (payload.city) { body.city = payload.city; }

@@ -414,7 +414,7 @@ export function sanitizeResponse(text: string, fallbackEs: boolean): string {
       : "Sorry, I could not process that clearly. Let's make it simple: is this about a bill, letter, coverage, medications, doctor/provider, or enrollment?";
   }
   // Strip stray "undefined" / "null" tokens that may leak from a broken template.
-  let cleaned = text
+  const cleaned = text
     .replace(/,\s*undefined\b/gi, '')
     .replace(/\bundefined\b/gi, '')
     .replace(/\bnull\b/g, '')
@@ -1770,30 +1770,12 @@ export function detectMedicalEmergency(text: string): boolean {
   return /\b(me duele el pecho|dolor (en |de )?(el )?pecho|opresi[oó]n en el pecho|chest pain|chest pressure|infarto|ataque al coraz[oó]n|heart attack|derrame( cerebral)?|stroke|no puedo respirar|cannot breathe|can'?t breathe|dificultad para respirar|me estoy ahogando)\b/i.test(t);
 }
 
-/** Returns true if message contains Medicare ID (MBI), SSN, or 16-digit card. */
-export function detectPHILeak(text: string): boolean {
-  // Medicare Beneficiary Identifier (MBI) — official CMS format is
-  //   C A AN N A AN N A A N N    (C=1-9, A=letter, N=digit, AN=letter|digit)
-  // Example: 1EG4-TE5-MK72. We allow optional dashes/spaces between blocks.
-  if (/\b[1-9][A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z]\d{2}\b/i.test(text)) return true;
-  // SSN — 3-2-4 with dash or space.
-  if (/\b\d{3}[-\s]\d{2}[-\s]\d{4}\b/.test(text)) return true;
-  // Bare 9-digit run that looks SSN-ish (and is NOT a phone).
-  const bare9 = text.match(/(?<!\d)\d{9}(?!\d)/);
-  if (bare9 && !/\d{3}[-.\s]?\d{3}[-.\s]?\d{4}/.test(text)) return true;
-  // 16-digit credit/debit card number.
-  if (/\b(?:\d{4}[-\s]?){3}\d{4}\b/.test(text)) return true;
-  // WAVE 39 — banking phrase + a digit run nearby.
-  if (/\b(account number|routing number|n[uú]mero de cuenta|n[uú]mero de ruta|bank account|cuenta bancaria|wire transfer|transferencia bancaria|routing|debit card number|n[uú]mero de tarjeta)\b/i.test(text)
-      && /\d{4,}/.test(text)) {
-    return true;
-  }
-  // WAVE 39 — explicit "my SSN is X" / "mi seguro social es X" with any digits.
-  if (/\b(my (ssn|social security)|mi (n[uú]mero de )?seguro social|my medicare (id|number|mbi)|mi (n[uú]mero de )?medicare)\b.{0,12}[\d]+/i.test(text)) {
-    return true;
-  }
-  return false;
-}
+// AUDIT 2026-07-03 Phase 4 — detectPHILeak moved VERBATIM to src/lib/phiPatterns.ts
+// (zero-import module) so sensitiveGuard/Zara on the homepage no longer drag this
+// entire engine into their chunk. Imported for internal use below and re-exported
+// so existing imports keep working.
+import { detectPHILeak } from './phiPatterns';
+export { detectPHILeak };
 
 /**
  * True when intent shifted to a clearly different topic.
@@ -4935,7 +4917,7 @@ export async function processMessageAsync(
     }
   }
 
-  let newState: ConversationState = {
+  const newState: ConversationState = {
     ...state,
     turnCount: (state.turnCount || 0) + 1,
     // Sawil 2026-06-14 — persist support topic memory across LLM turns so a

@@ -10,6 +10,12 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 // the raw notes.
 import { analyzeLeadIntelligence, formatIntelForGhlNotes } from './_lib/lead-intel.js';
 import { noStorePII } from './_lib/security-headers.js';
+// AUDIT 2026-07-03 Phase 1 — server-side PHI net. phi-scrub's own contract says it
+// must run before any LLM / CRM / persistent-log sink; this file hit all three
+// (Anthropic lead-intel, GHL customFields, GHL note) with unscrubbed free text.
+// The client-side firewall (sensitiveGuard) covers the common chat path but is
+// narrower, misses non-chat surfaces, and is bypassable with a direct POST.
+import { scrubPHI } from './_lib/phi-scrub.js';
 
 // Sawil 2026-06-30 AUDIT FIX C1 (no lost leads) — a CONSENTED lead must never be
 // lost to a transient GHL failure. Retry the GHL call on network errors and on
@@ -145,6 +151,24 @@ export default async function handler(req, res) {
     conversation_summary = _cap(conversation_summary, 8000);
     lead_quality_flags = _cap(lead_quality_flags, 1000);
 
+    // AUDIT 2026-07-03 Phase 1 — scrub PHI at the SOURCE variables so every
+    // downstream sink is covered by construction: the Anthropic lead-intel call
+    // (reads lead_notes/conversation_summary below), the GHL customField
+    // contact.chat_conversation_summary, and the GHL note POST. Patterns are
+    // conservative (SSN/MBI/HICN/card/routing/IBAN/9-digit); a 10-digit phone,
+    // 5-digit ZIP, email, name and callback window pass through unchanged —
+    // proven by scripts/phase1-phi-server.test.mjs. Log categories only (no PII).
+    var _scrubNotes = scrubPHI(lead_notes);
+    var _scrubSummary = scrubPHI(conversation_summary);
+    var _scrubFlags = scrubPHI(lead_quality_flags);
+    lead_notes = _scrubNotes.text;
+    conversation_summary = _scrubSummary.text;
+    lead_quality_flags = _scrubFlags.text;
+    var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected);
+    if (_phiCats.length > 0) {
+      console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
+    }
+
     // ── 3.6 — input hardening (Grupo B) ─────────────────────────────────────
     // Reuse the existing _cap() helper — do NOT duplicate the phone validation,
     // honeypot, CORS, rate-limit, body cap or tag sanitization that already run
@@ -171,6 +195,26 @@ export default async function handler(req, res) {
     // ghl_contact_id (Path A matched): switch from POST create to PUT update.
     // ghl_assigned_user_id (Path A matched): assign the contact to advisor.
     // consent_text/hash/version/UA: TCPA audit-trail persistence.
+    // AUDIT 2026-07-03 Phase 3 (lead completeness) — best_time_to_contact was
+    // captured on every surface and silently dropped before the CRM; interest_type
+    // arrived but was never read. Sanitize both, persist them as structured note
+    // lines (survives custom-field mapping changes) and as filterable GHL tags.
+    // No GHL custom-field ID exists for these today — inventing an ID would 400.
+    var best_time_to_contact = _cap(body.best_time_to_contact, 64).replace(/[\r\n\t]+/g, ' ').trim();
+    var interest_type = _cap(body.interest_type, 80).replace(/[\r\n\t]+/g, ' ').trim();
+    var intakeBits = [];
+    if (best_time_to_contact) intakeBits.push('Best time to contact: ' + best_time_to_contact);
+    if (interest_type) intakeBits.push('Interest/topic: ' + interest_type);
+    if (intakeBits.length > 0) {
+      lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— Intake —\n' + intakeBits.join('\n');
+    }
+    function _tagify(prefix, v) {
+      var t = String(v || '').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
+      return t ? prefix + '-' + t : '';
+    }
+    var _bestTimeTag = _tagify('CallTime', best_time_to_contact);
+    var _interestTag = _tagify('Interest', interest_type);
+
     var lead_type = typeof body.lead_type === 'string' ? body.lead_type.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '') : '';
     var ghl_contact_id = typeof body.ghl_contact_id === 'string' ? body.ghl_contact_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
     var ghl_assigned_user_id = typeof body.ghl_assigned_user_id === 'string' ? body.ghl_assigned_user_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
@@ -182,10 +226,20 @@ export default async function handler(req, res) {
     // GHL custom-field mapping changes. PII-free (only hash + version + UA).
     if (consent_receipt_hash || disclaimer_version) {
       var receiptBits = [];
-      if (consent_receipt_hash) receiptBits.push('sha256=' + consent_receipt_hash.slice(0, 16) + '…');
+      // AUDIT 2026-07-03 (compliance) — persist the FULL 64-char digest, not a
+      // 16-char prefix: a truncated hash cannot verify a later-supplied text.
+      if (consent_receipt_hash) receiptBits.push('sha256=' + consent_receipt_hash);
       if (disclaimer_version) receiptBits.push('disclaimer=' + disclaimer_version);
       if (signer_user_agent) receiptBits.push('ua=' + signer_user_agent.slice(0, 60));
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
+      // AUDIT 2026-07-03 (compliance) — persist the VERBATIM consent language per
+      // lead so the 10-year TCPA record is self-contained in the CRM (previously
+      // only hash+version survived; the text itself was captured then discarded).
+      // consent_text is the fixed canonical TCPA string (no PHI), appended AFTER
+      // the scrub point by design.
+      if (consent_text) {
+        lead_notes += '\n— Consent Text (verbatim' + (disclaimer_version ? ', v' + disclaimer_version : '') + ') —\n' + consent_text;
+      }
     }
 
     // ── PHASE A17 — Lead Intelligence Pass ─────────────────────────────────
@@ -347,6 +401,8 @@ export default async function handler(req, res) {
         { id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary', value: lead_notes || '' }
       ].filter(function (f) { return f.value; }),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
+        .concat(_bestTimeTag?[_bestTimeTag]:[])
+        .concat(_interestTag?[_interestTag]:[])
         .concat(utm_source?['UTM-'+utm_source]:[])
         .concat(allTags.filter(function(t){return t!=='Status-NewLead'&&t.indexOf('Lang-')!==0&&t!=='Source-Web';}))
         // PHASE A16 — SOA status tags so advisor pipelines can filter on them.

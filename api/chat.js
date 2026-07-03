@@ -351,7 +351,16 @@ export default async function handler(req, res) {
   for (var ci = 0; ci < STR_FIELDS.length; ci++) {
     var k = STR_FIELDS[ci];
     if (typeof rawCtx[k] === 'string') {
-      conversationContext[k] = rawCtx[k].slice(0, 120).replace(/[\r\n\t]/g, ' ');
+      // AUDIT 2026-07-03 Phase 2 — context fields are client-supplied and land in
+      // the system prompt every turn; only length/newline sanitation ran before,
+      // so an MBI/SSN planted in e.g. `name` reached Anthropic unredacted. Scrub
+      // each field. A legit 10-digit phone in phoneNumber is NOT redacted (the
+      // patterns skip 10-digit runs) — proven by scripts/phase2-chat-redaction.test.mjs.
+      var _ctxScrub = scrubPHI(rawCtx[k].slice(0, 120).replace(/[\r\n\t]/g, ' '));
+      conversationContext[k] = _ctxScrub.text;
+      if (_ctxScrub.detected.length > 0) {
+        console.warn('[CHAT] PHI redacted in context.' + k + ': ' + _ctxScrub.detected.join(','));
+      }
     }
   }
   conversationContext.conversationClosed = rawCtx.conversationClosed === true;
@@ -422,7 +431,16 @@ export default async function handler(req, res) {
     var turn = recent[i];
     if (!turn || !turn.role || !turn.content) continue;
     if (turn.role === 'user' || turn.role === 'assistant') {
-      messages.push({ role: turn.role, content: String(turn.content).slice(0, 1000) });
+      // AUDIT 2026-07-03 Phase 2 — history is CLIENT-SUPPLIED and is replayed to
+      // Anthropic verbatim; only the CURRENT message was scrubbed before, so PHI
+      // in an earlier turn (or a mutated history array) reached the LLM unredacted.
+      // Scrub every replayed turn. Redaction placeholders keep the turn readable,
+      // so the model retains safe context and does not re-ask answered questions.
+      var _turnScrub = scrubPHI(String(turn.content).slice(0, 1000));
+      if (_turnScrub.detected.length > 0) {
+        console.warn('[CHAT] PHI redacted in history turn: ' + _turnScrub.detected.join(','));
+      }
+      messages.push({ role: turn.role, content: _turnScrub.text });
     }
   }
   // Context (ZIP / state / state-specific programs / already-captured details)

@@ -1,9 +1,7 @@
 import { useEffect } from 'react';
 import { CustomerServiceBot } from '../components/CustomerServiceBot';
-import { useLanguage } from '../hooks/useLanguage';
 
 export default function Support() {
-  const { t } = useLanguage();
   // Sawil 2026-06 — THE mobile-keyboard fix (layer 1).
   //
   // /support is wrapped by the `.support-shell` (App.tsx): a fixed-height
@@ -39,10 +37,10 @@ export default function Support() {
 
   return (
     <>
-      {/* Sawil 2026-06-30 AUDIT FIX (SEO/a11y) — /support (a sitemap route) had no
-          descriptive page heading; the only h1 was Clara's chat-widget header.
-          A visually-hidden page h1 gives crawlers + screen readers a real heading. */}
-      <h1 className="sr-only">{t('Customer Support — Clear Point Senior Advisors', 'Servicio al Cliente — Clear Point Senior Advisors')}</h1>
+      {/* AUDIT 2026-07-03 Phase 7 — the sr-only h1 added 2026-06-30 DUPLICATED the
+          h1 Clara's header already renders in page mode (CustomerServiceBot.tsx
+          ~1557, itself added 2026-06-16 to be "exactly one visible H1 on /support").
+          Two h1s per page is an SEO/a11y defect; keep Clara's visible one. */}
       <CustomerServiceBot mode="page" />
     </>
   );
