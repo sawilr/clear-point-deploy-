@@ -129,9 +129,21 @@ export function clientId(req) {
     if (IP_RE.test(v)) return v;
   }
   if (onVercel) {
-    // On Vercel but the trusted header is absent/invalid — bucket together (shared
-    // conservative quota) rather than trust a spoofable header. Fail closed here.
-    return 'vercel-untrusted';
+    // AUDIT 2026-07-03 (security MEDIUM — self-inflicted-DoS blast radius) — when the
+    // trusted Vercel IP header is absent, DON'T collapse ALL such traffic into one
+    // global 'vercel-untrusted' counter (one actor could exhaust it and 429 everyone).
+    // Partition the fallback bucket by a coarse, NON-spoofable-for-quota-farming
+    // discriminator: a short hash of User-Agent + Accept-Language. This is still fail
+    // closed (never trusts a spoofable IP), but an attacker can no longer starve the
+    // shared quota for unrelated legitimate clients. UA/AL are trivially forgeable, so
+    // this only PARTITIONS the fallback — it does not grant more trust.
+    var ua = String(req.headers['user-agent'] || '');
+    var al = String(req.headers['accept-language'] || '');
+    if (!ua && !al) return 'vercel-untrusted';
+    var seed = ua + '|' + al;
+    var hash = 0;
+    for (var i = 0; i < seed.length; i++) { hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0; }
+    return 'vercel-untrusted:' + (hash >>> 0).toString(36);
   }
   var fwd = req.headers['x-forwarded-for'];
   if (fwd) {
