@@ -1,6 +1,7 @@
 import { useLanguage } from '../hooks/useLanguage';
 import { ArrowRight } from './icons';
 import { Link } from 'react-router';
+import { PictureImg } from './PictureImg';
 
 interface ServiceCardProps {
   image: string;
@@ -19,7 +20,7 @@ export function ServiceCard({ image, title, titleEs, description, descriptionEs,
         {/* Sawil 2026-06-30 AUDIT FIX (perf PERF-009) — service cards are below the
             fold; lazy-load so they don't compete with the LCP hero. The aspect-[4/3]
             wrapper already reserves space, so this adds no layout shift. */}
-        <img src={image} alt={t(title, titleEs)} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" decoding="async" />
+        <PictureImg src={image} alt={t(title, titleEs)} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" decoding="async" />
       </div>
       <div className="p-5">
         <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">{t(title, titleEs)}</h3>

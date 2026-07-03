@@ -56,6 +56,11 @@ export default defineConfig({
         manualChunks: {
           'react-vendor': ['react', 'react-dom'],
           'router-vendor': ['react-router'],
+          // AUDIT 2026-07-03 (perf) — lucide-react ships hundreds of icon modules
+          // used across nearly every component; carving it into its own long-cache
+          // vendor chunk keeps it out of the app `index` chunk so a copy/logic edit
+          // no longer re-downloads the icon set.
+          'icons-vendor': ['lucide-react'],
         },
       },
     },

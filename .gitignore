@@ -46,3 +46,5 @@ ruvector.db
 scripts/.*.bundle.mjs
 scripts/.*.cjs
 .gstack/
+deploy-*.log
+prod*.log

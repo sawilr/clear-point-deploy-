@@ -2,6 +2,7 @@ import { useLanguage } from '../hooks/useLanguage';
 import { useNavigate } from 'react-router';
 import { CheckIcon, PhoneIcon, CalendarIcon } from './icons';
 import { LeadForm } from './LeadForm';
+import { PictureImg } from './PictureImg';
 
 interface HeroProps {
   image: string;
@@ -49,7 +50,7 @@ export function Hero({
     return (
       <section className={`relative overflow-hidden flex ${compact ? tighter ? 'cp-hero-compact-tight items-start' : 'cp-hero-compact items-start' : 'cp-hero-page items-center'}`}>
         <div className="absolute inset-0" aria-hidden="true">
-          <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
+          <PictureImg src={image} alt="" role="presentation" aria-hidden={true} fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         </div>
         <div className={`relative z-10 max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5 w-full ${compact ? tighter ? 'pt-3 pb-8 lg:pt-4 lg:pb-10' : 'pt-8 pb-8 lg:pt-10 lg:pb-10' : 'pt-10 pb-12 lg:pt-14 lg:pb-16'}`}>
@@ -73,7 +74,7 @@ export function Hero({
   return (
     <section className="cp-hero-home relative flex items-center overflow-hidden">
       <div className="absolute inset-0" aria-hidden="true">
-        <img src={image} alt="" role="presentation" aria-hidden="true" fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
+        <PictureImg src={image} alt="" role="presentation" aria-hidden={true} fetchPriority="high" className="cp-hero-img w-full h-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-earth-900/80 via-earth-900/60 to-earth-900/30" />
         <div className="absolute inset-0 bg-gradient-to-t from-earth-900/50 via-transparent to-earth-900/20" />
       </div>
