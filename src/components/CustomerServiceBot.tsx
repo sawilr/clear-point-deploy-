@@ -1841,6 +1841,19 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           role="dialog"
           aria-modal="true"
           aria-label={isSpanish ? 'Confirmar empezar de nuevo' : 'Confirm start over'}
+          // AUDIT 2026-07-03 (a11y) — this confirm was aria-modal with zero focus
+          // management: focus stayed behind the overlay and Tab walked the hidden
+          // chat. Move focus to the first button on mount (buttons never raise the
+          // mobile keyboard) and cycle Tab inside — BotLauncher's proven pattern.
+          ref={(el) => { if (el && !el.contains(document.activeElement)) el.querySelector('button')?.focus(); }}
+          onKeyDown={(e) => {
+            if (e.key !== 'Tab') return;
+            const f = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>('button');
+            if (f.length === 0) return;
+            const first = f[0], last = f[f.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+          }}
         >
           <div className="bg-white rounded-xl shadow-lifted border border-cream-200 max-w-sm w-full p-5 space-y-4">
             <div className="text-earth-900 text-[15px] leading-[1.5] font-semibold">

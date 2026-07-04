@@ -4983,6 +4983,22 @@ export function ChatBot() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="zara-chat-title"
+          // AUDIT 2026-07-03 (a11y) — aria-modal promised a modal but Tab leaked to
+          // the page behind. Cycle focus among the dialog's own controls (same
+          // pattern as BotLauncher's popover trap). Deliberately NO auto-focus on
+          // open: focusing the textarea would raise the mobile keyboard unprompted
+          // (the exact regression class we just fixed) — the trap only engages once
+          // focus is inside. Escape-close already exists.
+          onKeyDown={(e) => {
+            if (e.key !== 'Tab') return;
+            const f = (e.currentTarget as HTMLElement).querySelectorAll<HTMLElement>(
+              'button, a[href], textarea, input, [tabindex]:not([tabindex="-1"])'
+            );
+            if (f.length === 0) return;
+            const first = f[0], last = f[f.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+          }}
           className="fixed bottom-[max(96px,calc(env(safe-area-inset-bottom)+92px))] left-2 right-2 max-h-[75dvh] md:top-auto md:left-auto md:bottom-6 md:right-6 z-[60] md:w-[480px] lg:w-[520px] md:h-[700px] md:max-h-[85dvh] bg-cream-50 rounded-2xl shadow-lifted flex flex-col overflow-hidden border border-cream-200 animate-panel-open"
           // Sawil 2026-07-02 REAL-DEVICE FIX — when the keyboard is open on mobile,
           // adopt Clara's PROVEN .support-shell geometry (index.css) instead of the
