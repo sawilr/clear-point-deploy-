@@ -3291,7 +3291,12 @@ export function processMessage(
           const _outS = isEs
             ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n${_tcpaEs}\n\n¿Está todo correcto?`
             : `Before I send this, let's confirm your details:\n${_linesEn}\n\n${_tcpaEn}\n\nIs everything correct?`;
-          return _emitHandoff(_outS, { lastBotIntent: 'handoff_asking_confirm' });
+          // AUDIT 2026-07-03 (lead completeness / B3-F3) — persist the captured email
+          // into state HERE (was omitted). Without this the email showed in the summary
+          // but was recomputed from the empty "sí/yes" confirm turn and dropped from
+          // the submitted lead. Placed in the summary patch (not in _emitHandoff's base)
+          // to avoid a TDZ — finalEmail is declared after _emitHandoff.
+          return _emitHandoff(_outS, { email: finalEmail || state.email, lastBotIntent: 'handoff_asking_confirm' });
         }
       }
 
