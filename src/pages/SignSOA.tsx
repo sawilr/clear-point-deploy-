@@ -158,7 +158,9 @@ export default function SignSOA() {
               </div>
               <h1 className="font-serif text-2xl mb-3 text-earth-900">{tLabel('success_title', language)}</h1>
               <p className="text-earth-600 mb-6">{tLabel('success_body', language)}</p>
-              <p className="text-xs text-earth-400">
+              {/* Sawil 2026-07-04 (a11y, approved) — earth-400 on light bg is 2.6:1
+                  (AA fail); earth-600 = 4.9:1, same family. */}
+              <p className="text-xs text-earth-600">
                 SOA ID: {signedResult.soaId}<br/>
                 {language === 'es' ? 'Firmado' : 'Signed'}: {signedResult.signedAt}
               </p>

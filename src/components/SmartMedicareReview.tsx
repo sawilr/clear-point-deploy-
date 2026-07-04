@@ -376,7 +376,9 @@ export function SmartMedicareReview() {
               >
                 {t('Sign Scope of Appointment', 'Firmar Scope of Appointment')} →
               </a>
-              <p className="text-xs text-earth-400 mt-3">
+              {/* Sawil 2026-07-04 (a11y, approved) — earth-400 on white measured 2.6:1
+                  (AA needs 4.5). earth-600 = 4.9:1, same earth family, no new color. */}
+              <p className="text-xs text-earth-600 mt-3">
                 {t('Secure link, expires in 24 hours. Required by CMS 422.2264 before advisor contact.', 'Enlace seguro, expira en 24 horas. Requerido por CMS 422.2264 antes del contacto del asesor.')}
               </p>
             </div>
@@ -494,7 +496,10 @@ export function SmartMedicareReview() {
               <button
                 type="button"
                 onClick={() => { setSpecialCat(null); setStep1View('special'); }}
-                className="mt-4 w-full flex items-center justify-center min-h-[44px] text-sm text-earth-400 hover:text-earth-600 underline underline-offset-2 transition-colors"
+                // Sawil 2026-07-04 (a11y, approved) — base was earth-400 (2.6:1 on white,
+                // AA fail); promote its own hover color earth-600 (4.9:1) to base and
+                // step hover one shade deeper so hover feedback is preserved.
+                className="mt-4 w-full flex items-center justify-center min-h-[44px] text-sm text-earth-600 hover:text-earth-700 underline underline-offset-2 transition-colors"
               >
                 {t('Have a different situation?', '¿Tiene una situación diferente?')}
               </button>
