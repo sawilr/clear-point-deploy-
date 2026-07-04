@@ -48,3 +48,4 @@ scripts/.*.cjs
 .gstack/
 deploy-*.log
 prod*.log
+.env.ghl-mission

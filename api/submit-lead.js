@@ -398,7 +398,14 @@ export default async function handler(req, res) {
         { id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age', value: age || '' },
         { id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age', value: calculated_age != null ? String(calculated_age) : '' },
         { id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags', value: lead_quality_flags || '' },
-        { id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary', value: lead_notes || '' }
+        { id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary', value: lead_notes || '' },
+        // Sawil 2026-07-04 — populate the Best Time / Interest custom fields created
+        // in GHL this session. Previously these lived only in notes + CallTime-/Interest-
+        // tags because no field id existed (see intake comment above). Both are TEXT, so
+        // free-form values carry no dropdown 400-risk on the revenue path. Empty values
+        // are dropped by the filter below (so a lead without either still submits fine).
+        { id: 'PpDDusEEsMz4xNIcrwRW', key: 'contact.best_time_to_call', value: best_time_to_contact || '' },
+        { id: 'fLxx7s1GpVJYlxJl08G6', key: 'contact.medicare_interest', value: interest_type || '' }
       ].filter(function (f) { return f.value; }),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
@@ -506,8 +513,13 @@ export default async function handler(req, res) {
         }
       }
     }
-    var pipelineId = 'puGDpLJLyeTSXQqutzsm';
-    var pipelineStageId = '3c52bf0b-2d8f-4174-8a0a-211a3637d02c';
+    // Sawil 2026-07-04 — repointed lead intake from the old 14-stage pipeline
+    // "ClearPoint Medicare Leads" (puGDpLJLyeTSXQqutzsm, New Lead stage
+    // 3c52bf0b-2d8f-4174-8a0a-211a3637d02c) to the clean 6-stage
+    // "ClearPoint Medicare Leads v2" so all new web/chat leads land in the
+    // single source-of-truth pipeline. New Lead stage below belongs to v2.
+    var pipelineId = 'HPvihjPaOhPeQ9u0bXUd';
+    var pipelineStageId = '5102d9b2-1b1b-415f-9663-9d21283b3032';
     // Derive a clean opportunity source label from the form_name sent by each form.
     // ChatBot sends 'Website Chatbot - Medicare Plan Review Request'
     // SmartMedicareReview sends 'Smart Medicare Review'

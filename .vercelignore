@@ -1,0 +1,4 @@
+.env.ghl-mission
+.env.local
+.env.prod
+scripts/live-*.mjs
