@@ -299,7 +299,7 @@ export function validatePersonName(value: string): { valid: boolean; flags: stri
   }
 
   // Tokenize on whitespace and hyphens
-  const words = raw.toLowerCase().split(/[\s\-]+/).filter(Boolean);
+  const words = raw.toLowerCase().split(/[\s-]+/).filter(Boolean);
 
   // Block all-same-character repeated patterns (aaa, bbb, zzz...)
   for (const word of words) {
@@ -310,7 +310,7 @@ export function validatePersonName(value: string): { valid: boolean; flags: stri
   }
 
   // Fake/placeholder check: entire normalized name
-  const normalizedFull = raw.toLowerCase().replace(/['\s.\-]+/g, '');
+  const normalizedFull = raw.toLowerCase().replace(/['\s.-]+/g, '');
   if (FAKE_NAME_WORDS.has(normalizedFull)) {
     return { valid: false, flags: ['Name appears fake or invalid'] };
   }

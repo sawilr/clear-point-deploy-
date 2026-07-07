@@ -153,6 +153,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // onInterim/onFinal that fires AFTER the user sends, so dictated text can never
   // reappear in the (now-cleared) input box.
   const voiceActiveRef = useRef(false);
+  // Sawil 2026-07-05 — text already in the box when dictation STARTS. Interim
+  // results preview as base+interim; the final commits ONCE as base+final and
+  // advances the base. Fixes the double-word bug where onInterim wrote the
+  // phrase and onFinal appended it again ("siete ocho siete siete ocho siete").
+  const voiceBaseRef = useRef('');
   // PHASE 9E — after-hours awareness (Mon-Fri 9-6 ET)
   const officeStatus = getOfficeStatus();
   // PHASE 10 — Clara outer flow (Path A/B/C) sits ABOVE the engine.
@@ -209,12 +214,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // options/chips become readable from the top.
         const msgs = cc.querySelectorAll('[data-msg-id]');
         const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
+        // Sawil 2026-07-05 LEAD-CAPTURE SCROLL FIX (mirrors Zara) — measure the
+        // whole last TURN (message + any chips below it) from its top to the end
+        // of the content. Anchor that top ONLY when the turn is TALLER than the
+        // visible area (long answer + chips that would be bottom-clipped). When
+        // it FITS — every lead-capture prompt + short reply — scroll fully to the
+        // bottom so it sits just above the input, instead of stranded at the top
+        // with a gap ("se queda arriba cogiendo el lead").
         if (lastMsg) {
           const cRect = cc.getBoundingClientRect();
           const mRect = lastMsg.getBoundingClientRect();
           const offsetTop = mRect.top - cRect.top + cc.scrollTop;
-          cc.scrollTo({ top: Math.max(0, offsetTop - 8), behavior: smooth ? 'smooth' : 'auto' });
-          return;
+          if (cc.scrollHeight - offsetTop > cc.clientHeight - 8) {
+            cc.scrollTo({ top: Math.max(0, offsetTop - 8), behavior: smooth ? 'smooth' : 'auto' });
+            return;
+          }
         }
         cc.scrollTo({ top: cc.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
       });
@@ -1489,6 +1503,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // suppressed: the user simply types. Buttons remain ONLY for the one-time
   // language pick (entry) and the form-style final actions (call / callback /
   // advisor) that the engine ALSO offers in plain text. No topic/recovery menus.
+  // `false &&` is an intentional kill-switch: mid-conversation recovery/topic
+  // chip menus are suppressed by design (conversation-first). Kept as code so
+  // it is trivial to re-enable if ever needed.
+  // eslint-disable-next-line no-constant-binary-expression
   const showRecoveryChips = false && quickReplies.length > 0 && !isTyping;
 
   // PHASE E — viewport tier still drives chip-row layout and desktop max-width.
@@ -1962,12 +1980,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
                   return;
                 }
                 voiceActiveRef.current = true;
+                voiceBaseRef.current = inputValue;
                 voiceRecognizerRef.current = createVoiceRecognizer(isSpanish ? 'es' : 'en', {
-                  onInterim: (t) => { if (!voiceActiveRef.current) return; setInputValue(normalizeSpokenNumbers(t, isSpanish)); },
+                  onInterim: (t) => { if (!voiceActiveRef.current) return; const base = voiceBaseRef.current; setInputValue((base ? base + ' ' : '') + normalizeSpokenNumbers(t, isSpanish)); },
                   onFinal: (t) => {
                     if (!voiceActiveRef.current) return;
-                    const norm = normalizeSpokenNumbers(t, isSpanish);
-                    setInputValue((prev) => (prev ? prev + ' ' : '') + norm);
+                    const base = voiceBaseRef.current;
+                    const committed = (base ? base + ' ' : '') + normalizeSpokenNumbers(t, isSpanish);
+                    voiceBaseRef.current = committed;
+                    setInputValue(committed);
                   },
                   onEnd: () => { voiceActiveRef.current = false; setVoiceListening(false); },
                   onError: () => { voiceActiveRef.current = false; setVoiceListening(false); },

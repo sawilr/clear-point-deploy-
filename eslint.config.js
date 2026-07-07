@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'backups/**', 'outputs/**']),
+  // Non-shipped dirs: build output, snapshots/backups, generated outputs, local
+  // tooling, and dev-only QA harness scripts. Only src/ ships to production.
+  globalIgnores(['dist', 'backups/**', '.backups/**', 'outputs/**', '.claude/**', 'scripts/**']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -20,6 +22,10 @@ export default defineConfig([
       globals: globals.browser,
     },
     rules: {
+      // Underscore-prefixed args/vars are the intentional "unused on purpose"
+      // convention (e.g. _reason debug labels, _language kept for signature
+      // parity). Standard config so they don't flag as errors.
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'off',
       'react-refresh/only-export-components': 'off',
       'react-hooks/purity': 'off',

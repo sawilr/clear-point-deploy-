@@ -96,7 +96,7 @@ export function createVoiceRecognizer(
   return {
     start: () => {
       if (listening) return;
-      try { r.start(); listening = true; } catch (err) { /* already started */ }
+      try { r.start(); listening = true; } catch { /* already started */ }
     },
     stop: () => {
       if (!listening) return;

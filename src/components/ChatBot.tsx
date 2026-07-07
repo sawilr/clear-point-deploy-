@@ -2249,7 +2249,7 @@ function normalizeForIntent(text: string): string {
     .trim()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[\u00BF\u00A1?!.,;:"\u201C\u201D()\[\]]/g, '')
+    .replace(/[\u00BF\u00A1?!.,;:"\u201C\u201D()[\]]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -2849,6 +2849,11 @@ export function ChatBot() {
   // Sawil 2026-06-25 — when true, ignore any in-flight voice onInterim/onFinal
   // so a late final transcript can never re-populate the box AFTER a send.
   const zaraVoiceSuppressRef = useRef(false);
+  // Sawil 2026-07-05 — text already in the box when dictation STARTS. Interim
+  // previews as base+interim; final commits ONCE as base+final and advances the
+  // base. Fixes the double-word bug (onInterim wrote the phrase, onFinal appended
+  // it again → "seven eight seven seven eight seven").
+  const zaraVoiceBaseRef = useRef('');
   const zaraTextareaRef = useRef<HTMLTextAreaElement>(null);
   const zaraOfficeStatus = getOfficeStatus();
   // Tracks previous messages.length so we know when a brand-new message
@@ -2908,12 +2913,23 @@ export function ChatBot() {
     // become readable from the top instead of bottom-clipped.
     const msgs = c.querySelectorAll('[data-msg-id]');
     const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
+    // Sawil 2026-07-05 LEAD-CAPTURE SCROLL FIX — measure the whole last TURN
+    // (message bubble + any option chips that render below it) from its top to
+    // the end of the content. Anchor that top near the container top ONLY when
+    // the turn is TALLER than the visible area (long answer + chips that would
+    // otherwise be bottom-clipped — the case the anchor was added for). When the
+    // turn FITS — every lead-capture prompt ("What's your name?", "Your phone?")
+    // and the user's short replies — scroll fully to the bottom so it sits just
+    // above the input, instead of being stranded at the top with an empty gap
+    // ("se queda arriba cogiendo el lead").
     if (lastMsg) {
       const cRect = c.getBoundingClientRect();
       const mRect = lastMsg.getBoundingClientRect();
       const offsetTop = mRect.top - cRect.top + c.scrollTop;
-      c.scrollTop = Math.max(0, offsetTop - 8);
-      return;
+      if (c.scrollHeight - offsetTop > c.clientHeight - 8) {
+        c.scrollTop = Math.max(0, offsetTop - 8);
+        return;
+      }
     }
     c.scrollTop = c.scrollHeight;
   }
@@ -4521,7 +4537,7 @@ export function ChatBot() {
         isoDate = rawDob;
       } else {
         // MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY
-        const mdy = rawDob.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        const mdy = rawDob.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
         if (mdy) {
           isoDate = `${mdy[3]}-${mdy[1].padStart(2,'0')}-${mdy[2].padStart(2,'0')}`;
         } else {
@@ -5183,14 +5199,17 @@ export function ChatBot() {
                       return;
                     }
                     zaraVoiceSuppressRef.current = false;
+                    zaraVoiceBaseRef.current = zaraTextareaRef.current?.value || '';
                     zaraVoiceRecognizerRef.current = createVoiceRecognizer(displayLanguage === 'es' ? 'es' : 'en', {
                       // Sawil 2026-06-30 AUDIT FIX C4/BUG-004 — normalize spoken
                       // numbers ("seven eight seven..." / "siete ocho siete...") to
                       // digits, mirroring Clara (CustomerServiceBot.tsx). Without this,
                       // a voice-dictated phone/ZIP arrives as words, validatePhone
                       // strips them to "" and the senior is trapped on the phone step.
-                      onInterim: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; zaraTextareaRef.current.value = normalizeSpokenNumbers(t, displayLanguage === 'es'); },
-                      onFinal: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; const norm = normalizeSpokenNumbers(t, displayLanguage === 'es'); zaraTextareaRef.current.value = (zaraTextareaRef.current.value ? zaraTextareaRef.current.value + ' ' : '') + norm; },
+                      // Sawil 2026-07-05 — base+interim preview, final commits ONCE
+                      // (fixes the doubled-phrase bug).
+                      onInterim: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; const base = zaraVoiceBaseRef.current; zaraTextareaRef.current.value = (base ? base + ' ' : '') + normalizeSpokenNumbers(t, displayLanguage === 'es'); },
+                      onFinal: (t) => { if (zaraVoiceSuppressRef.current || !zaraTextareaRef.current) return; const base = zaraVoiceBaseRef.current; const committed = (base ? base + ' ' : '') + normalizeSpokenNumbers(t, displayLanguage === 'es'); zaraVoiceBaseRef.current = committed; zaraTextareaRef.current.value = committed; },
                       onEnd: () => setZaraVoiceListening(false),
                       onError: () => setZaraVoiceListening(false),
                     });
