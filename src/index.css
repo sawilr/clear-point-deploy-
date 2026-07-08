@@ -518,3 +518,21 @@ p.text-center:not([class*="max-w"]) {
     animation: pulse-online 2.2s ease-in-out infinite;
   }
 }
+
+/* ── Footer legal disclaimer — desktop balance (surgical, footer-scoped) ──────
+   On desktop the four legal paragraphs flow into a balanced two-column measure
+   so the disclaimer FILLS the footer width, instead of a single ~600px column
+   that left a large empty void beside it (looked unbalanced on wide screens).
+   Scoped to <footer> so the shared .cp-legal reading-measure cap used elsewhere
+   on the site is untouched. Paragraphs never split across a column. Layout only
+   — no legal text or content is changed. Appended unlayered so it reliably wins
+   over the layered .cp-legal utility and Tailwind's space-y margins. */
+footer .cp-legal { max-width: none; }
+@media (min-width: 1024px) {
+  /* column-width (not a fixed count) auto-fits the number of columns to the
+     available width: ~2 on laptops, ~3 on ultrawide — each column staying a
+     readable ~60–72ch instead of one ~90ch+ line or a single 600px column
+     stranded beside a void. */
+  footer .cp-legal { column-width: 22rem; column-gap: 3rem; }
+  footer .cp-legal > p { break-inside: avoid; margin-top: 0 !important; margin-bottom: 0.9rem; }
+}

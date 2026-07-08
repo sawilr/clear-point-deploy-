@@ -65,24 +65,18 @@ export function Footer() {
   };
 
   return (
-    <footer className="bg-earth-900 text-cream-50/60 pt-16 pb-6">
-      <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
-        {/* lg+ rebalances the column widths so:
-            • Contact stays wide enough for the full email on one line
-            • Services is wide enough for the longest Spanish label
-              "Planes de Medicamentos Parte D" — instead of wrapping ugly
-              ("Planes de" / "Medicamentos Parte D"), Services now fits
-              "Planes de Medicamentos" on line 1 with "Parte D" on line 2,
-              which reads as a balanced, intentional 2-line wrap.
-            • Brand column narrows slightly (1.2 → 1.0fr); its paragraph
-              already has max-w-xs and just wraps to one more line, which
-              is visually fine for the description block.
-            md (tablet) keeps the original 5-col split because narrower
-            tablets don't have room to widen Services without squeezing
-            the link columns past readable. */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-8 md:gap-8 mb-10">
+    <footer className="bg-earth-900 text-cream-50/60 pt-16 lg:pt-20 pb-8">
+      <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5 sm:px-8">
+        {/* Columns: single stack on phones → a clean 2-column split from sm
+            through tablets AND landscape phones (avoids cramming 5 narrow
+            columns too early, which looked squeezed when the phone was rotated)
+            → the balanced 5-column desktop layout only at lg+ (≥1024px). The lg
+            track widths keep Contact wide enough for the full email on one line
+            and Services wide enough for the longest Spanish label
+            "Planes de Medicamentos Parte D". */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-x-8 gap-y-10 lg:gap-8 mb-12">
           {/* Brand */}
-          <div className="col-span-1 sm:col-span-2 md:col-span-1">
+          <div className="col-span-1 sm:col-span-2 lg:col-span-1">
             <a href="/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
@@ -144,8 +138,9 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Contact */}
-          <div className="col-span-1 sm:col-span-2 md:col-span-1">
+          {/* Contact — single cell from sm up so it pairs with Resources in the
+              2-column tier (Brand spans the full row above); its own cell at lg. */}
+          <div className="col-span-1">
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h3>
             <ul className="space-y-1 text-sm">
               <li><a href="tel:18663108702" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
@@ -168,8 +163,10 @@ export function Footer() {
           </div>
         </div>
 
-        {/* Disclaimer */}
-        <div className="mb-6">
+        {/* Disclaimer — on desktop this flows into a balanced 2-column measure
+            (footer-scoped CSS in index.css) so it fills the width instead of
+            leaving a void. Content unchanged. */}
+        <div className="mt-2 mb-8">
           <DisclaimerBlock variant="full" />
         </div>
 
@@ -183,9 +180,9 @@ export function Footer() {
         </div>
 
         {/* Bottom */}
-        <div className="border-t border-cream-50/10 pt-5 flex flex-col sm:flex-row items-center justify-between gap-3 text-[14px] text-cream-50/70">
+        <div className="border-t border-cream-50/10 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[14px] text-cream-50/70">
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap">
             <Link to="/privacy-policy" className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
             <span aria-hidden className="text-cream-50/30">·</span>
             <Link to="/accessibility" className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Accessibility', 'Accesibilidad')}</Link>
