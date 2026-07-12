@@ -2347,6 +2347,19 @@ function classifyGlobalIntent(
   // Step 8: Advisor request
   if (anyMatch(ADVISOR_KEYWORDS)) return 'ADVISOR_REQUEST';
 
+  // Sawil 2026-07-12 ZARA FIX (audit Q4/Q5) — a GENERAL education question must
+  // never be routed to customer service or clarification off isolated keywords
+  // ("cover", "dental", "how do i"). Question shape + Medicare-education subject
+  // + NO first-person problem marker → MEDICARE_EDUCATION. Real support cases
+  // ("MY doctor left", "I lost MY card", "denied") keep their possessive/problem
+  // markers and still classify as CUSTOMER_SERVICE below. Context, not keywords.
+  const _isQuestionShape = /\?\s*$/.test(low) ||
+    /^(what|when|how|does|do|can|is|are|who|which|where|why|que|qué|cuando|cuándo|como|cómo|puedo|cual|cuál|quien|quién|donde|dónde)\b/.test(low);
+  const _hasProblemMarker = /\b(my|mi|mis)\b/.test(low) ||
+    /(denied|negad|rechaz|no me lleg|not working|no funciona|perdi|lost my|no recib|collection|cobranza)/.test(low);
+  const _eduSubject = /(medicare|medigap|medicaid|part [abcd]\b|parte [abcd]\b|advantage|supplement|suplemento|enroll|inscri|qualify|calific|eligib|elegib|cover|cubre|deducible|deductible|copago|copay|prima\b|premium|formulary|red de|network|extra help|ayuda extra)/.test(low);
+  if (_isQuestionShape && _eduSubject && !_hasProblemMarker) return 'MEDICARE_EDUCATION';
+
   // Step 9: Customer service
   if (anyMatch(CUSTOMER_SERVICE_KEYWORDS)) return 'CUSTOMER_SERVICE';
 
@@ -4742,13 +4755,18 @@ export function ChatBot() {
     }
 
     // ── FORM_DATA or MEDICARE_EDUCATION — route by current step ──────────────
+    // Sawil 2026-07-12 ZARA FIX (audit Q1-Q3) — ANSWER FIRST. A real education
+    // question typed at the state step (or mid lead-capture) must reach the
+    // MEDICARE_EDUCATION handler below, never be swallowed by "I couldn't
+    // identify the state". The step is NOT changed, so Zara still collects the
+    // state/field on the user's next non-question reply.
     // If currently in lead capture flow, pass to field handler (form validation)
-    if (step.startsWith('lead_')) {
+    if (step.startsWith('lead_') && intent !== 'MEDICARE_EDUCATION') {
       if (handleLeadText(text)) return;
     }
 
     // State selection step
-    if (step === 'state') {
+    if (step === 'state' && intent !== 'MEDICARE_EDUCATION') {
       const detectedState = detectState(text);
       if (detectedState && SUPPORTED_STATES.includes(detectedState)) {
         handleStateSelection(detectedState);

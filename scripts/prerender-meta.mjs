@@ -40,10 +40,24 @@ if (routes.length < 13) {
   process.exit(1);
 }
 
+// Sawil 2026-07-12 SEO AUDIT W-01 — /thank-you was the only route without its
+// own title/canonical (it inherited the homepage title) and was indexable.
+// A post-submit confirmation page must not compete with the homepage in search:
+// give it its own metadata + robots noindex,follow.
+routes.push({
+  path: '/thank-you',
+  title: 'Thank You | Clear Point Senior Advisors',
+  description: 'Your request was received. A licensed Clear Point Senior Advisors advisor will contact you during business hours.',
+  noindex: true,
+});
+
 function renderRoute(route) {
   const canonical = SITE + (route.path === '/' ? '/' : route.path);
   let html = baseHtml;
   html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(route.title)}</title>`);
+  if (route.noindex && !/name="robots"/.test(html)) {
+    html = html.replace('</head>', `    <meta name="robots" content="noindex,follow" />\n  </head>`);
+  }
   html = html.replace(/(<meta name="description" content=")[^"]*(")/, `$1${esc(route.description)}$2`);
   html = html.replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${esc(route.title)}$2`);
   html = html.replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${esc(route.description)}$2`);

@@ -4521,7 +4521,7 @@ function _handleDualEligible(
     const srcLabelEn = src === 'hospital' ? 'from the hospital' : src === 'doctor' ? 'from the doctor' : src === 'lab' ? 'from the lab' : src === 'ambulance' ? 'from the ambulance' : src === 'plan' ? 'from the plan' : 'you received';
     const out = isEs
       ? `Gracias. Una factura ${srcLabelEs} cuando usted tiene Medicare y Medicaid es justo lo que un asesor licenciado debe revisar — con frecuencia no le deberían cobrar esos montos por servicios cubiertos por Medicare. No la pague todavía. ¿Quiere que un asesor de Clear Point revise su caso, sin costo?`
-      : `Thanks. A bill ${srcLabelEn} when you have both Medicare and Medicaid is exactly what a licensed advisor should review — often you should not be charged those amounts for Medicare-covered services. Please don't pay it yet. Would you like a Clear Point advisor to review your case, at no cost?`;
+      : `Thanks. A bill ${srcLabelEn} when you have both Medicare and Medicaid is exactly what a licensed advisor should review — often you should not be charged those amounts for Medicare-covered services. Before paying it, have it reviewed first (and don't ignore any due date). Would you like a Clear Point advisor to review your case, at no cost?`;
     return emit(out, { dualFlowStage: 'offered_advisor', serviceCategory: 'bill_provider', possibleQMB: true, lastBotOfferedAdvisor: true, lastBotIntent: 'dual_bill_followup' });
   }
 
@@ -4537,14 +4537,14 @@ function _handleDualEligible(
   if (qmbExplicit && billish) {
     const out = isEs
       ? 'Gracias por decírmelo. Si usted está en QMB, normalmente los proveedores no deberían cobrarle deducibles, coseguro ni copagos por servicios cubiertos por Medicare. Aun así podría haber un copago de Medicaid o un servicio no cubierto, por eso conviene revisar la factura antes de pagar. No la pague todavía. ¿La factura es de un doctor, hospital, farmacia, laboratorio o ambulancia?'
-      : "Thank you for telling me. If you are in QMB, providers generally should not bill you for deductibles, coinsurance, or copays on Medicare-covered services. There could still be a Medicaid copay or a non-covered service, so it's worth reviewing the bill before paying. Please don't pay it yet. Is the bill from a doctor, hospital, pharmacy, lab, or ambulance?";
+      : "Thank you for telling me. If you are in QMB, providers generally should not bill you for deductibles, coinsurance, or copays on Medicare-covered services. There could still be a Medicaid copay or a non-covered service, so it's worth reviewing the bill before paying — just don't ignore any due date on it. Is the bill from a doctor, hospital, pharmacy, lab, or ambulance?";
     return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_qmb_bill' });
   }
 
   // ── Dual + a medical/cost-sharing bill (the primary failure scenario). ──
   if (billNow || (billish && (dualNow || medicaidWithMedicare || bothNow))) {
     const out = isEs
-      ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Extra automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, no le recomiendo pagar esa factura todavía hasta revisarla. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
+      ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Extra automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, antes de pagarla conviene revisarla primero — sin ignorar la fecha de vencimiento. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
       : 'I understand, and thank you for telling me. Since you have both Medicare and Medicaid, that usually means you already have Extra Help automatically for your medications, and you may also have important protections (like QMB) that reduce or remove certain copays or bills for Medicare-covered services.\n\nBecause of that, please don\'t pay that bill yet until it is reviewed. First, let\'s see where it is from: did the bill come from a doctor, hospital, pharmacy, lab, ambulance, or your plan?';
     return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_bill_triage' });
   }
@@ -4620,13 +4620,18 @@ function _handleProviderBill(
   if (!_statesProviderBill(m)) return null;
   const isEs = (state.language || 'es') === 'es';
   const multi = /\b(mensual|al mes|cada mes|por mes|monthly|copago|copay)\b/i.test(m) && /\$\s?\d{2,}|\b\d{3,6}\b/.test(m);
+  // Sawil 2026-07-12 CLARA FIX (audit: bill guidance) — NEVER give an absolute
+  // financial instruction ("I don't recommend paying it"). Clara can't see the
+  // due date or whether it's a bill, EOB or MSN. Orientative, compliance-safe
+  // copy: compare with MSN/EOB, do NOT ignore the due date, provider billing
+  // office for clarification, free advisor review. Empathy + offer preserved.
   const out = isEs
     ? (multi
-        ? 'Entiendo, y veo que hay varias cosas. Empecemos por la factura del hospital, que es lo más importante: una factura así es justo lo que un asesor licenciado debe revisar — a veces hay errores, cobros duplicados, o montos que no corresponden a lo que Medicare cubre. No le recomiendo pagarla hasta que la revisen. ¿Quiere que un asesor de Clear Point revise todo su caso, sin costo?'
-        : 'Entiendo, y lamento la preocupación. Una factura de un hospital o doctor como esa es justo lo que un asesor licenciado debe revisar — a veces hay errores, cobros duplicados, o montos que no corresponden a lo que Medicare cubre. No le recomiendo pagarla hasta que la revisen. ¿Quiere que un asesor de Clear Point la revise con usted, sin costo?')
+        ? 'Entiendo, y veo que hay varias cosas. Empecemos por la factura del hospital, que es lo más importante: antes de pagarla, compárela con su Resumen de Medicare (MSN) o su Explicación de Beneficios (EOB) y confirme que Medicare o su plan procesó el reclamo — a veces hay errores o cobros duplicados. No ignore la fecha de vencimiento. También puede llamar a la oficina de facturación del proveedor para aclararla, y un asesor de Clear Point puede revisar todo su caso con usted, sin costo. ¿Quiere que le contacten?'
+        : 'Entiendo, y lamento la preocupación. Antes de pagar esa factura, compárela con su Resumen de Medicare (MSN) o su Explicación de Beneficios (EOB) y confirme que Medicare o su plan procesó el reclamo — a veces hay errores o cobros duplicados. No ignore la fecha de vencimiento. También puede llamar a la oficina de facturación del proveedor para aclararla, y un asesor de Clear Point puede revisar los documentos con usted, sin costo. ¿Quiere que le contacten?')
     : (multi
-        ? "I understand, and I can see there's more than one thing here. Let's start with the hospital bill, which matters most: a bill like that is exactly what a licensed advisor should review — sometimes there are errors, duplicate charges, or amounts that shouldn't apply under Medicare. I don't recommend paying it until it's reviewed. Would you like a Clear Point advisor to review your whole case, at no cost?"
-        : "I understand, and I'm sorry for the worry. A hospital or doctor bill like that is exactly what a licensed advisor should review — sometimes there are errors, duplicate charges, or amounts that shouldn't apply under Medicare. I don't recommend paying it until it's reviewed. Would you like a Clear Point advisor to review it with you, at no cost?");
+        ? "I understand, and I can see there's more than one thing here. Let's start with the hospital bill, which matters most: before paying it, compare it with your Medicare Summary Notice (MSN) or Explanation of Benefits (EOB) and confirm that Medicare or your plan processed the claim — sometimes there are errors or duplicate charges. Do not ignore the due date. You can also contact the provider's billing office for clarification, and a Clear Point advisor can review your whole case with you at no cost. Would you like that?"
+        : "I understand, and I'm sorry for the worry. Before paying that bill, compare it with your Medicare Summary Notice (MSN) or Explanation of Benefits (EOB) and confirm that Medicare or your plan processed the claim — sometimes there are errors or duplicate charges. Do not ignore the due date. You can also contact the provider's billing office for clarification, and a Clear Point advisor can review the documents with you at no cost. Would you like that?");
   const newState: ConversationState = {
     ...state,
     serviceCategory: 'bill_provider',
