@@ -50,9 +50,20 @@ export interface GHLLeadPayload {
   disclaimer_version?: string;
   signer_user_agent?: string;
   signer_ip?: string;
+  // Sawil 2026-07-09 SECURITY — ms between form render and submit. Server-side
+  // min-fill-time bot gate (only enforced when present; other surfaces omit it).
+  elapsed_ms?: number;
 }
 
 const API_ROUTE = '/api/submit-lead';
+
+// Sawil 2026-07-09 — HTTP status of the most recent submit. Lets LeadForm show a
+// specific "too many attempts" message on 429 WITHOUT changing this function's
+// boolean contract (ChatBot / SmartReview / CustomerServiceBot stay untouched).
+let lastSubmitStatus = 0;
+export function getLastSubmitStatus(): number {
+  return lastSubmitStatus;
+}
 
 export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean> {
   try {
@@ -123,12 +134,15 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     if (payload.disclaimer_version) { body.disclaimer_version = payload.disclaimer_version; }
     if (payload.signer_user_agent) { body.signer_user_agent = payload.signer_user_agent; }
     if (payload.signer_ip) { body.signer_ip = payload.signer_ip; }
+    if (payload.elapsed_ms != null) { body.elapsed_ms = payload.elapsed_ms; }
 
+    lastSubmitStatus = 0;
     const response = await fetch(API_ROUTE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    lastSubmitStatus = response.status;
 
     const data = await response.json().catch(() => null);
 

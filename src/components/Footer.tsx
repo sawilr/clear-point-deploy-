@@ -104,10 +104,10 @@ export function Footer() {
           <div>
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h3>
             <ul className="space-y-1 text-sm">
-              <li><Link to="/medicare-advantage" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
+              <li><Link to="/medicare-advantage" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
               {/* HIDDEN per Sawil 2026-06 — Medicare Supplement moved to Education column. Restore by uncommenting. */}
-              {/* <li><Link to="/medicare-supplement" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li> */}
-              <li><Link to="/part-d" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Parte D / Medicamentos')}</Link></li>
+              {/* <li><Link to="/medicare-supplement" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Supplement', 'Suplemento Medicare')}</Link></li> */}
+              <li><Link to="/part-d" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Part D Drug Plans', 'Parte D / Medicamentos')}</Link></li>
             </ul>
           </div>
 
@@ -116,12 +116,12 @@ export function Footer() {
           <div>
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h3>
             <ul className="space-y-1 text-sm">
-              <li><Link to="/resources" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
-              <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
-              <li><Link to="/extra-help" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
-              <li><Link to="/help-paying-costs" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
-              <li><Link to="/otc-benefits" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>
-              <li><a href="/#annual-review" onClick={handleAnnualReview} className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</a></li>
+              <li><Link to="/resources" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
+              <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
+              <li><Link to="/extra-help" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
+              <li><Link to="/help-paying-costs" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
+              <li><Link to="/otc-benefits" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>
+              <li><a href="/#annual-review" onClick={handleAnnualReview} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</a></li>
             </ul>
           </div>
 
@@ -129,12 +129,12 @@ export function Footer() {
           <div>
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h3>
             <ul className="space-y-1 text-sm">
-              <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="https://www.cms.gov/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] hover:text-cream-50 transition-colors">CMS.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="/#how" onClick={handleHowItWorks} className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
-              <li><Link to="/about" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('About', 'Nosotros')}</Link></li>
-              <li><Link to="/support" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Customer Support', 'Servicio al Cliente')}</Link></li>
+              <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="https://www.cms.gov/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">CMS.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
+              <li><a href="/#how" onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
+              <li><Link to="/about" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('About', 'Nosotros')}</Link></li>
+              <li><Link to="/support" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Customer Support', 'Servicio al Cliente')}</Link></li>
             </ul>
           </div>
 
@@ -143,7 +143,7 @@ export function Footer() {
           <div className="col-span-1">
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h3>
             <ul className="space-y-1 text-sm">
-              <li><a href="tel:18663108702" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
+              <li><a href="tel:18663108702" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
               {/* Email layout per viewport:
                   • Mobile (default, col-span-2): full-width column, fits on one
                     line at text-sm down to 320px viewport.
@@ -180,7 +180,10 @@ export function Footer() {
         </div>
 
         {/* Bottom */}
-        <div className="border-t border-cream-50/10 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[14px] text-cream-50/70">
+        {/* Sawil 2026-07-09 a11y — links /70→/80: senior-audience legibility (AA→AAA
+            for functional text) without touching brand colors. Decorative · separators
+            stay dimmer and are aria-hidden. */}
+        <div className="border-t border-cream-50/10 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[14px] text-cream-50/80">
           <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap">
             <Link to="/privacy-policy" className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>

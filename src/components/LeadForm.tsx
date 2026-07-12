@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { LockIcon, CheckIcon } from './icons';
 import { Link, useLocation } from 'react-router';
-import { submitLeadToGHL } from '../lib/ghl';
+import { submitLeadToGHL, getLastSubmitStatus } from '../lib/ghl';
 import { validatePersonName, validatePhone, validateEmail } from '../lib/validation';
 import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
 import { getZipInfo } from '../lib/zipLookup';
@@ -13,6 +13,10 @@ const FREE_REVIEW_SUCCESS_EN = 'Thank you — your review request was sent succe
 const FREE_REVIEW_SUCCESS_ES = 'Gracias — su solicitud fue enviada correctamente. Un asesor licenciado de Clear Point Senior Advisors revisará su información y se comunicará con usted durante horas laborables.';
 const FREE_REVIEW_ERROR_EN = 'We could not send your request right now. Please try again or call 1-866-310-8702.';
 const FREE_REVIEW_ERROR_ES = 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-866-310-8702.';
+// Sawil 2026-07-09 — distinct, generic copy for the server rate limit (429).
+// Reveals no internal logic; gives the caller a working path (phone).
+const FREE_REVIEW_LIMIT_EN = 'We already received your request. If you need to reach us sooner, please call 1-866-310-8702.';
+const FREE_REVIEW_LIMIT_ES = 'Ya recibimos su solicitud. Si necesita comunicarse antes, por favor llame al 1-866-310-8702.';
 
 // Fake ZIP patterns (mirrors ChatBot.tsx lead_zip handler)
 const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
@@ -33,7 +37,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
   const fid = (name: string) => `${uid}-${name}`;
   const firstNameRef = useRef<HTMLInputElement>(null);
   const formStartedRef = useRef(false);
+  // Sawil 2026-07-09 SECURITY — form render timestamp for the server-side
+  // min-fill-time bot gate (real users take far longer than 3s to fill this).
+  const formRenderedAtRef = useRef(Date.now());
   const [submitted, setSubmitted] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
 
   // Cursor-on-first-name autofocus — triggered when any Free Review CTA
   // navigates here with `?focus=name`. The CTA handler scrolls the form
@@ -240,15 +248,22 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
       created_at: new Date().toISOString(),
       // Honeypot value (always empty for real users; bots fill it and API discards)
       website_url: formData.website_url,
+      // Min-fill-time bot gate input (server only enforces when present)
+      elapsed_ms: Date.now() - formRenderedAtRef.current,
       ...utm,
     };
 
+    setRateLimited(false);
     const success = await submitLeadToGHL(payload);
     setSubmitting(false);
     if (success) {
       // Generic, PII-free conversion event (no name/phone/email/ZIP).
       track(Events.FORM_SUBMIT_SUCCESS, { event_category: 'lead', event_label: `${source}_form`, language: lang });
       setSubmitted(true);
+    } else if (getLastSubmitStatus() === 429) {
+      // Server rate limit — distinct, calm message (not a scary failure).
+      setRateLimited(true);
+      setError(true);
     } else {
       setError(true);
     }
@@ -256,7 +271,9 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
 
   if (submitted) {
     return (
-      <div className="bg-cream-50 rounded-2xl p-7 sm:p-8 shadow-lifted text-center">
+      // role=status + aria-live: screen readers announce the confirmation as
+      // soon as it renders (it only renders AFTER real server confirmation).
+      <div role="status" aria-live="polite" className="bg-cream-50 rounded-2xl p-7 sm:p-8 shadow-lifted text-center">
         <div className="w-14 h-14 bg-sage-200 rounded-full flex items-center justify-center mx-auto mb-4">
           <CheckIcon className="w-7 h-7 text-sage-500" />
         </div>
@@ -283,9 +300,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         </p>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+          <div role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
             <p className="text-red-700 text-xs">
-              {lang === 'es' ? FREE_REVIEW_ERROR_ES : FREE_REVIEW_ERROR_EN}
+              {rateLimited
+                ? (lang === 'es' ? FREE_REVIEW_LIMIT_ES : FREE_REVIEW_LIMIT_EN)
+                : (lang === 'es' ? FREE_REVIEW_ERROR_ES : FREE_REVIEW_ERROR_EN)}
             </p>
           </div>
         )}

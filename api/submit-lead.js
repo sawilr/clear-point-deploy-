@@ -151,6 +151,19 @@ export default async function handler(req, res) {
     conversation_summary = _cap(conversation_summary, 8000);
     lead_quality_flags = _cap(lead_quality_flags, 1000);
 
+    // ── Sawil 2026-07-09 SECURITY — server-side name validation ─────────────
+    // The client validates names, but a direct POST bypasses it (proven in the
+    // controlled test: "<script>x</script>" reached the CRM write path). Reject
+    // markup/URL/control characters server-side. Legit names — apostrophes
+    // (O'Brien), hyphens, accents (García, Peña) — pass untouched. Cap at 80.
+    first_name = _cap(first_name, 80).trim();
+    last_name = _cap(last_name, 80).trim();
+    var _badNameRe = /[<>{}[\]\\`$;=|\u0000-\u001f]|https?:|script|javascript:/i;
+    if ((first_name && _badNameRe.test(first_name)) || (last_name && _badNameRe.test(last_name))) {
+      console.warn('[VALIDATION] Name rejected: disallowed characters/markup');
+      return res.status(400).json({ error: 'Invalid name' });
+    }
+
     // AUDIT 2026-07-03 Phase 1 — scrub PHI at the SOURCE variables so every
     // downstream sink is covered by construction: the Anthropic lead-intel call
     // (reads lead_notes/conversation_summary below), the GHL customField
@@ -370,6 +383,42 @@ export default async function handler(req, res) {
       phoneE164 = '+1' + phone10;
     }
 
+    // ── Sawil 2026-07-09 SECURITY — layered anti-abuse on the validated identity ──
+    // (1) Minimum-fill-time gate: real seniors take well over 3s to complete the
+    //     form. When the client supplies elapsed_ms (LeadForm sends it) and it is
+    //     implausibly low, treat as bot: benign success response, no CRM write —
+    //     identical posture to the honeypot so bots learn nothing. Surfaces that
+    //     don't send elapsed_ms (Zara/Clara/SmartReview, older cached bundles) are
+    //     unaffected — the gate only runs when the field is present.
+    var _elapsed = Number(body.elapsed_ms);
+    if (Number.isFinite(_elapsed) && _elapsed >= 0 && _elapsed < 3000) {
+      console.warn('[ANTI-BOT] Min-fill-time gate triggered (' + Math.round(_elapsed) + 'ms) — submission discarded');
+      return res.status(200).json({ success: true, message: 'Received' });
+    }
+    // (2) Per-phone rate limit (3/hour) + per phone+ZIP (5/hour): stops one actor
+    //     rotating IPs to spam the same identity. Keyed on the VALIDATED national
+    //     number — never logged raw; the limiter stores only prefixed keys.
+    if (phone10) {
+      var rlPhone = await rateLimit(phone10, { max: 3, windowMs: 60 * 60 * 1000, prefix: 'lead-ph' });
+      var rlPhoneZip = await rateLimit(phone10 + ':' + (zip || 'nozip'), { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-pz' });
+      if (!rlPhone.ok || !rlPhoneZip.ok) {
+        // Generic response — reveal no internal logic. Retry-After lets legit
+        // callers (and the UI) know it is temporary.
+        res.setHeader('Retry-After', String((rlPhone.retryAfter || rlPhoneZip.retryAfter || 3600)));
+        console.warn('[RATE-LIMIT] per-phone window exceeded (key hashed, not logged)');
+        return res.status(429).json({ error: 'Too many submissions, try again later' });
+      }
+    }
+    // (3) submission_id — PII-free idempotency/trace key (phone+zip+UTC-hour digest).
+    //     Logged and returned so a lead can be traced end-to-end without exposing PII.
+    var submission_id = '';
+    try {
+      var _sidRaw = phone10 + '|' + (zip || '') + '|' + new Date().toISOString().slice(0, 13);
+      var _sidBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(_sidRaw));
+      submission_id = Array.from(new Uint8Array(_sidBuf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('').slice(0, 16);
+      console.log('[LEAD] submission_id=' + submission_id);
+    } catch (_e) { /* non-fatal — tracing only */ }
+
     var contact = {
       locationId, firstName: first_name, lastName: last_name || '',
       phone: phoneE164 || undefined, email: email || undefined,
@@ -560,7 +609,7 @@ export default async function handler(req, res) {
         console.error('[GHL] Opportunity creation exception: ' + (e && e.message ? e.message : String(e)));
       }
     }
-    return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId });
+    return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined });
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
   }

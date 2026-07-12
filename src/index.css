@@ -385,7 +385,10 @@
   font-size: clamp(0.9rem, 0.86rem + 0.2vw, 1rem);      /* 14.4 → 16px */
   padding-block: clamp(0.55rem, 0.48rem + 0.25vw, 0.8rem);
   padding-inline: clamp(1rem, 0.85rem + 0.5vw, 1.5rem);
-  min-height: clamp(40px, 38px + 0.35vw, 48px);
+  /* Sawil 2026-07-09 a11y — floor raised 40px→44px: measured 43.03px at 1440
+     (38px + .35vw < 44 below ~1714px). 44px guarantees the comfortable touch
+     target (WCAG 2.5.5 best practice) at every viewport; upper bound unchanged. */
+  min-height: clamp(44px, 38px + 0.35vw, 48px);
   border-radius: 0.625rem;
   text-align: center;
   /* No nowrap — a long label (e.g. ES "Revisar Mis Opciones de Inscripción")
