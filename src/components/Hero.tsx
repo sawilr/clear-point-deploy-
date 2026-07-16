@@ -85,6 +85,13 @@ export function Hero({
               <div className="w-2 h-2 rounded-full bg-gold-400" />
               <span className="text-xs font-bold tracking-[0.15em] uppercase text-gold-300">{t(eyebrow, eyebrowEs)}</span>
             </div>
+            {/* Sawil 2026-07-16 SECURITY INFO-2 — this sink renders ONLY hardcoded,
+                developer-authored headline strings passed by page components (e.g.
+                Home.tsx uses an inline <span class="text-gold-400"> for the gold
+                accent). It is NOT convertible to plain JSX without losing that
+                inline markup and changing the design. SAFE because no user/URL/API
+                input ever reaches `headline`/`headlineEs`. HARD RULE: never pass
+                untrusted or user-derived content into these props. */}
             <h1 className="font-serif text-[2.25rem] sm:text-5xl lg:text-[3.25rem] 2xl:text-[3.4rem] 3xl:text-[3.6rem] font-medium leading-[1.2] mb-6 break-words" dangerouslySetInnerHTML={{ __html: t(headline, headlineEs) }} />
             <p className="text-cream-100/80 text-base sm:text-lg leading-relaxed max-w-lg mb-8">
               {t(subheadline, subheadlineEs)}

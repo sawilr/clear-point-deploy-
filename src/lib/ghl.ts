@@ -151,17 +151,21 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     // the user sees the reassuring "your info is with an advisor" closing instead of
     // an alarming "we couldn't send it" failure for a lead that actually landed.
     if (response.status === 409) {
-      console.info('[GHL] Lead already on file (duplicate) — treated as success');
+      // Sawil 2026-07-16 SECURITY LOW-1 — success-path logging gated to DEV so no
+      // CRM identifier or diagnostic reaches the visitor's production console.
+      if (import.meta.env.DEV) console.info('[GHL] Lead already on file (duplicate) — treated as success');
       return true;
     }
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${data?.error || response.statusText}`);
     }
 
-    // Privacy: log only non-PII identifiers (HTTP status, CRM contact id, lead
-    // source label). Never log payload.full_name, phone, email, DOB, ZIP,
-    // lead_notes, or any user-supplied content.
-    console.info('[GHL] Lead submitted', { status: response.status, source: payload.source, contactId: data?.contact_id });
+    // Privacy: DEV-only success log. Sawil 2026-07-16 SECURITY LOW-1 — the CRM
+    // contactId must never appear in the production browser console, so this is
+    // gated behind import.meta.env.DEV and no longer logs the contact id. Never
+    // log payload.full_name, phone, email, DOB, ZIP, lead_notes, or any
+    // user-supplied content.
+    if (import.meta.env.DEV) console.info('[GHL] Lead submitted', { status: response.status, source: payload.source });
     return true;
   } catch (error) {
     // Privacy: do NOT persist the failed payload locally — it contains PII
