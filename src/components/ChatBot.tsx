@@ -2942,19 +2942,24 @@ export function ChatBot() {
     // become readable from the top instead of bottom-clipped.
     const msgs = c.querySelectorAll('[data-msg-id]');
     const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
-    // Sawil 2026-07-05 LEAD-CAPTURE SCROLL FIX — measure the whole last TURN
-    // (message bubble + any option chips that render below it) from its top to
-    // the end of the content. Anchor that top near the container top ONLY when
-    // the turn is TALLER than the visible area (long answer + chips that would
-    // otherwise be bottom-clipped — the case the anchor was added for). When the
-    // turn FITS — every lead-capture prompt ("What's your name?", "Your phone?")
-    // and the user's short replies — scroll fully to the bottom so it sits just
-    // above the input, instead of being stranded at the top with an empty gap
-    // ("se queda arriba cogiendo el lead").
+    // Sawil 2026-07-15 MOBILE SCROLL PATCH — composite bot replies (ack +
+    // education + question + chips) are ONE block: walk back over the trailing
+    // consecutive BOT messages (justify-start) to the block's FIRST element.
+    // If the whole block fits the visible chat area → scroll to bottom
+    // (unchanged). If it is TALLER → anchor the viewport to the TOP of the
+    // block, so the user always sees the beginning of the answer first ("ny"
+    // regression: the last-turn-only measure pinned to the chips and hid the
+    // acknowledgment above). One measurement, one scroll.
     if (lastMsg) {
+      let first: HTMLElement = lastMsg;
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const el = msgs[i] as HTMLElement;
+        if (el.className.includes('justify-end')) break;
+        first = el;
+      }
       const cRect = c.getBoundingClientRect();
-      const mRect = lastMsg.getBoundingClientRect();
-      const offsetTop = mRect.top - cRect.top + c.scrollTop;
+      const fRect = first.getBoundingClientRect();
+      const offsetTop = fRect.top - cRect.top + c.scrollTop;
       if (c.scrollHeight - offsetTop > c.clientHeight - 8) {
         c.scrollTop = Math.max(0, offsetTop - 8);
         return;
@@ -4673,6 +4678,10 @@ export function ChatBot() {
     zaraVoiceSuppressRef.current = true;
     zaraVoiceRecognizerRef.current?.stop();
     setZaraVoiceListening(false);
+    // MOBILE SCROLL PATCH — close the soft keyboard BEFORE the bot block
+    // renders, so the viewport height is stable and only ONE scroll runs
+    // (never scroll → keyboard resize → second scroll).
+    if (typeof window !== 'undefined' && window.innerWidth < 768) input.blur();
     input.value = '';
     if (zaraTextareaRef.current) zaraTextareaRef.current.value = '';
     addUserMessage(text);

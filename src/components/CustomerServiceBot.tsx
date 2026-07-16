@@ -214,17 +214,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // options/chips become readable from the top.
         const msgs = cc.querySelectorAll('[data-msg-id]');
         const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
-        // Sawil 2026-07-05 LEAD-CAPTURE SCROLL FIX (mirrors Zara) — measure the
-        // whole last TURN (message + any chips below it) from its top to the end
-        // of the content. Anchor that top ONLY when the turn is TALLER than the
-        // visible area (long answer + chips that would be bottom-clipped). When
-        // it FITS — every lead-capture prompt + short reply — scroll fully to the
-        // bottom so it sits just above the input, instead of stranded at the top
-        // with a gap ("se queda arriba cogiendo el lead").
+        // Sawil 2026-07-15 MOBILE SCROLL PATCH (mirrors Zara) — treat the
+        // trailing consecutive BOT messages as ONE block; anchor the block's
+        // FIRST element to the top when the block is taller than the visible
+        // area (user reads the beginning first), else scroll to bottom.
+        // Preventive parity with Zara's fix.
         if (lastMsg) {
+          let first: HTMLElement = lastMsg;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            const el = msgs[i] as HTMLElement;
+            if (el.className.includes('justify-end')) break;
+            first = el;
+          }
           const cRect = cc.getBoundingClientRect();
-          const mRect = lastMsg.getBoundingClientRect();
-          const offsetTop = mRect.top - cRect.top + cc.scrollTop;
+          const fRect = first.getBoundingClientRect();
+          const offsetTop = fRect.top - cRect.top + cc.scrollTop;
           if (cc.scrollHeight - offsetTop > cc.clientHeight - 8) {
             cc.scrollTo({ top: Math.max(0, offsetTop - 8), behavior: smooth ? 'smooth' : 'auto' });
             return;
