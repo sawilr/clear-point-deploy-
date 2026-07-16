@@ -2845,6 +2845,13 @@ export function ChatBot() {
   // BUG 8 — count consecutive LLM fallbacks. After 2 in a row, offer a licensed
   // advisor instead of looping canned answers. Resets on any LLM success.
   const fallbackCountRef = useRef(0);
+  // Sawil 2026-07-12 LOOP BREAKER — consecutive unrecognized inputs at the
+  // state-capture step / out-of-scope streak. After 2 in a row the SAME error
+  // must never repeat again: the text is handed to the LLM fallback (answers
+  // anything compliantly, then offers the advisor). Fixes the reported
+  // "off-topic word → error loop until a chip is tapped".
+  const stateRetryRef = useRef(0);
+  const oosStreakRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   // Ref attached to the FIRST message of the current step block.
@@ -4687,6 +4694,7 @@ export function ChatBot() {
     // Step 1: normalize (trim + lowercase handled inside classifyGlobalIntent)
     // Steps 2-13: classifyGlobalIntent returns the winning intent
     const intent = classifyGlobalIntent(text, SENSITIVE_KEYWORDS);
+    if (intent !== 'OUT_OF_SCOPE') oosStreakRef.current = 0;
     updateMemory({ lastValidUserInput: text, lastUserIntent: intent });
 
     // Step 2: SENSITIVE / Privacy → stop immediately
@@ -4748,8 +4756,16 @@ export function ChatBot() {
     }
 
     // Step 11: MEDICARE EDUCATION (handled below as FORM_DATA may also match — check step)
-    // Step 12: OUT OF SCOPE
+    // Step 12: OUT OF SCOPE — loop breaker: second consecutive off-topic input
+    // goes to the LLM (graceful, compliant reply + advisor offer), never the
+    // same canned rejection twice in a row.
     if (intent === 'OUT_OF_SCOPE') {
+      oosStreakRef.current += 1;
+      if (oosStreakRef.current >= 2) {
+        oosStreakRef.current = 0;
+        void tryLLMFallback(text);
+        return;
+      }
       handleOutOfScopeIntent();
       return;
     }
@@ -4769,10 +4785,21 @@ export function ChatBot() {
     if (step === 'state' && intent !== 'MEDICARE_EDUCATION') {
       const detectedState = detectState(text);
       if (detectedState && SUPPORTED_STATES.includes(detectedState)) {
+        stateRetryRef.current = 0;
         handleStateSelection(detectedState);
         return;
       } else if (detectedState) {
+        stateRetryRef.current = 0;
         handleStateSelection('other');
+        return;
+      }
+      // Loop breaker — after 2 unrecognized replies, STOP repeating the same
+      // error: hand the text to the LLM, which answers anything gracefully and
+      // offers the advisor. The user is never trapped until they tap a chip.
+      stateRetryRef.current += 1;
+      if (stateRetryRef.current >= 2) {
+        stateRetryRef.current = 0;
+        void tryLLMFallback(text);
         return;
       }
       enqueueBot([{
