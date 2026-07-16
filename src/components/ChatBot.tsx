@@ -2363,6 +2363,15 @@ function classifyGlobalIntent(
   // Step 9: Customer service
   if (anyMatch(CUSTOMER_SERVICE_KEYWORDS)) return 'CUSTOMER_SERVICE';
 
+  // Sawil 2026-07-15 MICRO-FIX 1 — PLAN_GUIDANCE_REQUEST (ES/EN/Spanglish).
+  // "¿Cuál plan es el mejor para mí?" fell through to the empty CLARIFICATION
+  // fallback in Spanish. Best-plan/recommendation asks now route to
+  // MEDICARE_EDUCATION → the shared LLM brain, whose UMKE rules already forbid
+  // naming a "best" plan and mandate factor education + ONE follow-up using the
+  // case profile. No new handler, no duplicated logic.
+  const PLAN_GUIDANCE_RE = /(cu[aá]l|que|qu[eé]|which|what)[^.?!]{0,40}(plan|cobertura|coverage)[^.?!]{0,40}(mejor|conviene|me sirve|deber[ií]a|elegir|escoger|best|right|choose)|(cu[aá]l|which|what)[^.?!]{0,30}(me conviene|me sirve|deber[ií]a (elegir|escoger)|should i (choose|pick))|recomi[eé]nda(me|s)?\b|dime cu[aá]l|el mejor (medicare|advantage|plan)|best (medicare )?(advantage )?plan/i;
+  if (PLAN_GUIDANCE_RE.test(low)) return 'MEDICARE_EDUCATION';
+
   // Step 10: Clarification
   const isClarEN = CLARIFICATION_PHRASES_EN.some((p) => low === p || low.includes(p));
   const isClarES = CLARIFICATION_PHRASES_ES.some((p) => low === p || low.includes(p));
@@ -4855,6 +4864,28 @@ export function ChatBot() {
     // Runs only when classifyGlobalIntent returned FORM_DATA (not recognized by
     // the 13-step pipeline) AND we are not in a personal-data collection step.
     // Personal data fields (name, phone, ZIP, DOB, email, consent) remain strict.
+    // Sawil 2026-07-15 CONTINUITY ROUTER (micro-fix) — CONTEXT FIRST, FALLBACK
+    // LAST. When an education/plan-guidance conversation is ACTIVE (the LLM
+    // asked the last question: step 'question' / mode 'education'), short
+    // declarative replies ("Tengo A y B", "Mi ZIP es 10550", "Tengo diabetes",
+    // "Quiero seguir con mi cardiólogo", "Sí", "CVS") are CONTEXTUAL_FOLLOWUPs:
+    // they continue the SAME workflow through the LLM — whose full history +
+    // UMKE case-profile rules resolve the pending question, update the profile
+    // and ask ONE next question — never the fuzzy clarification menu. Safety,
+    // sensitive, fraud, advisor and explicit intents were already routed above
+    // and keep absolute priority. A 5-digit ZIP in the reply is captured into
+    // memory so the context block carries it and it is never re-asked.
+    if (
+      intent === 'FORM_DATA' &&
+      !PERSONAL_DATA_STEPS.includes(stepRef.current) &&
+      (stepRef.current === 'question' || memory.currentMode === 'education')
+    ) {
+      const zipM = text.match(/\b(\d{5})\b/);
+      if (zipM && !memory.zip) updateMemory({ zip: zipM[1] });
+      void tryLLMFallback(text);
+      return;
+    }
+
     if (intent === 'FORM_DATA' && !PERSONAL_DATA_STEPS.includes(stepRef.current)) {
       const normalized = applyTypoAliases(normalizeForIntent(text));
       const fuzzyResult = classifyFuzzyIntent(

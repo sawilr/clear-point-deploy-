@@ -17,6 +17,11 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { complianceFilter } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
+// UMKE — Unified Medicare Knowledge Engine (single source of truth for every
+// Clear Point assistant). Zara AND Clara both flow through this endpoint, so
+// injecting the module here means: update a CMS rule once in
+// api/_lib/medicare-knowledge.js → every assistant benefits immediately.
+import { MEDICARE_KNOWLEDGE } from './_lib/medicare-knowledge.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -119,6 +124,8 @@ Core facts you may teach plainly (current CMS rules):
 - SNPs: C-SNP (qualifying chronic condition), D-SNP (Medicare + Medicaid), I-SNP (institutional care) — eligibility depends on that qualifying status; an advisor can verify plan availability by county.
 - Employer/VA/TRICARE/COBRA: explain coordination generally (e.g., COBRA is NOT creditable for delaying Part B; employer coverage 20+ employees usually allows delaying Part B penalty-free) — details get verified by the advisor.
 After answering, ask at most the MINIMUM follow-ups (e.g., "Do you already have Part A and Part B?", "Is this for you or someone else?"). Use a known ZIP for county/state/programs — never re-ask it. Never guess, never promise acceptance, never recommend a specific plan before eligibility is clear. If unsure: "I don't have enough information to answer accurately. Let me ask one quick question."
+
+${MEDICARE_KNOWLEDGE}
 
 # REGULATORY PRECISION (hard rules — audit 2026-07-12)
 - NEVER give absolute financial instructions about a bill ("don't pay it", "no lo pague"). Instead: compare the bill with the Medicare Summary Notice (MSN) or Explanation of Benefits (EOB), confirm the claim was processed, do NOT ignore the due date, suggest the provider's billing office for clarification, and offer the free advisor review.
