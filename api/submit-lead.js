@@ -569,6 +569,13 @@ export default async function handler(req, res) {
     // single source-of-truth pipeline. New Lead stage below belongs to v2.
     var pipelineId = 'HPvihjPaOhPeQ9u0bXUd';
     var pipelineStageId = '5102d9b2-1b1b-415f-9663-9d21283b3032';
+    // Sawil 2026-07-16 PHASE 2 — auto-assign the opportunity owner so no lead is
+    // ever created orphaned (audit R2: 15/15 opps had no owner). Single-owner
+    // agency → the sole licensed advisor. Env override wins so a future multi-
+    // advisor setup or a round-robin workflow can take over without a code change;
+    // falls back to the current owner id. If neither resolves, the opp is created
+    // unassigned exactly as before (graceful — assignment never blocks a lead).
+    var defaultOwnerId = process.env.GHL_DEFAULT_OWNER_ID || 'tdBdfxrg2pv3Z76YJm17';
     // Derive a clean opportunity source label from the form_name sent by each form.
     // ChatBot sends 'Website Chatbot - Medicare Plan Review Request'
     // SmartMedicareReview sends 'Smart Medicare Review'
@@ -593,10 +600,31 @@ export default async function handler(req, res) {
     var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' — ' + sourceLabel;
     if (contactId) {
       try {
+        // FASE 15 — opportunity idempotency. The contact upsert already dedupes by
+        // phone, but a retry-after-success (client never saw the 200, or the client
+        // auto-retry fires) would create a SECOND opportunity for the same contact.
+        // Before creating, check for an existing OPEN opp for this contact in this
+        // pipeline; if one exists, skip creation and return success (idempotent).
+        // Best-effort: a search failure never blocks the lead — we fall through to
+        // create, matching the previous always-create behavior on error.
+        var _dupOpp = false;
+        try {
+          var _oppSearch = await fetch('https://services.leadconnectorhq.com/opportunities/search?location_id=' + encodeURIComponent(locationId) + '&contact_id=' + encodeURIComponent(contactId) + '&pipeline_id=' + encodeURIComponent(pipelineId) + '&status=open&limit=20', {
+            headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Accept':'application/json'}
+          });
+          if (_oppSearch.ok) {
+            var _oppData = await _oppSearch.json();
+            _dupOpp = Array.isArray(_oppData && _oppData.opportunities) && _oppData.opportunities.length > 0;
+          }
+        } catch (_se) { /* search failed → fall through and create as before */ }
+        if (_dupOpp) {
+          console.log('[GHL] Opportunity idempotent skip — open opp already exists', { contactId: contactId, pipeline: pipelineId });
+          return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined, opportunity: 'existing' });
+        }
         var oppRes = await fetch('https://services.leadconnectorhq.com/opportunities/',{
           method:'POST',
           headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
-          body:JSON.stringify({ locationId:locationId, pipelineId:pipelineId, pipelineStageId:pipelineStageId, contactId:contactId, name:oppName, status:'open' })
+          body:JSON.stringify(Object.assign({ locationId:locationId, pipelineId:pipelineId, pipelineStageId:pipelineStageId, contactId:contactId, name:oppName, status:'open' }, defaultOwnerId ? { assignedTo: defaultOwnerId } : {}))
         });
         if (!oppRes.ok) {
           // Privacy: log status + pipeline IDs only. The response body may echo

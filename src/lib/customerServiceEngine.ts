@@ -206,6 +206,9 @@ export interface ConversationState {
   routingLevel?: 'A' | 'B' | 'C' | 'safety';
   /** Specific service category once detected (more granular than `intent`). */
   serviceCategory?: string;
+  /** FASE 3 — set once the caller confirmed the dual (provider-drop + bill)
+   *  reading, so the semantic confirmation is asked at most once. */
+  dualIntentConfirmed?: boolean;
   /** Sub-issue within a category (e.g., provider_left_network within
    *  doctor_provider_network). */
   subIssue?: string;
@@ -587,12 +590,34 @@ const FAKE_EMAIL_PATTERNS: RegExp[] = [
   /@yopmail\.|@trashmail\.|@dispostable\./i,
 ];
 
+// FASE 11 — common/real gTLDs accepted without a ccTLD check. Every 2-letter
+// TLD is treated as a valid country code (handled in validateEmail), so this
+// list only needs the multi-letter generic TLDs a real caller might plausibly
+// use. Anything not here and not a 2-letter ccTLD (e.g. ".culo") routes to the
+// optional email re-ask/skip — never accepted into the CRM as confirmed.
+const _COMMON_GTLDS = new Set<string>([
+  'com', 'net', 'org', 'edu', 'gov', 'mil', 'int', 'info', 'biz', 'name', 'pro',
+  'app', 'dev', 'online', 'site', 'xyz', 'live', 'email', 'mail', 'icu', 'cloud',
+  'health', 'care', 'clinic', 'insurance', 'medical', 'life', 'shop', 'store',
+  'club', 'group', 'inc', 'llc', 'ltd', 'agency', 'company', 'solutions',
+]);
+
 export function validateEmail(raw: string): { isValid: boolean; cleaned: string; reason?: string } {
   const cleaned = raw.trim().toLowerCase();
   if (!cleaned) return { isValid: false, cleaned: '', reason: 'empty' };
   // Basic RFC-lite shape check.
   if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(cleaned)) {
     return { isValid: false, cleaned, reason: 'bad_shape' };
+  }
+  // FASE 11 — TLD sanity so a junk address like "foo.culo" never reaches the CRM
+  // as a confirmed email. We do NOT hard-reject merely UNUSUAL TLDs: every
+  // 2-letter ccTLD is accepted, plus a broad set of common/real gTLDs. Anything
+  // else routes to the optional email re-ask/skip path ("that email does not
+  // look valid, or say skip"), never a false accusation. Email stays optional.
+  const _tld = (cleaned.split('.').pop() || '');
+  const _isCcTld = /^[a-z]{2}$/.test(_tld); // ISO country codes are all valid 2-letter TLDs
+  if (!_isCcTld && !_COMMON_GTLDS.has(_tld)) {
+    return { isValid: false, cleaned, reason: 'unknown_tld' };
   }
   for (const re of FAKE_EMAIL_PATTERNS) {
     if (re.test(cleaned)) return { isValid: false, cleaned, reason: 'fake_pattern' };
@@ -2915,6 +2940,14 @@ export function processMessage(
       // English: questions, fillers, verbs, nouns, chip-button commands,
       // Medicare domain terms.
       if (/\b(what|how|when|where|why|which|who|yes|no|thanks|hello|help|question|problem|bill|bills|charge|charges|doctor|doctors|medic|medicine|medicines|medication|medications|drug|drugs|pharmacy|prescription|letter|letters|plan|plans|advisor|advisors|is|are|the|my|i|want|need|have|got|going|new|client|patient|here|there|this|that|options|prefer|later|now|today|tomorrow|yesterday|skip|next|nothing|continue|start|begin|other|another|ready|email|phone|name|premium|premiums|copay|copays|deductible|coverage|network|medicare|medicaid|insurance|social|security)\b/i.test(lower)) return true;
+      // FASE 4/8 — memory-reference phrases ("lo que te comenté", "eso mismo",
+      // "ya te dije") are NOT names; they must recover context, never be stored
+      // as the caller's name. (Adversarial: "Lo q te comente" was captured as the
+      // name.) Also reject a phrase made ENTIRELY of function words.
+      if (/\b(lo que (te |me )?(dije|comente|coment[eé]|mencione|explique)|eso mismo|lo mismo|lo anterior|ya te dije|ya le dije|lo de (antes|la|el|mi)|that thing i (told|said|mentioned)|the (bill|thing|one) i (told|mentioned|said)|same (thing|as before|as i said))\b/i.test(lower)) return true;
+      const _toks = lower.split(/\s+/).filter(Boolean);
+      const _FN = new Set(['lo','la','el','los','las','un','una','que','q','te','me','se','de','del','y','o','en','es','su','mi','tu','le','les','ya','al','por','con','para','eso','esto','the','an','of','to','and','or','it','that','this','my','your','is','i']);
+      if (_toks.length >= 2 && _toks.every((t) => _FN.has(t))) return true;
       // No name should be just a verb or single common word followed by topic
       // words (e.g. "quiero ayuda" / "tengo problema"). Reject if every token
       // is a stop-word-ish term. (Defensive — the above mostly catches it.)
@@ -3010,6 +3043,29 @@ export function processMessage(
         );
       }
       if (state.lastBotIntent === 'handoff_asking_besttime') {
+        // FASE 10 — do NOT accept an impossible/out-of-hours window silently.
+        // "After midnight" / "madrugada" / "3am" etc. are outside advisor calling
+        // hours. Redirect ONCE to a daytime window (without inventing exact hours),
+        // then accept whatever they give on the retry so we never loop a senior.
+        const _outOfHours = /\b(after\s*midnight|midnight|medianoche|madrugada|(1|2|3|4|5)\s*(a\.?m\.?|de la (ma[ñn]ana|madrugada|noche))|(1|2|3|4)\s*am\b|toda la noche|all night|muy (tarde|de noche)|very late( at night)?)\b/i.test(_msg);
+        if (_outOfHours) {
+          return _emitHandoff(
+            isEs
+              ? 'Entiendo, pero las llamadas del asesor se hacen dentro del horario disponible durante el día. ¿Prefiere en la mañana, en la tarde, o una hora específica del día?'
+              : 'I understand, but the advisor calls within available daytime business hours. Would you prefer morning, afternoon, or a specific daytime hour?',
+            { lastBotIntent: 'handoff_asking_besttime_retry' },
+          );
+        }
+        return _emitHandoff(
+          isEs
+            ? '¿Hay algún tema específico que desea que el asesor sepa antes de llamarle? Por ejemplo: una factura, Medicaid, farmacia, doctor, carta del plan, plan inactivo o cambio de cobertura.'
+            : 'Is there any specific topic you want the advisor to know before calling you? For example: a bill, Medicaid, pharmacy, doctor, plan letter, inactive plan, or coverage change.',
+          { bestTimeToCall: _cleanShort(_msg, 60), topicAsked: true, lastBotIntent: 'handoff_asking_topic' },
+        );
+      }
+      // FASE 10 retry — accept the second time answer (even if still vague) so a
+      // senior is never trapped; the advisor coordinates the exact slot.
+      if (state.lastBotIntent === 'handoff_asking_besttime_retry') {
         return _emitHandoff(
           isEs
             ? '¿Hay algún tema específico que desea que el asesor sepa antes de llamarle? Por ejemplo: una factura, Medicaid, farmacia, doctor, carta del plan, plan inactivo o cambio de cobertura.'
@@ -3316,11 +3372,24 @@ export function processMessage(
       const _topicS = state.advisorTopic ? (isEs ? `, tema: ${state.advisorTopic}` : `, topic: ${state.advisorTopic}`) : '';
       const summaryEs = `Le paso al asesor esta información: ${finalName}, ${fmt}${_dobS}${_bestS}${_topicS}. Por su seguridad, no envíe su Seguro Social, número de Medicare, información bancaria ni documentos por este chat.`;
       const summaryEn = `I'll pass this to the advisor: ${finalName}, ${fmt}${_dobS}${_bestS}${_topicS}. For your protection, please do not send your Social Security number, Medicare number, bank information, or documents in this chat.`;
+      // FASE 13 — SOA is CONDITIONAL. CMS 422.2264 requires a Scope of
+      // Appointment ONLY before a MARKETING appointment where the advisor will
+      // discuss specific MA / MA-PD / Part D products. For a SERVICE case (bill,
+      // EOB/MSN, provider/network, acceptance, claim, copay, pharmacy,
+      // authorization, referral) an SOA must NOT be presented — it is not
+      // required and it wrongly frames a service request as a sales appointment.
+      // Only these serviceCategories are product/plan-selection ("marketing"):
+      const _MARKETING_SOA = new Set(['compare_plans', 'new_to_medicare', 'medigap', 'plan_change']);
+      const _soaRequired = _MARKETING_SOA.has(state.serviceCategory || '');
+      const _soaBlockEs = _soaRequired
+        ? `\n\nComo pidió comparar opciones de planes, antes de esa conversación puede ser necesario completar un **Scope of Appointment** — un formulario breve que documenta los temas que desea discutir, sin obligación. Se lo abro ahora.`
+        : '';
+      const _soaBlockEn = _soaRequired
+        ? `\n\nBecause you asked to compare plan options, a short **Scope of Appointment** form may be needed before that conversation — it documents the topics you'd like to discuss, with no obligation. I'll open it for you now.`
+        : '';
       const out = isEs
-        ? `Perfecto, ${finalName}. ${summaryEs}\n\nAntes de la llamada, **CMS requiere** que firme un formulario de 60 segundos llamado **Scope of Appointment** — confirma qué temas quiere discutir, sin obligación. Le voy a abrir el formulario ahora.\n\n` +
-          `Una vez firmado, un asesor licenciado de ClearPoint lo contactará al ${fmt}.${emailLineEs}${windowEs}`
-        : `Perfect, ${finalName}. ${summaryEn}\n\nBefore the call, **CMS requires** you to sign a 60-second form called the **Scope of Appointment** — it confirms what topics you'd like to discuss, with no obligation. I'll open the form for you now.\n\n` +
-          `Once signed, a licensed ClearPoint advisor will contact you at ${fmt}.${emailLineEn}${windowEn}`;
+        ? `Perfecto, ${finalName}. ${summaryEs}${_soaBlockEs}\n\nUn asesor licenciado de ClearPoint lo contactará al ${fmt}.${emailLineEs}${windowEs}`
+        : `Perfect, ${finalName}. ${summaryEn}${_soaBlockEn}\n\nA licensed ClearPoint advisor will contact you at ${fmt}.${emailLineEn}${windowEn}`;
       const newState: ConversationState = {
         ...state,
         turnCount: _currentTurnIdx,
@@ -3332,7 +3401,7 @@ export function processMessage(
         needsHuman: true,
         contactConfirmed: true,     // Sawil 2026-06-28 — caller confirmed the summary
         conversationClosed: false, // keep open so React can append SOA link
-        soaPending: true,           // signal to React: request a signing token
+        soaPending: _soaRequired,   // FASE 13 — request a signing token ONLY for marketing/plan-comparison cases; service cases get no SOA
         lastBotIntent: 'handoff_captured_contact',
         messages: [
           ...(state.messages || []),
@@ -4617,8 +4686,36 @@ function _handleProviderBill(
   if (!m) return null;
   // Don't re-fire after we've already offered the advisor for this bill.
   if (state.serviceCategory === 'bill_provider' && state.lastBotOfferedAdvisor) return null;
-  if (!_statesProviderBill(m)) return null;
+  // FASE 3 — an affirmative answer to the dual-intent confirmation re-enters this
+  // handler even though "sí" itself doesn't look like a provider-bill message.
+  const _dualAffirm = state.lastBotIntent === 'dual_intent_confirm'
+    && /^(s[ií]\b|yes\b|claro|correcto|exacto|as[ií] es|eso|ambas|las dos|both|right|aja|aha|ambos)/i.test(m.trim());
+  if (!_statesProviderBill(m) && !_dualAffirm) return null;
   const isEs = (state.language || 'es') === 'es';
+  // FASE 3 — DUAL INTENT. A doctor dropping / no longer accepting the plan AND
+  // bills in ONE message must be confirmed (both named) BEFORE giving the bill
+  // guidance — never latch onto only the bill. Ask once, then wait; the
+  // affirmative re-enters here (via _dualAffirm) and proceeds to the copy below.
+  const _providerDrop = /\b(ya no (lo |la )?acepta|dejar[aá] de aceptar|no (me )?acepta(n)? (el|mi|la) (plan|seguro|cobertura)|me (dijo|dixo|dice) que (me )?cambie de plan|cambie de plan (por|porq)|no longer (accepts?|takes?) (my|the) plan|dropping (my|the) plan|stop(ping|s)? (accepting|taking) (my|the) plan)\b/i.test(m);
+  const _hasBill = /\b(factura|facturas|me (est[aá]n )?cobr|recibiendo factura|bills?|charges?)\b/i.test(m);
+  if (_providerDrop && _hasBill && state.lastBotIntent !== 'dual_intent_confirm' && !state.dualIntentConfirmed) {
+    const outC = isEs
+      ? 'Para asegurarme de entender: ¿su médico le dijo que dejará de aceptar su plan actual y, además, usted está recibiendo facturas?'
+      : "To make sure I understand: your doctor said they'll stop accepting your current plan, and you're also getting bills?";
+    const nsC: ConversationState = {
+      ...state,
+      serviceCategory: 'bill_provider',
+      lastUserProblem: state.lastUserProblem || userMessage,
+      lastBotIntent: 'dual_intent_confirm',
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: outC, timestamp: Date.now() },
+      ],
+    };
+    return { response: outC, newState: nsC, needsHuman: false };
+  }
   const multi = /\b(mensual|al mes|cada mes|por mes|monthly|copago|copay)\b/i.test(m) && /\$\s?\d{2,}|\b\d{3,6}\b/.test(m);
   // Sawil 2026-07-12 CLARA FIX (audit: bill guidance) — NEVER give an absolute
   // financial instruction ("I don't recommend paying it"). Clara can't see the
@@ -4640,6 +4737,7 @@ function _handleProviderBill(
     costFlowStage: undefined,
     lastBotOfferedAdvisor: true,
     lastBotIntent: 'provider_bill_review',
+    dualIntentConfirmed: true, // FASE 3 — bill guidance given; never re-ask the dual confirmation
     quickReplies: [],
   };
   newState.messages = [...(state.messages || []), { role: 'bot', content: out, timestamp: Date.now() }];
@@ -8235,6 +8333,24 @@ function processMessageInner(
       newState.messages.push({ role: 'bot', content: categoryFollowup, timestamp: Date.now() });
       newState.lastFallbackResponse = categoryFollowup;
       return { response: categoryFollowup, newState, needsHuman: false };
+    }
+    // FASE 3 — affirmative right after the dual-intent (provider-drop + bill)
+    // confirmation: give the bill guidance now (service-first) AND clarify the
+    // provider side (a doctor dropping the plan is NOT a reason to switch plans),
+    // then offer the advisor. Don't fall to the generic "advisor?" line, which
+    // would drop the bill orientation the caller just confirmed they need.
+    if (state.lastBotIntent === 'dual_intent_confirm'
+        && /^(s[ií]\b|yes\b|claro|correcto|exacto|as[ií] es|eso|ambas|ambos|las dos|both|right|aja|aha)/i.test((userMessage || '').trim())) {
+      const out = isSpanish
+        ? 'Gracias por confirmar. Antes de pagar esa factura, compárela con su Resumen de Medicare (MSN) o su Explicación de Beneficios (EOB) y confirme que Medicare o su plan procesó el reclamo — a veces hay errores. No ignore la fecha de vencimiento. Y sobre su médico: que deje de aceptar el plan no significa que usted deba cambiar de plan. Un asesor de Clear Point puede revisar la factura y la situación del médico con usted, sin costo. ¿Quiere que le contacten?'
+        : "Thank you for confirming. Before paying that bill, compare it with your Medicare Summary Notice (MSN) or Explanation of Benefits (EOB) and confirm Medicare or your plan processed the claim — sometimes there are errors. Don't ignore the due date. And about your doctor: a provider dropping the plan does NOT mean you must switch plans. A Clear Point advisor can review the bill and the doctor's situation with you, at no cost. Would you like that?";
+      newState.serviceCategory = 'bill_provider';
+      newState.dualIntentConfirmed = true;
+      newState.lastBotOfferedAdvisor = true;
+      newState.lastBotIntent = 'provider_bill_review';
+      newState.lastFallbackResponse = out;
+      newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
+      return { response: out, newState, needsHuman: false };
     }
     // Sawil 2026-06-23 — never dump the generic topic menu when we already know
     // the user's topic (active case / stated problem / category). That reads as

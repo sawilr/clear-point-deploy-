@@ -32,7 +32,8 @@ import { Phone, RotateCcw, Send, User, Mic, MicOff } from 'lucide-react';
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
 import { normalizeSpokenNumbers } from '../lib/spokenNumbers';
 import { getOfficeStatus } from '../lib/afterHours';
-import { readVisitorMemory, writeVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
+import { readVisitorMemory, writeVisitorMemory, clearVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
+import { claraEvent, isIdentityDenial } from '../lib/claraObservability';
 import { buildConsentReceipt } from '../lib/disclaimerVersion';
 import {
   type ClaraOuterState,
@@ -153,6 +154,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // onInterim/onFinal that fires AFTER the user sends, so dictated text can never
   // reappear in the (now-cleared) input box.
   const voiceActiveRef = useRef(false);
+  // FASE 2 — the stored name we greeted with (empty = no returning greeting).
+  const returningIdentityRef = useRef('');
   // Sawil 2026-07-05 — text already in the box when dictation STARTS. Interim
   // results preview as base+interim; the final commits ONCE as base+final and
   // advances the base. Fixes the double-word bug where onInterim wrote the
@@ -445,6 +448,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       const mem = readVisitorMemory();
       const lang: 'en' | 'es' = (initialLanguage || mem?.language || (pageLang === 'es' ? 'es' : 'en')) as 'en' | 'es';
       const returning = returningVisitorGreeting(mem, lang);
+      // FASE 2 — remember that we greeted by a STORED name, so a denial
+      // ("no es Antonio") can invalidate that identity and start clean.
+      returningIdentityRef.current = returning ? (mem?.name || '') : '';
       const welcome = returning
         ? returning
         : (lang === 'es'
@@ -467,6 +473,21 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // FASE 18 — metric watcher: translate engine state transitions into PII-free
+  // events. One effect, booleans only, never message text.
+  const prevIntentRef = useRef<string>('');
+  useEffect(() => {
+    const intent = state.lastBotIntent || '';
+    const prev = prevIntentRef.current;
+    if (intent && intent !== prev) {
+      if (intent === 'handoff_asking_name') claraEvent('handoff_started');
+      if (intent === 'handoff_asking_besttime_retry') claraEvent('time_out_of_hours');
+      if (intent === 'handoff_asking_email_retry') claraEvent('email_invalid');
+      prevIntentRef.current = intent;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.lastBotIntent]);
 
   // PHASE 9E — persist captured fields to localStorage for next visit
   useEffect(() => {
@@ -559,6 +580,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       };
       const ok = await submitLeadToGHL(payload as any);
       setSubmitState(ok ? 'submitted' : 'failed');
+      // FASE 18 — CRM outcome metric (PII-free: booleans only).
+      claraEvent(ok ? 'crm_submit_ok' : 'crm_submit_failed', { retried: submitRetryRef.current > 0 });
       // Sawil 2026-06-30 AUDIT FIX C1/BUG-002 — hasSubmittedRef is set true BEFORE the
       // POST (gate effect), so a failed submit used to lock the session forever. On
       // failure: release the lock and allow ONE bounded auto-retry (server already
@@ -601,6 +624,24 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       pushUserMessageDirect(text.trim());
       setInputValue('');
       pushBotMessageDirect(reply);
+      return;
+    }
+    // FASE 2 — IDENTITY MISMATCH. We greeted with a STORED name and the caller
+    // says that identity is not them ("No es Antonio", "that's not me", shared
+    // phone/device). Invalidate the remembered identity, start a clean session,
+    // never mention the previous name again, and log a PII-free event. The
+    // legitimate CRM history is untouched — only browser-local memory is wiped.
+    if (returningIdentityRef.current && isIdentityDenial(text, returningIdentityRef.current)) {
+      returningIdentityRef.current = '';
+      clearVisitorMemory();
+      claraEvent('identity_mismatch', { session_reset: true, previous_identity_exposed: false });
+      claraEvent('session_reset');
+      const isEs = outerState.language === 'es' || pageLang === 'es';
+      pushUserMessageDirect(text.trim());
+      setInputValue('');
+      pushBotMessageDirect(isEs
+        ? 'Gracias por corregirme. No usaré la información asociada con ese nombre. Comencemos como una conversación nueva. ¿Cuál es su código postal de 5 dígitos?'
+        : 'Thank you for correcting me. I will not use the information associated with that name. Let\'s start fresh. What is your 5-digit ZIP code?');
       return;
     }
     // PHASE 12 — Client-side PHI / sensitive-data firewall. Raw SSN / Medicare
