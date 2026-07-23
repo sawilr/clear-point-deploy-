@@ -3776,6 +3776,29 @@ export function ChatBot() {
     updateMemory({ hasAskedForHuman: true, isAdvisorFlowActive: true });
     setMode('advisor_intake');
     setView('advisor_intro');
+    startOrResumeReview();
+  }
+
+  // AUDIT 2026-07-23 (P1-02) — single entry for the advisor review that RESUMES
+  // an in-progress intake instead of wiping it. Reached from the request_review
+  // chip AND the "Advisor" toolbar button / ADVISOR_REQUEST intent (which used
+  // to call startPlanReview directly and reset name/phone). Only starts fresh
+  // when there is no unsubmitted lead in progress.
+  function startOrResumeReview() {
+    const hasInProgressLead = !memory.submitted && (memory.pausedStep || memory.firstName || memory.phone);
+    if (hasInProgressLead) {
+      const resumeStep = memory.pausedStep;
+      updateMemory({ pausedStep: undefined, wantsPlanReview: true });
+      if (resumeStep && resumeStep.startsWith('lead_')) setStepSync(resumeStep);
+      const es = memory.language === 'es';
+      const fn = memory.firstName;
+      enqueueBot([{ text: es
+        ? (fn ? `Claro, ${fn}. Continuemos su solicitud donde la dejamos.` : 'Claro. Continuemos su solicitud donde la dejamos.')
+        : (fn ? `Of course, ${fn}. Let's continue your request where we left off.` : "Of course. Let's continue your request where we left off."),
+        pace: 'short' }]);
+      askNextQuestion({ ...memory, pausedStep: undefined, wantsPlanReview: true });
+      return;
+    }
     startPlanReview(memory.interestType || 'Plan review');
   }
 
@@ -4015,24 +4038,8 @@ export function ChatBot() {
     if (value === 'request_review') {
       trackTopic('Appointment Request');
       // AUDIT 2026-07-23 (P1-02) — resume an in-progress intake instead of
-      // wiping it. If a lead was paused (stepped out to menu / change state)
-      // and nothing was submitted, continue from the pending field with all
-      // collected data intact. Only start fresh when there's no intake yet.
-      const hasInProgressLead = !memory.submitted && (memory.pausedStep || memory.firstName || memory.phone);
-      if (hasInProgressLead) {
-        const resumeStep = memory.pausedStep;
-        updateMemory({ pausedStep: undefined, wantsPlanReview: true });
-        if (resumeStep && resumeStep.startsWith('lead_')) setStepSync(resumeStep);
-        const es = memory.language === 'es';
-        const fn = memory.firstName;
-        enqueueBot([{ text: es
-          ? (fn ? `Claro, ${fn}. Continuemos su solicitud donde la dejamos.` : 'Claro. Continuemos su solicitud donde la dejamos.')
-          : (fn ? `Of course, ${fn}. Let's continue your request where we left off.` : "Of course. Let's continue your request where we left off."),
-          pace: 'short' }]);
-        askNextQuestion({ ...memory, pausedStep: undefined, wantsPlanReview: true });
-        return;
-      }
-      startPlanReview(memory.interestType || 'Plan review');
+      // wiping it (shared with the Advisor toolbar button via startOrResumeReview).
+      startOrResumeReview();
       return;
     }
 
