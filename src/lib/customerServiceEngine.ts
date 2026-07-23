@@ -1611,6 +1611,17 @@ export function detectVagueProblemReport(text: string): { isVague: boolean; topi
     /no funciona porque|no funciono|porque tiene|porque viene/i,
     // WAVE 42 — scam/fraud signals on cards / bills (not a vague request).
     /didn'?t order|no ped[ií]|never ordered|nunca ped[ií]|scam|fraud|fraude|estafa/i,
+    // AUDIT 2026-07-22 — "my doctor told me to change plans" is a SPECIFIC
+    // report, not a vague one. Live failure: "tengo problemas con mi doctor
+    // me dice que cambie de plan y tengo condiciones preexistentes" got the
+    // scripted "¿Qué pasó con su doctor?" — re-asking what the caller had
+    // just explained. A say/recommend verb + a change verb = specific.
+    /\b(dice|dijo|dijeron|recomend[oó]|recomienda|pide|pidi[oó]|sugiere|sugiri[oó]|quiere)\b.{0,40}\b(cambiar|cambie|cambio|cambiarme|mudar)\b/i,
+    /\b(told|tells?|say|says|said|recommend(s|ed)?|suggest(s|ed)?|advis(es|ed)?|wants? me to)\b.{0,40}\b(change|switch|leave|drop)\b/i,
+    // AUDIT 2026-07-22 — a mentioned pre-existing condition is a material
+    // concern that must be acknowledged, never dropped by a scripted
+    // clarification that only sees the first topic.
+    /condicion(es)? ?pre-?existente(s)?|pre-?existing condition/i,
   ];
   for (const q of specific) {
     if (q.test(lower)) return { isVague: false, topic };
@@ -1741,6 +1752,11 @@ export function detectToldToChange(text: string): boolean {
   // V30 — provider-said source: "mi doctor dice/dijo q debo cambiar",
   //   "mi especialista me dijo que cambie", "the pharmacy said I should change".
   if (/\b(mi |el |la |un |una )?\b(doctor|doctora|especialista|m[eé]dico|m[eé]dica|provider|farmacia|hospital|cl[ií]nica|pharmacy|specialist)\b.{0,20}\b(dice|dijo|dijeron|me dijo|told me|said|says|tells me)\b.{0,30}\b(cambiar|cambiarme|cambio|cambie|cambiara|cambien|mudar|change|switch|leave|drop)\b/i.test(lower)) return true;
+  // AUDIT 2026-07-22 — same intent, ask/want verbs: "mi doctor me pide cambiar
+  // de plan", "quiere que me cambie", "my doctor is asking me to change".
+  // Keeps this detector aligned with the vague-check's specific[] verbs so the
+  // message can't slip past both and land in the enrollment handler (G7b).
+  if (/\b(mi |el |la |un |una )?\b(doctor|doctora|especialista|m[eé]dico|m[eé]dica|provider|farmacia|hospital|cl[ií]nica|pharmacy|specialist)\b.{0,20}\b(me )?(pide|pidi[oó]|quiere|exige|insiste|sugiere|sugiri[oó]|recomienda|recomend[oó]|asks? me|asking me|wants? me|is asking)\b.{0,40}\b(cambiar|cambiarme|cambio|cambie|mudar|change|switch|leave|drop)\b/i.test(lower)) return true;
   if (/\bmi (doctor|doctora|especialista|m[eé]dico) (dice|dijo|me dijo)\b.{0,40}\b(cambiar|cambio|cambie)\b/i.test(lower)) return true;
   // English
   if (/\b(they|someone) (told me|said i should|said i need to|said i have to)\b.{0,30}\b(change|switch|leave|drop|cancel)\b/i.test(lower)) return true;
@@ -7522,9 +7538,32 @@ function processMessageInner(
         : 'none';
         const keepEs = keptKind === 'specialist' ? ' ni de especialista' : keptKind === 'doctor' ? ' ni de doctor' : '';
         const keepEn = keptKind === 'specialist' ? ' or specialist' : keptKind === 'doctor' ? ' or doctor' : '';
+        // AUDIT 2026-07-22 — compliant rewrite (live failure). The old copy
+        // INVENTED the doctor's motive ("casi siempre es que el proveedor está
+        // saliendo de la red"), teased a SEP the caller may not have, and
+        // attached "sin costo" next to the plan review. New contract:
+        // acknowledge EVERY stated issue (incl. pre-existing conditions),
+        // never invent the reason, never mention SEP here, ask ONE question —
+        // the reason, if someone recommended the change; otherwise who said it.
+        const mentionsPreexisting = /condicion(es)? ?pre-?existente(s)?|pre-?existing condition/i.test(msgLow);
+        const preEs = mentionsPreexisting ? ' y le preocupa cómo podrían afectar sus condiciones preexistentes' : '';
+        const preEn = mentionsPreexisting ? ' and you are concerned about how your pre-existing conditions could affect a change' : '';
+        // Source NAMED ("mi doctor me dice que cambie") → ask WHY they said it.
+        // Source anonymous ("me dijeron que cambie") → ask WHO said it (V27 behavior).
+        const sourceNamed = newState.subIssue === 'told_to_change_plan'
+          && /\b(doctor|doctora|especialista|m[eé]dic[oa]|provider|farmacia|pharmacy|hospital|cl[ií]nica|specialist)\b.{0,25}\b(dice|dijo|dijeron|me dijo|recomend[oó]|recomienda|pide|pidi[oó]|told me|said|says|tells? me|recommend(s|ed)?)\b/i.test(msgLow);
+        const wasTold = newState.subIssue === 'told_to_change_plan';
         const out = isSpanish
-          ? `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta. Casi siempre es que el proveedor está saliendo de la red o el plan cambió, y eso se revisa antes de decidir nada. Yo no puedo verificar la red desde aquí, pero un asesor licenciado de ClearPoint sí, y le dirá si aplica un Período Especial de Inscripción, sin costo. ¿Quiere que lo revise con usted?`
-          : `I understand, and we won't assume changing your plan${keepEn} is the answer. It's almost always that the provider is leaving the network or the plan changed, and that gets reviewed before deciding anything. I can't verify the network from here, but a licensed ClearPoint advisor can, and will tell you whether a Special Enrollment Period applies — at no cost. Want them to review it with you?`;
+          ? (sourceNamed
+              ? `Entiendo: le recomendaron cambiar de plan${preEs}. Eso, por sí solo, no significa que usted tenga que cambiar${keepEs ? ` — y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta` : ''} — primero hay que entender el motivo y verificarlo. ¿Le explicaron por qué le recomendaron el cambio?`
+              : wasTold
+              ? `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta${preEs}. Primero hay que entender qué pasó y verificarlo antes de cualquier decisión. ¿Quién le dijo que debería cambiar, o qué fue lo que le indicaron?`
+              : `Entiendo, y no vamos a asumir que cambiar de plan${keepEs} sea la respuesta${preEs}. Primero hay que entender la situación y verificarla antes de cualquier decisión. ¿Qué fue lo que pasó — algo cambió con su plan o con su doctor?`)
+          : (sourceNamed
+              ? `I understand: you were advised to change plans${preEn}. That alone does not mean you have to change${keepEn ? ` — and we won't assume changing plans${keepEn} is the answer` : ''} — first we need to understand the reason and verify it. Did they explain why they recommended the change?`
+              : wasTold
+              ? `I understand, and we won't assume changing your plan${keepEn} is the answer${preEn}. First we need to understand what happened and verify it before any decision. Who told you to change plans, or what exactly did they say?`
+              : `I understand, and we won't assume changing your plan${keepEn} is the answer${preEn}. First we need to understand the situation and verify it before any decision. What happened — did something change with your plan or your doctor?`);
         newState.planChangeAcknowledged = true;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
