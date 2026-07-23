@@ -86,6 +86,8 @@ ok('P1-01 lead_state out-of-area loop breaker', /leadStateRetryRef/.test(bot) &&
 // P1-02: pausedStep written + resume path.
 ok('P1-02a menu/change-state write pausedStep', /pausedStep: stepRef\.current/.test(bot));
 ok('P1-02b resume via shared helper (chip AND Advisor button)', /function startOrResumeReview[\s\S]{0,300}hasInProgressLead/.test(bot) && /handleAdvisorRequestIntent[\s\S]{0,200}startOrResumeReview\(\)/.test(bot) && !/function handleAdvisorRequestIntent[\s\S]{0,200}startPlanReview\(memory\.interestType/.test(bot));
+ok('P1-02c footer Advisor button routes through startOrResumeReview', /onClick=\{\(\) => startOrResumeReview\(\)\}/.test(bot) && !/onClick=\{\(\) => startPlanReview\(memory\.interestType/.test(bot));
+ok('P1-02d startOrResumeReview reads closure-safe memoryRef', /function startOrResumeReview\(\)\s*\{[\s\S]{0,300}const mem = memoryRef\.current/.test(bot));
 // P1-03: page-language ↔ session sync.
 ok('P1-03 page language sync effect', /prevPageLangRef/.test(bot));
 // P1-04: voice stopped on chip + reset/close/lang.

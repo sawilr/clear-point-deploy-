@@ -5613,7 +5613,7 @@ export function ChatBot() {
             </a>
             <button
               type="button"
-              onClick={() => startPlanReview(memory.interestType || 'Plan review')}
+              onClick={() => startOrResumeReview()}
               className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cream-100 border border-cream-200 hover:bg-cream-200 transition-colors"
             >
               <User className="w-4 h-4" />
