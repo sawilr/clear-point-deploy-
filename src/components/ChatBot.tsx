@@ -13,6 +13,7 @@ import { validateDOB, validatePhone, validatePersonName, validateEmail } from '.
 import { callLLM, buildHistory } from '../lib/llmHandler';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
 import { containsSensitiveData } from '../lib/sensitiveGuard';
+import { scrubSensitiveText } from '../lib/phiPatterns';
 import { MEDICARE_2026 } from '../data/medicare-figures-2026';
 import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight';
 
@@ -2669,17 +2670,22 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
     };
   }
 
-  if (low.includes('who are you') || low.includes('medicare.gov') || low.includes('cms') || low.includes('government') || low.includes('gobierno')) {
+  // AUDIT 2026-07-23 (P2-03) — recognize the identity question in Spanish and
+  // in its common variants ("¿quién eres?", "¿eres un bot?", "¿qué puedes
+  // hacer?"), not just English "who are you". Previously ES identity questions
+  // fell to the generic menu (only reachable when the LLM was unavailable).
+  const identityRe = /\b(who are you|what are you|are you (a )?(real )?(person|human|bot|robot|machine)|what can you do|qui[eé]n eres|qu[eé] eres|eres (una? )?(persona|humano|bot|robot|m[aá]quina|real)|es usted (una? )?(persona|humano|bot|robot)|qu[eé] puede(s)? hacer|para qu[eé] sirve)\b/i;
+  if (identityRe.test(low) || low.includes('medicare.gov') || low.includes('cms') || low.includes('government') || low.includes('gobierno')) {
     return {
       topic: 'Agency identity',
       messages: language === 'es'
         ? [
-            { text: `${CHATBOT_CONTEXT.agencyName} es una agencia independiente de seguros Medicare.`, pace: 'short' },
-            { text: 'No somos Medicare, CMS ni el gobierno de los Estados Unidos. ¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'long' },
+            { text: `Soy Zara, la asistente virtual de ${CHATBOT_CONTEXT.agencyName}. Le doy información educativa general de Medicare; no reemplazo la orientación personalizada de un asesor licenciado, y no le pediré ni debe compartir datos sensibles por este chat.`, pace: 'short' },
+            { text: 'Somos una agencia independiente — no somos Medicare, CMS ni el gobierno de los Estados Unidos. ¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'long' },
           ]
         : [
-            { text: `${CHATBOT_CONTEXT.agencyName} is an independent Medicare insurance agency.`, pace: 'short' },
-            { text: 'We are not Medicare, CMS, or the U.S. government. Would you like to ask a general Medicare question?', options: [{ label: 'Yes', value: 'ask_question' }, { label: 'Request review', value: 'request_review' }], pace: 'long' },
+            { text: `I'm Zara, the virtual assistant for ${CHATBOT_CONTEXT.agencyName}. I share general Medicare education; I don't replace a licensed advisor's personalized guidance, and I won't ask for — and you shouldn't share — sensitive information in this chat.`, pace: 'short' },
+            { text: "We're an independent agency — not Medicare, CMS, or the U.S. government. Would you like to ask a general Medicare question?", options: [{ label: 'Yes', value: 'ask_question' }, { label: 'Request review', value: 'request_review' }], pace: 'long' },
           ],
     };
   }
@@ -2863,6 +2869,14 @@ export function ChatBot() {
   // anything compliantly, then offers the advisor). Fixes the reported
   // "off-topic word → error loop until a chip is tapped".
   const stateRetryRef = useRef(0);
+  // AUDIT 2026-07-23 (P1-01) — separate retry counter for the LEAD state step
+  // (the educational `state` step uses stateRetryRef). Breaks the out-of-area loop.
+  const leadStateRetryRef = useRef(0);
+  // AUDIT 2026-07-23 (P1-06) — submit state machine guards: in-flight lock
+  // (blocks double-submit) + stable idempotency key (retry never duplicates a
+  // lead the server already processed).
+  const submitInFlightRef = useRef(false);
+  const submitIdempotencyKeyRef = useRef<string | null>(null);
   const oosStreakRef = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const chatBodyRef = useRef<HTMLDivElement>(null);
@@ -3057,6 +3071,30 @@ export function ChatBot() {
     try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(memory))); } catch { /* private mode */ }
   }, [memory]);
 
+  // AUDIT 2026-07-23 (P1-03) — page language toggle ↔ open Zara session.
+  // Before, toggling EN/ES in the header changed the t() chrome labels but the
+  // conversation kept answering in the old language (mixed-language UI). Now,
+  // when the page language changes while Zara is OPEN and past the language
+  // picker, sync memory.language, cancel any in-flight reply in the old
+  // language (generation bump → orphan discard), and stop voice. Intake data
+  // is untouched (only `language` is patched), so nothing is re-asked.
+  const prevPageLangRef = useRef(lang);
+  useEffect(() => {
+    const pageLang: ChatLanguage = lang === 'es' ? 'es' : 'en';
+    if (prevPageLangRef.current === lang) return;
+    prevPageLangRef.current = lang;
+    if (!isOpen) return;
+    if (stepRef.current === 'language') return; // chips still own the choice
+    if (memory.language === pageLang) return;
+    generationRef.current += 1; // discard any pending old-language LLM reply
+    stopZaraVoice();
+    queueRef.current = [];
+    processingRef.current = false;
+    setIsTyping(false);
+    updateMemory({ language: pageLang });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
+
   function addMessage(type: MessageType, text: string, options?: Option[]) {
     setMessages((prev) => [...prev, { id: uid(), type, text, options }]);
   }
@@ -3174,9 +3212,23 @@ export function ChatBot() {
     );
   }
 
+  // AUDIT 2026-07-23 (P0-04 / P1-04) — hard stop for voice. Called by reset,
+  // close, and language switch so the mic never survives a session boundary
+  // (old behavior left it hot until the 20s watchdog). Idempotent.
+  function stopZaraVoice() {
+    zaraVoiceSuppressRef.current = true;
+    try { zaraVoiceRecognizerRef.current?.stop(); } catch { /* no-op */ }
+    setZaraVoiceListening(false);
+    if (zaraTextareaRef.current) zaraTextareaRef.current.value = '';
+  }
+
   function resetChat() {
     setTopicPage(0);
+    // AUDIT 2026-07-23 (P0-04) — bump generation FIRST so any in-flight LLM
+    // promise resolves into a dead generation and is discarded (no orphan
+    // response leaking into the fresh session), and stop the mic.
     generationRef.current += 1;
+    stopZaraVoice();
     queueRef.current = [];
     processingRef.current = false;
     setIsTyping(false);
@@ -3321,7 +3373,20 @@ export function ChatBot() {
   }
 
   async function submitLead(finalMemory: ChatMemory) {
+    // AUDIT 2026-07-23 (P1-06) — submit as a proper state machine:
+    // idle → submitting → success | error. Before, `submitted:true` was set by
+    // the caller BEFORE the POST and never reverted on failure, and the fail
+    // screen offered only "Call now" (no retry, and recovering meant
+    // request_review which wiped all data). Now: a synchronous guard blocks a
+    // double-submit while in flight; `submitted` is set ONLY after a confirmed
+    // success; a failure keeps every field and offers Retry (same idempotency
+    // key so a lead the server DID process is not duplicated on retry).
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setStepSync('complete');
+    if (!submitIdempotencyKeyRef.current) {
+      submitIdempotencyKeyRef.current = `zara-${Date.now()}-${Math.floor(Math.random() * 1e9).toString(36)}`;
+    }
     const conversationSummary = buildConversationSummary(finalMemory);
     // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — record the canonical
     // TCPA text shown in chat (DISCLAIMERS.consent is now canonical), in the user's
@@ -3362,12 +3427,21 @@ export function ChatBot() {
       // (no specific product discussion has occurred — that happens on the
       // advisor's first call when they obtain SOA before discussing products).
       lead_source: 'zara_education',
+      idempotency_key: submitIdempotencyKeyRef.current,
       created_at: new Date().toISOString(),
       ...getUtms(),
     };
 
-    const success = await submitLeadToGHL(payload);
+    let success = false;
+    try {
+      success = await submitLeadToGHL(payload);
+    } catch {
+      success = false;
+    }
+    submitInFlightRef.current = false;
     if (success) {
+      updateMemory({ submitted: true });
+      submitIdempotencyKeyRef.current = null;
       enqueueBot([
         {
           text: getSuccessMessage(finalMemory.language),
@@ -3379,10 +3453,14 @@ export function ChatBot() {
         },
       ]);
     } else {
+      // AUDIT 2026-07-23 (P1-06) — keep the data, offer Retry. The step stays
+      // 'complete' but submitted is NOT set, so retry_submit can re-POST with
+      // the same idempotency key.
       enqueueBot([
         {
           text: getFailMessage(finalMemory.language),
           options: [
+            { label: finalMemory.language === 'es' ? 'Reintentar' : 'Retry', value: 'retry_submit', icon: <RotateCcw className="w-4 h-4" /> },
             { label: finalMemory.language === 'es' ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> },
           ],
           pace: 'long',
@@ -3552,6 +3630,12 @@ export function ChatBot() {
 
   // ── Handle MENU intent ───────────────────────────────────────────────────────
   function handleMenuIntent() {
+    // AUDIT 2026-07-23 (P1-02) — if the user steps out to the menu MID-INTAKE,
+    // remember the pending field so "request a review" resumes it with data
+    // intact, instead of startPlanReview wiping name/phone/ZIP.
+    if (stepRef.current.startsWith('lead_') && !memory.submitted) {
+      updateMemory({ pausedStep: stepRef.current });
+    }
     if (memory.state) {
       showTopicMenuWithState();
     } else {
@@ -3561,6 +3645,13 @@ export function ChatBot() {
 
   // ── Handle CHANGE STATE intent ───────────────────────────────────────────────
   function handleChangeStateIntent() {
+    // AUDIT 2026-07-23 (P1-02) — changing state must only reset the geographic
+    // fields (state/ZIP/city/county), never the identity already collected
+    // (name/phone/email/coverage). If mid-intake, remember the field so the
+    // user returns to it after re-selecting the state.
+    if (stepRef.current.startsWith('lead_') && !memory.submitted) {
+      updateMemory({ pausedStep: stepRef.current });
+    }
     updateMemory({
       state: '',
       derivedState: '',
@@ -3867,6 +3958,11 @@ export function ChatBot() {
   // ═══════════════════════════════════════════════════════════════════════════
 
   function handleOption(value: string) {
+    // AUDIT 2026-07-23 (P1-04) — tapping a chip must stop an active dictation
+    // and clear any residual transcript, exactly like handleText does. Before,
+    // only handleText stopped voice, so a chip tap mid-dictation left the mic
+    // hot and the leftover transcript stuck to the next typed message.
+    stopZaraVoice();
     const selected = messages[messages.length - 1]?.options?.find((option) => option.value === value);
     if (selected) addUserMessage(selected.label);
     // Cancel any pending bot queue so new step messages arrive cleanly
@@ -3918,7 +4014,32 @@ export function ChatBot() {
 
     if (value === 'request_review') {
       trackTopic('Appointment Request');
+      // AUDIT 2026-07-23 (P1-02) — resume an in-progress intake instead of
+      // wiping it. If a lead was paused (stepped out to menu / change state)
+      // and nothing was submitted, continue from the pending field with all
+      // collected data intact. Only start fresh when there's no intake yet.
+      const hasInProgressLead = !memory.submitted && (memory.pausedStep || memory.firstName || memory.phone);
+      if (hasInProgressLead) {
+        const resumeStep = memory.pausedStep;
+        updateMemory({ pausedStep: undefined, wantsPlanReview: true });
+        if (resumeStep && resumeStep.startsWith('lead_')) setStepSync(resumeStep);
+        const es = memory.language === 'es';
+        const fn = memory.firstName;
+        enqueueBot([{ text: es
+          ? (fn ? `Claro, ${fn}. Continuemos su solicitud donde la dejamos.` : 'Claro. Continuemos su solicitud donde la dejamos.')
+          : (fn ? `Of course, ${fn}. Let's continue your request where we left off.` : "Of course. Let's continue your request where we left off."),
+          pace: 'short' }]);
+        askNextQuestion({ ...memory, pausedStep: undefined, wantsPlanReview: true });
+        return;
+      }
       startPlanReview(memory.interestType || 'Plan review');
+      return;
+    }
+
+    // AUDIT 2026-07-23 (P1-06) — retry a failed submit with all data intact and
+    // the same idempotency key (no duplicate if the first POST actually landed).
+    if (value === 'retry_submit') {
+      submitLead(memory);
       return;
     }
 
@@ -4043,7 +4164,7 @@ export function ChatBot() {
         {
           text:
             memory.language === 'es'
-              ? 'Claro. Le lo explico en términos sencillos.'
+              ? 'Claro. Se lo explico en términos sencillos.'
               : "Of course. I'll explain it in simple terms.",
           pace: 'short',
         },
@@ -4275,6 +4396,12 @@ export function ChatBot() {
           : (stateNameLabel ? `What is your ${stateNameLabel} ZIP code?` : 'What is your ZIP code?'), pace: 'short' }]);
         break;
       }
+      // AUDIT 2026-07-23 (P2-05) — INTENTIONALLY UNREACHABLE. DOB collection was
+      // removed from public chat by the 2026-06-29 security fix (finding 08):
+      // getNextMissingStep never returns 'dob', so this case and the lead_dob
+      // text handler never run. Kept (not deleted) so the validated DOB parser
+      // is available if a future, secure flow re-enables it — do NOT re-wire
+      // getNextMissingStep to reach this without a privacy review.
       case 'dob':
         setStepSync('lead_dob');
         enqueueBot([{ text: mem.language === 'es'
@@ -4311,7 +4438,8 @@ export function ChatBot() {
         enqueueBot([{ text: mem.language === 'es' ? DISCLAIMERS.es.consent : DISCLAIMERS.en.consent, options: [{ label: mem.language === 'es' ? 'Sí, acepto' : 'Yes, I agree', value: 'consent_yes' }, { label: mem.language === 'es' ? 'Ahora no' : 'Not now', value: 'consent_no' }], pace: 'long' }]);
         break;
       case 'readyToSubmit':
-        updateMemory({ submitted: true });
+        // AUDIT 2026-07-23 (P1-06) — do NOT set submitted here; submitLead sets
+        // it only after a confirmed success so a failed POST can be retried.
         submitLead(mem);
         break;
     }
@@ -4395,6 +4523,59 @@ export function ChatBot() {
             : 'I need your authorization so a licensed advisor can contact you. You can respond "Yes, I agree" or "Not now".',
             pace: 'short' },
         ];
+      // AUDIT 2026-07-23 (P1-05) — step-specific reprompts (were falling to the
+      // generic "Do you have a question?" with the prior step's chips greyed).
+      case 'lead_state':
+        return [
+          { text: es
+            ? 'Estoy preguntando en qué estado vive porque los planes de Medicare varían por estado. Por ahora atendemos New York, New Jersey y Connecticut.'
+            : "I'm asking which state you live in because Medicare plans vary by state. Right now we serve New York, New Jersey, and Connecticut.",
+            pace: 'short' },
+          { text: es ? '¿En qué estado vive?' : 'Which state do you live in?',
+            options: [
+              { label: 'New York', value: 'state_NY' },
+              { label: 'New Jersey', value: 'state_NJ' },
+              { label: 'Connecticut', value: 'state_CT' },
+            ], pace: 'short' },
+        ];
+      case 'lead_preferred_language':
+        return [
+          { text: es
+            ? 'Estoy preguntando en qué idioma prefiere que le contacten para asignarle el asesor adecuado.'
+            : "I'm asking which language you'd prefer for contact so we can match you with the right advisor.",
+            pace: 'short' },
+          { text: es ? '¿Prefiere que le contacten en inglés o español?' : 'Do you prefer to be contacted in English or Spanish?',
+            options: [
+              { label: 'English', value: 'preferred_en' },
+              { label: 'Español', value: 'preferred_es' },
+              { label: es ? 'Cualquiera' : 'Either', value: 'preferred_either' },
+            ], pace: 'short' },
+        ];
+      case 'lead_time':
+        return [
+          { text: es
+            ? 'Estoy preguntando el mejor horario para que el asesor le llame cuando le convenga.'
+            : "I'm asking your best time so the advisor can call when it works for you.",
+            pace: 'short' },
+          { text: es ? '¿Cuál es el mejor horario para contactarle?' : 'What is the best time to contact you?',
+            options: [
+              { label: es ? 'Mañana' : 'Morning', value: 'time_morning' },
+              { label: es ? 'Tarde' : 'Afternoon', value: 'time_afternoon' },
+              { label: es ? 'Después de las 3pm' : 'After 3pm', value: 'time_after_3' },
+              { label: es ? 'Cualquier hora' : 'Anytime', value: 'time_anytime' },
+            ], pace: 'short' },
+        ];
+      case 'lead_review':
+        return [
+          { text: es
+            ? 'Este es el resumen de su solicitud. Por favor confirme si todo está correcto.'
+            : 'This is the summary of your request. Please confirm whether everything is correct.',
+            pace: 'short' },
+          { text: buildZaraSummary(mem), options: [
+            { label: es ? 'Sí, todo correcto' : 'Yes, all correct', value: 'review_yes' },
+            { label: es ? 'No, corregir un dato' : 'No, fix something', value: 'review_no' },
+          ], pace: 'long' },
+        ];
       default:
         return [
           { text: es
@@ -4409,6 +4590,32 @@ export function ChatBot() {
     // Use stepRef.current — always the current step without stale-closure risk.
     // stepRef is updated synchronously in setStepSync before any React re-render.
     const currentStep = stepRef.current;
+
+    // AUDIT 2026-07-23 (P1-08) — email typed AT the review step is a
+    // correction: validate, update, and RE-SHOW the updated summary with the
+    // Yes/No chips so the user can confirm the change. Before, the pre-capture
+    // below swallowed it with the generic "Do you have a question?" clarify and
+    // left the summary chips disabled. Handled here, ahead of pre-capture.
+    if (isEmail(text) && currentStep === 'lead_review') {
+      const emailCheck = validateEmail(text.trim());
+      if (!emailCheck.valid) {
+        enqueueBot([{ text: memory.language === 'es'
+          ? 'Ese correo no parece válido. ¿Puede escribirlo de nuevo?'
+          : "That email doesn't look valid. Could you type it again?", pace: 'short' }]);
+        return true;
+      }
+      const updated = { ...memory, email: text.trim(), skippedEmail: false };
+      updateMemory({ email: text.trim(), skippedEmail: false });
+      const es = memory.language === 'es';
+      enqueueBot([
+        { text: es ? 'Actualicé su correo electrónico.' : 'Updated your email address.', pace: 'short' },
+        { text: buildZaraSummary(updated), options: [
+          { label: es ? 'Sí, todo correcto' : 'Yes, all correct', value: 'review_yes' },
+          { label: es ? 'No, corregir un dato' : 'No, fix something', value: 'review_no' },
+        ], pace: 'long' },
+      ]);
+      return true;
+    }
 
     // Email pre-capture: if user provides email out of order, save it but
     // do NOT advance the flow — just acknowledge and repeat the current prompt.
@@ -4506,13 +4713,42 @@ export function ChatBot() {
     if (currentStep === 'lead_state') {
       const detectedState = detectState(text);
       if (detectedState && ['NY','NJ','CT'].includes(detectedState)) {
+        leadStateRetryRef.current = 0;
         updateMemory({ state: detectedState });
         askNextQuestion({ ...memory, state: detectedState });
-      } else {
-        enqueueBot([{ text: memory.language === 'es'
-          ? 'Por favor seleccione New York, New Jersey o Connecticut.'
-          : 'Please select New York, New Jersey, or Connecticut.', pace: 'short' }]);
+        return true;
       }
+      // AUDIT 2026-07-23 (P1-01) — out-of-area loop breaker. Before, an
+      // unsupported state ("Florida") repeated the same "select NY/NJ/CT" line
+      // forever with no exit. Now: re-offer the chips once, then on the second
+      // miss explain the service-area limit plainly and give real exits
+      // (educational question or licensed advisor) — never trap the caller.
+      leadStateRetryRef.current += 1;
+      const es = memory.language === 'es';
+      if (leadStateRetryRef.current >= 2) {
+        leadStateRetryRef.current = 0;
+        setStepSync('question');
+        setMode('education');
+        enqueueBot([{
+          text: es
+            ? 'Por ahora, la experiencia en línea de Clear Point atiende solo New York, New Jersey y Connecticut, así que no puedo preparar una revisión para otro estado. Con gusto le respondo preguntas generales de Medicare, o un asesor licenciado puede orientarle sin costo.'
+            : "Right now, Clear Point's online experience serves only New York, New Jersey, and Connecticut, so I can't set up a review for another state. I'm glad to answer general Medicare questions, or a licensed advisor can give you general guidance at no cost.",
+          options: [
+            { label: es ? 'Hacer una pregunta' : 'Ask a question', value: 'ask_question' },
+            { label: es ? 'Hablar con un asesor' : 'Speak with an advisor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
+          ],
+          pace: 'long',
+        }]);
+        return true;
+      }
+      enqueueBot([{ text: es
+        ? '¿En qué estado vive? Por ahora atendemos New York, New Jersey y Connecticut.'
+        : 'Which state do you live in? Right now we serve New York, New Jersey, and Connecticut.',
+        options: [
+          { label: 'New York', value: 'state_NY' },
+          { label: 'New Jersey', value: 'state_NJ' },
+          { label: 'Connecticut', value: 'state_CT' },
+        ], pace: 'short' }]);
       return true;
     }
     if (currentStep === 'lead_zip') {
@@ -4597,8 +4833,15 @@ export function ChatBot() {
       return true;
     }
     if (currentStep === 'lead_coverage') {
-      updateMemory({ currentCoverage: text });
-      askNextQuestion({ ...memory, currentCoverage: text });
+      // AUDIT 2026-07-23 (P2-04) — normalize to the enum; reject junk ("asdf")
+      // instead of storing it and shipping it to the CRM.
+      const coverage = normalizeCoverage(text);
+      if (!coverage) {
+        enqueueBot(getStepClarificationMessages('lead_coverage', memory));
+        return true;
+      }
+      updateMemory({ currentCoverage: coverage });
+      askNextQuestion({ ...memory, currentCoverage: coverage });
       return true;
     }
     if (currentStep === 'lead_phone') {
@@ -4616,13 +4859,23 @@ export function ChatBot() {
       return true;
     }
     if (currentStep === 'lead_preferred_language') {
-      updateMemory({ preferredLanguage: text });
-      askNextQuestion({ ...memory, preferredLanguage: text });
+      const pref = normalizePreferredLanguage(text);
+      if (!pref) {
+        enqueueBot(getStepClarificationMessages('lead_preferred_language', memory));
+        return true;
+      }
+      updateMemory({ preferredLanguage: pref });
+      askNextQuestion({ ...memory, preferredLanguage: pref });
       return true;
     }
     if (currentStep === 'lead_time') {
-      updateMemory({ preferredContactTime: text });
-      askNextQuestion({ ...memory, preferredContactTime: text });
+      const time = normalizePreferredTime(text);
+      if (!time) {
+        enqueueBot(getStepClarificationMessages('lead_time', memory));
+        return true;
+      }
+      updateMemory({ preferredContactTime: time });
+      askNextQuestion({ ...memory, preferredContactTime: time });
       return true;
     }
     if (currentStep === 'lead_email') {
@@ -4659,11 +4912,17 @@ export function ChatBot() {
         updateMemory({ consentGiven: true });
         askNextQuestion({ ...memory, consentGiven: true });
       } else {
+        // AUDIT 2026-07-23 (P1-07) — chip/text parity. Written "no" now yields
+        // the SAME exit chips (Ask a question / Call now) as the "Not now" chip;
+        // before, the typed path left the user in `choice` with no options,
+        // able only to free-type. Also clarifies they can keep using education
+        // without agreeing to contact.
         updateMemory({ consentGiven: false });
         setStepSync('choice');
+        const es = memory.language === 'es';
         enqueueBot([
-          { text: memory.language === 'es' ? 'No hay problema. No voy a recopilar su número por chat.' : "No problem. I won't collect your number through chat.", pace: 'short' },
-          { text: memory.language === 'es' ? `También puede llamar a ${CHATBOT_CONTEXT.phone} si prefiere.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, pace: 'short' },
+          { text: es ? 'No hay problema. No voy a recopilar su número por chat, y puede seguir haciéndome preguntas de Medicare sin compromiso.' : "No problem. I won't collect your number through chat, and you can keep asking me Medicare questions with no obligation.", pace: 'short' },
+          { text: es ? `También puede llamar a ${CHATBOT_CONTEXT.phone} si prefiere.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: es ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: es ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
         ]);
       }
       return true;
@@ -4687,8 +4946,17 @@ export function ChatBot() {
     if (typeof window !== 'undefined' && window.innerWidth < 768) input.blur();
     input.value = '';
     if (zaraTextareaRef.current) zaraTextareaRef.current.value = '';
-    addUserMessage(text);
-    cancelBotQueue();
+
+    // AUDIT 2026-07-23 (P0-01) — detection runs BEFORE the message is stored.
+    // The old order (addUserMessage first) meant a blocked turn was only
+    // visually suppressed: the raw SSN/card stayed in messages[] and
+    // buildHistory shipped it to /api/chat on the next LLM turn. Now the
+    // original value never enters messages[], history, storage, or the
+    // network — a sensitive turn is stored ONLY as a scrubbed/placeholder
+    // representation. Safety (988/911) keeps absolute priority: a crisis
+    // message that ALSO carries PHI still gets the crisis response (stored
+    // scrubbed), never a privacy lecture.
+    const hasSensitive = containsSensitiveData(text);
 
     // ── PHASE 9A SAFETY ROUTER — runs BEFORE intent classification ──────────
     // Federal liability table-stakes: any sign of self-harm/suicide → 988;
@@ -4696,20 +4964,25 @@ export function ChatBot() {
     // before SENSITIVE, language switch, or any other intent.
     const safety = detectSafetyTrigger(text);
     if (safety.action !== 'none') {
+      addUserMessage(hasSensitive ? scrubSensitiveText(text) : text);
+      cancelBotQueue();
       const reply = memory.language === 'es' ? safety.responseEs : safety.responseEn;
       enqueueBot([{ text: reply, pace: 'slow' }], true);
       return;
     }
 
     // ── CLIENT-SIDE PHI / SENSITIVE-DATA FIREWALL ───────────────────────────
-    // Catches raw SSN / Medicare number / bank / card patterns that the
-    // keyword-based SENSITIVE intent misses (e.g. a bare "123-45-6789"). Runs
-    // BEFORE classification, memory write, and the /api/chat LLM call, so raw
-    // sensitive data is never stored or transmitted. scrubPHI is defense-in-depth.
-    if (containsSensitiveData(text)) {
+    if (hasSensitive) {
+      addUserMessage(memory.language === 'es'
+        ? '[Mensaje ocultado por seguridad]'
+        : '[Message hidden for your safety]');
+      cancelBotQueue();
       showPrivacyReminder();
       return;
     }
+
+    addUserMessage(text);
+    cancelBotQueue();
 
     // ── GLOBAL 13-STEP INTENT CLASSIFICATION ─────────────────────────────────
     // Step 1: normalize (trim + lowercase handled inside classifyGlobalIntent)
@@ -4892,8 +5165,7 @@ export function ChatBot() {
       !PERSONAL_DATA_STEPS.includes(stepRef.current) &&
       (stepRef.current === 'question' || memory.currentMode === 'education')
     ) {
-      const zipM = text.match(/\b(\d{5})\b/);
-      if (zipM && !memory.zip) updateMemory({ zip: zipM[1] });
+      captureContextualZip(text);
       void tryLLMFallback(text);
       return;
     }
@@ -4934,8 +5206,75 @@ export function ChatBot() {
     void tryLLMFallback(text);
   }
 
+  // AUDIT 2026-07-23 (P2-04) — enum normalizers for the typed-answer paths.
+  // Structured lead fields must not accept free junk ("asdf") that then lands
+  // in the CRM. Return the canonical value, or null → reprompt with chips.
+  function normalizeCoverage(text: string): string | null {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    if (/\b(original|traditional|tradicional|parte? ?a ?y ?b|part ?a ?and ?b|og|straight)\b/.test(t)) return 'Original Medicare';
+    if (/\b(advantage|ventaja|\bma\b|part ?c|parte? ?c|hmo|ppo|plan privado|medicare advantage)\b/.test(t)) return 'Medicare Advantage';
+    if (/\b(not ?sure|no ?se|no ?estoy ?segur|no ?lo ?se|dont ?know|unsure|no ?idea|neither|ninguno)\b/.test(t)) return 'Not sure';
+    return null;
+  }
+  function normalizePreferredLanguage(text: string): string | null {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    if (/\b(english|ingles|en)\b/.test(t)) return 'English';
+    if (/\b(spanish|espanol|es|castellano)\b/.test(t)) return 'Spanish';
+    if (/\b(either|cualquier|ambos|both|any|no ?importa|no ?preference)\b/.test(t)) return 'Either';
+    return null;
+  }
+  function normalizePreferredTime(text: string): string | null {
+    const t = text.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+    if (/\b(morning|manana|am|temprano|early)\b/.test(t)) return 'Morning';
+    if (/\b(after ?3|despues ?de ?las ?3|evening|noche|late|tarde ?noche)\b/.test(t)) return 'After 3pm';
+    if (/\b(afternoon|tarde|mediodia|noon|pm)\b/.test(t)) return 'Afternoon';
+    if (/\b(any ?time|anytime|cualquier|cualquiera|whenever|no ?importa|flexible)\b/.test(t)) return 'Anytime';
+    return null;
+  }
+
+  // AUDIT 2026-07-23 (P0-03) — canonical contextual ZIP capture. The old path
+  // stored ANY bare 5-digit run as the ZIP ("My income is 25000" → zip=25000),
+  // which then made getNextMissingStep skip lead_zip and its state-locked
+  // validation, sending an invalid/out-of-area lead with empty city/county.
+  // A 5-digit number is now captured ONLY when (a) the caller shows clear
+  // geographic intent (zip/postal/"I live in"/"my area is"), AND (b) getZipInfo
+  // resolves it to a real, SERVED ZIP — populating city/county/state so the
+  // lead is never geographically empty. Anything else is ignored here and the
+  // deterministic lead_zip step collects a validated ZIP later.
+  function captureContextualZip(text: string) {
+    if (memory.zip) return;
+    const zipM = text.match(/\b(\d{5})\b/);
+    if (!zipM) return;
+    const GEO_INTENT = /\b(zip|zipcode|postal|c[oó]digo postal|codigo postal|i live in|i live at|vivo en|mi (c[oó]digo|zona|area|área)|my (zip|area|county|city)|live in the)\b/i;
+    if (!GEO_INTENT.test(text)) return;
+    const info = getZipInfo(zipM[1]);
+    if (!info || !info.supported) return; // unknown or out-of-area → never stored as ZIP here
+    updateMemory({
+      zip: zipM[1],
+      city: info.city,
+      county: info.county,
+      derivedState: info.stateCode,
+      state: memory.state || info.stateCode,
+    });
+  }
+
   async function tryLLMFallback(text: string) {
     const lang = memory.language;
+    // AUDIT 2026-07-23 (P0-02/P0-04) — generation + step contract for the
+    // async LLM path. The scripted queue already honors generations (BUG 6);
+    // this extends the same contract to the LLM promise:
+    //   · gen: captured BEFORE the await. Reset / close / new user message /
+    //     language switch bumps generationRef, so a resolution from a
+    //     cancelled generation is discarded silently — it may not enqueue,
+    //     change step/mode, or touch memory (orphan-response fix).
+    //   · activeStep: the deterministic flow OWNS the step. If the user asked
+    //     an educational question MID-INTAKE (lead_*), the answer is delivered
+    //     and then askNextQuestion() resumes the SAME pending field with its
+    //     own prompt/chips — the fallback never seizes the step to 'question'
+    //     and never discards collected data.
+    const gen = generationRef.current;
+    const activeStep = stepRef.current;
+    const inLeadIntake = activeStep.startsWith('lead_');
     setIsTyping(true);
     try {
       const history = buildHistory(
@@ -4944,30 +5283,45 @@ export function ChatBot() {
           content: m.text,
         })),
       );
-      const fullName = [memory.firstName, memory.lastName].filter(Boolean).join(' ').trim();
+      // AUDIT 2026-07-23 (P1-09) — data minimization: an educational answer
+      // never needs the caller's identity. Only geography (for state-program
+      // accuracy) and language travel to the LLM; name/phone/email are intake
+      // data and stay in the browser, consent or not.
       const result = await callLLM(text, history, {
         language: lang,
         zipCode: memory.zip || undefined,
         state: memory.state || undefined,
-        name: fullName || undefined,
-        phoneNumber: memory.phone || undefined,
-        email: memory.email || undefined,
       });
+      if (gen !== generationRef.current) return; // orphan — session was reset/superseded
       setIsTyping(false);
       if (result.ok && result.response && result.response.trim()) {
         fallbackCountRef.current = 0; // BUG 8 — LLM answered; clear the fallback streak.
         updateMemory({ lastTopic: 'LLM_FREEFORM', interestType: 'LLM_FREEFORM' });
+        if (inLeadIntake) {
+          // Answer, then resume the exact pending intake field (data intact).
+          enqueueBot([{ text: result.response, pace: 'long' }]);
+          askNextQuestion(memory);
+          return;
+        }
         setMode('education');
         setStepSync('question');
         enqueueBot([{ text: result.response, pace: 'long' }]);
         return;
       }
     } catch {
+      if (gen !== generationRef.current) return; // orphan
       setIsTyping(false);
     }
+    if (gen !== generationRef.current) return; // orphan
     // Fallback path — canned education preserves Zara's original behavior.
     const education = getEducationMessages(text, lang);
     updateMemory({ lastTopic: education.topic, interestType: education.topic, lastEducationTopic: education.topic });
+    if (inLeadIntake) {
+      // Same contract as the LLM path: answer, then resume the pending field.
+      enqueueBot(education.messages);
+      askNextQuestion(memory);
+      return;
+    }
     setMode('education');
     setStepSync('question');
 

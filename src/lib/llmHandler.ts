@@ -11,6 +11,8 @@
 // The browser NEVER touches the API key — it just hits /api/chat.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { scrubSensitiveText } from './phiPatterns';
+
 export interface LLMTurn { role: 'user' | 'assistant'; content: string }
 
 export interface LLMContext {
@@ -48,15 +50,24 @@ export interface LLMFailure {
 const ENDPOINT = '/api/chat';
 const TIMEOUT_MS = 12_000;
 
-/** Build the Anthropic-format history from the engine's messages array. */
+/** Build the Anthropic-format history from the engine's messages array.
+ *
+ * AUDIT 2026-07-23 (P0-01) — every turn is scrubbed client-side before it can
+ * travel to /api/chat. A sensitive value that slipped into messages[] (e.g. a
+ * blocked-then-stored SSN from an older session, or a pattern the UI gate
+ * missed) is replaced with a placeholder here, so the reusable LLM history
+ * never carries the original value. Server-side scrubPHI stays as the final
+ * defense.
+ */
 export function buildHistory(
   messages: Array<{ role: 'user' | 'bot'; content: string }>,
 ): LLMTurn[] {
   const out: LLMTurn[] = [];
   for (const m of messages) {
     if (!m || !m.content) continue;
-    if (m.role === 'user') out.push({ role: 'user', content: m.content });
-    else if (m.role === 'bot') out.push({ role: 'assistant', content: m.content });
+    const content = scrubSensitiveText(m.content);
+    if (m.role === 'user') out.push({ role: 'user', content });
+    else if (m.role === 'bot') out.push({ role: 'assistant', content });
   }
   // Cap to last 20 turns (Anthropic charges by token count).
   return out.slice(-20);
