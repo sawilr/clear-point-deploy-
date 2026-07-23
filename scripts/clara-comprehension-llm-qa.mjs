@@ -76,7 +76,7 @@ const ONE_Q = (r) => (r.match(/\?/g) || []).length <= 1;
   // T4 — doctor will stop accepting the plan
   {
     const r = await turn('Dijo que dejará de aceptar mi plan');
-    ok('T4 verify-first (office/plan/date/confirm)', /confirmar|verificar|consultorio|oficina|fecha|el plan/i.test(r), r);
+    ok('T4 verify-first (office/plan/date/scope/confirm)', /confirmar|verificar|consultorio|oficina|fecha|desde cu[aá]ndo|todos sus pacientes|ciertos servicios|when .*stop|all (your |of your )?patients|certain services/i.test(r), r);
     ok('T4 no SEP guarantee', NO_SEP_CLAIM(r), r);
     ok('T4 no immediate-enrollment push', !/inscribir(se|lo) (ya|ahora|hoy)|enroll (now|today)|cambie (ya|ahora|hoy) mismo/i.test(r), r);
   }
