@@ -176,6 +176,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // flush between two near-simultaneous click events; a ref does. Blocks
   // double-submit on rapid taps / Enter mashing.
   const isSendingRef = useRef(false);
+  // AUDIT 2026-07-22 (KI-REL-03) — WAVE 39 only guards the engine turn; the
+  // outer flow (ZIP / Path A-B-C) had no synchronous gate, so a double Enter +
+  // double click in one tick produced the same bot reply 4×. This ref dedupes
+  // identical sends inside a short window across ALL send paths.
+  const lastSendRef = useRef<{ t: number; text: string }>({ t: 0, text: '' });
   // ─── PHASE E: viewport tracking + new-message indicator + reset modal ───
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
     (typeof window !== 'undefined' ? window.innerWidth : 1280));
@@ -614,6 +619,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
   ) {
     if (!text.trim() || isTyping) return;
+    // AUDIT 2026-07-22 (KI-REL-03) — one logical operation per send: drop an
+    // identical message re-fired within 600 ms (double click, Enter mash,
+    // click+Enter). isTyping can't catch same-tick duplicates; this does.
+    {
+      const now = Date.now();
+      const trimmedText = text.trim();
+      if (now - lastSendRef.current.t < 600 && lastSendRef.current.text === trimmedText) return;
+      lastSendRef.current = { t: now, text: trimmedText };
+    }
     // Sawil 2026-06-24 — voice clear fix. Stop dictation and flip the active flag
     // OFF before this message is processed, so any late onInterim/onFinal from the
     // speech recognizer cannot re-populate the input after we clear it below.

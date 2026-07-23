@@ -74,6 +74,11 @@ ok('CSB: mem.language is NOT a greeting-language source', !/initialLanguage\s*\|
 ok('CSB: greeting lang derives from initialLanguage||pageLang', /initialLanguage \|\| \(pageLang === 'es' \? 'es' : 'en'\)/.test(csb));
 ok("CSB: no `newState.language || 'es'` hardcoded fallback", !/newState\.language \|\| 'es'/.test(csb));
 
+// 3b. Race-condition gate (KI-REL-03): handleSendMessage carries the
+// synchronous duplicate-send gate that covers the outer flow (WAVE 39's
+// isSendingRef only guards the engine turn).
+ok('CSB: duplicate-send gate present (lastSendRef)', /lastSendRef/.test(csb) && /now - lastSendRef\.current\.t < 600/.test(csb));
+
 // 4. Zara storage strips raw user input + identity-grade fields.
 const zara = readFileSync(join(root, 'src/components/ChatBot.tsx'), 'utf8');
 const gmfs = zara.slice(zara.indexOf('function getMemoryForStorage'), zara.indexOf('function getMemoryForStorage') + 900);
