@@ -2481,7 +2481,10 @@ function getMemoryForStorage(memory: ChatMemory) {
   // BUG 9 — never persist sensitive PII to sessionStorage. phone/email/dob are
   // identity-grade; keep firstName/lastName/zip for conversational continuity
   // (so Zara doesn't re-ask them after a reload). calculatedAge is derived from dob.
-  const safeMemory = { ...memory, phone: '', email: '', dob: '', calculatedAge: 0 };
+  // AUDIT 2026-07-22 — lastValidUserInput is raw free text the user typed; it
+  // can contain anything (an SSN, a card number). Continuity metadata only —
+  // never persist raw user input.
+  const safeMemory = { ...memory, phone: '', email: '', dob: '', calculatedAge: 0, lastValidUserInput: '' };
   return safeMemory;
 }
 

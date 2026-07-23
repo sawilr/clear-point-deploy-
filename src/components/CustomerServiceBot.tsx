@@ -446,7 +446,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     if (messages.length === 0) {
       // Check persistent memory for returning visitor.
       const mem = readVisitorMemory();
-      const lang: 'en' | 'es' = (initialLanguage || mem?.language || (pageLang === 'es' ? 'es' : 'en')) as 'en' | 'es';
+      // AUDIT 2026-07-22 — language precedence fix (bug: entering via the
+      // ENGLISH page, Clara greeted in Spanish). A stored preference must
+      // NEVER override the language of the experience the user just opened:
+      // explicit prop > current page language. mem.language is no longer a
+      // greeting-language source; the explicit chip tap still locks the bot.
+      const lang: 'en' | 'es' = (initialLanguage || (pageLang === 'es' ? 'es' : 'en')) as 'en' | 'es';
       const returning = returningVisitorGreeting(mem, lang);
       // FASE 2 — remember that we greeted by a STORED name, so a denial
       // ("no es Antonio") can invalidate that identity and start clean.
@@ -489,18 +494,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastBotIntent]);
 
-  // PHASE 9E — persist captured fields to localStorage for next visit
+  // PHASE 9E — persist continuity fields to localStorage for next visit.
+  // AUDIT 2026-07-22 (KI-SEC-01) — PII (name/zip/state) is no longer written:
+  // only language + last topic, which is all the returning greeting needs.
   useEffect(() => {
-    if (state.name || state.zipCode || state.state || state.language) {
+    if (state.language || state.serviceCategory) {
       writeVisitorMemory({
-        name: state.name,
-        zip: state.zipCode,
-        state: state.state,
         language: state.language as 'en' | 'es' | undefined,
         lastTopic: state.serviceCategory,
       });
     }
-  }, [state.name, state.zipCode, state.state, state.language, state.serviceCategory]);
+  }, [state.language, state.serviceCategory]);
 
   const getTypingText = () => {
     if (!state.language) return 'Typing…';
@@ -1144,7 +1148,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               phone: newState.phoneNumber,
               email: newState.email || '',
               zip: newState.zipCode || '',
-              language: newState.language || 'es',
+              // AUDIT 2026-07-22 — fallback follows the page language, never a
+              // hardcoded default that can contradict the active experience.
+              language: newState.language || pageLang,
               leadSource: 'customer_service',
             }),
           });
@@ -1153,7 +1159,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             const data = await r.json();
             const soaUrl = window.location.origin + (data.soaUrl || `/soa/${data.token}`);
             setState((prev) => ({ ...prev, soaToken: data.token, soaUrl }));
-            const isEs = (newState.language || 'es') === 'es';
+            const isEs = (newState.language || pageLang) === 'es';
             const linkMsg: Message = {
               id: (Date.now() + 2).toString(),
               text: isEs
