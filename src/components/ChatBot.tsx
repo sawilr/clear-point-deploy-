@@ -2850,6 +2850,12 @@ export function ChatBot() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [step, setStep] = useState<ChatStep>('language');
   const [memory, setMemory] = useState<ChatMemory>(() => getStoredMemory(initialLanguage));
+  // AUDIT 2026-07-23 (P1-02 / Z-14) — always-current mirror of memory. Toolbar
+  // handlers (the "Advisor" button) are bound across renders and can read a
+  // stale `memory` closure — which made startOrResumeReview see an empty
+  // firstName and reset an in-progress lead. Reading lead fields from this ref
+  // is closure-safe. Synced in the [memory] effect below.
+  const memoryRef = useRef(memory);
   const [isTyping, setIsTyping] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
   const [topicPage, setTopicPage] = useState<0 | 1 | 2>(0);
@@ -3066,6 +3072,8 @@ export function ChatBot() {
   }, [messages, isTyping, step]);
 
   useEffect(() => {
+    // AUDIT 2026-07-23 (P1-02) — keep the closure-safe mirror in sync.
+    memoryRef.current = memory;
     if (typeof window === 'undefined') return;
     // PHASE 6 — Safari Private Browsing throws on sessionStorage writes.
     try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(getMemoryForStorage(memory))); } catch { /* private mode */ }
@@ -3785,21 +3793,24 @@ export function ChatBot() {
   // to call startPlanReview directly and reset name/phone). Only starts fresh
   // when there is no unsubmitted lead in progress.
   function startOrResumeReview() {
-    const hasInProgressLead = !memory.submitted && (memory.pausedStep || memory.firstName || memory.phone);
+    // Read from the closure-safe mirror (toolbar handlers can hold a stale
+    // `memory` closure — see memoryRef note).
+    const mem = memoryRef.current;
+    const hasInProgressLead = !mem.submitted && (mem.pausedStep || mem.firstName || mem.phone);
     if (hasInProgressLead) {
-      const resumeStep = memory.pausedStep;
+      const resumeStep = mem.pausedStep;
       updateMemory({ pausedStep: undefined, wantsPlanReview: true });
       if (resumeStep && resumeStep.startsWith('lead_')) setStepSync(resumeStep);
-      const es = memory.language === 'es';
-      const fn = memory.firstName;
+      const es = mem.language === 'es';
+      const fn = mem.firstName;
       enqueueBot([{ text: es
         ? (fn ? `Claro, ${fn}. Continuemos su solicitud donde la dejamos.` : 'Claro. Continuemos su solicitud donde la dejamos.')
         : (fn ? `Of course, ${fn}. Let's continue your request where we left off.` : "Of course. Let's continue your request where we left off."),
         pace: 'short' }]);
-      askNextQuestion({ ...memory, pausedStep: undefined, wantsPlanReview: true });
+      askNextQuestion({ ...mem, pausedStep: undefined, wantsPlanReview: true });
       return;
     }
-    startPlanReview(memory.interestType || 'Plan review');
+    startPlanReview(mem.interestType || 'Plan review');
   }
 
   // ── Handle CUSTOMER SERVICE intent ──────────────────────────────────────────
