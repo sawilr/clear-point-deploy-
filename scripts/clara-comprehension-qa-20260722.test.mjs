@@ -85,6 +85,21 @@ ok('P9 pre-existing conditions block present', /# PRE-EXISTING CONDITIONS — ne
 ok('P10 doctor-recommended-change playbook present', /# DOCTOR RECOMMENDED CHANGING PLANS/.test(prompt));
 ok('P11 verification list present (doctors/meds/OOP max/effective date)', /out-of-pocket maximum, the effective date, and the available enrollment period/.test(prompt));
 
+console.log('── Part 3: deterministic SEP-claim filter (compliance-filter.js) ──');
+{
+  const { complianceFilter } = await import('../api/_lib/compliance-filter.js');
+  const bad1 = complianceFilter('Si hay un problema, usted podría tener derecho a un Período Especial de Inscripción para cambiar sin esperar a octubre.', 'es');
+  ok('F1 ES SEP claim rewritten', !/podr[ií]a tener derecho a un per[ií]odo especial|sin esperar a octubre/i.test(bad1.text), bad1.text);
+  ok('F2 ES replacement is the verification phrasing', /no quiero asumir que existe un Periodo Especial/i.test(bad1.text));
+  ok('F3 violations tagged', bad1.violations.some(v => v.startsWith('sep_claim:')));
+  const bad2 = complianceFilter('Good news — you likely qualify for a Special Enrollment Period, so you can switch without waiting until October.', 'en');
+  ok('F4 EN SEP claim rewritten', !/qualify for a special enrollment|without waiting until october/i.test(bad2.text), bad2.text);
+  const good1 = complianceFilter('Para saber si puede cambiar ahora, primero habría que verificar qué periodo de inscripción tiene disponible. No quiero asumir que existe un Periodo Especial sin revisar su situación.', 'es');
+  ok('F5 compliant verification phrasing untouched', good1.violations.filter(v => v.startsWith('sep_claim:')).length === 0 && /verificar qu[eé] periodo/i.test(good1.text), good1.text);
+  const good2 = complianceFilter('Un asesor licenciado puede verificar si aplica algún periodo de inscripción en su caso.', 'es');
+  ok('F6 verify-framed mention untouched', good2.violations.filter(v => v.startsWith('sep_claim:')).length === 0, good2.text);
+}
+
 console.log(`\n${FAIL ? '❌' : '✅'}  ${PASS} pass, ${FAIL} fail`);
 if (FAIL) console.log('FAILS: ' + fails.join(' | '));
 process.exit(FAIL ? 1 : 0);

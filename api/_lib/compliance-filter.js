@@ -123,5 +123,43 @@ export function complianceFilter(text, lang) {
     out = out.replace(PLAN_LETTER_RE, lang === 'en' ? 'a Medigap plan' : 'un plan Medigap');
   }
 
+  // 4) AUDIT 2026-07-22 — SEP claims. The LLM must never state or hint that
+  //    the caller HAS (or "podría tener") a Special Enrollment Period, nor
+  //    promise "sin esperar a octubre" — a doctor recommending/leaving a plan
+  //    does not create a SEP. The prompt forbids it but slips ~1 in N; this
+  //    rewrite is the deterministic guarantee. Verification-framed mentions
+  //    ("verificar si aplica un Período Especial", "no quiero asumir que
+  //    existe un Periodo Especial") are compliant and intentionally NOT
+  //    matched by these claim patterns.
+  var SEP_CLAIM_RES = [
+    /\b(usted\s+)?(tiene|tendr[ií]a|podr[ií]a\s+tener|puede\s+tener|podr[ií]a\s+calificar\s+para|califica\s+para)\b[^.!?]{0,50}\b(per[ií]odo\s+especial|special\s+enrollment|\bSEP\b)/i,
+    /\byou\s+(may|might|could|likely|probably|do)?\s*(have|qualify\s+for|be\s+eligible\s+for|are\s+eligible\s+for)\b[^.!?]{0,50}\b(special\s+enrollment|\bSEP\b)/i,
+    /\bsin\s+esperar\s+(a|hasta)\s+octubre\b/i,
+    /\bwithout\s+waiting\s+(for|until)\s+october\b/i,
+  ];
+  var SEP_SAFE = {
+    es: 'Para saber si puede cambiar ahora, primero habría que verificar qué periodo de inscripción tiene disponible — no quiero asumir que existe un Periodo Especial sin revisar su situación.',
+    en: "To know whether you can change now, we'd first have to verify which enrollment period you have available — I don't want to assume a Special Enrollment Period exists without reviewing your situation.",
+  };
+  var sepHit = false;
+  for (var si = 0; si < SEP_CLAIM_RES.length; si++) {
+    if (SEP_CLAIM_RES[si].test(out)) { sepHit = true; violations.push('sep_claim:' + SEP_CLAIM_RES[si].source.slice(0, 40)); }
+  }
+  if (sepHit) {
+    var sepSafe = SEP_SAFE[lang === 'en' ? 'en' : 'es'];
+    var sepSentences = out.split(/(?<=[.!?])\s+/);
+    var sepClean = sepSentences.filter(function (s) {
+      for (var sj = 0; sj < SEP_CLAIM_RES.length; sj++) {
+        if (SEP_CLAIM_RES[sj].test(s)) return false;
+      }
+      return true;
+    });
+    out = sepClean.join(' ').trim();
+    // Append the verification phrasing once (skip if an equivalent line survived).
+    if (!/no quiero asumir que existe un periodo especial|don'?t want to assume a special enrollment/i.test(out)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + sepSafe : sepSafe;
+    }
+  }
+
   return { text: out, violations: violations };
 }
