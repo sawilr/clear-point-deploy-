@@ -181,6 +181,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // double click in one tick produced the same bot reply 4×. This ref dedupes
   // identical sends inside a short window across ALL send paths.
   const lastSendRef = useRef<{ t: number; text: string }>({ t: 0, text: '' });
+  // AUDIT 2026-07-23 — Clara's textarea is controlled and clears via
+  // setInputValue('') from ~10 call sites; a single effect resets the auto-grown
+  // height back to one row whenever the box empties, so it never stays tall with
+  // leftover internal scroll after a send/reset.
+  useEffect(() => {
+    if (inputValue === '' && inputRef.current) {
+      inputRef.current.style.height = 'auto';
+      inputRef.current.style.overflowY = 'hidden';
+    }
+  }, [inputValue]);
   // ─── PHASE E: viewport tracking + new-message indicator + reset modal ───
   const [viewportWidth, setViewportWidth] = useState<number>(() =>
     (typeof window !== 'undefined' ? window.innerWidth : 1280));
@@ -1297,8 +1307,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     if (!yes) {
       setOuterState((s) => ({ ...s, step: 'B_done' }));
       setTimeout(() => pushBotTyped(isEs
-        ? 'Entendido, sin presión. Gracias por considerarnos. Si en algún momento cambia de opinión, puede llamarnos al 1-866-310-8702 o regresar aquí — siempre estaremos para ayudarle.'
-        : "Understood — no pressure at all. Thank you for considering us. If you ever change your mind, you can call us at 1-866-310-8702 or come back anytime. We'll always be here to help."), 300);
+        ? 'Entendido, sin presión. Gracias por considerarnos. Si en algún momento cambia de opinión, puede llamarnos al 1-855-720-8555 o regresar aquí — siempre estaremos para ayudarle.'
+        : "Understood — no pressure at all. Thank you for considering us. If you ever change your mind, you can call us at 1-855-720-8555 or come back anytime. We'll always be here to help."), 300);
       return;
     }
     // Sawil 2026-06 (Phase 1) — HYDRATE the engine with everything the
@@ -1341,8 +1351,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
     setTimeout(() => pushBotTyped(isEs
-      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
-      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply."), 300);
+      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
+      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply."), 300);
   }
 
   // Path A identity capture: parses single text input "Name | last4" or split flow.
@@ -1394,16 +1404,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       } else {
         setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
         pushBotMessageDirect(isEs
-          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
-          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply.");
+          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
+          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply.");
       }
     } catch {
       clearTimeout(timer);
       setIsTyping(false);
       setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
       pushBotMessageDirect(isEs
-        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar de mensajes y datos.'
-        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-866-310-8702. Standard message and data rates may apply.");
+        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
+        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply.");
     }
   }
 
@@ -1411,8 +1421,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   async function submitOuterLead(extras: { phone?: string; summary?: string } = {}): Promise<boolean> {
     const isEs = outerState.language === 'es';
     const failMsg = isEs
-      ? 'Disculpe, no pude enviar su información en este momento. Por favor inténtelo de nuevo, o llámenos directamente al 1-866-310-8702 y un asesor licenciado le ayudará.'
-      : "I'm sorry, I couldn't send your information right now. Please try again, or call us directly at 1-866-310-8702 and a licensed advisor will help you.";
+      ? 'Disculpe, no pude enviar su información en este momento. Por favor inténtelo de nuevo, o llámenos directamente al 1-855-720-8555 y un asesor licenciado le ayudará.'
+      : "I'm sorry, I couldn't send your information right now. Please try again, or call us directly at 1-855-720-8555 and a licensed advisor will help you.";
     setSubmitState('submitting');
     try {
       const receipt = await buildConsentReceipt(outerState.language);
@@ -1442,10 +1452,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       setSubmitState(ok ? 'submitted' : 'failed');
       if (ok) {
         const closingEs = officeStatus.isOpen
-          ? 'Listo, gracias. Su información ya está con un asesor licenciado. Si prefiere hablar ahora mismo, puede llamarnos al 1-866-310-8702; de lo contrario, un asesor le contactará pronto.'
+          ? 'Listo, gracias. Su información ya está con un asesor licenciado. Si prefiere hablar ahora mismo, puede llamarnos al 1-855-720-8555; de lo contrario, un asesor le contactará pronto.'
           : 'Listo, gracias. Su información ya está con un asesor licenciado. En este momento estamos fuera de horario, así que un asesor le devolverá la llamada el próximo día laboral. Que tenga una buena noche.';
         const closingEn = officeStatus.isOpen
-          ? "All set, thank you. Your information is now with a licensed advisor. If you'd rather speak right now, you can call us at 1-866-310-8702; otherwise, an advisor will reach out to you shortly."
+          ? "All set, thank you. Your information is now with a licensed advisor. If you'd rather speak right now, you can call us at 1-855-720-8555; otherwise, an advisor will reach out to you shortly."
           : "All set, thank you. Your information is now with a licensed advisor. We're currently after hours, so an advisor will call you back on the next business day. Have a good evening.";
         setTimeout(() => pushBotTyped(isEs ? closingEs : closingEn), 200);
       } else {
@@ -1851,8 +1861,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               <div className="font-bold text-red-900">
                 {isSpanish ? 'Disculpe, su mensaje quedó preparado pero no pude confirmar el envío en este momento. Por favor llámenos directamente y le atenderemos enseguida.' : "Apologies — your message was prepared but I couldn't confirm the submission right now. Please call us directly and we'll take care of you right away."}
               </div>
-              <a href="tel:18663108702" className="inline-flex items-center gap-1.5 px-4 py-3 bg-earth-800 text-cream-50 rounded-lg text-[14px] font-semibold min-h-[44px]">
-                <Phone className="w-4 h-4" /> 1-866-310-8702
+              <a href="tel:18557208555" className="inline-flex items-center gap-1.5 px-4 py-3 bg-earth-800 text-cream-50 rounded-lg text-[14px] font-semibold min-h-[44px]">
+                <Phone className="w-4 h-4" /> 1-855-720-8555
               </a>
             </div>
           )}
@@ -1869,7 +1879,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           shrink; the status stays pinned (flex-shrink-0). */}
       <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white min-w-0">
         <a
-          href="tel:18663108702"
+          href="tel:18557208555"
           className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors min-w-0"
         >
           <Phone className="w-4 h-4 flex-shrink-0" />
@@ -2003,10 +2013,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             }}
             onChange={(e) => {
               setInputValue(e.target.value);
-              // Auto-grow up to 4 lines.
               const el = e.target as HTMLTextAreaElement;
               el.style.height = 'auto';
-              el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+              // AUDIT 2026-07-23 — the old fixed 120px cap forced the box to
+              // scroll internally on mobile (a normal senior question hid text
+              // above the fold — "se pierde algo"). Grow to fit up to 30% of the
+              // VISIBLE viewport (adapts when the soft keyboard is open), hide
+              // the scrollbar until that max, and keep the caret line in view.
+              const maxH = Math.round((window.visualViewport?.height || window.innerHeight) * 0.4);
+              el.style.height = Math.min(el.scrollHeight, maxH) + 'px';
+              el.style.overflowY = el.scrollHeight > maxH ? 'auto' : 'hidden';
+              el.scrollTop = el.scrollHeight;
             }}
             onKeyDown={(e) => {
               // Enter sends, Shift+Enter newline (premium chat convention).

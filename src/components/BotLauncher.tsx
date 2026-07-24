@@ -118,7 +118,7 @@ export function BotLauncher() {
                 <span className="block font-medium text-earth-900 leading-snug">
                   {isEs ? 'Aprender sobre Medicare' : 'Learn about Medicare'}
                 </span>
-                <span className="block text-xs text-earth-500 mt-0.5">
+                <span className="block text-xs text-earth-600 mt-0.5">
                   {isEs ? 'Educación general — partes, planes, ahorros' : 'General education — parts, plans, savings'}
                 </span>
               </span>
@@ -133,7 +133,7 @@ export function BotLauncher() {
                 <span className="block font-medium text-earth-900 leading-snug">
                   {isEs ? 'Tengo un problema o pregunta' : 'I have a problem or question'}
                 </span>
-                <span className="block text-xs text-earth-500 mt-0.5">
+                <span className="block text-xs text-earth-600 mt-0.5">
                   {isEs ? 'Factura, doctor, carta, cobertura…' : 'Bill, doctor, letter, coverage…'}
                 </span>
               </span>

@@ -95,10 +95,10 @@ export function detectSafetyTrigger(userMessage: string): SafetyResult {
       action: 'emergency_911',
       responseEn:
         "Please call 911 right now. This sounds like a medical emergency and I cannot help with that — I am a Medicare information assistant. " +
-        "If you are alone, also ask someone nearby to help call 911. Call us back when you are safe — 1-866-310-8702.",
+        "If you are alone, also ask someone nearby to help call 911. Call us back when you are safe — 1-855-720-8555.",
       responseEs:
         'Por favor llame al 911 ahora mismo. Esto suena como una emergencia médica y no puedo ayudarle con eso — soy un asistente de información de Medicare. ' +
-        'Si está solo, también pídale a alguien cercano que llame al 911. Llámenos cuando esté seguro — 1-866-310-8702.',
+        'Si está solo, también pídale a alguien cercano que llame al 911. Llámenos cuando esté seguro — 1-855-720-8555.',
     };
   }
 

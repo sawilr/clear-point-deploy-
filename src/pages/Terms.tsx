@@ -118,7 +118,7 @@ export default function Terms() {
           <section>
             <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('11. Contact', '11. Contacto')}</h2>
             <p>
-              {t('Questions about these Terms? Contact us at ', '¿Preguntas sobre estos Términos? Contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or', 'o')} <a href="tel:18663108702" className="text-gold-500 hover:underline">1-866-310-8702</a>.
+              {t('Questions about these Terms? Contact us at ', '¿Preguntas sobre estos Términos? Contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or', 'o')} <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a>.
             </p>
           </section>
         </div>

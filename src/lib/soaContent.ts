@@ -21,7 +21,7 @@ export const AGENT = {
   name: 'Sawil Reyes',
   npn: '17261494',
   agency: 'ClearPoint Senior Advisors',
-  agencyPhone: '1-866-310-8702',
+  agencyPhone: '1-855-720-8555',
   agencyEmail: 'info@clearpointsenioradvisors.com',
 } as const;
 
@@ -99,7 +99,7 @@ export const LABELS = {
   success_title:        { en: 'Thank you — your SOA has been signed.',                            es: 'Gracias — su SOA ha sido firmado.' },
   success_body:         { en: 'A licensed ClearPoint advisor will contact you within 24–48 hours at the phone number on file. You will also receive a copy of this signed document for your records.', es: 'Un asesor licenciado de ClearPoint le contactará dentro de 24 a 48 horas al teléfono registrado. También recibirá una copia de este documento firmado para sus registros.' },
   error_title:          { en: 'We could not save your signature',                                 es: 'No pudimos guardar su firma' },
-  error_retry:          { en: 'Please try again or call us directly at 1-866-310-8702.',          es: 'Por favor inténtelo de nuevo o llámenos directamente al 1-866-310-8702.' },
+  error_retry:          { en: 'Please try again or call us directly at 1-855-720-8555.',          es: 'Por favor inténtelo de nuevo o llámenos directamente al 1-855-720-8555.' },
   required:             { en: 'Required',                                                         es: 'Requerido' },
   validation_required:  { en: 'This field is required.',                                          es: 'Este campo es obligatorio.' },
   validation_signature_mismatch: { en: 'The typed signature does not match your full name. Please check your name and try again.', es: 'La firma escrita no coincide con su nombre completo. Por favor verifique su nombre.' },

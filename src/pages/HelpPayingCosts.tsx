@@ -91,8 +91,8 @@ export default function HelpPayingCosts() {
                     'Podemos ayudarle a entender qué programas podrían aplicar a su situación y orientarle hacia el próximo paso correcto. La elegibilidad final la determina la agencia correspondiente.'
                   )}
                 </p>
-                <a href="tel:18663108702" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
-                  {t('Call 1-866-310-8702', 'Llame al 1-866-310-8702')}
+                <a href="tel:18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
+                  {t('Call 1-855-720-8555', 'Llame al 1-855-720-8555')}
                 </a>
               </div>
 

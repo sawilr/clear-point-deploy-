@@ -143,7 +143,7 @@ export function Footer() {
           <div className="col-span-1">
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h3>
             <ul className="space-y-1 text-sm">
-              <li><a href="tel:18663108702" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">1-866-310-8702</a></li>
+              <li><a href="tel:18557208555" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">1-855-720-8555</a></li>
               {/* Email layout per viewport:
                   • Mobile (default, col-span-2): full-width column, fits on one
                     line at text-sm down to 320px viewport.

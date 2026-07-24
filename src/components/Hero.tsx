@@ -101,9 +101,9 @@ export function Hero({
                 <CalendarIcon className="w-4 h-4" />
                 {t('Schedule Free Consultation', 'Agendar Consulta Gratis')}
               </button>
-              <a href="tel:18663108702" className="cp-btn border border-cream-50/30 text-cream-50 hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto">
+              <a href="tel:18557208555" className="cp-btn border border-cream-50/30 text-cream-50 hover:bg-cream-50/10 transition-all active:scale-[0.98] w-full sm:w-auto">
                 <PhoneIcon className="w-4 h-4" />
-                1-866-310-8702
+                1-855-720-8555
               </a>
             </div>
             <div className="flex flex-wrap gap-x-6 gap-y-3">

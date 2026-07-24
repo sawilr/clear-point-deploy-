@@ -2738,8 +2738,8 @@ export function processMessage(
   if (isClosingIntent(userMessage) && !state.conversationClosed) {
     const isEs = (state.language || 'es') === 'es';
     const out = isEs
-      ? `¡Gracias a usted! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
-      : `Thank you! It was a pleasure helping. We're here whenever you need us — write back anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+      ? `¡Gracias a usted! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-855-720-8555**. ¡Que tenga excelente día!`
+      : `Thank you! It was a pleasure helping. We're here whenever you need us — write back anytime, or call ClearPoint at **1-855-720-8555**. Have a wonderful day!`;
     const newState: ConversationState = {
       ...state,
       turnCount: _currentTurnIdx,
@@ -3473,8 +3473,8 @@ export function processMessage(
       // Have name — ask for phone next
       const out = _phoneEscape
         ? (isEs
-          ? `Tiene toda la razón y le pido disculpas — no quiero repetir lo mismo. Lo único que me falta para que un asesor licenciado le devuelva la llamada es un teléfono de 10 dígitos. Si prefiere, puede llamarnos directo ahora al 1-866-310-8702 y con gusto le ayudamos, sin costo.`
-          : `You're absolutely right, and I'm sorry — I don't want to keep repeating myself. The only thing I still need so a licensed advisor can call you back is a 10-digit phone. If you'd rather, you can call us directly right now at 1-866-310-8702 and we'll gladly help, at no cost.`)
+          ? `Tiene toda la razón y le pido disculpas — no quiero repetir lo mismo. Lo único que me falta para que un asesor licenciado le devuelva la llamada es un teléfono de 10 dígitos. Si prefiere, puede llamarnos directo ahora al 1-855-720-8555 y con gusto le ayudamos, sin costo.`
+          : `You're absolutely right, and I'm sorry — I don't want to keep repeating myself. The only thing I still need so a licensed advisor can call you back is a 10-digit phone. If you'd rather, you can call us directly right now at 1-855-720-8555 and we'll gladly help, at no cost.`)
         : (isEs
           ? (isInvalidRetry
             ? `Disculpe, ese número no parece válido. ¿Me lo puede dar de nuevo? (solo los 10 dígitos, sin guiones)`
@@ -5615,8 +5615,8 @@ function processMessageInner(
       ? 'Por su seguridad acabo de ocultar ese mensaje. Por favor no envíe su número de Medicare, Seguro Social, número de tarjeta, ni datos bancarios aquí. Esa información solo debe darla a un asesor licenciado por teléfono o en persona. ¿Quiere que le conecte con un asesor licenciado para continuar de manera segura?'
       : "For your safety I just hid that message. Please do not send your Medicare number, Social Security, card number, or banking info here. That information should only be shared with a licensed advisor by phone or in person. Would you like me to connect you with a licensed advisor so you can continue safely?";
     newState.quickReplies = isEs
-      ? ['Sí, hablar con asesor', 'Continuar sin ese dato', 'Llamar 1-866-310-8702']
-      : ['Yes, talk to advisor', 'Continue without that info', 'Call 1-866-310-8702'];
+      ? ['Sí, hablar con asesor', 'Continuar sin ese dato', 'Llamar 1-855-720-8555']
+      : ['Yes, talk to advisor', 'Continue without that info', 'Call 1-855-720-8555'];
     newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
     return { response: out, newState, needsHuman: false };
   }
@@ -6169,8 +6169,8 @@ function processMessageInner(
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
@@ -6210,8 +6210,8 @@ function processMessageInner(
             ? `That's okay${withName(newState.name)}, you don't have to share your ZIP.`
             : `Perfect${withName(newState.name)}.`;
           const outA = isSpanish
-            ? `${leadEs} Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
-            : `${leadEn} I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+            ? `${leadEs} Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+            : `${leadEn} I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
           newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
           return { response: outA, newState, needsHuman: true };
         }
@@ -6277,8 +6277,8 @@ function processMessageInner(
         newState.step = 'conversation';
         newState.needsHuman = true;
         const outA = isSpanish
-          ? `Gracias${withName(newState.name)}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-866-310-8702.`
-          : `Thank you${withName(newState.name)}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-866-310-8702.`;
+          ? `Gracias${withName(newState.name)}. Anoto su ZIP (${zip}). Actualmente nuestro servicio está concentrado en NY, NJ y CT, pero un asesor licenciado revisará su caso de todos modos. Si es urgente, llame al 1-855-720-8555.`
+          : `Thank you${withName(newState.name)}. I have your ZIP (${zip}). Our service is currently focused on NY, NJ, and CT, but a licensed advisor will review your case anyway. If urgent, call 1-855-720-8555.`;
         newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
         return { response: outA, newState, needsHuman: true };
       }
@@ -6301,8 +6301,8 @@ function processMessageInner(
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
@@ -6333,8 +6333,8 @@ function processMessageInner(
       }
       newState.conversationClosed = true;
       const out = isSpanish
-        ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
-        : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+        ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-855-720-8555**. ¡Que tenga excelente día!`
+        : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-855-720-8555**. Have a wonderful day!`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -7934,12 +7934,12 @@ function processMessageInner(
       let out: string;
       if (isVisual) {
         out = isSpanish
-          ? 'Anotado — voy a escribir con mensajes cortos y claros. Si necesita audio en vez de texto, llame directo a un asesor licenciado de ClearPoint al **1-866-310-8702**. ¿Cómo le ayudo?'
-          : "Noted — I'll keep messages short and clear. If you need audio instead of text, call a ClearPoint licensed advisor directly at **1-866-310-8702**. How can I help?";
+          ? 'Anotado — voy a escribir con mensajes cortos y claros. Si necesita audio en vez de texto, llame directo a un asesor licenciado de ClearPoint al **1-855-720-8555**. ¿Cómo le ayudo?'
+          : "Noted — I'll keep messages short and clear. If you need audio instead of text, call a ClearPoint licensed advisor directly at **1-855-720-8555**. How can I help?";
       } else if (isHearing) {
         out = isSpanish
-          ? 'Entendido — seguiremos por texto que es más fácil para usted. Si en algún momento necesita llamada con video (lectura de labios) o TTY, un asesor licenciado puede coordinarlo al **1-866-310-8702**. ¿Cómo le ayudo?'
-          : "Understood — we'll keep using text which is easier for you. If you need video call (lip reading) or TTY at any point, a licensed advisor can coordinate at **1-866-310-8702**. How can I help?";
+          ? 'Entendido — seguiremos por texto que es más fácil para usted. Si en algún momento necesita llamada con video (lectura de labios) o TTY, un asesor licenciado puede coordinarlo al **1-855-720-8555**. ¿Cómo le ayudo?'
+          : "Understood — we'll keep using text which is easier for you. If you need video call (lip reading) or TTY at any point, a licensed advisor can coordinate at **1-855-720-8555**. How can I help?";
       } else if (isPace) {
         out = isSpanish
           ? 'Por supuesto, vamos sin prisa. Una pregunta a la vez. ¿En qué le ayudo?'
@@ -8054,8 +8054,8 @@ function processMessageInner(
       newState.routingLevel = 'A';
       newState.serviceCategory = 'scheduling';
       const out = isSpanish
-        ? 'Un asesor licenciado de ClearPoint le puede llamar en horario laboral. También puede llamar directamente al **1-866-310-8702**. ¿Le gustaría coordinar una llamada de regreso?'
-        : "A ClearPoint licensed advisor can call you during business hours. You can also call directly at **1-866-310-8702**. Want to set up a callback?";
+        ? 'Un asesor licenciado de ClearPoint le puede llamar en horario laboral. También puede llamar directamente al **1-855-720-8555**. ¿Le gustaría coordinar una llamada de regreso?'
+        : "A ClearPoint licensed advisor can call you during business hours. You can also call directly at **1-855-720-8555**. Want to set up a callback?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
@@ -8193,8 +8193,8 @@ function processMessageInner(
       }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-866-310-8702**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiptacenter.org.*\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiptacenter.org.*\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }
@@ -8204,8 +8204,8 @@ function processMessageInner(
       if (isClosingIntent(userMessage)) {
         newState.conversationClosed = true;
         const out = isSpanish
-          ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-866-310-8702**. ¡Que tenga excelente día!`
-          : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-866-310-8702**. Have a wonderful day!`;
+          ? `¡Gracias a usted${withName(newState.name)}! Fue un placer ayudarle. Quedamos a su disposición — si necesita algo más, escríbanos cuando guste, o llame a ClearPoint al **1-855-720-8555**. ¡Que tenga excelente día!`
+          : `Thank you${withName(newState.name)}! It was a pleasure helping you. We're here whenever you need us — message anytime, or call ClearPoint at **1-855-720-8555**. Have a wonderful day!`;
         newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
         return { response: out, newState, needsHuman: false };
       }

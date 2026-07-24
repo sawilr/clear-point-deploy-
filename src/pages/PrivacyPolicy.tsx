@@ -54,8 +54,8 @@ export default function PrivacyPolicy() {
             <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('4. TCPA Consent & SMS Communications', '4. Consentimiento TCPA y Comunicaciones SMS')}</h2>
             <p>
               {t(
-                'By providing your phone number and checking the consent box on our forms, you expressly consent to receive marketing calls and text messages from Clear Point Senior Advisors at the number you provided. These calls may be made using an automatic telephone dialing system. Message and data rates may apply. You are not required to consent as a condition of purchasing any goods or services. You may revoke your consent at any time by replying STOP to any text message or by calling us at 1-866-310-8702.',
-                'Al proporcionar su número de teléfono y marcar la casilla de consentimiento en nuestros formularios, usted consiente expresamente recibir llamadas de marketing y mensajes de texto de Clear Point Senior Advisors en el número que proporcionó. Estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático. Pueden aplicarse tarifas de mensajes y datos. No está obligado a consentir como condición para comprar bienes o servicios. Puede revocar su consentimiento en cualquier momento respondiendo STOP a cualquier mensaje de texto o llamándonos al 1-866-310-8702.'
+                'By providing your phone number and checking the consent box on our forms, you expressly consent to receive marketing calls and text messages from Clear Point Senior Advisors at the number you provided. These calls may be made using an automatic telephone dialing system. Message and data rates may apply. You are not required to consent as a condition of purchasing any goods or services. You may revoke your consent at any time by replying STOP to any text message or by calling us at 1-855-720-8555.',
+                'Al proporcionar su número de teléfono y marcar la casilla de consentimiento en nuestros formularios, usted consiente expresamente recibir llamadas de marketing y mensajes de texto de Clear Point Senior Advisors en el número que proporcionó. Estas llamadas pueden realizarse utilizando un sistema de marcado telefónico automático. Pueden aplicarse tarifas de mensajes y datos. No está obligado a consentir como condición para comprar bienes o servicios. Puede revocar su consentimiento en cualquier momento respondiendo STOP a cualquier mensaje de texto o llamándonos al 1-855-720-8555.'
               )}
             </p>
           </section>
@@ -91,7 +91,7 @@ export default function PrivacyPolicy() {
               <li>{t('Revoke TCPA consent at any time', 'Revocar el consentimiento TCPA en cualquier momento')}</li>
             </ul>
             <p className="mt-2">
-              {t('To exercise these rights, contact us at ', 'Para ejercer estos derechos, contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or call', 'o llame al')} <a href="tel:18663108702" className="text-gold-500 hover:underline">1-866-310-8702</a>.
+              {t('To exercise these rights, contact us at ', 'Para ejercer estos derechos, contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or call', 'o llame al')} <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a>.
             </p>
           </section>
 
@@ -127,7 +127,7 @@ export default function PrivacyPolicy() {
               {t('If you have questions about this Privacy Policy, please contact us:', 'Si tiene preguntas sobre esta Política de Privacidad, contáctenos:')}<br />
               <strong>Clear Point Senior Advisors</strong><br />
               Email: <a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a><br />
-              Phone: <a href="tel:18663108702" className="text-gold-500 hover:underline">1-866-310-8702</a><br />
+              Phone: <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a><br />
               {t('TTY: 711', 'TTY: 711')}
             </p>
           </section>

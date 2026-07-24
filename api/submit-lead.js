@@ -443,7 +443,11 @@ export default async function handler(req, res) {
         { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: ((body.consent === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
         { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: ((body.consent_sms === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
         { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: ((body.consent_call === true) || (body.consent_calls === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
-        { id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: email ? 'true' : 'false' },
+        // AUDIT 2026-07-23 (GHL-02) — email consent must come from the affirmative
+        // TCPA consent (same gate as calls/sms), NOT from the mere presence of an
+        // email address. Recorded true only when the caller both provided an email
+        // AND checked the consent box.
+        { id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: (email && body.consent_to_contact === true) ? 'true' : 'false' },
         { id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age', value: age || '' },
         { id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age', value: calculated_age != null ? String(calculated_age) : '' },
         { id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags', value: lead_quality_flags || '' },
@@ -514,7 +518,7 @@ export default async function handler(req, res) {
       }
       return res.status(502).json({
         error: 'CRM_UNAVAILABLE',
-        message: 'We could not submit your request right now. Please call us at 1-866-310-8702.',
+        message: 'We could not submit your request right now. Please call us at 1-855-720-8555.',
       });
     }
     // Sawil 2026-06-30 AUDIT FIX C3/BUG-003 — GHL can return a 2xx with an empty

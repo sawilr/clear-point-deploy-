@@ -13,7 +13,7 @@ export default function Accessibility() {
         <h1 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-2">
           {t('Accessibility Statement', 'Declaración de Accesibilidad')}
         </h1>
-        <p className="text-earth-500 text-sm mb-8">{t('Last Updated: June 16, 2026', 'Última Actualización: 16 de junio de 2026')}</p>
+        <p className="text-earth-600 text-sm mb-8">{t('Last Updated: June 16, 2026', 'Última Actualización: 16 de junio de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>
@@ -71,7 +71,7 @@ export default function Accessibility() {
             <div className="mt-4 bg-cream-50 rounded-xl p-5 space-y-3">
               <div className="flex items-center gap-3">
                 <PhoneIcon className="w-4 h-4 text-gold-500" />
-                <a href="tel:18663108702" className="text-earth-800 font-semibold hover:text-gold-500 transition-colors">1-866-310-8702</a>
+                <a href="tel:18557208555" className="text-earth-800 font-semibold hover:text-gold-500 transition-colors">1-855-720-8555</a>
               </div>
               <div className="flex items-center gap-3">
                 <MailIcon className="w-4 h-4 text-gold-500" />

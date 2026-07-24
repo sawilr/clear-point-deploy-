@@ -62,7 +62,12 @@ export default function App() {
       </a>
       <ScrollToTop />
       <RouteMeta />
-      <Header />
+      {/* AUDIT 2026-07-23 (A11Y-01) — wrap the site header so it exposes the
+          `banner` landmark. Header itself returns a fragment (top-bar + nav);
+          the <header> element alone yields the role — no role="banner" needed. */}
+      <header>
+        <Header />
+      </header>
       <main id="main-content" className={isSupportPage ? 'support-main' : undefined}>
         {/* Suspense holds the layout height while a lazily-loaded route chunk
             arrives (same-origin, typically &lt;100 ms), preventing a jump. */}

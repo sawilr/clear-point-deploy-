@@ -35,10 +35,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           <h1 className="font-serif text-2xl text-earth-900 mb-3">{heading}</h1>
           <p className="text-earth-700 text-sm leading-relaxed mb-6">{sub}</p>
           <a
-            href="tel:+18663108702"
+            href="tel:+18557208555"
             className="block w-full bg-earth-800 text-cream-50 font-semibold py-3 rounded-lg hover:bg-earth-900 transition-colors mb-3"
           >
-            {phoneLabel}: 1-866-310-8702
+            {phoneLabel}: 1-855-720-8555
           </a>
           <button
             type="button"
@@ -47,7 +47,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, State> {
           >
             {reloadLabel}
           </button>
-          <p className="text-xs text-earth-500 mt-5">TTY: 711 · Mon–Fri 9am–6pm ET</p>
+          <p className="text-xs text-earth-600 mt-5">TTY: 711 · Mon–Fri 9am–6pm ET</p>
         </div>
       </div>
     );

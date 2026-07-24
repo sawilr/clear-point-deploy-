@@ -78,7 +78,7 @@ export function getOfficeStatus(now: Date = getEtNow()): OfficeStatus {
     nextOpenLabelEs,
     greetingEn,
     greetingEs,
-    ctaLabelEn: isOpen ? 'Call now — 1-866-310-8702' : 'Schedule callback',
-    ctaLabelEs: isOpen ? 'Llamar ahora — 1-866-310-8702' : 'Programar llamada',
+    ctaLabelEn: isOpen ? 'Call now — 1-855-720-8555' : 'Schedule callback',
+    ctaLabelEs: isOpen ? 'Llamar ahora — 1-855-720-8555' : 'Programar llamada',
   };
 }

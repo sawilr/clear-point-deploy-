@@ -95,7 +95,7 @@ export function CTASection({
             </Link>
           )}
           <a
-            href="tel:18663108702"
+            href="tel:18557208555"
             className={`cp-btn border transition-all active:scale-[0.98] ${
               variant === 'gold'
                 ? 'bg-cream-50 text-earth-900 border-earth-800/15 hover:border-earth-800'
@@ -103,7 +103,7 @@ export function CTASection({
             }`}
           >
             <PhoneIcon className="w-4 h-4" />
-            {t(secondaryCta || 'Call 1-866-310-8702', secondaryCtaEs || 'Llamar 1-866-310-8702')}
+            {t(secondaryCta || 'Call 1-855-720-8555', secondaryCtaEs || 'Llamar 1-855-720-8555')}
           </a>
         </div>
       </div>

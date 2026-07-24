@@ -25,10 +25,10 @@ export default function NotFound() {
             {t('Return Home', 'Volver al Inicio')}
           </Link>
           <a
-            href="tel:+18663108702"
+            href="tel:+18557208555"
             className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-500 transition-colors"
           >
-            {t('Call 1-866-310-8702', 'Llamar 1-866-310-8702')}
+            {t('Call 1-855-720-8555', 'Llamar 1-855-720-8555')}
           </a>
         </div>
         <p className="text-sm text-earth-600">

@@ -1533,8 +1533,8 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
 const CHATBOT_CONTEXT = {
   agencyName: 'Clear Point Senior Advisors',
   assistantName: 'Zara',
-  phone: '1-866-310-8702',
-  phoneHref: 'tel:18663108702',
+  phone: '1-855-720-8555',
+  phoneHref: 'tel:18557208555',
   hours: 'Monday-Friday, 9am-6pm ET',
   statesServed: 'NY, NJ, and CT',
   identity: 'Independent Medicare insurance agency',
@@ -2713,8 +2713,8 @@ function getSuccessMessage(language: ChatLanguage) {
 
 function getFailMessage(language: ChatLanguage) {
   return language === 'es'
-    ? 'Lo siento, no pude enviar la solicitud en este momento. Puede llamarnos directamente al 1-866-310-8702.'
-    : "I'm sorry, I couldn't send the request right now. You can call us directly at 1-866-310-8702.";
+    ? 'Lo siento, no pude enviar la solicitud en este momento. Puede llamarnos directamente al 1-855-720-8555.'
+    : "I'm sorry, I couldn't send the request right now. You can call us directly at 1-855-720-8555.";
 }
 
 export function ChatBot() {
@@ -4963,7 +4963,13 @@ export function ChatBot() {
     // (never scroll → keyboard resize → second scroll).
     if (typeof window !== 'undefined' && window.innerWidth < 768) input.blur();
     input.value = '';
-    if (zaraTextareaRef.current) zaraTextareaRef.current.value = '';
+    // AUDIT 2026-07-23 — reset the auto-grown box back to a single row after
+    // send, so it never stays tall with leftover internal scroll.
+    if (zaraTextareaRef.current) {
+      zaraTextareaRef.current.value = '';
+      zaraTextareaRef.current.style.height = 'auto';
+      zaraTextareaRef.current.style.overflowY = 'hidden';
+    }
 
     // AUDIT 2026-07-23 (P0-01) — detection runs BEFORE the message is stored.
     // The old order (addUserMessage first) meant a blocked turn was only
@@ -5639,7 +5645,17 @@ export function ChatBot() {
                 onInput={(event) => {
                   const el = event.currentTarget as HTMLTextAreaElement;
                   el.style.height = 'auto';
-                  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+                  // AUDIT 2026-07-23 — the old fixed 120px cap forced the box to
+                  // scroll internally on mobile (a normal senior question hid
+                  // ~200px of text above the fold — "se pierde algo"). Grow to
+                  // fit up to 30% of the VISIBLE viewport (adapts when the soft
+                  // keyboard is open, so it never covers the conversation), keep
+                  // the scrollbar hidden until that max, and pin the caret line
+                  // in view so the user always sees what they're typing.
+                  const maxH = Math.round((window.visualViewport?.height || window.innerHeight) * 0.4);
+                  el.style.height = Math.min(el.scrollHeight, maxH) + 'px';
+                  el.style.overflowY = el.scrollHeight > maxH ? 'auto' : 'hidden';
+                  el.scrollTop = el.scrollHeight;
                 }}
                 onKeyDown={(event) => {
                   // Enter sends, Shift+Enter newline (premium chat convention).

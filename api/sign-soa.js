@@ -284,7 +284,7 @@ function buildSoaPdf(opts) {
       kv(doc, L === 'es' ? 'Agente' : 'Agent', AGENT_NAME);
       kv(doc, 'NPN', AGENT_NPN);
       kv(doc, L === 'es' ? 'Agencia' : 'Agency', 'ClearPoint Senior Advisors');
-      kv(doc, L === 'es' ? 'Teléfono' : 'Phone', '1-866-310-8702');
+      kv(doc, L === 'es' ? 'Teléfono' : 'Phone', '1-855-720-8555');
 
       // Footer
       doc.moveDown(1);

@@ -29,11 +29,11 @@ export default function ThankYou() {
           )}
         </p>
         <a
-          href="tel:18663108702"
+          href="tel:18557208555"
           className="cp-btn inline-flex items-center justify-center gap-2 bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all hover:shadow-soft mb-4"
         >
           <PhoneIcon className="w-4 h-4" />
-          1-866-310-8702
+          1-855-720-8555
         </a>
         <p className="text-earth-600 text-sm mt-4">
           <Link to="/" className="underline text-earth-800 font-semibold hover:text-gold-500">

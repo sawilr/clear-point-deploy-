@@ -69,8 +69,8 @@ const PAGE_META: Record<string, Meta> = {
   '/contact': {
     title: 'Contact Us | Clear Point Senior Advisors (NY, NJ, CT)',
     titleEs: 'Contáctenos | Clear Point Senior Advisors (NY, NJ, CT)',
-    description: 'Contact Clear Point Senior Advisors for free, no-pressure bilingual Medicare help. Call 1-866-310-8702 or request a callback. Serving NY, NJ and CT.',
-    descriptionEs: 'Contacte a Clear Point Senior Advisors para ayuda de Medicare bilingüe, gratis y sin presión. Llame al 1-866-310-8702 o pida una llamada. Servimos NY, NJ y CT.',
+    description: 'Contact Clear Point Senior Advisors for free, no-pressure bilingual Medicare help. Call 1-855-720-8555 or request a callback. Serving NY, NJ and CT.',
+    descriptionEs: 'Contacte a Clear Point Senior Advisors para ayuda de Medicare bilingüe, gratis y sin presión. Llame al 1-855-720-8555 o pida una llamada. Servimos NY, NJ y CT.',
   },
   '/privacy-policy': {
     title: 'Privacy Policy | Clear Point Senior Advisors',

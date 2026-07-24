@@ -17,7 +17,7 @@ export const TCPA_CONSENT_TEXT_EN =
   'you provided to discuss Medicare plan options. You understand calls/texts may ' +
   'be made using an automatic telephone dialing system, that consent is not ' +
   'required to purchase, and that you can revoke consent at any time by replying ' +
-  'STOP or calling 1-866-310-8702. Standard message and data rates may apply.';
+  'STOP or calling 1-855-720-8555. Standard message and data rates may apply.';
 
 /** Canonical TCPA consent text (ES). Hash this for audit. */
 export const TCPA_CONSENT_TEXT_ES =
@@ -27,7 +27,7 @@ export const TCPA_CONSENT_TEXT_ES =
   'Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un ' +
   'sistema telefónico automático de marcado, que el consentimiento no es requerido ' +
   'para comprar, y que puede revocar el consentimiento en cualquier momento ' +
-  'respondiendo STOP o llamando al 1-866-310-8702. Pueden aplicar tarifas estándar ' +
+  'respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar ' +
   'de mensajes y datos.';
 
 export interface ConsentReceipt {

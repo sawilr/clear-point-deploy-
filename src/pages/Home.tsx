@@ -110,8 +110,8 @@ const steps = [
     num: '3',
     title: 'We Compare Your Options',
     titleEs: 'Comparamos Sus Opciones',
-    desc: 'We search 20+ carriers and present only the plans that make sense for your specific needs.',
-    descEs: 'Buscamos en más de 20 aseguradoras y le presentamos solo los planes que tienen sentido para sus necesidades.',
+    desc: 'We review options from leading carriers and walk you through the plans available to you for your specific needs.',
+    descEs: 'Revisamos opciones de aseguradoras líderes y le explicamos los planes disponibles para sus necesidades específicas.',
   },
   {
     num: '4',
@@ -315,8 +315,8 @@ export default function Home() {
                   <Link to="/contact" className="cp-btn bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all">
                     {t('Check My Enrollment Options', 'Revisar Mis Opciones de Inscripción')}
                   </Link>
-                  <a href="tel:18663108702" className="cp-btn bg-white text-earth-800 border border-cream-200 hover:bg-cream-50 transition-all">
-                    {t('Call 1-866-310-8702', 'Llamar al 1-866-310-8702')}
+                  <a href="tel:18557208555" className="cp-btn bg-white text-earth-800 border border-cream-200 hover:bg-cream-50 transition-all">
+                    {t('Call 1-855-720-8555', 'Llamar al 1-855-720-8555')}
                   </a>
                 </div>
               </div>
@@ -373,8 +373,8 @@ export default function Home() {
                   <p className="text-cream-100/70 text-base leading-relaxed mb-6 max-w-sm mx-auto">
                     {t('Our advisors are available Monday through Friday, 9am–6pm Eastern Time. No robots. No hold music. Just a real person who knows Medicare.', 'Nuestros asesores están disponibles de lunes a viernes, 9am–6pm hora del Este. Sin robots. Sin música de espera. Solo una persona real que conoce Medicare.')}
                   </p>
-                  <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-866-310-8702</span>
-                  <a href="tel:18663108702" className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
+                  <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-855-720-8555</span>
+                  <a href="tel:18557208555" className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
                     <PhoneIcon className="w-4 h-4" />
                     {t("Call Now — It's Free", 'Llamar Ahora — Es Gratis')}
                   </a>

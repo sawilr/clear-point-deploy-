@@ -155,7 +155,7 @@ s = processMessage('John', s).newState;
 const r10 = processMessage('10001', s);
 check('EN advisor: needsHuman=true', r10.needsHuman === true);
 check('EN advisor: bot offers phone',
-  /1-866-310-8702/.test(r10.response));
+  /1-855-720-8555/.test(r10.response));
 
 console.log('\n=== RECOVERY → CHIP CLICK → triage works (V20) ===');
 s = createInitialState();

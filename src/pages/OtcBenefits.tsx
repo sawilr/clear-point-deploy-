@@ -160,8 +160,8 @@ export default function OtcBenefits() {
                     'ClearPoint puede ayudar a explicar y organizar la información del plan, pero el asesor licenciado debe verificar los detalles del plan y el cliente decide. La elegibilidad final, la disponibilidad del plan y las reglas de OTC las determina la aseguradora y el área de servicio del plan.'
                   )}
                 </p>
-                <a href="tel:18663108702" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
-                  {t('Call 1-866-310-8702', 'Llame al 1-866-310-8702')}
+                <a href="tel:18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
+                  {t('Call 1-855-720-8555', 'Llame al 1-855-720-8555')}
                 </a>
               </div>
 

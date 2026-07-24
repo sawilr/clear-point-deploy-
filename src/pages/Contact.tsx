@@ -58,7 +58,7 @@ export default function Contact() {
 
               <div className="grid sm:grid-cols-2 gap-5">
                 {[
-                  { icon: <PhoneIcon className="w-5 h-5" />, title: 'Phone', titleEs: 'Teléfono', value: '1-866-310-8702', href: 'tel:18663108702', sub: 'Mon–Fri · 9am–6pm ET', subEs: 'Lun–Vie · 9am–6pm ET' },
+                  { icon: <PhoneIcon className="w-5 h-5" />, title: 'Phone', titleEs: 'Teléfono', value: '1-855-720-8555', href: 'tel:18557208555', sub: 'Mon–Fri · 9am–6pm ET', subEs: 'Lun–Vie · 9am–6pm ET' },
                   { icon: <MailIcon className="w-5 h-5" />, title: 'Email', titleEs: 'Correo', value: 'info@clearpointsenioradvisors.com', href: 'mailto:info@clearpointsenioradvisors.com', sub: 'Response within 24h', subEs: 'Respuesta en 24h' },
                   // K (audit) — temporary compliance-friendly line until the licensed business mailing address is provided. Swap the t(...) value for the real address (EN/ES) when ready.
                   { icon: <MapPinIcon className="w-5 h-5" />, title: 'Mailing Address', titleEs: 'Dirección Postal', value: t('Business mailing address available upon request.', 'Dirección comercial disponible a solicitud.'), href: null, sub: 'Licensed insurance agency', subEs: 'Agencia de seguros licenciada' },

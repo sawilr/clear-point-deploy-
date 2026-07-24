@@ -11,12 +11,12 @@ import { track, Events } from '../lib/analytics';
 // Spec-required messages — Free Review form
 const FREE_REVIEW_SUCCESS_EN = 'Thank you — your review request was sent successfully. A licensed Clear Point Senior Advisors advisor will review your information and contact you during business hours.';
 const FREE_REVIEW_SUCCESS_ES = 'Gracias — su solicitud fue enviada correctamente. Un asesor licenciado de Clear Point Senior Advisors revisará su información y se comunicará con usted durante horas laborables.';
-const FREE_REVIEW_ERROR_EN = 'We could not send your request right now. Please try again or call 1-866-310-8702.';
-const FREE_REVIEW_ERROR_ES = 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-866-310-8702.';
+const FREE_REVIEW_ERROR_EN = 'We could not send your request right now. Please try again or call 1-855-720-8555.';
+const FREE_REVIEW_ERROR_ES = 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-855-720-8555.';
 // Sawil 2026-07-09 — distinct, generic copy for the server rate limit (429).
 // Reveals no internal logic; gives the caller a working path (phone).
-const FREE_REVIEW_LIMIT_EN = 'We already received your request. If you need to reach us sooner, please call 1-866-310-8702.';
-const FREE_REVIEW_LIMIT_ES = 'Ya recibimos su solicitud. Si necesita comunicarse antes, por favor llame al 1-866-310-8702.';
+const FREE_REVIEW_LIMIT_EN = 'We already received your request. If you need to reach us sooner, please call 1-855-720-8555.';
+const FREE_REVIEW_LIMIT_ES = 'Ya recibimos su solicitud. Si necesita comunicarse antes, por favor llame al 1-855-720-8555.';
 
 // Fake ZIP patterns (mirrors ChatBot.tsx lead_zip handler)
 const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
@@ -331,28 +331,28 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             <div>
               <label htmlFor={fid('first_name')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
               <input id={fid('first_name')} ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
-              {errors.first_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.first_name}</p>}
+              {errors.first_name && <p role="alert" className="text-xs text-red-700 mt-1">{errors.first_name}</p>}
             </div>
             <div>
               <label htmlFor={fid('last_name')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Last Name', 'Apellido')} *</label>
               <input id={fid('last_name')} type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
-              {errors.last_name && <p role="alert" className="text-xs text-red-500 mt-1">{errors.last_name}</p>}
+              {errors.last_name && <p role="alert" className="text-xs text-red-700 mt-1">{errors.last_name}</p>}
             </div>
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
             <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
-            {errors.phone && <p role="alert" className="text-xs text-red-500 mt-1">{errors.phone}</p>}
+            {errors.phone && <p role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
           </div>
           <div>
             <label htmlFor={fid('email')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Email', 'Correo')}</label>
             <input id={fid('email')} type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
-            {errors.email && <p role="alert" className="text-xs text-red-500 mt-1">{errors.email}</p>}
+            {errors.email && <p role="alert" className="text-xs text-red-700 mt-1">{errors.email}</p>}
           </div>
           <div>
             <label htmlFor={fid('zip')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
             <input id={fid('zip')} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
-            {errors.zip && <p role="alert" className="text-xs text-red-500 mt-1">{errors.zip}</p>}
+            {errors.zip && <p role="alert" className="text-xs text-red-700 mt-1">{errors.zip}</p>}
           </div>
           <div>
             <label className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
@@ -416,7 +416,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
               </span>
             </label>
-            {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-500 mt-2">{errors.consent}</p>}
+            {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-700 mt-2">{errors.consent}</p>}
           </div>
 
           {/* Privacy / HIPAA-style notice */}

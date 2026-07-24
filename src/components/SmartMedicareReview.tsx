@@ -442,7 +442,7 @@ export function SmartMedicareReview() {
           {step > 1 && (
             <button
               onClick={() => setStep(s => Math.max(s - 1, 1))}
-              className="inline-flex items-center gap-2 text-sm text-earth-500 hover:text-earth-800 transition-colors mb-5 py-1 pr-3"
+              className="inline-flex items-center gap-2 text-sm text-earth-600 hover:text-earth-800 transition-colors mb-5 py-1 pr-3"
               aria-label={isEs ? 'Volver al paso anterior' : 'Go back to previous step'}
             >
               <span aria-hidden="true" className="text-base leading-none">←</span>
@@ -532,7 +532,7 @@ export function SmartMedicareReview() {
               </div>
               <button
                 onClick={resetStep1}
-                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+                className="mt-4 text-sm text-earth-600 underline underline-offset-2 hover:text-earth-700"
               >
                 {isEs ? '← Volver' : '← Back'}
               </button>
@@ -542,7 +542,7 @@ export function SmartMedicareReview() {
           {/* ── Step 1 — Special situations: scope language, then categories ─ */}
           {step === 1 && step1View === 'special' && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-600 mb-3">
                 {t('Special situations', 'Situaciones especiales')}
               </p>
               {/* Required scope language — shown BEFORE any category. */}
@@ -565,7 +565,7 @@ export function SmartMedicareReview() {
               </div>
               <button
                 onClick={resetStep1}
-                className="mt-4 text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700"
+                className="mt-4 text-sm text-earth-600 underline underline-offset-2 hover:text-earth-700"
               >
                 {isEs ? '← Volver a las opciones de Medicare' : '← Back to Medicare options'}
               </button>
@@ -575,14 +575,14 @@ export function SmartMedicareReview() {
           {/* ── Step 1 — Special situation detail: guidance + callback opt-in ─ */}
           {step === 1 && step1View === 'specialDetail' && specialCat && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-600 mb-3">
                 {isEs ? specialCat.es : specialCat.en}
               </p>
               <div className="rounded-xl border border-cream-200 bg-cream-50 p-4 text-sm text-earth-700 leading-relaxed mb-4">
                 {isEs ? SPECIAL_GUIDANCE[specialCat.id].es : SPECIAL_GUIDANCE[specialCat.id].en}
               </div>
               {/* Scope reminder sits right next to the offer. */}
-              <p className="text-xs text-earth-500 italic mb-5">
+              <p className="text-xs text-earth-600 italic mb-5">
                 {isEs ? SPECIAL_SCOPE_ES : SPECIAL_SCOPE_EN}
               </p>
               <p className="text-earth-800 text-base font-semibold mb-3">
@@ -607,7 +607,7 @@ export function SmartMedicareReview() {
                 </button>
                 <button
                   onClick={() => setStep1View('special')}
-                  className="w-full text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700 py-2"
+                  className="w-full text-sm text-earth-600 underline underline-offset-2 hover:text-earth-700 py-2"
                 >
                   {isEs ? '← Atrás' : '← Back'}
                 </button>
@@ -618,7 +618,7 @@ export function SmartMedicareReview() {
           {/* ── Step 1 — Special situation resources (callback declined; no CRM lead) ─ */}
           {step === 1 && step1View === 'specialResources' && specialCat && (
             <div>
-              <p className="text-xs font-bold tracking-widest uppercase text-earth-500 mb-3">
+              <p className="text-xs font-bold tracking-widest uppercase text-earth-600 mb-3">
                 {t('Helpful resources', 'Recursos útiles')}
               </p>
               <div className="rounded-xl border border-cream-200 bg-cream-50 p-4 text-sm text-earth-700 leading-relaxed mb-4 space-y-2">
@@ -631,12 +631,12 @@ export function SmartMedicareReview() {
               </div>
               <p className="text-sm text-earth-700 mb-4">
                 {t('You can also call ClearPoint for general Medicare guidance:', 'También puede llamar a ClearPoint para orientación general de Medicare:')}{' '}
-                <a href="tel:18663108702" className="font-semibold text-gold-600 hover:underline">1-866-310-8702</a>{' '}
-                <span className="text-earth-500">({t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')})</span>
+                <a href="tel:18557208555" className="font-semibold text-gold-600 hover:underline">1-855-720-8555</a>{' '}
+                <span className="text-earth-600">({t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')})</span>
               </p>
               <button
                 onClick={resetStep1}
-                className="w-full text-sm text-earth-500 underline underline-offset-2 hover:text-earth-700 py-2"
+                className="w-full text-sm text-earth-600 underline underline-offset-2 hover:text-earth-700 py-2"
               >
                 {isEs ? '← Volver a las opciones de Medicare' : '← Back to Medicare options'}
               </button>
@@ -673,7 +673,7 @@ export function SmartMedicareReview() {
                 </p>
               )}
               {zip.length === 5 && (!zipInfo || !zipInfo.supported) && (
-                <p id="zip-error" role="alert" className="text-sm text-red-500 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, or CT.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ o CT.')}</p>
+                <p id="zip-error" role="alert" className="text-sm text-red-700 mt-3">{t('Please enter a valid 5-digit ZIP code from NY, NJ, or CT.', 'Por favor ingrese un código postal válido de 5 dígitos de NY, NJ o CT.')}</p>
               )}
               <button
                 onClick={nextStep}
@@ -691,7 +691,7 @@ export function SmartMedicareReview() {
               <p className="text-earth-800 text-base font-semibold mb-2">
                 {t('What is your date of birth?', '¿Cuál es su fecha de nacimiento?')}
               </p>
-              <p className="text-earth-500 text-sm mb-4">
+              <p className="text-earth-600 text-sm mb-4">
                 {t('Select the month, day, and year.', 'Seleccione el mes, el día y el año.')}
               </p>
               <div className="grid grid-cols-3 gap-2.5 sm:gap-3">
@@ -739,12 +739,12 @@ export function SmartMedicareReview() {
                 </label>
               </div>
               {dob && validateDOB(dob).valid && validateDOB(dob).age !== null && (
-                <p className="text-sm text-earth-500 mt-3">
+                <p className="text-sm text-earth-600 mt-3">
                   {isEs ? `Edad: ${validateDOB(dob).age} años` : `Age: ${validateDOB(dob).age}`}
                 </p>
               )}
               {dob && !validateDOB(dob).valid && (
-                <p role="alert" className="text-sm text-red-500 mt-3">
+                <p role="alert" className="text-sm text-red-700 mt-3">
                   {((validateDOB(dob).age ?? -1) >= 0 && (validateDOB(dob).age ?? 0) < 18)
                     ? t('Please double-check the year — this date is under 18.', 'Por favor revise el año — esta fecha es menor de 18.')
                     : t('Please select a valid date of birth.', 'Por favor seleccione una fecha de nacimiento válida.')}
@@ -763,24 +763,40 @@ export function SmartMedicareReview() {
                 {t('Your contact information', 'Su información de contacto')}
               </p>
               <div className="space-y-3.5">
-                <input type="text" autoComplete="given-name" aria-label={t('First Name', 'Nombre')} value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {firstName.length > 1 && !validatePersonName(firstName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="text" autoComplete="family-name" aria-label={t('Last Name', 'Apellido')} value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido') + ' *'} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
-                <input type="tel" aria-label={t('Phone Number', 'Teléfono')} value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono') + ' *'} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-500">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
+                {/* AUDIT 2026-07-23 (A11Y-04) — persistent visible <label> above each
+                    field (implicit association) so the field name stays on screen
+                    after the placeholder is replaced by typed text. Redundant
+                    aria-label removed — the label now provides the accessible name. */}
+                <label className="block">
+                  <span className="block text-sm font-medium text-earth-700 mb-1">{t('First Name', 'Nombre')} *</span>
+                  <input type="text" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                </label>
+                {firstName.length > 1 && !validatePersonName(firstName).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                <label className="block">
+                  <span className="block text-sm font-medium text-earth-700 mb-1">{t('Last Name', 'Apellido')} *</span>
+                  <input type="text" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                </label>
+                {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                <label className="block">
+                  <span className="block text-sm font-medium text-earth-700 mb-1">{t('Phone Number', 'Teléfono')} *</span>
+                  <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono')} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                </label>
+                {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-700">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
                 {phone.length === 10 && !validatePhone(phone).valid && (() => {
                   // Sawil 2026-06-19 — clearer error for reserved-fictional "555"
                   // numbers (the anti-fake-lead reject), so the generic "valid
                   // 10-digit" wording does not confuse a real user/QA. Validation
                   // itself is unchanged — 555 numbers are still rejected.
                   const is555 = /555|fictional/i.test(validatePhone(phone).flags.join(' '));
-                  return <p role="alert" className="text-xs text-red-500">{is555
+                  return <p role="alert" className="text-xs text-red-700">{is555
                     ? t('Please enter a real phone number. Numbers with 555 are commonly used for testing and cannot be accepted.', 'Ingrese un número de teléfono real. Los números con 555 suelen usarse para pruebas y no se pueden aceptar.')
                     : t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>;
                 })()}
-                <input type="email" autoComplete="email" aria-label={t('Email (optional)', 'Correo electrónico (opcional)')} value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
-                {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-500">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
+                <label className="block">
+                  <span className="block text-sm font-medium text-earth-700 mb-1">{t('Email (optional)', 'Correo electrónico (opcional)')}</span>
+                  <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                </label>
+                {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="cp-btn mt-5 w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
@@ -924,25 +940,26 @@ export function SmartMedicareReview() {
               {/* Consent — TCPA language matched to the main LeadForm (MED-01).
                   Required: the Submit button is disabled until `consent` is true. */}
               <label className="flex items-start gap-3 cursor-pointer bg-cream-100 rounded-xl p-4 border border-cream-300 mb-4">
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-label={t('I agree to the contact consent', 'Acepto el consentimiento de contacto')} className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
-                {/* Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the
-                    EXACT canonical TCPA text that gets recorded + SHA-256 hashed (EN/ES),
-                    so the audit receipt matches verbatim what the user saw. */}
-                <span className="text-sm text-earth-700 leading-relaxed">
+                {/* AUDIT 2026-07-23 (A11Y-05) — reference the VISIBLE TCPA text as the
+                    accessible name (aria-labelledby) instead of a generic aria-label
+                    that overrode it. A screen reader now reads the exact consent the
+                    user is agreeing to (matches the LeadForm pattern). */}
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-labelledby="smr-consent-text" className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
+                <span id="smr-consent-text" className="text-sm text-earth-700 leading-relaxed">
                   {isEs ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
                   <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
                 </span>
               </label>
 
               {/* Disclaimer */}
-              <p className="text-xs text-earth-500 mb-4 leading-relaxed">
+              <p className="text-xs text-earth-600 mb-4 leading-relaxed">
                 {t(
                   'This is an educational review request. Clear Point Senior Advisors is not Medicare, Medicaid, Social Security, or a government agency. A licensed advisor may contact you to review your options. Do not enter your Social Security number, Medicare ID, banking information, or sensitive medical records.',
                   'Esta es una solicitud educativa de revisión. Clear Point Senior Advisors no es Medicare, Medicaid, Seguro Social ni una agencia del gobierno. Un asesor licenciado puede contactarle para revisar sus opciones. No ingrese su número de Seguro Social, número de Medicare, información bancaria ni expedientes médicos sensibles.'
                 )}
               </p>
 
-              {error && <p className="text-sm text-red-500 mb-3">{error}</p>}
+              {error && <p className="text-sm text-red-700 mb-3">{error}</p>}
 
               <button
                 onClick={handleSubmit}

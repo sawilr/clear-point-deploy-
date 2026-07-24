@@ -166,7 +166,7 @@ export function Header() {
                 (text-only inline). inline-flex + min-h-[44px] gives a 44px tap
                 target; -my-1 absorbs the growth so the top bar's visual height
                 is unchanged. Width (~95px) already exceeds 44px. */}
-            <a href="tel:18663108702" className="inline-flex items-center min-h-[44px] -my-1 text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-866-310-8702</a>
+            <a href="tel:18557208555" className="inline-flex items-center min-h-[44px] -my-1 text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-855-720-8555</a>
             <span className="hidden md:inline whitespace-nowrap">&nbsp;|&nbsp; TTY: 711 &nbsp;|&nbsp; {t('Mon–Fri 9am–6pm ET', 'Lun–Vie 9am–6pm ET')}</span>
           </span>
           <div className="flex-shrink-0">
@@ -271,9 +271,9 @@ export function Header() {
                 Inline phone link is gated to 2xl (1536px+) to keep the lg-xl range
                 breathing room — phone is still always visible in the top bar above. */}
             <div className="hidden lg:flex items-center gap-3">
-              <a href="tel:18663108702" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors whitespace-nowrap">
+              <a href="tel:18557208555" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors whitespace-nowrap">
                 <PhoneIcon className="w-4 h-4 flex-shrink-0" />
-                1-866-310-8702
+                1-855-720-8555
               </a>
               <button
                 onClick={handleFreeReview}
@@ -288,6 +288,8 @@ export function Header() {
               className="lg:hidden p-3 min-w-[44px] min-h-[44px] flex items-center justify-center text-earth-800 transition-transform active:scale-90"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               aria-label={t('Toggle menu', 'Alternar menú')}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-menu"
             >
               {mobileMenuOpen ? <CloseIcon /> : <MenuIcon />}
             </button>
@@ -296,7 +298,7 @@ export function Header() {
 
         {/* Mobile Menu */}
         {mobileMenuOpen && (
-          <div className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-98px)] overflow-y-auto overscroll-contain">
+          <div id="mobile-menu" className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-98px)] overflow-y-auto overscroll-contain">
             <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
             <Link to="/medicare-advantage" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap moved to Education section below. Restore by uncommenting. */}

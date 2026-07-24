@@ -118,8 +118,8 @@ export default function SignSOA() {
               </h1>
               <p className="text-earth-600">
                 {language === 'es'
-                  ? 'Este enlace de firma no es válido o ya pasaron 24 horas. Por favor llámenos al 1-866-310-8702.'
-                  : 'This signing link is no longer valid (links expire after 24 hours). Please call us at 1-866-310-8702.'}
+                  ? 'Este enlace de firma no es válido o ya pasaron 24 horas. Por favor llámenos al 1-855-720-8555.'
+                  : 'This signing link is no longer valid (links expire after 24 hours). Please call us at 1-855-720-8555.'}
               </p>
             </div>
           )}
@@ -180,8 +180,8 @@ export default function SignSOA() {
               {error && (
                 <p className="text-xs text-earth-600 mt-3">
                   {language === 'es'
-                    ? `Si el problema continúa, llámenos al 1-866-310-8702 (Referencia: ${error}).`
-                    : `If the problem continues, call us at 1-866-310-8702 (Reference: ${error}).`}
+                    ? `Si el problema continúa, llámenos al 1-855-720-8555 (Referencia: ${error}).`
+                    : `If the problem continues, call us at 1-855-720-8555 (Reference: ${error}).`}
                 </p>
               )}
             </div>
