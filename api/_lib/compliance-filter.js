@@ -70,12 +70,14 @@ const SAFE_REPLACEMENT = {
  *
  * @param {string} text     The LLM response.
  * @param {'en'|'es'} lang  Caller language (defaults to 'es').
+ * @param {{ now?: Date }} [opts]  `now` overrides the clock (unit tests only).
  * @returns {{ text: string, violations: string[] }}
  *   - text: the cleaned response (may be the original if no violations).
  *   - violations: tags of every rule that fired (for logging / telemetry).
  */
-export function complianceFilter(text, lang) {
+export function complianceFilter(text, lang, opts) {
   if (!text) return { text: text || '', violations: [] };
+  var now = (opts && opts.now) || new Date();
   var out = text;
   var violations = [];
   var safe = SAFE_REPLACEMENT[lang === 'en' ? 'en' : 'es'];
@@ -131,9 +133,18 @@ export function complianceFilter(text, lang) {
   //    ("verificar si aplica un Período Especial", "no quiero asumir que
   //    existe un Periodo Especial") are compliant and intentionally NOT
   //    matched by these claim patterns.
+  // AUDIT 2026-07-27 (BUG 4a) — Spanish variants + hedged likelihood forms.
+  // "Es muy probable que califique para un Período Especial" asserts the SEP
+  // just as hard as "usted tiene un SEP"; both are rewritten. Verification
+  // framing ("verificar si aplica un Período Especial") is still allowed.
   var SEP_CLAIM_RES = [
     /\b(usted\s+)?(tiene|tendr[ií]a|podr[ií]a\s+tener|puede\s+tener|podr[ií]a\s+calificar\s+para|califica\s+para)\b[^.!?]{0,50}\b(per[ií]odo\s+especial|special\s+enrollment|\bSEP\b)/i,
     /\byou\s+(may|might|could|likely|probably|do)?\s*(have|qualify\s+for|be\s+eligible\s+for|are\s+eligible\s+for)\b[^.!?]{0,50}\b(special\s+enrollment|\bSEP\b)/i,
+    /\b(es\s+(muy\s+)?probable\s+que|seguramente|probablemente|casi\s+seguro\s+que)\b[^.!?]{0,60}\b(per[ií]odo\s+especial|special\s+enrollment|\bSEP\b)/i,
+    /\byou\s+(most\s+likely|almost\s+certainly|probably|likely)\b[^.!?]{0,50}\b(special\s+enrollment|\bSEP\b)/i,
+    // Lookbehinds keep verification framing ("verificar si le aplica un
+    // Período Especial" / "check whether a SEP applies") allowed.
+    /(?<!\bsi\s)(?<!\bwhether\s)\b(aplicar[ií]a|le\s+aplica|se\s+aplica)\s+(un\s+)?(per[ií]odo\s+especial|\bSEP\b)/i,
     /\bsin\s+esperar\s+(a|hasta)\s+octubre\b/i,
     /\bwithout\s+waiting\s+(for|until)\s+october\b/i,
   ];
@@ -159,6 +170,66 @@ export function complianceFilter(text, lang) {
     if (!/no quiero asumir que existe un periodo especial|don'?t want to assume a special enrollment/i.test(out)) {
       out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + sepSafe : sepSafe;
     }
+  }
+
+  // 5) AUDIT 2026-07-27 (BUG 1 — date math). The LLM told a caller born in
+  //    1950 they were "turning 65 in January 2015" as if it were upcoming.
+  //    Deterministic backstop: any FUTURE-tense "turning 65 in <year>" claim
+  //    where <year> is before the current year is wrong by construction —
+  //    the caller already turned 65. Strip the sentence and append the
+  //    correct statement. Past-tense ("you turned 65 in 2015") is a correct
+  //    statement about the past and is intentionally NOT matched.
+  var TURN65_FUTURE_RES = [
+    // "you're turning 65 in January 2015" / "will turn 65 in 2015"
+    /\b(?:you(?:'re| are| will| would)?(?:\s+be)?\s+)?turn(?:ing|s)?\s+65\b[^.!?]{0,40}?\bin\s+(?:\w+\s+(?:of\s+)?)?((?:19|20)\d{2})\b/i,
+    // "cumple/cumplirá (los) 65 en enero de 2015" / "va a cumplir 65 en 2015"
+    /\b(?:va\s+a\s+cumplir|cumplir[aá]|cumple|estar[aá]\s+cumpliendo)\s+(?:los\s+)?65\b[^.!?]{0,40}?\ben\s+(?:\w+\s+(?:de[l]?\s+)?)?((?:19|20)\d{2})\b/i,
+  ];
+  var TURN65_SAFE = {
+    es: 'Según la fecha de nacimiento que compartió, usted ya cumplió los 65 años, así que su Período de Inscripción Inicial ya pasó. Un asesor licenciado puede verificar qué período de inscripción tiene disponible ahora.',
+    en: 'Based on the birth date you shared, you have already turned 65, so your Initial Enrollment Period is in the past. A licensed advisor can verify which enrollment period may be available to you now.',
+  };
+  var currentYear = now.getFullYear();
+  var turn65Hit = false;
+  for (var ti = 0; ti < TURN65_FUTURE_RES.length; ti++) {
+    var tm = out.match(TURN65_FUTURE_RES[ti]);
+    if (tm && parseInt(tm[1], 10) < currentYear) {
+      turn65Hit = true;
+      violations.push('turning_65_past_year:' + tm[1]);
+    }
+  }
+  if (turn65Hit) {
+    var t65Safe = TURN65_SAFE[lang === 'en' ? 'en' : 'es'];
+    var t65Sentences = out.split(/(?<=[.!?])\s+/);
+    var t65Clean = t65Sentences.filter(function (s) {
+      for (var tj = 0; tj < TURN65_FUTURE_RES.length; tj++) {
+        var sm = s.match(TURN65_FUTURE_RES[tj]);
+        if (sm && parseInt(sm[1], 10) < currentYear) return false;
+      }
+      return true;
+    });
+    out = t65Clean.join(' ').trim();
+    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + t65Safe : t65Safe;
+  }
+
+  // 6) AUDIT 2026-07-27 (BUG 4a — invented causes). For "my doctor doesn't
+  //    accept my plan" the LLM invented "it's almost always because the
+  //    provider may be leaving the plan's network". Clara does NOT know the
+  //    reason. Any hedged-generalization + "because" + network/provider/plan
+  //    causal claim is stripped and replaced with the neutral ask-what-they-
+  //    said phrasing (EN + ES).
+  var INVENTED_CAUSE_RE = /\b(almost\s+always|usually|typically|generally|most\s+often|in\s+most\s+cases|casi\s+siempre|usualmente|generalmente|normalmente|por\s+lo\s+general|en\s+la\s+mayor[ií]a\s+de\s+los\s+casos)\b[^.!?]{0,80}\b(because|porque|debido\s+a)\b[^.!?]{0,120}\b(network|red|provider|proveedor|plan)\b/i;
+  var INVENTED_CAUSE_SAFE = {
+    es: 'No quiero asumir el motivo sin conocerlo. ¿Le explicó el consultorio o el plan qué fue exactamente lo que cambió? Un asesor licenciado puede revisar su situación con usted, sin costo.',
+    en: "I don't want to assume the reason without knowing it. Did the office or the plan explain exactly what changed? A licensed advisor can review your situation with you, at no cost.",
+  };
+  if (INVENTED_CAUSE_RE.test(out)) {
+    violations.push('invented_cause_generalization');
+    var icSafe = INVENTED_CAUSE_SAFE[lang === 'en' ? 'en' : 'es'];
+    var icSentences = out.split(/(?<=[.!?])\s+/);
+    var icClean = icSentences.filter(function (s) { return !INVENTED_CAUSE_RE.test(s); });
+    out = icClean.join(' ').trim();
+    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + icSafe : icSafe;
   }
 
   return { text: out, violations: violations };

@@ -341,7 +341,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
+            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="(d{3}) d{3}-d{4}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
             {errors.phone && <p role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
           </div>
           <div>
@@ -351,7 +351,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
           <div>
             <label htmlFor={fid('zip')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
-            <input id={fid('zip')} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
+            <input id={fid('zip')} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} pattern="[0-9]{5}" value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
             {errors.zip && <p role="alert" className="text-xs text-red-700 mt-1">{errors.zip}</p>}
           </div>
           <div>
@@ -445,7 +445,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
         </form>
         <p className="text-center text-sm text-earth-700 mt-3 flex items-center justify-center gap-1">
           <LockIcon className="w-3 h-3" />
-          {t('Your information is secure and never sold.', 'Su información es segura y nunca se vende.')}
+          {t('We protect your information and only use it to connect you with a licensed advisor.', 'Protegemos su información y la usamos solo para conectarle con un asesor licenciado.')}
         </p>
         <p className="text-center text-sm text-earth-700 mt-1">
           {t('Reply STOP to unsubscribe. Message frequency may vary.', 'Responda STOP para cancelar. La frecuencia de mensajes puede variar.')}

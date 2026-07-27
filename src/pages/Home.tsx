@@ -68,8 +68,8 @@ const faqItems = [
   {
     q: 'When can I enroll or change my Medicare plan?',
     qEs: '¿Cuándo puedo inscribirme o cambiar mi plan de Medicare?',
-    a: 'Key enrollment periods: Initial Enrollment (3 months before/after turning 65), Annual Open Enrollment (Oct 15–Dec 7), Medicare Advantage Open Enrollment (Jan 1–Mar 31), and Special Enrollment Periods for qualifying life events.',
-    aEs: 'Períodos clave: Inscripción Inicial (3 meses antes/después de cumplir 65), Inscripción Abierta Anual (15 oct–7 dic), Inscripción Abierta de Medicare Advantage (1 ene–31 mar), y Períodos Especiales por eventos de vida calificados.',
+    a: 'Key enrollment periods: Initial Enrollment (a 7-month window: the 3 months before your 65th-birthday month, that month, and the 3 months after), Annual Open Enrollment (Oct 15–Dec 7), Medicare Advantage Open Enrollment (Jan 1–Mar 31), and Special Enrollment Periods for qualifying life events.',
+    aEs: 'Períodos clave: Inscripción Inicial (una ventana de 7 meses: los 3 meses antes del mes en que cumple 65, ese mes, y los 3 meses después), Inscripción Abierta Anual (15 oct–7 dic), Inscripción Abierta de Medicare Advantage (1 ene–31 mar), y Períodos Especiales por eventos de vida calificados.',
   },
   {
     q: 'Do I have to change my doctors?',
@@ -86,8 +86,8 @@ const faqItems = [
   {
     q: 'Is my personal information safe?',
     qEs: '¿Está segura mi información personal?',
-    a: 'Absolutely. We do not sell, share, or distribute your personal information. We use it only to help you review your plan options. Our systems use industry-standard security protocols.',
-    aEs: 'Absolutamente. No vendemos, compartimos ni distribuimos su información personal. La usamos únicamente para ayudarle a revisar sus opciones de plan. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
+    a: 'We take that seriously. We protect your information and use it only to connect you with a licensed advisor and review your plan options — we do not sell, share, or distribute it. Our systems use industry-standard security protocols.',
+    aEs: 'Lo tomamos muy en serio. Protegemos su información y la usamos únicamente para conectarle con un asesor licenciado y revisar sus opciones de plan — no la vendemos, compartimos ni distribuimos. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
   },
 ];
 

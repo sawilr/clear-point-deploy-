@@ -22,6 +22,10 @@ import { noStorePII } from './_lib/security-headers.js';
 // injecting the module here means: update a CMS rule once in
 // api/_lib/medicare-knowledge.js → every assistant benefits immediately.
 import { MEDICARE_KNOWLEDGE } from './_lib/medicare-knowledge.js';
+// AUDIT 2026-07-27 — deterministic date-math grounding (BUG 1) and per-message
+// language mirroring (BUG 4b). See each module for the audit transcripts.
+import { extractBirthDate, buildAgeGroundingNote, redactBirthDate } from './_lib/date-grounding.js';
+import { detectMessageLang } from './_lib/lang-detect.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -409,6 +413,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'history too long' });
   }
   var userMessage = typeof body.userMessage === 'string' ? body.userMessage.slice(0, 2000) : '';
+  // AUDIT 2026-07-27 (BUG 1) — extract a birth date BEFORE any scrubbing so the
+  // age math can be computed in code; the raw DOB itself is then redacted and
+  // only the computed result travels to the LLM as a [System note].
+  var _now = new Date();
+  var _birthDate = extractBirthDate(userMessage, _now);
+  var ageGroundingNote = null;
+  if (_birthDate) {
+    ageGroundingNote = buildAgeGroundingNote(_birthDate, _now);
+    userMessage = redactBirthDate(userMessage, _birthDate);
+  }
+  // AUDIT 2026-07-27 (BUG 4b) — the reply language mirrors the LATEST user
+  // message, not the session. Detected deterministically; falls back to the
+  // session context language when the message has no clear signal.
+  var _turnLang = detectMessageLang(userMessage);
   // PHASE 9A — scrub PHI BEFORE it reaches Anthropic. Audit any redactions.
   var phiResult = scrubPHI(userMessage);
   userMessage = phiResult.text;
@@ -496,7 +514,7 @@ export default async function handler(req, res) {
   }
 
   // Build the message list for Claude
-  var contextSummary = buildContextSummary(conversationContext);
+  var contextSummary = buildContextSummary(conversationContext, _turnLang, _now);
   var messages = [];
   // Replay last 12 turns as user/assistant pairs (Anthropic format)
   var recent = conversationHistory.slice(-12);
@@ -521,7 +539,9 @@ export default async function handler(req, res) {
   // below) so it reaches the LLM even after there's conversation history.
   // Previously it was prepended to the FIRST user turn only and was lost once
   // history existed — which meant state-appropriate answers stopped working.
-  messages.push({ role: 'user', content: userMessage });
+  // BUG 1 — the deterministic age note rides WITH the message so the model
+  // grounds every age/enrollment statement on code-computed figures.
+  messages.push({ role: 'user', content: ageGroundingNote ? userMessage + '\n\n' + ageGroundingNote : userMessage });
 
   // Anthropic API call
   try {
@@ -622,7 +642,9 @@ export default async function handler(req, res) {
 
     // ── A15.5 Compliance post-filter v2 (shared module) ────────────────
     // Strips carrier names, eligibility confirmations, network claims, etc.
-    var lang = (body.context && body.context.language) || 'es';
+    // BUG 4b — the deterministic disclaimers/rewrites use the LATEST-message
+    // language, so a Spanish turn never gets an English safe-replacement.
+    var lang = _turnLang || (body.context && body.context.language) || 'es';
     var filtered = complianceFilter(cleanText, lang);
     cleanText = filtered.text;
     if (filtered.violations.length) {
@@ -649,10 +671,24 @@ export default async function handler(req, res) {
   }
 }
 
-function buildContextSummary(ctx) {
-  if (!ctx) return '';
+function buildContextSummary(ctx, turnLang, now) {
   var lines = [];
-  if (ctx.language) lines.push('Caller language: ' + (ctx.language === 'es' ? 'Spanish — RESPOND IN SPANISH USING USTED FORM ONLY (su / tiene / puede — NEVER tu / tienes / puedes)' : 'English'));
+  // AUDIT 2026-07-27 (BUG 1) — the model has no reliable "today"; a caller
+  // born in 1950 was told they were "turning 65 in January 2015" as a future
+  // event. Injected in THIS dynamic block (not the cached SYSTEM_PROMPT) so
+  // the prompt cache never goes stale as the date changes.
+  var iso = (now || new Date()).toISOString().slice(0, 10);
+  lines.push("Today's date: " + iso + '. Use it for ALL age and enrollment-period calculations — never assume a different current year, and never describe a past year as upcoming.');
+  ctx = ctx || {};
+  // AUDIT 2026-07-27 (BUG 4b) — per-message language mirror. The LATEST
+  // message's detected language outranks the session preference; live
+  // transcripts showed English replies to Spanish messages mid-conversation.
+  var effLang = turnLang || ctx.language;
+  if (effLang) {
+    lines.push('REPLY LANGUAGE (latest message): ' + (effLang === 'es'
+      ? 'Spanish — the caller\'s LATEST message is in Spanish. You MUST write this reply in Spanish USING USTED FORM ONLY (su / tiene / puede — NEVER tu / tienes / puedes), even if earlier turns were in English.'
+      : 'English — the caller\'s LATEST message is in English. You MUST write this reply in English, even if earlier turns were in Spanish.'));
+  }
   if (ctx.zipCode) lines.push('Caller ZIP: ' + ctx.zipCode + (ctx.state ? ' (' + ctx.state + ')' : '') + ' — ALREADY CAPTURED. Use it as the service ZIP. NEVER ask the caller for their ZIP again.');
   if (ctx.zipCode && ctx.state) lines.push('You ALREADY KNOW the caller lives in ' + ctx.state + ' (derived from their ZIP above). NEVER ask which state they live in (NY/NJ/CT) and NEVER ask for the ZIP again. You already have both. Use the state directly: for a Medicaid/Medicaid-program question, answer using ' + ctx.state + ' specifics (e.g. "In New York, Medicaid is handled through the state Medicaid agency...") rather than asking which state. Re-asking something the caller already gave is a failure.');
   if (ctx.state) { var sp = buildStatePrograms(ctx.state); if (sp) lines.push(sp); }

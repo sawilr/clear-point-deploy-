@@ -10,7 +10,11 @@
 
 import { PHRASE_BANK, type PhraseKey } from '../data/customerServiceIntents.ts';
 // PHASE D — canonical language policy (priority rules, false-positive guard).
-import { resolveLanguage as _resolveLanguage } from './orchestrator/languagePolicy.ts';
+import { resolveLanguage as _resolveLanguage, detectMessageLanguage as _detectMessageLanguage } from './orchestrator/languagePolicy.ts';
+// AUDIT 2026-07-27 (BUG 2) — soft health-disclosure tier (meds / diagnosis /
+// doctor name / DOB): classify to answer ONCE with a privacy note, and scrub
+// before anything reaches the LLM or a lead note.
+import { classifyHealthDisclosure as _classifyHealthDisclosure, scrubHealthDisclosures as _scrubHealthDisclosures, scrubSensitiveText as _scrubSensitiveText } from './phiPatterns.ts';
 // PHASE A7 — LLM bridge (Claude Haiku via /api/chat). Optional, fails gracefully.
 import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler.ts';
 // Sawil 2026-06-15 — hardened shared validators (substring profanity, fake
@@ -156,6 +160,10 @@ export interface ConversationState {
    *  Handlers must NOT loop back to the same offer; they pivot to
    *  topic-specific sub-chips or escalate. */
   advisorOfferDismissed?: boolean;
+  /** AUDIT 2026-07-27 (BUG 2) — TRUE once the soft health-privacy note was
+   *  shown. The note fires exactly once per conversation — later disclosures
+   *  are scrubbed silently, never nagged about. */
+  healthDisclosureNoted?: boolean;
   /** PHASE A3 — turn index (0-based) when an advisor offer was last emitted. */
   advisorOfferLastTurn?: number;
   /** PHASE A3 — count of consecutive loop-guard pivots fired in a row.
@@ -1488,11 +1496,13 @@ export function buildLeadNotes(state: ConversationState): string {
     || state.subIssue
     || '';
   if (subtype) lines.push(`Subtopic: ${subtype}`);
-  // User's own words — last 3 non-trivial user messages
+  // User's own words — last 3 non-trivial user messages.
+  // AUDIT 2026-07-27 (BUG 2) — scrubbed so meds/diagnoses/doctor names/DOBs
+  // never land in a lead note (advisor reviews health details by phone).
   const userWords = (state.messages || [])
     .filter((m) => m.role === 'user' && m.content && m.content.trim().length > 1)
     .slice(-3)
-    .map((m) => `"${m.content.replace(/\s+/g, ' ').slice(0, 120)}"`);
+    .map((m) => `"${_scrubSensitiveText(m.content.replace(/\s+/g, ' ')).slice(0, 120)}"`);
   if (userWords.length) lines.push(`User's own words: ${userWords.join(' | ')}`);
   // Known / unverified facts
   const known: string[] = [];
@@ -2207,7 +2217,42 @@ import { classifyIntent as _classifyIntent } from './classifier/classifyIntent.t
 import { correctTypos as _correctTypos } from './classifier/typoCorrect.ts';
 import { findStrongestPriorIntent as _findStrongestPriorIntent, isBackReference as _isBackReference } from './classifier/conversationMemory.ts';
 
+// AUDIT 2026-07-27 (BUG 3) — TERMINAL human-escalation intents. "Quiero
+// hablar con Sawil." got a triage question ("¿es sobre una factura, un
+// doctor...?") instead of the handoff. These intents skip ALL triage and enter
+// the existing rich handoff flow (name → phone → best-time → topic — that flow
+// is intentional and unchanged; only the pre-handoff triage question was the
+// bug). EN + ES, including angry loop signals.
+export function detectHumanEscalation(text: string): boolean {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return (
+    // Named principal: "hablar con Sawil" / "talk to Sawil"
+    /\b(hablar|talk|speak|comunicar(me)?)\b[^.?!]{0,20}\b(con|to|with)\s+sawil\b/i.test(t)
+    || /\bsawil\b/i.test(t) && /\b(quiero|necesito|dame|p[aá]same|want|need|get me|connect)\b/i.test(t)
+    // "quiero un humano / una persona / un agente / un asesor (de verdad)"
+    || /\b(quiero|necesito|deme|dame|prefiero|exijo)\s+(hablar\s+con\s+)?(un[a]?\s+)?(humano|persona(\s+real)?|agente|asesor[a]?|ser\s+humano|alguien\s+real)\b/i.test(t)
+    || /\b(human\s+advisor|real\s+person|live\s+person|actual\s+(person|human)|i\s+(need|want)\s+a\s+human(\s+now)?|give\s+me\s+a\s+human|speak\s+(to|with)\s+a\s+human|talk\s+to\s+a\s+human)\b/i.test(t)
+    // Angry loop signals — the caller is done with the bot.
+    || /\b(stuck\s+in\s+a\s+loop|going\s+(around\s+)?in\s+circles|me\s+tienen?\s+dando\s+vueltas|dando\s+vueltas\s+y\s+vueltas|estoy\s+atrapad[oa]\s+en\s+un\s+(bucle|ciclo)|no\s+quiero\s+(hablar\s+con\s+)?(un\s+)?(bot|robot|m[aá]quina)|stop\s+the\s+bot|no\s+more\s+bot)\b/i.test(t)
+  );
+}
+
+/** AUDIT 2026-07-27 (BUG 4b) — per-message reply language. Every deterministic
+ *  template (privacy note, escalation ack, handoff lines) mirrors the language
+ *  of the LATEST user message; the session language is only the fallback. */
+export function _turnLanguage(userMessage: string, state: ConversationState): 'en' | 'es' {
+  const det = _detectMessageLanguage(userMessage);
+  if (det.language && det.tokenCount >= 3 && det.score >= 0.6) return det.language;
+  return (state.language || 'es') === 'es' ? 'es' : 'en';
+}
+
 export function detectProblemType(text: string): string {
+  // AUDIT 2026-07-27 (BUG 3) — "hablar con Sawil" / "quiero un humano" /
+  // angry loop signals are TERMINAL escalation intents; they trump the
+  // classifier AND every topic pattern so the caller never gets a triage
+  // question first. Also intercepted pre-LLM in _runStructuralFirst via
+  // detectHumanEscalation (same phrase families).
+  if (detectHumanEscalation(text)) return 'advisor';
   // WAVE 51 — charitable typo correction. Real customer-service reads what
   // the customer MEANT. "famarcaia" → "farmacia", "mdiccna" → "medicina",
   // "ahorror" → "ahorrar" before classification runs.
@@ -4859,6 +4904,45 @@ export function _runStructuralFirst(
   if (isClosingIntent(userMessage) && !state.conversationClosed) {
     return processMessage(userMessage, state);
   }
+  // AUDIT 2026-07-27 (BUG 3) — TERMINAL escalation. "Quiero hablar con
+  // Sawil." / "I need a human now" / loop-anger must enter the handoff flow
+  // IMMEDIATELY — never a triage question first, never the LLM. The rich
+  // handoff (name → phone → best-time → topic) is unchanged; the ack line +
+  // first question replace only the pre-handoff triage. Reply mirrors the
+  // language of THIS message (BUG 4b), not the session lock.
+  if (!state.advisorHandoffStarted && detectHumanEscalation(userMessage)) {
+    const escEs = _turnLanguage(userMessage, state) === 'es';
+    const mentionsSawil = /\bsawil\b/i.test(userMessage);
+    const ack = mentionsSawil
+      ? (escEs ? 'Con gusto — le conecto con Sawil.' : 'Of course — let me connect you with Sawil.')
+      : (escEs ? 'Con gusto — le conecto con un asesor licenciado.' : 'Of course — let me connect you with a licensed advisor.');
+    const askName = escEs
+      ? ' Para que pueda comunicarse con usted, ¿cuál es su nombre, por favor?'
+      : " So they can reach you, what's your name, please?";
+    const askPhone = escEs
+      ? ' ¿A qué número de teléfono le pueden llamar?'
+      : ' What phone number can they call you at?';
+    const needsName = !state.name;
+    const needsPhone = !state.phoneNumber;
+    const out = ack + (needsName ? askName : needsPhone ? askPhone : (escEs
+      ? ' Ya tengo sus datos — un asesor le contactará pronto, o puede llamar ahora al 1-855-720-8555.'
+      : ' I already have your details — an advisor will contact you shortly, or you can call now at 1-855-720-8555.'));
+    const newState: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      advisorHandoffStarted: true,
+      advisorHandoffReason: state.advisorHandoffReason || 'user_requested_human',
+      needsHuman: true,
+      lastBotIntent: needsName ? 'handoff_asking_name' : needsPhone ? 'handoff_asking_phone' : 'handoff_complete',
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: out, timestamp: Date.now() },
+      ],
+    };
+    return { response: out, newState, needsHuman: true };
+  }
   // Sawil 2026-06-25 — CONSENT → CAPTURE. If OUR last message asked for TCPA
   // consent ("¿autoriza que un asesor licenciado de ClearPoint le contacte?")
   // and the caller AFFIRMS (sí / yes / acepto / autorizo / dale), START the
@@ -4987,10 +5071,46 @@ export async function processMessageAsync(
   const structural = _runStructuralFirst(userMessage, state);
   if (structural) return structural;
 
+  // AUDIT 2026-07-27 (BUG 4b) — every reply mirrors the language of THIS
+  // message; the session language is only the fallback.
+  const turnLang = _turnLanguage(userMessage, state);
+
+  // AUDIT 2026-07-27 (BUG 2) — SOFT health-disclosure guard, ONCE per
+  // conversation. Meds / diagnosis / doctor name volunteered by the caller
+  // get a brief privacy note + pivot (never echoed back, never sent to the
+  // LLM raw). Later disclosures are scrubbed silently — no nagging.
+  // A birth date is NOT intercepted here: it flows to the server, which
+  // computes the age deterministically and redacts the DOB itself (BUG 1) —
+  // so an enrollment-timing question still gets a correct answer. The DOB is
+  // still scrubbed from history and lead notes.
+  const _healthDisclosure = _classifyHealthDisclosure(userMessage);
+  if (!state.healthDisclosureNoted && _healthDisclosure && _healthDisclosure.type !== 'birth_date') {
+    const noteEs = turnLang === 'es';
+    const note = noteEs
+      ? 'Para proteger su privacidad, no necesita compartir medicamentos, diagnósticos ni otros datos médicos en este chat — un asesor licenciado puede revisar esos detalles de forma segura por teléfono. Dicho esto, con gusto le ayudo de forma general: ¿qué le gustaría saber sobre su cobertura o sus opciones?'
+      : "To protect your privacy, you don't need to share medication or health details in this chat — a licensed advisor will review that securely by phone. That said, I'm happy to help in general terms: what would you like to know about your coverage or options?";
+    const noteState: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      healthDisclosureNoted: true,
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: note, timestamp: Date.now() },
+      ],
+      lastBotIntent: 'llm_response',
+    };
+    return { response: note, newState: noteState, needsHuman: false };
+  }
+
   // 2) LLM brain.
   const history = _buildHistory(state.messages || []);
-  const llmRes = await _callLLM(userMessage, history, {
-    language: state.language,
+  // BUG 2 — health details are scrubbed from the outbound message so the LLM
+  // can never echo them. Birth dates stay: the server extracts them for
+  // deterministic age grounding, then redacts them itself (BUG 1).
+  const llmUserMessage = _scrubHealthDisclosures(userMessage, { includeBirthDates: false });
+  const llmRes = await _callLLM(llmUserMessage, history, {
+    language: turnLang,
     zipCode: state.zipCode,
     state: state.state,
     name: state.name,
@@ -5010,7 +5130,8 @@ export async function processMessageAsync(
   }
 
   // 4) Apply LLM meta tags.
-  const isEs = (state.language || 'es') === 'es';
+  // BUG 4b — deterministic template language mirrors the LATEST user message.
+  const isEs = turnLang === 'es';
 
   // Sawil 2026-06-12 — DETERMINISTIC ZIP/state anti-re-ask guard. The prompt
   // tells the LLM never to re-ask the ZIP, but it slips ~1 in 5. When a valid

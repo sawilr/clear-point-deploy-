@@ -89,8 +89,8 @@ export function CookieConsent() {
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 pr-28 md:pr-32 min-[1440px]:pr-0">
         <p className="flex-1 text-base leading-relaxed">
           {t(
-            'We use cookies for our chat service and site analytics. See our ',
-            'Usamos cookies para el servicio de chat y estadísticas del sitio. Vea nuestra '
+            'We use cookies for our chat service. See our ',
+            'Usamos cookies para el servicio de chat. Vea nuestra '
           )}
           <Link
             to={lp('/privacy-policy')}

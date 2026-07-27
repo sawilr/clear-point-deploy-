@@ -60,6 +60,22 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
 
   const lang: Lang = urlIsSpanish ? 'es' : storedLang;
 
+  // Sawil 2026-07-27 AUDIT CP-001 — a Spanish-preference visitor landing on an
+  // ENGLISH URL that has an /es twin is redirected once (replace, first load
+  // only) so URL, content and hreflang never disagree. Not keyed on later
+  // navigations: an explicit EN toggle sets the stored pref to 'en' first, so
+  // this can never loop against it.
+  const navigate = useNavigate();
+  const [redirectChecked, setRedirectChecked] = useState(false);
+  useEffect(() => {
+    if (redirectChecked) return;
+    setRedirectChecked(true);
+    if (storedLang === 'es' && !urlIsSpanish && !NO_ES_TWIN.test(pathname)) {
+      navigate(toSpanishPath(pathname) + window.location.search + window.location.hash, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Landing on an /es URL updates the stored preference so the choice persists
   // if the user later follows a link into the English URL space. Keyed on
   // pathname ONLY: re-syncing on storedLang would race the EN toggle while
