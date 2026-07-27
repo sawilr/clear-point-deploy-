@@ -1,14 +1,16 @@
 import { useNavigate } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { PhoneIcon, CalendarIcon } from './icons';
 
 export function MobileStickyBar() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  // Sawil 2026-07-27 ES ROUTES — CTA stays inside /es while browsing Spanish.
+  const lp = useLocalizedPath();
 
   const handleFreeReview = () => {
     // `?focus=name` signals LeadForm to autofocus the First Name field on mount.
-    navigate('/contact?focus=name');
+    navigate(lp('/contact') + '?focus=name');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#lead-form-heading');
       if (el) {

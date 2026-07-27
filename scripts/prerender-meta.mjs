@@ -27,13 +27,15 @@ if (!existsSync(distIndex)) { console.error('[prerender-meta] dist/index.html mi
 const baseHtml = readFileSync(distIndex, 'utf8');
 
 // Extract PAGE_META entries: '/route': { title: '...', titleEs: '...', description: '...', descriptionEs: '...' }
-const entryRe = /'(\/[a-z-]*)':\s*\{\s*title:\s*'((?:[^'\\]|\\.)*)',\s*titleEs:\s*'(?:[^'\\]|\\.)*',\s*description:\s*'((?:[^'\\]|\\.)*)',/g;
+// Sawil 2026-07-27 ES ROUTES — titleEs/descriptionEs are now captured too so the
+// /es/<route> twins get pre-JS Spanish metadata baked the same way.
+const entryRe = /'(\/[a-z-]*)':\s*\{\s*title:\s*'((?:[^'\\]|\\.)*)',\s*titleEs:\s*'((?:[^'\\]|\\.)*)',\s*description:\s*'((?:[^'\\]|\\.)*)',\s*descriptionEs:\s*'((?:[^'\\]|\\.)*)',/g;
 const unesc = (s) => s.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const routes = [];
 let m;
 while ((m = entryRe.exec(src)) !== null) {
-  routes.push({ path: m[1], title: unesc(m[2]), description: unesc(m[3]) });
+  routes.push({ path: m[1], title: unesc(m[2]), titleEs: unesc(m[3]), description: unesc(m[4]), descriptionEs: unesc(m[5]) });
 }
 if (routes.length < 13) {
   console.error(`[prerender-meta] FATAL: extracted only ${routes.length} routes from RouteMeta.tsx (expected >= 13). Aborting so metadata never silently regresses.`);
@@ -51,37 +53,70 @@ routes.push({
   noindex: true,
 });
 
-function renderRoute(route) {
-  const canonical = SITE + (route.path === '/' ? '/' : route.path);
+// Sawil 2026-07-27 ES ROUTES — '/' → '/es', '/about' → '/es/about'.
+const esPath = (p) => (p === '/' ? '/es' : `/es${p}`);
+
+function renderRoute(route, lang = 'en') {
+  const isEs = lang === 'es';
+  const urlPath = isEs ? esPath(route.path) : route.path;
+  const canonical = SITE + (urlPath === '/' ? '/' : urlPath);
+  const title = isEs ? route.titleEs : route.title;
+  const description = isEs ? route.descriptionEs : route.description;
   let html = baseHtml;
-  html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(route.title)}</title>`);
+  // Sawil 2026-07-27 ES ROUTES — Spanish pages declare their language pre-JS.
+  if (isEs) html = html.replace('<html lang="en">', '<html lang="es">');
+  html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
   if (route.noindex && !/name="robots"/.test(html)) {
     html = html.replace('</head>', `    <meta name="robots" content="noindex,follow" />\n  </head>`);
   }
-  html = html.replace(/(<meta name="description" content=")[^"]*(")/, `$1${esc(route.description)}$2`);
-  html = html.replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${esc(route.title)}$2`);
-  html = html.replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${esc(route.description)}$2`);
+  html = html.replace(/(<meta name="description" content=")[^"]*(")/, `$1${esc(description)}$2`);
+  html = html.replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${esc(title)}$2`);
+  html = html.replace(/(<meta property="og:description" content=")[^"]*(")/, `$1${esc(description)}$2`);
   html = html.replace(/(<meta property="og:url" content=")[^"]*(")/, `$1${canonical}$2`);
-  html = html.replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${esc(route.title)}$2`);
-  html = html.replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${esc(route.description)}$2`);
+  html = html.replace(/(<meta name="twitter:title" content=")[^"]*(")/, `$1${esc(title)}$2`);
+  html = html.replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${esc(description)}$2`);
   // Canonical: RouteMeta upserts the same tag client-side (querySelector), so
   // pre-seeding it is idempotent — no duplicate tag after hydration.
   if (!/rel="canonical"/.test(html)) {
     html = html.replace('</head>', `    <link rel="canonical" href="${canonical}" />\n  </head>`);
   }
+  // Sawil 2026-07-27 ES ROUTES — hreflang cluster per content page (en / es /
+  // x-default→en). RouteMeta re-creates the same set client-side (it removes
+  // stale alternates on every route change), so pre-seeding stays idempotent.
+  if (!route.noindex) {
+    const enUrl = SITE + (route.path === '/' ? '/' : route.path);
+    const esUrl = SITE + esPath(route.path);
+    html = html.replace('</head>',
+      `    <link rel="alternate" hreflang="en" href="${enUrl}" />\n` +
+      `    <link rel="alternate" hreflang="es" href="${esUrl}" />\n` +
+      `    <link rel="alternate" hreflang="x-default" href="${enUrl}" />\n  </head>`);
+  }
   return html;
 }
 
-let written = 0;
-for (const route of routes) {
-  const html = renderRoute(route);
-  if (route.path === '/') {
+function writeRoute(urlPath, html) {
+  if (urlPath === '/') {
     writeFileSync(distIndex, html, 'utf8');
   } else {
-    const dir = join(root, 'dist', route.path.slice(1));
+    const dir = join(root, 'dist', urlPath.slice(1));
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'index.html'), html, 'utf8');
   }
-  written++;
 }
-console.log(`[prerender-meta] wrote pre-JS metadata for ${written} routes: ${routes.map(r => r.path).join(' ')}`);
+
+let written = 0;
+const writtenPaths = [];
+for (const route of routes) {
+  writeRoute(route.path, renderRoute(route, 'en'));
+  writtenPaths.push(route.path);
+  written++;
+  // Sawil 2026-07-27 ES ROUTES — every content route also gets its /es twin
+  // with Spanish title/description baked in. /thank-you (noindex, no titleEs)
+  // stays EN-only by design.
+  if (!route.noindex) {
+    writeRoute(esPath(route.path), renderRoute(route, 'es'));
+    writtenPaths.push(esPath(route.path));
+    written++;
+  }
+}
+console.log(`[prerender-meta] wrote pre-JS metadata for ${written} routes: ${writtenPaths.join(' ')}`);

@@ -1,8 +1,32 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router';
 
 export type Lang = 'en' | 'es';
 
 const STORAGE_KEY = 'clearpoint_lang';
+
+// Sawil 2026-07-27 ES ROUTES (SEO) — every content page now has an indexable
+// Spanish twin under /es (e.g. /es/medicare-advantage). These helpers are the
+// single source of truth for mapping between the EN and ES URL spaces.
+export function isSpanishPath(pathname: string): boolean {
+  return pathname === '/es' || pathname.startsWith('/es/');
+}
+
+/** Strip the /es prefix: '/es' → '/', '/es/about' → '/about'. EN paths pass through. */
+export function toEnglishPath(pathname: string): string {
+  return pathname === '/es' ? '/' : pathname.replace(/^\/es\//, '/');
+}
+
+/** Add the /es prefix: '/' → '/es', '/about' → '/es/about'. Already-ES paths pass through. */
+export function toSpanishPath(pathname: string): string {
+  const base = toEnglishPath(pathname);
+  return base === '/' ? '/es' : `/es${base}`;
+}
+
+// Routes with NO /es twin: /soa/:token (per-user, 24h secure links — never
+// indexed) and /thank-you (post-submit confirmation, noindex). Switching
+// language on these stays client-side only, exactly as before.
+const NO_ES_TWIN = /^\/(soa\/|thank-you$)/;
 
 interface LanguageContextValue {
   lang: Lang;
@@ -13,7 +37,15 @@ interface LanguageContextValue {
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [lang, setLangState] = useState<Lang>(() => {
+  // Sawil 2026-07-27 ES ROUTES — the URL wins: any /es URL is Spanish no matter
+  // what the stored preference or browser language says. English URLs keep the
+  // original behavior (stored preference → browser language → 'en').
+  // Provider is mounted inside <BrowserRouter> (see main.tsx), so useLocation
+  // is safe and covers back/forward (popstate) navigation too.
+  const { pathname } = useLocation();
+  const urlIsSpanish = isSpanishPath(pathname);
+
+  const [storedLang, setLangState] = useState<Lang>(() => {
     if (typeof window !== 'undefined') {
       // PHASE 6 — Safari Private Browsing throws SecurityError on localStorage.
       try {
@@ -25,6 +57,16 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     }
     return 'en';
   });
+
+  const lang: Lang = urlIsSpanish ? 'es' : storedLang;
+
+  // Landing on an /es URL updates the stored preference so the choice persists
+  // if the user later follows a link into the English URL space. Keyed on
+  // pathname ONLY: re-syncing on storedLang would race the EN toggle while
+  // react-router's startTransition navigation is still pending on /es/*.
+  useEffect(() => {
+    if (isSpanishPath(pathname)) setLangState('es');
+  }, [pathname]);
 
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* private mode */ }
@@ -59,4 +101,35 @@ export function useLanguage() {
     throw new Error('useLanguage must be used within a LanguageProvider');
   }
   return ctx;
+}
+
+// Sawil 2026-07-27 ES ROUTES — language switch that also moves the URL into the
+// matching language space: ES on /about → /es/about, EN on /es/about → /about
+// (search + hash preserved). Routes without an /es twin (/soa/*, /thank-you)
+// switch client-side only, as before. Used by the header LanguageToggle and by
+// Zara's language chips.
+export function useLanguageNavigate(): (l: Lang) => void {
+  const { setLang } = useLanguage();
+  const navigate = useNavigate();
+  const location = useLocation();
+  return useCallback((l: Lang) => {
+    setLang(l);
+    const { pathname, search, hash } = location;
+    const base = toEnglishPath(pathname);
+    if (NO_ES_TWIN.test(base)) return;
+    const target = l === 'es' ? toSpanishPath(pathname) : base;
+    if (target !== pathname) navigate(target + search + hash);
+  }, [setLang, navigate, location]);
+}
+
+// Sawil 2026-07-27 ES ROUTES — returns a function that prefixes internal link
+// targets with /es while the visitor is browsing the Spanish URL space, so
+// navigation (and crawlers following it) stays inside /es/*.
+export function useLocalizedPath(): (path: string) => string {
+  const { pathname } = useLocation();
+  const urlIsSpanish = isSpanishPath(pathname);
+  return useCallback((path: string) => {
+    if (!urlIsSpanish || isSpanishPath(path) || NO_ES_TWIN.test(path)) return path;
+    return path === '/' ? '/es' : `/es${path}`;
+  }, [urlIsSpanish]);
 }

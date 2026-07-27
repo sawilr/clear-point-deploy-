@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { useLocation } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, isSpanishPath, toEnglishPath, toSpanishPath } from '../hooks/useLanguage';
 
 // Sawil 2026-06 — UNIQUE per-page <title> + meta description (SEO).
 // Before this, every route shared the single static title/description from
@@ -111,11 +111,21 @@ export function RouteMeta() {
   const { pathname } = useLocation();
   useEffect(() => {
     if (typeof document === 'undefined') return;
-    const m = PAGE_META[pathname] || FALLBACK;
-    const title = lang === 'es' ? m.titleEs : m.title;
-    const desc = lang === 'es' ? m.descriptionEs : m.description;
+    // Sawil 2026-07-27 ES ROUTES (SEO) — /es twins reuse the PAGE_META entry
+    // keyed by their English path. A Spanish URL ALWAYS serves the Spanish
+    // title/description (URL wins over the client-side language preference);
+    // English URLs keep the original lang-driven behavior.
+    const urlIsSpanish = isSpanishPath(pathname);
+    const basePath = toEnglishPath(pathname);
+    const m = PAGE_META[basePath] || FALLBACK;
+    const useEs = urlIsSpanish || lang === 'es';
+    const title = useEs ? m.titleEs : m.title;
+    const desc = useEs ? m.descriptionEs : m.description;
     const url = SITE + pathname;
     document.title = title;
+    // <html lang> mirrors the URL language (es on /es/*), or the client-side
+    // preference on English URLs — same value the LanguageProvider writes.
+    document.documentElement.lang = useEs ? 'es' : 'en';
     let el = document.head.querySelector('meta[name="description"]');
     if (!el) {
       el = document.createElement('meta');
@@ -133,12 +143,12 @@ export function RouteMeta() {
     // 24h-expiring secure Scope-of-Appointment links. They must NEVER be indexed or
     // self-canonicalized (that would invite crawling/caching of tokenized secure URLs
     // and thin soft-404s once tokens expire). Force noindex + no canonical for /soa/*.
-    const isSoa = pathname.startsWith('/soa/');
+    const isSoa = basePath.startsWith('/soa/');
     // Sawil 2026-06-30 AUDIT FIX (SEO) — /thank-you is a post-submit confirmation
     // page. It has no PAGE_META, so indexing it served the homepage's title/description
     // as duplicate content. Treat it like /soa: noindex + no canonical.
-    const isThankYou = pathname === '/thank-you';
-    const isKnownRoute = !isSoa && !isThankYou && !!PAGE_META[pathname];
+    const isThankYou = basePath === '/thank-you';
+    const isKnownRoute = !isSoa && !isThankYou && !!PAGE_META[basePath];
     let link = document.head.querySelector('link[rel="canonical"]');
     if (isKnownRoute) {
       if (!link) {
@@ -146,11 +156,29 @@ export function RouteMeta() {
         link.setAttribute('rel', 'canonical');
         document.head.appendChild(link);
       }
-      link.setAttribute('href', url);
+      link.setAttribute('href', url); // self-referencing (the /es URL canonicalizes to itself)
       upsertMeta('name', 'robots', 'index, follow');
     } else {
       if (link) link.remove(); // omit canonical on a 404 (finding 12) or secure /soa page
       upsertMeta('name', 'robots', isSoa ? 'noindex, nofollow' : 'noindex, follow');
+    }
+
+    // Sawil 2026-07-27 ES ROUTES (SEO) — hreflang cluster per content page:
+    // en → English URL, es → /es twin, x-default → English URL. Stale tags from
+    // the previous route are removed first so the set stays exact on SPA
+    // navigation (same idempotent pattern as canonical/robots above).
+    document.head.querySelectorAll('link[rel="alternate"][hreflang]').forEach((el) => el.remove());
+    if (isKnownRoute) {
+      const enUrl = SITE + basePath;
+      const esUrl = SITE + toSpanishPath(basePath);
+      const alternates: Array<[string, string]> = [['en', enUrl], ['es', esUrl], ['x-default', enUrl]];
+      alternates.forEach(([hreflang, href]) => {
+        const alt = document.createElement('link');
+        alt.setAttribute('rel', 'alternate');
+        alt.setAttribute('hreflang', hreflang);
+        alt.setAttribute('href', href);
+        document.head.appendChild(alt);
+      });
     }
 
     // OG / Twitter por ruta (reusa el title/description únicos que ya existen).

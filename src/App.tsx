@@ -8,6 +8,7 @@ import { ScrollToTop } from './components/ScrollToTop'
 import { RouteMeta } from './components/RouteMeta'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { BotLauncher } from './components/BotLauncher'
+import { CookieConsent } from './components/CookieConsent'
 import { LanguageProvider } from './hooks/useLanguage'
 import { track, Events } from './lib/analytics'
 
@@ -37,13 +38,37 @@ const NotFound = lazy(() => import('./pages/NotFound'))
 // first paint, well before the user opens it via the launcher.
 const ChatBot = lazy(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot })))
 
+// Sawil 2026-07-27 ES ROUTES (SEO) — single source of truth for content routes.
+// Each entry renders at its English path AND at an indexable /es twin
+// (/es, /es/about, …). /thank-you, /soa/:token and the 404 catch-all stay
+// EN-only below (noindex pages — no Spanish twin by design).
+const CONTENT_ROUTES = [
+  { path: '/', element: <Home /> },
+  { path: '/about', element: <About /> },
+  { path: '/medicare-advantage', element: <MedicareAdvantage /> },
+  { path: '/part-d', element: <PartD /> },
+  { path: '/extra-help', element: <ExtraHelp /> },
+  { path: '/help-paying-costs', element: <HelpPayingCosts /> },
+  { path: '/otc-benefits', element: <OtcBenefits /> },
+  { path: '/support', element: <Support /> },
+  { path: '/resources', element: <Resources /> },
+  { path: '/contact', element: <Contact /> },
+  { path: '/privacy-policy', element: <PrivacyPolicy /> },
+  { path: '/accessibility', element: <Accessibility /> },
+  { path: '/terms', element: <Terms /> },
+]
+
+const esPath = (p: string) => (p === '/' ? '/es' : `/es${p}`)
+
 export default function App() {
   // Sawil 2026-06 — MobileStickyBar (the bottom CTA) is suppressed on
   // /support. Clara's chat shell sits flush at bottom-0 on mobile, and
   // a second fixed bar there would collide / cover the input. App is
   // mounted inside <BrowserRouter> (see main.tsx), so useLocation() is safe.
   const location = useLocation();
-  const isSupportPage = location.pathname === '/support';
+  // Sawil 2026-07-27 ES ROUTES — /es/support is the same Clara shell; the
+  // suppression rules (sticky bar, footer, Zara) apply to both URLs.
+  const isSupportPage = location.pathname === '/support' || location.pathname === '/es/support';
   // Generic, PII-free page_view on every route change (no-ops until GTM is set).
   useEffect(() => {
     track(Events.PAGE_VIEW, { event_category: 'navigation', page_path: location.pathname });
@@ -73,19 +98,13 @@ export default function App() {
             arrives (same-origin, typically &lt;100 ms), preventing a jump. */}
         <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" aria-live="polite" />}>
           <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/about" element={<About />} />
-            <Route path="/medicare-advantage" element={<MedicareAdvantage />} />
-            <Route path="/part-d" element={<PartD />} />
-            <Route path="/extra-help" element={<ExtraHelp />} />
-            <Route path="/help-paying-costs" element={<HelpPayingCosts />} />
-            <Route path="/otc-benefits" element={<OtcBenefits />} />
-            <Route path="/support" element={<Support />} />
-            <Route path="/resources" element={<Resources />} />
-            <Route path="/contact" element={<Contact />} />
-            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
-            <Route path="/accessibility" element={<Accessibility />} />
-            <Route path="/terms" element={<Terms />} />
+            {CONTENT_ROUTES.map(({ path, element }) => (
+              <Route key={path} path={path} element={element} />
+            ))}
+            {/* Sawil 2026-07-27 ES ROUTES — indexable Spanish twins under /es. */}
+            {CONTENT_ROUTES.map(({ path, element }) => (
+              <Route key={esPath(path)} path={esPath(path)} element={element} />
+            ))}
             <Route path="/thank-you" element={<ThankYou />} />
             {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
             <Route path="/soa/:token" element={<SignSOA />} />
@@ -99,6 +118,11 @@ export default function App() {
       {/* PHASE A18 — BotLauncher renders the floating button (eager, instant).
           Sawil 2026-06 — Zara's launcher + chat are suppressed on /support
           (Clara's surface); a floating Zara pill would collide there. */}
+      {/* Sawil 2026-07-27 — Cookie-consent banner (all routes, EN + /es twins).
+          Suppressed on /support like Footer/StickyBar: Clara's chat shell sits
+          flush at bottom-0 on mobile and a fixed bottom banner would cover her
+          input row. First visit only; choice persists in localStorage. */}
+      {!isSupportPage && <CookieConsent />}
       {!isSupportPage && <BotLauncher />}
       {!isSupportPage && <Suspense fallback={null}><ChatBot /></Suspense>}
     </div>

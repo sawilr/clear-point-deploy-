@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLanguageNavigate } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getNextMissingStep, buildZaraSummary } from '../lib/zaraReview';
 import { Calendar, ChevronRight, Mic, MicOff, Minus, Phone, RotateCcw, Send, User, X } from 'lucide-react';
@@ -2718,7 +2718,11 @@ function getFailMessage(language: ChatLanguage) {
 }
 
 export function ChatBot() {
-  const { lang, setLang, t } = useLanguage();
+  const { lang, t } = useLanguage();
+  // Sawil 2026-07-27 ES ROUTES — navigation wiring only: when the user picks a
+  // language in Zara's chips, the page URL follows (/x ↔ /es/x). Zara herself
+  // lives at App level, so her chat state survives the route change.
+  const setLangRouted = useLanguageNavigate();
   const initialLanguage = lang === 'es' ? 'es' : 'en';
 
   const [isOpen, setIsOpen] = useState(false);
@@ -3685,7 +3689,7 @@ export function ChatBot() {
 
   // ── Handle LANGUAGE SWITCH intent ────────────────────────────────────────────
   function handleLanguageSwitchIntent(targetLang: ChatLanguage) {
-    setLang(targetLang);
+    setLangRouted(targetLang);
     updateMemory({ language: targetLang, preferredLanguage: targetLang === 'es' ? 'Spanish' : 'English' });
 
     const currentStep = stepRef.current;
@@ -4006,7 +4010,7 @@ export function ChatBot() {
     /* Language */
     if (value === 'lang_en' || value === 'lang_es') {
       const selectedLanguage: ChatLanguage = value === 'lang_es' ? 'es' : 'en';
-      setLang(selectedLanguage);
+      setLangRouted(selectedLanguage);
       updateMemory({ language: selectedLanguage, preferredLanguage: languageLabel(selectedLanguage) });
       showOpeningChoice(selectedLanguage);
       return;

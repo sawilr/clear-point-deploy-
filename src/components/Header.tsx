@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLanguageNavigate, useLocalizedPath } from '../hooks/useLanguage';
 import { LanguageToggle } from './LanguageToggle';
 import { LogoSvg } from './LogoSvg';
 import { PhoneIcon, MenuIcon, CloseIcon, ChevronDown } from './icons';
@@ -19,7 +19,11 @@ const navLinks = [
 ];
 
 export function Header() {
-  const { lang, setLang, t } = useLanguage();
+  const { lang, t } = useLanguage();
+  // Sawil 2026-07-27 ES ROUTES — the toggle now moves the URL between the EN
+  // and /es URL spaces (SEO), and internal links stay inside the current one.
+  const setLang = useLanguageNavigate();
+  const lp = useLocalizedPath();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   const [educationOpen, setEducationOpen] = useState(false);
@@ -94,7 +98,7 @@ export function Header() {
     // `?focus=name` signals LeadForm to position the cursor on the First Name
     // field when it mounts — works reliably on mobile where the gesture chain
     // expires before setTimeout-based focus would fire.
-    navigate('/contact?focus=name');
+    navigate(lp('/contact') + '?focus=name');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#lead-form-heading');
       if (el) {
@@ -122,7 +126,7 @@ export function Header() {
     requestAnimationFrame(() => requestAnimationFrame(() => tryScroll(30)));
   };
 
-  const isHome = location.pathname === '/';
+  const isHome = location.pathname === '/' || location.pathname === '/es';
 
   /* Navigate to home then scroll to section — fixes broken nav from non-home pages.
      Defer scrollTo via double-rAF so closeNav()'s menu-drawer close commits BEFORE
@@ -136,7 +140,7 @@ export function Header() {
       requestAnimationFrame(() => requestAnimationFrame(() => scrollTo(id)));
       return;
     }
-    navigate('/');
+    navigate(lp('/'));
     // Double rAF + 30-frame retry budget (~500 ms at 60 fps) absorbs
     // HashRouter commit + Home page mount + scroll-reveal observers on
     // mid-range mobile. Matches the proven Free Review CTA pattern.
@@ -180,7 +184,7 @@ export function Header() {
         <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
           <div className="flex items-center justify-between h-[70px]">
             {/* Logo */}
-            <a href="/" onClick={(e) => { e.preventDefault(); navigate('/'); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
+            <a href="/" onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
               <div className="transition-transform group-hover:scale-105 flex-shrink-0">
                 <LogoSvg size={40} />
               </div>
@@ -195,14 +199,14 @@ export function Header() {
             {/* Desktop Nav — tighter gap at lg to fit longer Spanish labels without
                 squeezing the logo. Spanish "Revisión Inteligente" + "Períodos de
                 Inscripción" et al. add ~80px to row width vs English. */}
-            <div className="hidden lg:flex items-center gap-2 2xl:gap-4">
+            <div className="hidden lg:flex items-center gap-1.5 xl:gap-2 2xl:gap-4">
               {/* Services dropdown — products / coverage categories ClearPoint
                   is authorized to broker. Medicare Supplement / Medigap MOVED to
                   Education (per Sawil 2026-06: pending broker authorization). */}
               <div className="relative" ref={servicesRef}>
                 <button
                   onClick={() => { setServicesOpen(!servicesOpen); setEducationOpen(false); }}
-                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
+                  className="text-[13px] xl:text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
                   aria-expanded={servicesOpen}
                   aria-haspopup="menu"
                 >
@@ -211,10 +215,10 @@ export function Header() {
                 </button>
                 {servicesOpen && (
                   <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
-                    <Link to="/medicare-advantage" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
+                    <Link to={lp('/medicare-advantage')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
                     {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap relocated to Education dropdown below until ClearPoint is broker-authorized. */}
                     {/* <Link to="/medicare-supplement" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
-                    <Link to="/part-d" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
+                    <Link to={lp('/part-d')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900 whitespace-nowrap" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
                   </div>
                 )}
               </div>
@@ -225,7 +229,7 @@ export function Header() {
               <div className="relative" ref={educationRef}>
                 <button
                   onClick={() => { setEducationOpen(!educationOpen); setServicesOpen(false); }}
-                  className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
+                  className="text-[13px] xl:text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors flex items-center gap-1 whitespace-nowrap px-1 min-h-[44px]"
                   aria-expanded={educationOpen}
                   aria-haspopup="menu"
                 >
@@ -234,11 +238,11 @@ export function Header() {
                 </button>
                 {educationOpen && (
                   <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
-                    <Link to="/resources" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
+                    <Link to={lp('/resources')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
                     <button onClick={() => { handleScrollNav('/#annual-review'); }} className="block w-full text-left px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
-                    <Link to="/extra-help" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
-                    <Link to="/help-paying-costs" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
-                    <Link to="/otc-benefits" className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
+                    <Link to={lp('/extra-help')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
+                    <Link to={lp('/help-paying-costs')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
+                    <Link to={lp('/otc-benefits')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
                   </div>
                 )}
               </div>
@@ -248,15 +252,15 @@ export function Header() {
                   <button
                     key={link.href}
                     onClick={() => handleScrollNav(link.href)}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap inline-flex items-center min-h-[44px] px-1"
+                    className="text-[13px] xl:text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap inline-flex items-center min-h-[44px] px-1"
                   >
                     {t(link.label, link.labelEs)}
                   </button>
                 ) : (
                   <Link
                     key={link.href}
-                    to={link.href}
-                    className="text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap min-h-[44px] px-1 inline-flex items-center"
+                    to={lp(link.href)}
+                    className="text-[13px] xl:text-sm font-medium text-earth-700 hover:text-earth-900 transition-colors whitespace-nowrap min-h-[44px] px-1 inline-flex items-center"
                     onClick={closeNav}
                   >
                     {t(link.label, link.labelEs)}
@@ -300,17 +304,17 @@ export function Header() {
         {mobileMenuOpen && (
           <div id="mobile-menu" className="lg:hidden bg-cream-50 border-t border-cream-200 px-5 py-6 space-y-4 animate-fade-in max-h-[calc(100dvh-98px)] overflow-y-auto overscroll-contain">
             <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Our Services', 'Nuestros Servicios')}</p>
-            <Link to="/medicare-advantage" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
+            <Link to={lp('/medicare-advantage')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Advantage', 'Medicare Advantage')}</Link>
             {/* HIDDEN per Sawil 2026-06 — Medicare Supplement / Medigap moved to Education section below. Restore by uncommenting. */}
             {/* <Link to="/medicare-supplement" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Supplement', 'Suplemento Medicare')}</Link> */}
-            <Link to="/part-d" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
+            <Link to={lp('/part-d')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Part D Drug Plans', 'Planes de Medicamentos Parte D')}</Link>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Education', 'Educación')}</p>
-              <Link to="/resources" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
+              <Link to={lp('/resources')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
               <button onClick={() => handleScrollNav('/#annual-review')} className="block py-2.5 text-base font-medium text-earth-800 w-full text-left">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
-              <Link to="/extra-help" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
-              <Link to="/help-paying-costs" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
-              <Link to="/otc-benefits" className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
+              <Link to={lp('/extra-help')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
+              <Link to={lp('/help-paying-costs')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
+              <Link to={lp('/otc-benefits')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
             </div>
             <div className="border-t border-cream-200 pt-4 space-y-4">
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Explore', 'Explorar')}</p>
@@ -320,7 +324,7 @@ export function Header() {
                     {t(link.label, link.labelEs)}
                   </button>
                 ) : (
-                  <Link key={link.href} to={link.href} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>
+                  <Link key={link.href} to={lp(link.href)} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>
                     {t(link.label, link.labelEs)}
                   </Link>
                 )
