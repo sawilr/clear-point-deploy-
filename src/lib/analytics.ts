@@ -61,6 +61,12 @@ export function track(event: string, payload: GenericPayload = {}): void {
     safe.page_path = String(payload.page_path).split(/[?#]/)[0].slice(0, 120);
   }
   w.dataLayer.push({ event, ...safe });
+  // Re-audit 2026-07-27: GA4 is loaded directly via gtag.js (no GTM container),
+  // so a GTM-style dataLayer.push({event}) never reaches GA4. When gtag is
+  // present (consent granted), also emit a real GA4 event with the same
+  // PII-free params so conversions (form_submit_success, thank_you_view) flow.
+  const g = (window as unknown as { gtag?: (...args: unknown[]) => void }).gtag;
+  if (typeof g === 'function') g('event', event, safe);
 }
 
 // ─── GA4 DIRECT LOADER (Sawil 2026-07-27) ────────────────────────────────────
