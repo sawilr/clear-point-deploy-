@@ -62,3 +62,30 @@ export function track(event: string, payload: GenericPayload = {}): void {
   }
   w.dataLayer.push({ event, ...safe });
 }
+
+// ─── GA4 DIRECT LOADER (Sawil 2026-07-27) ────────────────────────────────────
+// Consent-gated: only injects gtag.js when the cookie banner stored "all".
+// Reads localStorage directly (not CookieConsent.tsx) to avoid a circular import.
+const GA4_ID = 'G-287ZZL7JB6';
+let gaLoaded = false;
+export function initGA4IfConsented(): void {
+  if (gaLoaded || typeof document === 'undefined') return;
+  try {
+    const raw = localStorage.getItem('cp_cookie_consent');
+    if (!raw) return;
+    const choice = raw.startsWith('{') ? JSON.parse(raw).choice : raw;
+    if (choice !== 'all') return;
+  } catch { return; }
+  gaLoaded = true;
+  const s = document.createElement('script');
+  s.async = true;
+  s.src = 'https://www.googletagmanager.com/gtag/js?id=' + GA4_ID;
+  document.head.appendChild(s);
+  const w = window as any;
+  w.dataLayer = w.dataLayer || [];
+  function gtag(...args: unknown[]) { w.dataLayer.push(args); }
+  (w as any).gtag = gtag;
+  gtag('js', new Date());
+  // anonymize_ip: senior/health-adjacent site — never store full IPs.
+  gtag('config', GA4_ID, { anonymize_ip: true });
+}

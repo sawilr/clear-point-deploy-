@@ -399,7 +399,7 @@ export default function Home() {
             <div className="space-y-4">
               {[
                 { icon: <ShieldIcon className="w-5 h-5 text-gold-500" />, title: 'Unbiased Advice', titleEs: 'Asesoría Imparcial', desc: 'No quotas, no company targets. Our only goal is to help you review the options that fit you.', descEs: 'Sin cuotas, sin metas corporativas. Nuestro único objetivo es ayudarle a revisar las opciones que se ajusten a usted.' },
-                { icon: <LockIcon className="w-5 h-5 text-gold-500" />, title: 'Your Data Is Protected', titleEs: 'Sus Datos Están Protegidos', desc: 'We never sell your personal information. Period.', descEs: 'Nunca vendemos su información personal. Punto.' },
+                { icon: <LockIcon className="w-5 h-5 text-gold-500" />, title: 'Your Data Is Protected', titleEs: 'Sus Datos Están Protegidos', desc: 'Your information is kept confidential and used only to connect you with a licensed advisor.', descEs: 'Su información se mantiene confidencial y se usa solo para conectarle con un asesor licenciado.' },
                 { icon: <UsersIcon className="w-5 h-5 text-gold-500" />, title: 'We Stay With You After Enrollment', titleEs: 'Permanecemos Con Usted Después de la Inscripción', desc: "Questions, claims, or billing issues — we're your point of contact, not a call center.", descEs: 'Preguntas, reclamaciones o problemas de facturación — somos su contacto, no un centro de llamadas.' },
               ].map((r, i) => (
                 <div key={i} className="flex gap-4 items-start bg-cream-50 rounded-xl p-5 shadow-xs hover:shadow-soft transition-shadow">

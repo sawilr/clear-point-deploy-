@@ -5061,15 +5061,57 @@ export function _buildPostZipReaskReplacement(userMessage: string, isEs: boolean
   return null;
 }
 
+// RE-AUDIT 2026-07-27 (P2 — DOB minimization). When the caller volunteers a
+// birth date, the reply STILL answers the enrollment question (server-side
+// age grounding keeps working — the DOB travels to api/chat.js, which
+// computes the age and redacts it), but the one-time privacy line is
+// PREPENDED so the caller learns they didn't need to share it. Reuses the
+// existing healthDisclosureNoted flag, so a later med/diagnosis disclosure
+// doesn't nag twice.
+function _applyDobPrivacyNote(
+  result: { response: string; newState: ConversationState; needsHuman: boolean },
+  isEs: boolean,
+): { response: string; newState: ConversationState; needsHuman: boolean } {
+  const note = isEs
+    ? 'Un aviso rápido para proteger su privacidad: no necesita compartir su fecha de nacimiento en este chat. Dicho esto, con gusto le oriento.'
+    : "A quick note to protect your privacy: you don't need to share your date of birth in this chat. That said, I'm happy to help.";
+  const response = note + '\n\n' + result.response;
+  // Keep the stored transcript consistent with what the caller actually saw.
+  const msgs = [...(result.newState.messages || [])];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'bot') {
+      msgs[i] = { ...msgs[i], content: response };
+      break;
+    }
+  }
+  return {
+    ...result,
+    response,
+    newState: { ...result.newState, healthDisclosureNoted: true, messages: msgs },
+  };
+}
+
 /** Public async entry: structural sync + LLM brain + fallback. */
 export async function processMessageAsync(
   userMessage: string,
   state: ConversationState,
   meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
 ): Promise<{ response: string; newState: ConversationState; needsHuman: boolean }> {
+  // RE-AUDIT 2026-07-27 (P2) — classify BEFORE any routing so a volunteered
+  // birth date gets the one-time privacy note prepended to WHICHEVER path
+  // produces the answer (structural, LLM, or regex fallback). The answer
+  // itself is never suppressed — age grounding must keep working.
+  const _disclosureEarly = _classifyHealthDisclosure(userMessage);
+  const _needsDobNote =
+    !state.healthDisclosureNoted && _disclosureEarly !== null && _disclosureEarly.type === 'birth_date';
+  const _dobNoteEs = _turnLanguage(userMessage, state) === 'es';
+  const _dobWrap = (
+    r: { response: string; newState: ConversationState; needsHuman: boolean },
+  ) => (_needsDobNote ? _applyDobPrivacyNote(r, _dobNoteEs) : r);
+
   // 1) Structural first.
   const structural = _runStructuralFirst(userMessage, state);
-  if (structural) return structural;
+  if (structural) return _dobWrap(structural);
 
   // AUDIT 2026-07-27 (BUG 4b) — every reply mirrors the language of THIS
   // message; the session language is only the fallback.
@@ -5082,8 +5124,9 @@ export async function processMessageAsync(
   // A birth date is NOT intercepted here: it flows to the server, which
   // computes the age deterministically and redacts the DOB itself (BUG 1) —
   // so an enrollment-timing question still gets a correct answer. The DOB is
-  // still scrubbed from history and lead notes.
-  const _healthDisclosure = _classifyHealthDisclosure(userMessage);
+  // still scrubbed from history and lead notes, and the one-time privacy
+  // line is PREPENDED to the final answer via _dobWrap (P2 re-audit).
+  const _healthDisclosure = _disclosureEarly;
   if (!state.healthDisclosureNoted && _healthDisclosure && _healthDisclosure.type !== 'birth_date') {
     const noteEs = turnLang === 'es';
     const note = noteEs
@@ -5126,7 +5169,7 @@ export async function processMessageAsync(
 
   if (!llmRes.ok) {
     // 3) Fallback to regex engine.
-    return processMessage(userMessage, state, meta);
+    return _dobWrap(processMessage(userMessage, state, meta));
   }
 
   // 4) Apply LLM meta tags.
@@ -5158,7 +5201,7 @@ export async function processMessageAsync(
     if (_topicReply) {
       _resp = _topicReply;
     } else {
-      return processMessage(userMessage, state);
+      return _dobWrap(processMessage(userMessage, state));
     }
   }
 
@@ -5252,7 +5295,7 @@ export async function processMessageAsync(
     newState.lastBotIntent = 'handoff_asking_name';
   }
 
-  return { response, newState, needsHuman };
+  return _dobWrap({ response, newState, needsHuman });
 }
 
 // WAVE 49 — heuristic: does this bot response look like a multi-topic chip
@@ -7872,8 +7915,8 @@ function processMessageInner(
     if (problemType === 'about_clearpoint') {
       newState.serviceCategory = 'about_clearpoint';
       const out = isSpanish
-        ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno. Nuestros asesores son **licenciados** y el servicio **no tiene costo para usted**. No vendemos su información. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
-        : "ClearPoint Senior Advisors is an independent agency — we are NOT Medicare or the government. Our advisors are **licensed** and the service is **at no cost to you**. We don't sell your information. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
+        ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno. Nuestros asesores son **licenciados** y el servicio **no tiene costo para usted**. Su información se mantiene confidencial y se usa solo para conectarle con un asesor licenciado. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
+        : "ClearPoint Senior Advisors is an independent agency — we are NOT Medicare or the government. Our advisors are **licensed** and the service is **at no cost to you**. Your information is kept confidential and used only to connect you with a licensed advisor. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

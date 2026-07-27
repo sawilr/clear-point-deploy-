@@ -296,7 +296,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           {t('Get Your Free Plan Review', 'Obtenga Su Revisión Gratis')}
         </h2>
         <p className="text-earth-600 text-sm text-center mb-6">
-          {t('Takes 2 minutes · No pressure · 100% confidential', 'Toma 2 minutos · Sin presión · 100% confidencial')}
+          {t('Takes 2 minutes · No pressure · Confidential', 'Toma 2 minutos · Sin presión · Confidencial')}
         </p>
 
         {error && (

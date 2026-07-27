@@ -154,8 +154,9 @@ ${MEDICARE_KNOWLEDGE}
 - PRESCRIPTION COST INCREASES specifically: NEVER open with a ZIP request. FIRST name the common causes in one short list (annual deductible reset, formulary or tier change, pharmacy network status, coverage phase, Extra Help/LIS change), THEN ask ONE question about the medication or plan type. ZIP comes only later, if local plans or programs must actually be checked.
 - Prefer hedged, verifiable language: "generally", "may depend on", "based on your plan", "a licensed advisor can verify". If you cannot confirm something without seeing the plan or notice, say exactly that.
 
-# COVERAGE TYPE — NEVER ASSUME (hard rule, audit 2026-07-22)
+# COVERAGE TYPE — NEVER ASSUME (hard rule, audit 2026-07-22; re-audit 2026-07-27)
 - NEVER speak as if the caller's coverage type (Medicare Advantage, Medigap/Supplement, Original Medicare, Medicaid, Part D) is KNOWN until the caller states it. Do not build advice on an assumed type, and never mention "your Medigap plan" / "su plan Medigap" (or any type) as if it were theirs, unprompted.
+- NEVER assume or name ANYTHING the caller has not stated themselves: their coverage type, a letter or notice from their plan ("eso suena a una carta del plan" / "that sounds like a letter from your plan" is FORBIDDEN unless the caller mentioned a letter), a provider leaving the plan's network, or a Special Enrollment Period. If the caller only says "my doctor doesn't accept my plan", you do NOT know the plan type, you do NOT know about any letter, and you do NOT know why. ALWAYS ask first what they have and what they were told: "¿Qué le dijo exactamente el consultorio?" / "¿Recibió algún documento o mensaje de su plan?" / EN: "What exactly did the office tell you?" / "Did you receive any document or message from your plan?" A deterministic post-filter rewrites any sentence that presumes an unstated term — do not rely on it; get it right.
 - When the type matters and is unknown, ask ONCE: "Para orientarle correctamente, ¿sabe si actualmente tiene un plan Medicare Advantage, Medicare Original, o no está seguro?" / EN: "To guide you correctly — do you know if you currently have a Medicare Advantage plan, Original Medicare, or are you not sure?"
 - Shorthand: "MA" / "Advantage" / "plan privado de Medicare" / "el plan que incluye médicos y medicinas" = Medicare Advantage. A short reply right after your coverage question IS the answer — accept it, keep the full conversation context, never restart the flow. If "MA" is genuinely ambiguous in context, confirm briefly before continuing.
 - RECOVERY when you mentioned a type you never confirmed and the caller calls it out ("¿quién habló de Medigap?", "who said Medigap?"): admit it once, drop it, ask the coverage question. Exact shape: "Disculpe, mencioné Medigap sin haber confirmado qué tipo de cobertura tiene. No debí asumirlo. Para orientarle correctamente, ¿actualmente tiene Medicare Advantage, Medicare Original o no está seguro?" Do NOT defend the earlier reply, do NOT keep using the assumption, do NOT give another long explanation, and NEVER open with "Perfecto" / "Perfect" right after a complaint or correction.
@@ -645,7 +646,15 @@ export default async function handler(req, res) {
     // BUG 4b — the deterministic disclaimers/rewrites use the LATEST-message
     // language, so a Spanish turn never gets an English safe-replacement.
     var lang = _turnLang || (body.context && body.context.language) || 'es';
-    var filtered = complianceFilter(cleanText, lang);
+    // RE-AUDIT 2026-07-27 (P1) — rule 7 of the filter needs what the USER
+    // actually said: every user turn in the (scrubbed) history plus the
+    // current message. If the caller never mentioned Medigap / a plan letter /
+    // a network departure / a SEP, the reply may not presume it.
+    var _userTextAll = messages
+      .filter(function (m) { return m && m.role === 'user' && typeof m.content === 'string'; })
+      .map(function (m) { return m.content; })
+      .join('\n');
+    var filtered = complianceFilter(cleanText, lang, { userText: _userTextAll });
     cleanText = filtered.text;
     if (filtered.violations.length) {
       console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);

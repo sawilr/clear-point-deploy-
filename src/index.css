@@ -344,6 +344,15 @@
    overlaps the menu items. */
 .cp-menu-open .cp-zara-fab { opacity: 0; pointer-events: none; }
 
+/* RE-AUDIT 2026-07-27 (P2 — 320px first viewport). While the cookie-consent
+   banner is open (CookieConsent.tsx toggles body.cp-consent-open), hide the
+   MobileStickyBar on ultra-narrow screens ONLY (≤360px): at 320x568 the
+   banner + Help FAB + sticky call bar together covered nearly the whole
+   viewport. Once the visitor chooses, the class drops and the bar returns. */
+@media (max-width: 360px) {
+  body.cp-consent-open .cp-mobile-sticky-bar { display: none; }
+}
+
 /* ── UNIFIED CTA BUTTON SYSTEM (Sawil 2026-06-19) ──
    Root cause of "buttons change size weirdly across the site / look choppy":
    the SAME CTA was hand-sized differently on every page (header px-4 py-2,

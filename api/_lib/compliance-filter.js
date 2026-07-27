@@ -11,6 +11,9 @@
 //   3. Never confirm doctor-in-network / drug-covered for a specific plan
 //   4. Never quote a specific plan premium / copay as a personal price
 //   5. Never claim affiliation with Medicare / CMS / SSA / "the government"
+//   6. Never invent a hedged-generalization cause ("it's almost always because…")
+//   7. Never assert/presume a coverage type, plan letter, network departure,
+//      or SEP the USER never mentioned (re-audit 2026-07-27, P1)
 
 // ── Forbidden carriers / brands (expand as ClearPoint adds carriers) ─────
 // A15.9 — HIGH fix: carrier patterns now tolerate dashes, dots, and spaces
@@ -70,7 +73,11 @@ const SAFE_REPLACEMENT = {
  *
  * @param {string} text     The LLM response.
  * @param {'en'|'es'} lang  Caller language (defaults to 'es').
- * @param {{ now?: Date }} [opts]  `now` overrides the clock (unit tests only).
+ * @param {{ now?: Date, userText?: string }} [opts]
+ *   - now: overrides the clock (unit tests only).
+ *   - userText: ALL accumulated user messages of the conversation (history +
+ *     current turn, newline-joined). Enables rule 7 — the unstated-assumption
+ *     rewrite. When absent, rule 7 is skipped (nothing to whitelist against).
  * @returns {{ text: string, violations: string[] }}
  *   - text: the cleaned response (may be the original if no violations).
  *   - violations: tags of every rule that fired (for logging / telemetry).
@@ -230,6 +237,88 @@ export function complianceFilter(text, lang, opts) {
     var icClean = icSentences.filter(function (s) { return !INVENTED_CAUSE_RE.test(s); });
     out = icClean.join(' ').trim();
     out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + icSafe : icSafe;
+  }
+
+  // 7) RE-AUDIT 2026-07-27 (P1 — invented coverage specifics). Live transcripts:
+  //    caller said "Mi mediko no asepta el plan" and Clara replied about "su
+  //    plan Medigap" (never stated) and "eso suena a una carta del plan" (no
+  //    letter was ever mentioned). Deterministic guarantee on top of the
+  //    prompt rule: when the reply ASSERTS/PRESUMES a specific coverage type,
+  //    a plan letter, a network departure, or a possessive SEP that the
+  //    accumulated USER messages never mentioned, the offending sentence is
+  //    replaced by a neutral clarifying question. Whitelist: if the USER did
+  //    say the term, the reply is left alone. Sanctioned ask-first questions
+  //    ("¿sabe si tiene Medicare Advantage… o no está seguro?") are exempt.
+  var userText = (opts && typeof opts.userText === 'string') ? opts.userText : null;
+  if (userText !== null) {
+    // The sanctioned coverage-clarifying question must never be rewritten.
+    var ASK_FIRST_EXEMPT_RE = /(no\s+est[aá]\s+segur|not\s+sure|sabe\s+si|do\s+you\s+know\s+(if|whether)|qu[eé]\s+tipo\s+de\s+(plan|cobertura)|what\s+(kind|type)\s+of\s+(plan|coverage))/i;
+    var ASSUMPTION_GROUPS = [
+      {
+        tag: 'medigap',
+        // Possessive / presumptive usage only — "su plan Medigap", "your
+        // Medigap", "cambiar de un plan Medigap". Educational mentions
+        // ("Medigap is different…") are allowed.
+        assertRe: /\b(?:(su|your|tu)\s+(plan\s+)?medigap\b|(cambiar|switch(?:ing)?|leave|leaving|dejar|salir)\s+(de\s+)?(un|el|su|the|your|a)\s+(plan\s+)?medigap\b)/i,
+        userRe: /\b(medigap|med[- ]?sup|supplement|suplement)\w*/i,
+      },
+      {
+        tag: 'medicare_advantage',
+        assertRe: /\b(?:(su|your|tu)\s+plan\s+(de\s+)?(medicare\s+advantage|advantage)\b|(su|your|tu)\s+medicare\s+advantage\b|(su|your|tu)\s+plan\s+MA\b|(cambiar|switch(?:ing)?|leave|leaving|dejar|salir)\s+(de\s+)?(un|el|su|the|your|a)\s+plan\s+(medicare\s+advantage|advantage|MA)\b)/i,
+        userRe: /\b(medicare\s+advantage|advantage|ma|parte?\s+c)\b/i,
+      },
+      {
+        tag: 'part_d',
+        assertRe: /\b(?:(su|your|tu)\s+plan\s+(de\s+la\s+)?parte?\s+d\b|your\s+part\s+d\s+plan\b|(su|your|tu)\s+parte?\s+d\b)/i,
+        userRe: /\b(part[e]?\s+d|pdp)\b/i,
+      },
+      {
+        tag: 'plan_letter',
+        assertRe: /\b(suena\s+a\s+una?\s+carta|sounds?\s+like\s+a\s+letter|eso\s+parece\s+una?\s+carta|la\s+carta\s+(que\s+)?(recibi[oó]|le\s+lleg[oó])|carta\s+de(l|\s+su)?\s+plan|letter\s+from\s+(your|the)\s+plan|the\s+letter\s+you\s+(received|got))\b/i,
+        userRe: /\b(carta|letter|aviso|notice|anoc|correspondencia)\b/i,
+      },
+      {
+        tag: 'network_departure',
+        assertRe: /\b(va\s+a\s+salir\s+de\s+la\s+red|saldr[aá]\s+de\s+la\s+red|dejar[aá]\s+la\s+red|est[aá]\s+dejando\s+la\s+red|sali[oó]\s+de\s+la\s+red|is\s+leaving\s+the\s+(plan'?s\s+)?network|leaving\s+the\s+network|left\s+the\s+network|dropped\s+(from|out\s+of)\s+the\s+network)\b/i,
+        userRe: /\b(red|network|fuera\s+de\s+la\s+red|out[-\s]of[-\s]network)\b/i,
+      },
+      {
+        tag: 'sep_possessive',
+        assertRe: /\b(su|your|tu)\s+(per[ií]odo\s+especial|special\s+enrollment(\s+period)?|SEP)\b/i,
+        userRe: /\b(per[ií]odo\s+especial|special\s+enrollment|sep)\b/i,
+      },
+    ];
+    var UNSTATED_SAFE = {
+      es: '¿Qué le dijo exactamente el consultorio? ¿Recibió algún documento o mensaje de su plan?',
+      en: 'What exactly did the office tell you? Did you receive any document or message from your plan?',
+    };
+    var activeGroups = [];
+    for (var gi = 0; gi < ASSUMPTION_GROUPS.length; gi++) {
+      var g = ASSUMPTION_GROUPS[gi];
+      if (g.assertRe.test(out) && !g.userRe.test(userText)) activeGroups.push(g);
+    }
+    if (activeGroups.length) {
+      var uaSentences = out.split(/(?<=[.!?])\s+/);
+      var uaHit = false;
+      var uaClean = uaSentences.filter(function (s) {
+        if (ASK_FIRST_EXEMPT_RE.test(s)) return true;
+        for (var gj = 0; gj < activeGroups.length; gj++) {
+          if (activeGroups[gj].assertRe.test(s)) {
+            uaHit = true;
+            return false;
+          }
+        }
+        return true;
+      });
+      if (uaHit) {
+        for (var gk = 0; gk < activeGroups.length; gk++) {
+          violations.push('unstated_assumption:' + activeGroups[gk].tag);
+        }
+        var uaSafe = UNSTATED_SAFE[lang === 'en' ? 'en' : 'es'];
+        out = uaClean.join(' ').trim();
+        out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + uaSafe : uaSafe;
+      }
+    }
   }
 
   return { text: out, violations: violations };
