@@ -64,6 +64,13 @@ export default async function handler(req, res) {
   // ── A15.2 Rate limit (lead-specific: very conservative — anti-spam) ────
   var ip = clientId(req);
   var rlHour = await rateLimit(ip, { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-h' });
+  // Re-audit 2026-07-27 (AS-01): surface the limit as standard headers so the
+  // control is externally observable without exhausting the quota (a POST that
+  // fails validation still returns these). Purely informational — the 429 gate
+  // below is what enforces.
+  res.setHeader('X-RateLimit-Limit', '5');
+  res.setHeader('X-RateLimit-Remaining', String(Math.max(0, rlHour.remaining != null ? rlHour.remaining : 0)));
+  res.setHeader('X-RateLimit-Window', '3600');
   if (!rlHour.ok) {
     res.setHeader('Retry-After', String(rlHour.retryAfter));
     return res.status(429).json({ error: 'Too many submissions, try again later' });

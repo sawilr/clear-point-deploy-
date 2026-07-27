@@ -71,7 +71,7 @@ export function CookieConsent() {
   const [visible, setVisible] = useState<boolean>(() => getCookieConsent() === null);
 
   // RE-AUDIT 2026-07-27 (P2 — 320px first viewport). While the banner is open,
-  // flag <body> so ultra-narrow screens (≤360px) can hide the MobileStickyBar
+  // flag <body> so ultra-narrow screens (≤430px) can hide the MobileStickyBar
   // (index.css: body.cp-consent-open .cp-mobile-sticky-bar) — banner + FAB +
   // sticky bar together buried the hero at 320x568. Removed on choice/unmount.
   useEffect(() => {
@@ -93,18 +93,18 @@ export function CookieConsent() {
     <div
       role="region"
       aria-label={t('Cookie consent', 'Consentimiento de cookies')}
-      className="fixed left-0 right-0 z-[45] bottom-[calc(env(safe-area-inset-bottom)+76px)] max-[360px]:bottom-0 max-[360px]:pb-[max(0.625rem,env(safe-area-inset-bottom))] md:bottom-0 bg-earth-900 text-cream-50 border-t border-cream-50/15 shadow-lifted px-4 py-4 max-[360px]:px-3 max-[360px]:py-2.5 sm:px-6"
+      className="fixed left-0 right-0 z-[45] bottom-[calc(env(safe-area-inset-bottom)+76px)] max-[430px]:bottom-0 max-[430px]:pb-[max(0.625rem,env(safe-area-inset-bottom))] md:bottom-0 bg-earth-900 text-cream-50 border-t border-cream-50/15 shadow-lifted px-4 py-4 max-[430px]:px-3 max-[430px]:py-2.5 sm:px-6"
     >
       {/* pr-28/md:pr-32 reserves clearance for the Help FAB (.cp-zara-fab,
           z-50, anchored bottom-right) so the consent text and buttons are never
           covered by it; ≥1440px the centered max-w-5xl content clears the FAB
-          on its own, so the padding drops. ≤360px (compact variant, re-audit
+          on its own, so the padding drops. ≤430px (compact variant, re-audit
           2026-07-27): banner drops to bottom-0 (the sticky bar is hidden via
           body.cp-consent-open), text shrinks, buttons sit in ONE row, and only
           the text keeps FAB clearance (the FAB floats ~88px up, clear of the
           compact banner's button row). */}
-      <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 max-[360px]:gap-2 sm:gap-6 pr-28 max-[360px]:pr-0 md:pr-32 min-[1440px]:pr-0">
-        <p className="flex-1 text-base max-[360px]:text-sm leading-relaxed max-[360px]:pr-16">
+      <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 max-[430px]:gap-2 sm:gap-6 pr-28 max-[430px]:pr-0 md:pr-32 min-[1440px]:pr-0">
+        <p className="flex-1 text-base max-[430px]:text-sm leading-relaxed max-[430px]:pr-16">
           {t(
             'We use cookies for our chat service. See our ',
             'Usamos cookies para el servicio de chat. Vea nuestra '
@@ -117,18 +117,18 @@ export function CookieConsent() {
           </Link>
           .
         </p>
-        <div className="flex flex-col-reverse max-[360px]:flex-row sm:flex-row gap-2 sm:gap-3 sm:flex-shrink-0">
+        <div className="flex flex-col-reverse max-[430px]:flex-row sm:flex-row gap-2 sm:gap-3 sm:flex-shrink-0">
           <button
             type="button"
             onClick={() => choose('essential')}
-            className="min-h-[44px] px-5 max-[360px]:px-3 max-[360px]:flex-1 py-2.5 rounded-lg border border-cream-50/30 text-cream-50 text-base max-[360px]:text-sm font-semibold hover:bg-cream-50/10 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold-400"
+            className="min-h-[44px] px-5 max-[430px]:px-3 max-[430px]:flex-1 py-2.5 rounded-lg border border-cream-50/30 text-cream-50 text-base max-[430px]:text-sm font-semibold hover:bg-cream-50/10 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold-400"
           >
             {t('Essentials only', 'Solo esenciales')}
           </button>
           <button
             type="button"
             onClick={() => choose('all')}
-            className="min-h-[44px] px-5 max-[360px]:px-3 max-[360px]:flex-1 py-2.5 rounded-lg bg-gold-400 text-earth-900 text-base max-[360px]:text-sm font-bold hover:bg-gold-300 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-cream-50"
+            className="min-h-[44px] px-5 max-[430px]:px-3 max-[430px]:flex-1 py-2.5 rounded-lg bg-gold-400 text-earth-900 text-base max-[430px]:text-sm font-bold hover:bg-gold-300 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-cream-50"
           >
             {t('Accept all', 'Aceptar todo')}
           </button>

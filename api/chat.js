@@ -374,6 +374,11 @@ export default async function handler(req, res) {
   // ── A15.2 Rate limit (IP-based, KV-backed when available) ──────────────
   var ip = clientId(req);
   var rl = await rateLimit(ip, { max: 30, windowMs: 5 * 60 * 1000, prefix: 'chat' });
+  // Re-audit 2026-07-27 (AS-01): expose the limit as standard headers so the
+  // control is externally observable without exhausting the quota.
+  res.setHeader('X-RateLimit-Limit', '30');
+  res.setHeader('X-RateLimit-Remaining', String(Math.max(0, rl.remaining != null ? rl.remaining : 0)));
+  res.setHeader('X-RateLimit-Window', '300');
   if (!rl.ok) {
     res.setHeader('Retry-After', String(rl.retryAfter));
     return res.status(429).json({ error: 'Too many requests' });

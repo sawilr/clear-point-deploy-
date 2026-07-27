@@ -3,3 +3,5 @@ Contact: mailto:info@clearpointsenioradvisors.com
 Expires: 2027-07-16T00:00:00.000Z
 Preferred-Languages: en, es
 Canonical: https://clearpointsenioradvisors.com/.well-known/security.txt
+Policy: https://clearpointsenioradvisors.com/privacy-policy
+Encryption: mailto:info@clearpointsenioradvisors.com
