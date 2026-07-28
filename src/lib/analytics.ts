@@ -89,7 +89,11 @@ export function initGA4IfConsented(): void {
   document.head.appendChild(s);
   const w = window as any;
   w.dataLayer = w.dataLayer || [];
-  function gtag(...args: unknown[]) { w.dataLayer.push(args); }
+  // gtag.js REQUIRES the classic `arguments` object here — NOT a rest-param
+  // array. With push([...]) the library silently ignores the js/config commands
+  // and never sends a single hit (confirmed live: 0 beacons vs 204 with arguments).
+  // eslint-disable-next-line prefer-rest-params
+  function gtag() { w.dataLayer.push(arguments); }
   (w as any).gtag = gtag;
   gtag('js', new Date());
   // anonymize_ip: senior/health-adjacent site — never store full IPs.
