@@ -14,6 +14,10 @@
 //   6. Never invent a hedged-generalization cause ("it's almost always because…")
 //   7. Never assert/presume a coverage type, plan letter, network departure,
 //      or SEP the USER never mentioned (re-audit 2026-07-27, P1)
+//   8. LIFE SAFETY (audit 2026-07-28, CPF-001): a reply to a medical emergency
+//      MUST contain the 911 instruction — otherwise it is replaced outright
+//   9. GEO (audit 2026-07-28, CPF-002): a caller outside NY/NJ/CT never gets a
+//      name/phone request — the reply is replaced by the out-of-area message
 
 // ── Forbidden carriers / brands (expand as ClearPoint adds carriers) ─────
 // A15.9 — HIGH fix: carrier patterns now tolerate dashes, dots, and spaces
@@ -62,6 +66,64 @@ const FORBIDDEN_PHRASES = [
   /\ble\s+recomiend[oa]\s+(el|este|ese)\s+plan\b/gi,
 ];
 
+// ── AUDIT 2026-07-28 CPF-001 — LIFE-SAFETY net (rule 8) ─────────────────
+// Mirrors detectEmergency() in src/lib/customerServiceEngine.ts. Kept as a
+// literal copy because this module is intentionally zero-import (it runs in
+// the serverless function, the engine is a browser bundle). Both lists must
+// be updated together; scripts/test-audit-regressions.mjs asserts parity on
+// the audit's 20 phrase variants.
+const EMERGENCY_USER_RES = [
+  /\b(this is (an? )?)?emerg[ea]n[csz](y|ia|ie)\b/,
+  /\b911\b/,
+  /\b(can'?t|cant|cannot|can not|couldn'?t|no puedo|not able to)\s+(breath?e?|breathe|breath|breather|respire?r?)\b/,
+  /\b(trouble|difficulty|struggling|hard time)\s+breath(ing|e)?\b/,
+  /\b(short(ness)? of breath|gasping for air|choking|suffocating)\b/,
+  /\b(chest\s+(pain|pains|pressure|tightness)|heart\s+attack|cardiac\s+arrest)\b/,
+  /\b(stroke|having a stroke)\b/,
+  /\b(bleeding|blood\s+everywhere|hemorrhag\w*)\b/,
+  /\b(passed\s+out|pass(ing)?\s+out|unconscious|unresponsive|blacked\s+out|fainted)\b/,
+  /\b(overdos\w*|od'?ed)\b/,
+  /\b(suicid\w*|kill\s+myself)\b/,
+  /\bemerg[ea]n[csz](ia|ya|y)\b/,
+  /\bno\s+puedo\s+respir\w*/,
+  /\b(me\s+falta\s+(el\s+)?aire|falta\s+de\s+aire|me\s+estoy\s+ahogando|no\s+me\s+llega\s+el\s+aire)\b/,
+  /\b(dificultad|problemas?)\s+para\s+respirar\b/,
+  /\b(dolor\s+(de|en\s+el)\s+pecho|me\s+duele\s+el\s+pecho|opresion\s+en\s+el\s+pecho)\b/,
+  /\b(infarto|ataque\s+al\s+corazon|paro\s+cardiaco)\b/,
+  /\b(derrame(\s+cerebral)?|embolia)\b/,
+  /\b(estoy\s+sangrando|sangrando\s+mucho|hemorragia)\b/,
+  /\b(me\s+desmay\w*|se\s+desmay\w*|esta\s+inconsciente|estoy\s+inconsciente|perdio\s+el\s+conocimiento)\b/,
+  /\bsobredosis\b/,
+];
+const EMERGENCY_911_REPLY = {
+  en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
+  es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
+};
+
+// ── AUDIT 2026-07-28 CPF-002 — GEO net (rule 9) ──────────────────────────
+const OUT_OF_AREA_REPLY = {
+  en: "Right now our office serves clients in New York, New Jersey, and Connecticut, so we're not able to help with plans in your state. For help where you live, you can call 1-800-MEDICARE or visit Medicare.gov.",
+  es: 'En este momento nuestra oficina atiende a clientes en Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con planes en su estado. Para recibir ayuda donde usted vive, puede llamar al 1-800-MEDICARE o visitar Medicare.gov.',
+};
+const NON_SERVED_STATES_RE = /\b(?:vivo en|vivimos en|resido en|estoy en|estamos en|soy de|somos de|me mud[eé] a|aqu[ií] en|en el estado de|i live in|we live in|i am in|i'?m in|im in|we are in|living in|i reside in|i moved to|i am from|i'?m from|im from|based in|located in|in the state of|my state is|mi estado es)\s+(alabama|alaska|arizona|arkansas|california|colorado|delaware|district of columbia|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new mexico|nuevo mexico|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|pensilvania|puerto rico|rhode island|south carolina|south dakota|tennessee|texas|tejas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|carolina del norte|carolina del sur|dakota del norte|dakota del sur|nueva hampshire|virginia occidental)\b/i;
+// The reply asks for contact details (what the geo net must never allow).
+const ASKS_FOR_CONTACT_RE = /(what'?s your name|what is your (name|phone|full name)|your name,? please|c[uá]al es su nombre|su nombre completo|qu[eé] n[uú]mero de tel[eé]fono|what phone number|su tel[eé]fono|n[uú]mero de tel[eé]fono|c[oó]digo postal|what is your zip|your zip code)/i;
+
+/** Accent-stripped lowercase, matching the engine's emergency normalization. */
+function normLoose(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/** TRUE when the text matches any emergency phrase (EN/ES, typo-tolerant). */
+export function matchesEmergency(text) {
+  var t = normLoose(text);
+  if (!t) return false;
+  for (var i = 0; i < EMERGENCY_USER_RES.length; i++) {
+    if (EMERGENCY_USER_RES[i].test(t)) return true;
+  }
+  return false;
+}
+
 // Generic compliant replacement text — used to substitute violations.
 const SAFE_REPLACEMENT = {
   en: 'I can\'t confirm that here — it depends on the specific plan, area, and your situation. A licensed ClearPoint advisor can review it with you, at no cost.',
@@ -88,6 +150,29 @@ export function complianceFilter(text, lang, opts) {
   var out = text;
   var violations = [];
   var safe = SAFE_REPLACEMENT[lang === 'en' ? 'en' : 'es'];
+  // The LATEST user message drives rules 8 and 9. Falls back to the whole
+  // accumulated userText only when the caller did not pass it (unit tests).
+  var latestUser = (opts && typeof opts.latestUserText === 'string')
+    ? opts.latestUserText
+    : ((opts && typeof opts.userText === 'string') ? opts.userText : null);
+
+  // 8) AUDIT 2026-07-28 (CPF-001, P1 LIFE SAFETY). Live transcript: "This is an
+  //    emergency and I cannot breathe." → Clara asked for the caller's name.
+  //    Deterministic, un-bypassable net: if the caller's latest message reads
+  //    as a medical emergency and the reply does not carry the 911 instruction,
+  //    the ENTIRE reply is replaced. Nothing else in this filter runs after it.
+  if (latestUser !== null && matchesEmergency(latestUser) && !/\b911\b/.test(out)) {
+    violations.push('emergency_no_911');
+    return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
+  }
+
+  // 9) AUDIT 2026-07-28 (CPF-002). A caller who states a non-served state must
+  //    never be asked for name/phone/ZIP — the reply becomes the out-of-area
+  //    message with the 1-800-MEDICARE referral.
+  if (latestUser !== null && NON_SERVED_STATES_RE.test(latestUser) && ASKS_FOR_CONTACT_RE.test(out)) {
+    violations.push('out_of_area_lead_capture');
+    return { text: OUT_OF_AREA_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
+  }
 
   // 1) Strip specific carrier names. A15.9 — always reset .lastIndex BEFORE
   //    every .test() call because we're using `g` flag (stateful) regex.
@@ -318,6 +403,28 @@ export function complianceFilter(text, lang, opts) {
         out = uaClean.join(' ').trim();
         out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + uaSafe : uaSafe;
       }
+    }
+  }
+
+  // ── AUDIT 2026-07-28 CPF-007 — storage-claim net (rule 10) ────────────────
+  // The bot must never PROMISE non-storage ("I won't store those details") —
+  // retention is governed by the privacy policy, not the model. Rewrite any
+  // such sentence to the accurate handled-securely wording. EN + ES.
+  var STORAGE_CLAIM_RE = /(won'?t|will not|don'?t|do not)\s+(store|keep|save|retain)|no\s+(lo\s+|la\s+|los\s+|las\s+)?(guardar|almacenar|retendr|conservar)/i;
+  if (STORAGE_CLAIM_RE.test(out)) {
+    var scSentences = out.split(/(?<=[.!?])\s+/);
+    var scHit = false;
+    var scSafe = lang === 'en'
+      ? 'Any details you share are handled under our Privacy Policy, and a licensed advisor reviews sensitive information securely by phone.'
+      : 'Cualquier dato que comparta se maneja según nuestra Política de Privacidad, y un asesor licenciado revisa la información sensible de forma segura por teléfono.';
+    var scClean = scSentences.filter(function (s) {
+      if (STORAGE_CLAIM_RE.test(s)) { scHit = true; return false; }
+      return true;
+    });
+    if (scHit) {
+      violations.push('storage_claim');
+      out = scClean.join(' ').trim();
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + scSafe : scSafe;
     }
   }
 

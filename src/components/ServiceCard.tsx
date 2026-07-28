@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { ArrowRight } from './icons';
 import { Link } from 'react-router';
 import { PictureImg } from './PictureImg';
@@ -14,8 +14,11 @@ interface ServiceCardProps {
 
 export function ServiceCard({ image, title, titleEs, description, descriptionEs, link }: ServiceCardProps) {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — callers pass EN paths ('/part-d'); the card
+  // resolves them into the URL space the visitor is actually browsing.
+  const lp = useLocalizedPath();
   return (
-    <Link to={link} className="group bg-cream-50 rounded-2xl overflow-hidden shadow-soft hover:shadow-card transition-all duration-300 hover:-translate-y-1 active:scale-[0.99] block">
+    <Link to={lp(link)} className="group bg-cream-50 rounded-2xl overflow-hidden shadow-soft hover:shadow-card transition-all duration-300 hover:-translate-y-1 active:scale-[0.99] block">
       <div className="aspect-[4/3] overflow-hidden bg-cream-100">
         {/* Sawil 2026-06-30 AUDIT FIX (perf PERF-009) — service cards are below the
             fold; lazy-load so they don't compete with the LCP hero. The aspect-[4/3]

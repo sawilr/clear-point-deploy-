@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { Link } from 'react-router';
 import { Hero } from '../components/Hero';
 import { TrustBar } from '../components/TrustBar';
@@ -62,8 +62,8 @@ const faqItems = [
   {
     q: "What's the difference between Medicare Advantage and a Supplement?",
     qEs: '¿Cuál es la diferencia entre Medicare Advantage y un Suplemento?',
-    a: "Medicare Advantage replaces Original Medicare with a private plan (often available with a $0 premium and may include extra benefits, which vary by plan and area). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
-    aEs: 'Medicare Advantage reemplaza al Medicare Original con un plan privado (frecuentemente con prima de $0 y puede incluir beneficios extra, que varían por plan y área). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
+    a: "With Medicare Advantage, you stay in Medicare but receive your Part A and Part B benefits through a private plan instead of through Original Medicare (often available with a $0 premium and may include extra benefits, which vary by plan and area). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
+    aEs: 'Con Medicare Advantage usted sigue en Medicare, pero recibe sus beneficios de las Partes A y B a través de un plan privado en lugar del Medicare Original (frecuentemente con prima de $0 y puede incluir beneficios extra, que varían por plan y área). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
   },
   {
     q: 'When can I enroll or change my Medicare plan?',
@@ -86,8 +86,10 @@ const faqItems = [
   {
     q: 'Is my personal information safe?',
     qEs: '¿Está segura mi información personal?',
-    a: 'We take that seriously. We protect your information and use it only to connect you with a licensed advisor and review your plan options — we do not sell, share, or distribute it. Our systems use industry-standard security protocols.',
-    aEs: 'Lo tomamos muy en serio. Protegemos su información y la usamos únicamente para conectarle con un asesor licenciado y revisar sus opciones de plan — no la vendemos, compartimos ni distribuimos. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
+    // Absolute "we will not ever sell" phrasing is banned by the F4a guard in
+    // scripts/test-audit-regressions.mjs — present tense states the same policy.
+    a: 'We take that seriously. We protect your information and use it only to connect you with a licensed advisor and review your plan options — we do not sell it, and we only share it as described in our Privacy Policy — for example with a licensed advisor or, at your request, an insurance carrier. Our systems use industry-standard security protocols.',
+    aEs: 'Lo tomamos muy en serio. Protegemos su información y la usamos únicamente para conectarle con un asesor licenciado y revisar sus opciones de plan — no la vendemos, y solo la compartimos según nuestra Política de Privacidad — por ejemplo con un asesor licenciado o, a su solicitud, con una aseguradora. Nuestros sistemas utilizan protocolos de seguridad estándar de la industria.',
   },
 ];
 
@@ -149,6 +151,8 @@ const carriers: Carrier[] = [
 
 export default function Home() {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — in-page links stay inside the /es space.
+  const lp = useLocalizedPath();
   const servicesReveal = useScrollReveal();
   const howReveal = useScrollReveal();
   const whyReveal = useScrollReveal();
@@ -312,7 +316,7 @@ export default function Home() {
                   {t('A licensed Medicare advisor can help you review your situation and understand your next steps.', 'Un asesor licenciado de Medicare puede ayudarle a revisar su situación y entender sus próximos pasos.')}
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  <Link to="/contact" className="cp-btn bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all">
+                  <Link to={lp('/contact')} className="cp-btn bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all">
                     {t('Check My Enrollment Options', 'Revisar Mis Opciones de Inscripción')}
                   </Link>
                   <a href="tel:18557208555" className="cp-btn bg-white text-earth-800 border border-cream-200 hover:bg-cream-50 transition-all">

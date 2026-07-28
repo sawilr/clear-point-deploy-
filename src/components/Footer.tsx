@@ -81,7 +81,9 @@ export function Footer() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.0fr_1.2fr_0.95fr_0.95fr_1.9fr] gap-x-8 gap-y-10 lg:gap-8 mb-12">
           {/* Brand */}
           <div className="col-span-1 sm:col-span-2 lg:col-span-1">
-            <a href="/" onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
+            {/* Sawil 2026-07-28 AUDIT CPF-003 — localize the href, not just the
+                onClick: the raw attribute is what crawlers and middle-click use. */}
+            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
                 <span className="font-serif text-base font-bold text-cream-50 tracking-tight">Clear Point</span>
@@ -121,11 +123,13 @@ export function Footer() {
             <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h3>
             <ul className="space-y-1 text-sm">
               <li><Link to={lp('/resources')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
-              <li><a href="/#annual-review" onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
+              {/* Sawil 2026-07-28 AUDIT CPF-003 — path+hash anchors localize the
+                  PATH half; the fragment is language-neutral. */}
+              <li><a href={lp('/') + '#annual-review'} onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
               <li><Link to={lp('/extra-help')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link></li>
               <li><Link to={lp('/help-paying-costs')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
               <li><Link to={lp('/otc-benefits')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>
-              <li><a href="/#annual-review" onClick={handleAnnualReview} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</a></li>
+              <li><a href={lp('/') + '#annual-review'} onClick={handleAnnualReview} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Annual Review', 'Revisión Anual')}</a></li>
             </ul>
           </div>
 
@@ -136,7 +140,7 @@ export function Footer() {
               <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.cms.gov/" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">CMS.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
-              <li><a href="/#how" onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
+              <li><a href={lp('/') + '#how'} onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('How It Works', 'Cómo Funciona')}</a></li>
               <li><Link to={lp('/about')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('About', 'Nosotros')}</Link></li>
               <li><Link to={lp('/support')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Customer Support', 'Servicio al Cliente')}</Link></li>
             </ul>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validateEmail, validatePersonName } from '../lib/validation';
@@ -49,6 +49,8 @@ function daysInMonth(mm: string, yyyy: string): number {
 
 export function SmartMedicareReview() {
   const { t, lang } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — consent link stays inside the /es space.
+  const lp = useLocalizedPath();
   const [step, setStep] = useState(1);
   // Smart Review routing state. `selectedOption` drives the qualified
   // sales/triage paths; `specialCat` drives the educational Special
@@ -947,7 +949,7 @@ export function SmartMedicareReview() {
                 <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-labelledby="smr-consent-text" className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
                 <span id="smr-consent-text" className="text-sm text-earth-700 leading-relaxed">
                   {isEs ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
-                  <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
+                  <Link to={lp('/privacy-policy')} className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
                 </span>
               </label>
 

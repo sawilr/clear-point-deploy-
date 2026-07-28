@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { Link } from 'react-router';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -8,6 +8,8 @@ import { useScrollReveal } from '../components/ScrollReveal';
 
 export default function HelpPayingCosts() {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — in-page links stay inside the /es space.
+  const lp = useLocalizedPath();
   const cardsReveal = useScrollReveal();
 
   return (
@@ -103,7 +105,7 @@ export default function HelpPayingCosts() {
                     'Extra Help / LIS is covered separately because it specifically relates to Medicare Part D prescription drug costs.',
                     'Ayuda Extra / LIS se explica por separado porque se enfoca específicamente en costos de medicamentos de Medicare Parte D.'
                   )}{' '}
-                  <Link to="/extra-help" className="font-semibold text-gold-600 hover:text-gold-700 underline">
+                  <Link to={lp('/extra-help')} className="font-semibold text-gold-600 hover:text-gold-700 underline">
                     {t('Learn about Extra Help / LIS', 'Más información sobre Ayuda Extra / LIS')}
                   </Link>
                 </p>

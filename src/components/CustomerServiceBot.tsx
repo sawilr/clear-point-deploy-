@@ -13,7 +13,7 @@ import {
   type ConversationState,
   type Language,
 } from '../lib/customerServiceEngine';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { useVisualViewportHeight } from '../hooks/useVisualViewportHeight';
 import { submitLeadToGHL } from '../lib/ghl';
 // PHASE F — advisor-readable lead-note builder. Pure helper, no network.
@@ -120,6 +120,9 @@ interface CustomerServiceBotProps {
 export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget' }: CustomerServiceBotProps = {}) {
   const navigate = useNavigate();
   const { lang: pageLang, setLang } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — the "Back to site" fallback must land on
+  // /es when Clara is running at /es/support, not bounce the visitor to EN.
+  const lp = useLocalizedPath();
   // Sawil 2026-06 — enterprise viewport handling. Hook writes the real
   // visible viewport height to CSS var `--svh` on :root (and `--kb-offset`
   // for the soft keyboard), coalesced via rAF, reacting to keyboard
@@ -1612,7 +1615,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               if (typeof window !== 'undefined' && window.history.length > 1) {
                 navigate(-1);
               } else {
-                navigate('/');
+                navigate(lp('/'));
               }
             }}
             className="mr-1 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg hover:bg-cream-50/10 transition-colors flex-shrink-0"

@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { useNavigate } from 'react-router';
 import { CheckIcon, PhoneIcon, CalendarIcon } from './icons';
 import { LeadForm } from './LeadForm';
@@ -33,11 +33,13 @@ export function Hero({
 }: HeroProps) {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  // Sawil 2026-07-28 AUDIT CPF-003 — keep the CTA inside the /es URL space.
+  const lp = useLocalizedPath();
   // Sawil 2026-06: "Schedule Free Consultation" must land DIRECTLY on the
   // lead form with focus, not at the top of /contact. Mirrors the helper
   // used by Header / MobileStickyBar / CTASection / MedicareSupplement.
   function handleFreeReview() {
-    navigate('/contact?focus=name');
+    navigate(lp('/contact') + '?focus=name');
     setTimeout(() => {
       const el = document.getElementById('lead-form-heading');
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });

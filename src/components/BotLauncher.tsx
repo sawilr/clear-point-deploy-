@@ -19,10 +19,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { GraduationCap, ClipboardList, MessageCircle } from 'lucide-react';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 
 export function BotLauncher() {
   const { lang } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — "Tengo un problema" must open Clara at
+  // /es/support while the visitor is browsing Spanish, not drop them into EN.
+  const lp = useLocalizedPath();
   const isEs = lang === 'es';
   const [open, setOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -71,7 +74,7 @@ export function BotLauncher() {
 
   const goSupport = () => {
     setOpen(false);
-    navigate('/support');
+    navigate(lp('/support'));
     // Scroll the page so the CS bot is in view (Support.tsx renders it).
     setTimeout(() => {
       const el = document.getElementById('customer-service-bot') || document.querySelector('main');

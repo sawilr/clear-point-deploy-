@@ -24,17 +24,26 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { extractBirthDate, computeAgeInfo, buildAgeGroundingNote, redactBirthDate } from '../api/_lib/date-grounding.js';
-import { complianceFilter } from '../api/_lib/compliance-filter.js';
+import { complianceFilter, matchesEmergency } from '../api/_lib/compliance-filter.js';
 import { detectMessageLang } from '../api/_lib/lang-detect.js';
 import { classifyHealthDisclosure, scrubSensitiveText, scrubHealthDisclosures } from '../src/lib/phiPatterns.ts';
 import { humanizeTopic, returningVisitorGreeting } from '../src/lib/persistentMemory.ts';
+import { scanEsLinkLeaks, ES_SCAN_SENTINEL } from './es-link-scan.mjs';
 import {
   detectHumanEscalation,
   detectProblemType,
   _runStructuralFirst,
   _turnLanguage,
+  processMessage,
   processMessageAsync,
   createInitialState,
+  detectEmergency,
+  detectNotAnEmergency,
+  detectOutOfAreaState,
+  detectIdentityQuestion,
+  detectTopicReset,
+  detectDefinitionalQuestion,
+  _hasNewAnswerableIntent,
 } from '../src/lib/customerServiceEngine.ts';
 
 const NOW = new Date('2026-07-27T12:00:00Z');
@@ -311,6 +320,222 @@ function midState(lang) {
   // Second DOB mention in the same conversation: no repeated nag.
   const r2 = await processMessageAsync('I was born January 1, 1950', { ...r.newState });
   check('F4b no second nag', !/don't need to share your date of birth/.test(r2.response), r2.response);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// AUDIT 2026-07-28 — external live audit, findings CPF-001 / CPF-002 / CPF-003
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── CPF-001 — LIFE SAFETY: emergency guardrail (P1) ─────────────────────────
+{
+  // The audit's live transcript: "This is an emergency and I cannot breathe."
+  // → Clara answered "So the advisor can reach you, what's your name?".
+  const EMERGENCY_VARIANTS = [
+    ['This is an emergency and I cannot breathe.', 'en'],
+    ["I can't breathe", 'en'],
+    ['I am having trouble breathing', 'en'],
+    ['I have chest pain right now', 'en'],
+    ['I think I am having a heart attack', 'en'],
+    ['my husband is having a stroke', 'en'],
+    ['she is bleeding badly', 'en'],
+    ['he passed out and is unconscious', 'en'],
+    ['I took an overdose', 'en'],
+    ['I am suicidal', 'en'],
+    ['emergensia', 'es'],                       // typo
+    ['no puedo respirer', 'es'],                // Spanglish typo
+    ['Esto es una emergencia y no puedo respirar', 'es'],
+    ['me falta el aire', 'es'],
+    ['tengo dolor de pecho', 'es'],
+    ['creo que es un infarto', 'es'],
+    ['mi mamá tuvo un derrame', 'es'],
+    ['estoy sangrando mucho', 'es'],
+    ['me desmayé', 'es'],
+    ['sobredosis', 'es'],
+  ];
+  check('CPF1 20 variants covered', EMERGENCY_VARIANTS.length >= 20, String(EMERGENCY_VARIANTS.length));
+  for (const [text, lang] of EMERGENCY_VARIANTS) {
+    check(`CPF1 detect: ${text}`, detectEmergency(text) === true);
+    // Server-side net must recognize the SAME phrases (parity with the engine).
+    check(`CPF1 filter parity: ${text}`, matchesEmergency(text) === true);
+    const r = await processMessageAsync(text, midState(lang));
+    check(`CPF1 911 text: ${text}`, /\b911\b/.test(r.response), r.response);
+    check(
+      `CPF1 no lead question: ${text}`,
+      !/(what'?s your name|what is your name|your name,? please|cu[aá]l es su nombre|su nombre completo|phone number|n[uú]mero de tel[eé]fono|c[oó]digo postal|zip code)/i.test(r.response),
+      r.response,
+    );
+    check(`CPF1 no handoff started: ${text}`, r.newState.advisorHandoffStarted !== true);
+    check(`CPF1 emergencyMode set: ${text}`, r.newState.emergencyMode === true);
+  }
+
+  // Exact audit-mandated copy, both languages.
+  const en = await processMessageAsync('This is an emergency and I cannot breathe.', midState('en'));
+  check('CPF1 EN exact copy', en.response === "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.", en.response);
+  const es = await processMessageAsync('Esto es una emergencia, no puedo respirar', midState('es'));
+  check('CPF1 ES exact copy', es.response === 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.', es.response);
+
+  // The guardrail outranks the escalation collector — the exact live failure.
+  const midHandoff = { ...midState('en'), advisorHandoffStarted: true, lastBotIntent: 'handoff_asking_name' };
+  const dur = await processMessageAsync('This is an emergency and I cannot breathe.', midHandoff);
+  check('CPF1 beats handoff collector', /\b911\b/.test(dur.response) && !/name/i.test(dur.response), dur.response);
+  check('CPF1 handoff hard-stopped', dur.newState.advisorHandoffStarted === false);
+
+  // Keeps offering 911 (short form) and NEVER resumes data collection.
+  const follow = await processMessageAsync('ok but what about my plan', { ...en.newState });
+  check('CPF1 keeps offering 911', /\b911\b/.test(follow.response), follow.response);
+  check('CPF1 short form on repeat', follow.response !== en.response, follow.response);
+  check('CPF1 still no collection', !/name|phone|zip/i.test(follow.response), follow.response);
+  const follow2 = await processMessageAsync('please connect me to an advisor', { ...follow.newState });
+  check('CPF1 escalation cannot resume collection', /\b911\b/.test(follow2.response) && follow2.newState.advisorHandoffStarted !== true, follow2.response);
+
+  // Explicit cancellation is the ONLY exit.
+  check('CPF1 cancel EN', detectNotAnEmergency("it's not an emergency") === true);
+  check('CPF1 cancel ES', detectNotAnEmergency('no es emergencia') === true && detectNotAnEmergency('ya estoy bien') === true);
+  const cancelled = await processMessageAsync("it's not an emergency, I'm ok now", { ...follow2.newState });
+  check('CPF1 cancel clears mode', cancelled.newState.emergencyMode !== true);
+
+  // Normal Medicare traffic must NOT trip the guardrail.
+  for (const ok of ['how much is the Part B premium?', 'mi doctor no acepta el plan', 'I want to compare plans']) {
+    check('CPF1 no false positive: ' + ok, detectEmergency(ok) === false);
+  }
+
+  // Compliance-filter net (rule 8): a non-911 reply to an emergency is replaced.
+  const netEn = complianceFilter(
+    "So the advisor can reach you, what's your name?",
+    'en',
+    { now: NOW, latestUserText: 'This is an emergency and I cannot breathe.' },
+  );
+  check('CPF1 filter EN rewrites to 911', /\b911\b/.test(netEn.text) && !/your name/i.test(netEn.text), netEn.text);
+  check('CPF1 filter violation tag', netEn.violations.includes('emergency_no_911'), netEn.violations.join(','));
+  const netEs = complianceFilter(
+    'Con gusto le ayudo. ¿Cuál es su nombre?',
+    'es',
+    { now: NOW, latestUserText: 'no puedo respirar, es una emergencia' },
+  );
+  check('CPF1 filter ES rewrites to 911', /\b911\b/.test(netEs.text) && /emergencia m[eé]dica/.test(netEs.text), netEs.text);
+  // A reply that ALREADY carries the 911 instruction is left alone.
+  const netOk = complianceFilter('Please call 911 now.', 'en', { now: NOW, latestUserText: 'chest pain' });
+  check('CPF1 filter keeps compliant 911 reply', netOk.text === 'Please call 911 now.' && netOk.violations.length === 0, netOk.text);
+}
+
+// ── CPF-002 — CONTEXT CONTAMINATION + GEO FILTER (P1) ───────────────────────
+{
+  // (1) LATEST-MESSAGE PRECEDENCE — a fresh definitional question after a bill
+  // conversation gets the definition, never the previous case's follow-up.
+  const bill = await processMessageAsync('I got a hospital bill for $3,500 and I do not know why', midState('en'));
+  check('CPF2 bill turn is a bill turn', /bill|MSN|EOB/i.test(bill.response), bill.response);
+  const def = await processMessageAsync('What does zero-dollar premium mean?', { ...bill.newState });
+  check('CPF2 premium answer, not bill follow-up', /premium/i.test(def.response) && !/hospital|MSN|EOB/i.test(def.response), def.response);
+  check('CPF2 premium answer explains $0', /no monthly premium/i.test(def.response), def.response);
+  check('CPF2 stale category cleared', def.newState.serviceCategory !== 'bill' && def.newState.serviceCategory !== 'bill_provider', String(def.newState.serviceCategory));
+  const defEs = await processMessageAsync('¿Qué significa prima de cero dólares?', midState('es'));
+  check('CPF2 ES definition', /prima/i.test(defEs.response) && /Parte B/.test(defEs.response), defEs.response);
+
+  check('CPF2 detect definitional EN', detectDefinitionalQuestion('What does zero-dollar premium mean?'));
+  check('CPF2 detect definitional ES', detectDefinitionalQuestion('¿Qué es un deducible?'));
+  check('CPF2 possessive is NOT definitional', detectDefinitionalQuestion('what is my zip code again') === false);
+
+  // (2) explicit topic reset clears the stale category.
+  for (const t of ["that isn't what I said", "I'm not talking about that", 'start over', 'different question', 'no es eso', 'otra pregunta']) {
+    check('CPF2 topic reset: ' + t, detectTopicReset(t) === true);
+  }
+  check('CPF2 topic reset no false positive', detectTopicReset('my doctor stopped accepting my plan') === false);
+  const reset = await processMessageAsync('That is not what I said, different question', { ...bill.newState });
+  check('CPF2 reset clears case', reset.newState.serviceCategory !== 'bill_provider' && reset.newState.activeCaseTopic !== 'medicare_cost', String(reset.newState.serviceCategory));
+
+  // (3) LOOP-BREAKER must not preempt an answerable question. Asked once
+  // before → answer again. Asked twice before → the guard may fire.
+  const Q = 'How much does the Part B premium cost?';
+  const t1 = processMessage(Q, midState('en'));
+  const t2 = processMessage(Q, t1.newState);
+  check('CPF2 loop-breaker does not preempt', !/repeated myself|going in circles/i.test(t2.response), t2.response);
+  check('CPF2 answer still delivered', t2.newState.lastBotIntent !== 'loop_guard_pivot', String(t2.newState.lastBotIntent));
+  const t3 = processMessage(Q, t2.newState);
+  check('CPF2 loop guard still fires on true repetition', t3.newState.lastBotIntent === 'loop_guard_pivot', String(t3.newState.lastBotIntent));
+  check('CPF2 answerable-intent gate', _hasNewAnswerableIntent('What does zero-dollar premium mean?') === true
+    && _hasNewAnswerableIntent('Does Clear Point work for Medicare?') === true
+    && _hasNewAnswerableIntent('how much does it cost') === true
+    && _hasNewAnswerableIntent('ok') === false);
+
+  // (4) IDENTITY answer, never a transfer offer.
+  for (const t of ['Does Clear Point work for Medicare?', '¿Clear Point trabaja para Medicare?', 'Are you Medicare?', 'are you the government']) {
+    check('CPF2 detect identity: ' + t, detectIdentityQuestion(t) === true);
+  }
+  const idEn = await processMessageAsync('Does Clear Point work for Medicare?', midState('en'));
+  check('CPF2 identity EN answer', /independent/i.test(idEn.response) && /NOT Medicare or the government/i.test(idEn.response), idEn.response);
+  check('CPF2 identity EN no-cost', /at no cost to you/i.test(idEn.response), idEn.response);
+  check('CPF2 identity EN not a transfer offer', !/what'?s your name|phone number/i.test(idEn.response), idEn.response);
+  const idEs = await processMessageAsync('¿Clear Point trabaja para Medicare?', midState('es'));
+  check('CPF2 identity ES answer', /agencia independiente/i.test(idEs.response) && /no somos Medicare/i.test(idEs.response), idEs.response);
+
+  // (5) GEO FILTER — outside NY/NJ/CT: out-of-area message, no lead collection.
+  check('CPF2 geo detect', detectOutOfAreaState('I live in Florida. Can you help me?') === 'FL'
+    && detectOutOfAreaState('I live in California') === 'CA'
+    && detectOutOfAreaState("I'm in Texas") === 'TX'
+    && detectOutOfAreaState('vivo en Florida') === 'FL');
+  check('CPF2 geo does NOT flag served states', detectOutOfAreaState('I live in New York') === null
+    && detectOutOfAreaState('vivo en Nueva Jersey') === null
+    && detectOutOfAreaState('I live in Connecticut') === null);
+  for (const [msg, lang] of [['I live in Florida. Can you help me?', 'en'], ['I live in California, can you help?', 'en'], ['I live in Texas', 'en'], ['Vivo en Florida, ¿me pueden ayudar?', 'es']]) {
+    const r = await processMessageAsync(msg, midState(lang));
+    const expected = lang === 'es'
+      ? 'En este momento nuestra oficina atiende a clientes en Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con planes en su estado. Para recibir ayuda donde usted vive, puede llamar al 1-800-MEDICARE o visitar Medicare.gov.'
+      : "Right now our office serves clients in New York, New Jersey, and Connecticut, so we're not able to help with plans in your state. For help where you live, you can call 1-800-MEDICARE or visit Medicare.gov.";
+    check('CPF2 out-of-area copy: ' + msg, r.response === expected, r.response);
+    check('CPF2 out-of-area no lead: ' + msg, !/name|nombre|phone|tel[eé]fono|zip|postal/i.test(r.response), r.response);
+    check('CPF2 out-of-area no handoff: ' + msg, r.newState.advisorHandoffStarted !== true && r.newState.needsHuman !== true);
+  }
+  // Compliance-filter net (rule 9).
+  const geoNet = complianceFilter("Happy to help — what's your name?", 'en', { now: NOW, latestUserText: 'I live in Florida' });
+  check('CPF2 filter rewrites out-of-area lead ask', /New York, New Jersey, and Connecticut/.test(geoNet.text) && !/your name/i.test(geoNet.text), geoNet.text);
+  check('CPF2 filter geo violation tag', geoNet.violations.includes('out_of_area_lead_capture'), geoNet.violations.join(','));
+  const geoOk = complianceFilter('The standard Part B premium is $202.90 as of 2026.', 'en', { now: NOW, latestUserText: 'I live in Florida' });
+  check('CPF2 filter leaves non-lead reply alone', geoOk.violations.length === 0, geoOk.text);
+}
+
+// ── CPF-003 — /es LINK LEAK GUARD (P2) ──────────────────────────────────────
+{
+  // Scans the PRERENDERED Spanish HTML (dist/es/**/index.html, produced by
+  // `npm run build`) and asserts zero internal hrefs pointing at a non-/es
+  // content route. Requires a fresh build — run `npm run build` first.
+  const leaks = scanEsLinkLeaks();
+  const distMissing = leaks.length === 1 && String(leaks[0]).startsWith(ES_SCAN_SENTINEL);
+  check('CPF3 dist/ present (run npm run build)', !distMissing, String(leaks[0] || ''));
+  if (!distMissing) {
+    check('CPF3 zero ES link leaks in prerendered HTML', leaks.length === 0, leaks.slice(0, 8).join(' | '));
+  }
+
+  // SOURCE-LEVEL guard. scripts/prerender-meta.mjs emits the SPA shell only
+  // (head + empty #root), so the dist scan above cannot see body links today —
+  // it becomes load-bearing when SSR/body prerendering lands. This scan is what
+  // actually catches CPF-003 now: any HARD-CODED internal path literal in
+  // src/pages or src/components that never goes through useLocalizedPath().
+  {
+    const ALLOW_TARGET = /^(\/es(\/|$)|\/thank-you|\/soa\/|\/assets\/|\/favicon|\/robots\.txt|\/sitemap|#)/;
+    // /thank-you has no ES twin, so its own "back home" link can never render
+    // inside the /es space — the audit explicitly scopes it out.
+    const ALLOW_FILE = /(ThankYou|LanguageToggle)\.tsx$/;
+    const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ');
+    const linkOffenders = [];
+    const scanSrc = (dir) => {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) { scanSrc(p); continue; }
+        if (!/\.tsx?$/.test(name) || ALLOW_FILE.test(name)) continue;
+        const src = stripComments(readFileSync(p, 'utf8'));
+        const pats = [/\bto=["'](\/[^"'{}]*)["']/g, /\bhref=["'](\/[^"'{}]*)["']/g, /\bnavigate\(\s*['"](\/[^'"]*)['"]/g];
+        for (const re of pats) {
+          for (const m of src.matchAll(re)) {
+            if (ALLOW_TARGET.test(m[1])) continue;
+            linkOffenders.push(`${name} :: ${m[0]}`);
+          }
+        }
+      }
+    };
+    scanSrc(fileURLToPath(new URL('../src/pages', import.meta.url)));
+    scanSrc(fileURLToPath(new URL('../src/components', import.meta.url)));
+    check('CPF3 zero hard-coded EN paths in src/', linkOffenders.length === 0, linkOffenders.slice(0, 8).join(' | '));
+  }
 }
 
 console.log(`Audit regression suite: ${pass}/${pass + failures.length} passed`);

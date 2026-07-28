@@ -1,9 +1,12 @@
 import { Link } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 
 // PHASE 7 — Branded 404 with phone CTA so a typo'd URL still drives to support.
 export default function NotFound() {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — a bad /es/* URL renders this 404, so the
+  // recovery links must send the visitor back into /es, not into English.
+  const lp = useLocalizedPath();
   return (
     <section className="bg-cream-50 py-20 sm:py-28">
       <div className="max-w-2xl mx-auto px-5 text-center">
@@ -19,7 +22,7 @@ export default function NotFound() {
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
           <Link
-            to="/"
+            to={lp('/')}
             className="cp-btn bg-earth-800 text-cream-50 hover:bg-earth-900 transition-colors"
           >
             {t('Return Home', 'Volver al Inicio')}
@@ -33,11 +36,11 @@ export default function NotFound() {
         </div>
         <p className="text-sm text-earth-600">
           {t('Or browse our ', 'O explore nuestros ')}
-          <Link to="/resources" className="text-earth-800 underline font-medium hover:text-gold-600">
+          <Link to={lp('/resources')} className="text-earth-800 underline font-medium hover:text-gold-600">
             {t('Medicare resources', 'recursos de Medicare')}
           </Link>
           {t(' and ', ' y ')}
-          <Link to="/support" className="text-earth-800 underline font-medium hover:text-gold-600">
+          <Link to={lp('/support')} className="text-earth-800 underline font-medium hover:text-gold-600">
             {t('support center', 'centro de apoyo')}
           </Link>
           .

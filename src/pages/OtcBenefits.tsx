@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { Link } from 'react-router';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
@@ -8,6 +8,8 @@ import { useScrollReveal } from '../components/ScrollReveal';
 
 export default function OtcBenefits() {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — in-page links stay inside the /es space.
+  const lp = useLocalizedPath();
   const cardsReveal = useScrollReveal();
 
   return (
@@ -172,7 +174,7 @@ export default function OtcBenefits() {
                     'Some expanded card benefits (food, utilities, flex supports) may require Medicaid, MSP, or other eligibility. Those programs are covered on a separate page.',
                     'Algunos beneficios ampliados de tarjeta (comida, utilidades, apoyos flex) pueden requerir Medicaid, MSP u otra elegibilidad. Esos programas se explican en una página separada.'
                   )}{' '}
-                  <Link to="/help-paying-costs" className="font-semibold text-gold-600 hover:text-gold-700 underline">
+                  <Link to={lp('/help-paying-costs')} className="font-semibold text-gold-600 hover:text-gold-700 underline">
                     {t('See Help Paying Costs', 'Ver Ayuda con Costos')}
                   </Link>
                 </p>

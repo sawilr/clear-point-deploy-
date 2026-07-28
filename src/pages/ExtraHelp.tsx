@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
 import { CTASection } from '../components/CTASection';
@@ -9,6 +9,8 @@ import { MEDICARE_2026 } from '../data/medicare-figures-2026';
 
 export default function ExtraHelp() {
   const { t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — in-page links stay inside the /es space.
+  const lp = useLocalizedPath();
   const eduReveal = useScrollReveal();
   // Sawil 2026-07-02 — drive Extra Help eligibility figures from the SINGLE source
   // of truth (MEDICARE_2026.extraHelp) so this page can never again drift from what
@@ -121,7 +123,7 @@ export default function ExtraHelp() {
                     'Looking for help beyond Medicare Part D drug costs? Medicare Savings Programs (MSP), Medicaid, and State Pharmaceutical Assistance Programs (SPAP) are covered on a separate page.',
                     '¿Busca ayuda más allá de costos de medicamentos de Medicare Parte D? Los Programas de Ahorro de Medicare (MSP), Medicaid y los Programas Estatales de Asistencia Farmacéutica (SPAP) se explican en una página separada.'
                   )}{' '}
-                  <Link to="/help-paying-costs" className="font-semibold text-gold-600 hover:text-gold-700 underline">
+                  <Link to={lp('/help-paying-costs')} className="font-semibold text-gold-600 hover:text-gold-700 underline">
                     {t('See Programs That May Help You Save', 'Ver Programas que Pueden Ayudarle a Ahorrar')}
                   </Link>
                 </p>

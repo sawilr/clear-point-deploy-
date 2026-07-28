@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { LeadForm } from '../components/LeadForm';
 import { CTASection } from '../components/CTASection';
@@ -10,9 +10,11 @@ import { CheckIcon } from '../components/icons';
 export default function MedicareSupplement() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  // Sawil 2026-07-28 AUDIT CPF-003 — CTA stays inside the /es URL space.
+  const lp = useLocalizedPath();
 
   const handleFreeReview = () => {
-    navigate('/contact?focus=name');
+    navigate(lp('/contact') + '?focus=name');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#lead-form-heading');
       if (el) {

@@ -1,4 +1,4 @@
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { useScrollReveal } from './ScrollReveal';
 import { PhoneIcon, CalendarIcon } from './icons';
 import { Link, useNavigate } from 'react-router';
@@ -33,12 +33,15 @@ export function CTASection({
   const { t } = useLanguage();
   const { ref, visible } = useScrollReveal();
   const navigate = useNavigate();
+  // Sawil 2026-07-28 AUDIT CPF-003 — callers pass EN paths in `primaryHref`;
+  // resolve them into the URL space the visitor is browsing so /es never leaks.
+  const lp = useLocalizedPath();
 
   // When primaryHref points to /contact, navigate then scroll to form + focus first name.
   // Works from any page. onPrimaryClick prop overrides this (e.g. Contact page itself).
   const handleContactNav = () => {
     // `?focus=name` signals LeadForm to autofocus the First Name field on mount.
-    navigate('/contact?focus=name');
+    navigate(lp('/contact') + '?focus=name');
     const tryScroll = (attemptsLeft: number) => {
       const el = document.querySelector('#lead-form-heading');
       if (el) {
@@ -89,7 +92,7 @@ export function CTASection({
               {primaryLabel}
             </button>
           ) : (
-            <Link to={primaryHref} className={primaryBtnClass}>
+            <Link to={lp(primaryHref)} className={primaryBtnClass}>
               <CalendarIcon className="w-4 h-4" />
               {primaryLabel}
             </Link>

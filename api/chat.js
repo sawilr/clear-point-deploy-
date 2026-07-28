@@ -14,7 +14,7 @@
 
 import { checkPromptInjection } from './_lib/prompt-guard.js';
 import { scrubPHI } from './_lib/phi-scrub.js';
-import { complianceFilter } from './_lib/compliance-filter.js';
+import { complianceFilter, matchesEmergency } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 // UMKE — Unified Medicare Knowledge Engine (single source of truth for every
@@ -467,6 +467,23 @@ export default async function handler(req, res) {
   conversationContext.clarificationCount = (isFinite(_cc) && _cc >= 0 && _cc <= 50) ? _cc : 0;
   if (!userMessage) return res.status(400).json({ error: 'userMessage required' });
 
+  // ── AUDIT 2026-07-28 CPF-001 (P1, LIFE SAFETY) ─────────────────────────
+  // The emergency guardrail runs BEFORE the injection guard, before the LLM
+  // request is built, and before anything that could ask for contact details.
+  // Short-circuits with the 911 text — the model is never called. Mirrors the
+  // client engine's _handleEmergency so both paths are covered.
+  if (matchesEmergency(userMessage)) {
+    var _emLang = _turnLang || conversationContext.language || 'es';
+    var _emText = _emLang === 'en'
+      ? "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first."
+      : 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.';
+    console.warn('[CHAT] medical emergency guardrail fired, LLM skipped, ip=' + ip);
+    return res.status(200).json({
+      response: _emText,
+      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'medical_emergency' },
+    });
+  }
+
   // ── A15.3 Cap conversation history (max 12 turns) ──────────────────────
   if (conversationHistory.length > 12) {
     conversationHistory = conversationHistory.slice(-12);
@@ -659,7 +676,10 @@ export default async function handler(req, res) {
       .filter(function (m) { return m && m.role === 'user' && typeof m.content === 'string'; })
       .map(function (m) { return m.content; })
       .join('\n');
-    var filtered = complianceFilter(cleanText, lang, { userText: _userTextAll });
+    // CPF-001 / CPF-002 (2026-07-28) — rules 8 and 9 key off the LATEST user
+    // message only, so an emergency or a state named 6 turns ago cannot rewrite
+    // every later reply.
+    var filtered = complianceFilter(cleanText, lang, { userText: _userTextAll, latestUserText: userMessage });
     cleanText = filtered.text;
     if (filtered.violations.length) {
       console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);

@@ -184,7 +184,10 @@ export function Header() {
         <div className="max-w-6xl 2xl:max-w-[1400px] 3xl:max-w-[1600px] mx-auto px-5">
           <div className="flex items-center justify-between h-[70px]">
             {/* Logo */}
-            <a href="/" onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
+            {/* Sawil 2026-07-28 AUDIT CPF-003 — href is the no-JS / middle-click /
+                crawler target, so it must be localized too: onClick alone left
+                <a href="/"> in the DOM on every /es page. */}
+            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
               <div className="transition-transform group-hover:scale-105 flex-shrink-0">
                 <LogoSvg size={40} />
               </div>

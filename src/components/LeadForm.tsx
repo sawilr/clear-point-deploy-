@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { LockIcon, CheckIcon } from './icons';
 import { Link, useLocation } from 'react-router';
 import { submitLeadToGHL, getLastSubmitStatus } from '../lib/ghl';
@@ -29,6 +29,8 @@ interface LeadFormProps {
 
 export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFormProps) {
   const { lang, t } = useLanguage();
+  // Sawil 2026-07-28 AUDIT CPF-003 — consent link stays inside the /es space.
+  const lp = useLocalizedPath();
   const location = useLocation();
   // Sawil 2026-06-16 compliance audit — programmatic label↔input association
   // (WCAG 1.3.1 / 4.1.2). useId() keeps ids unique even if two LeadForms render
@@ -212,7 +214,19 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     }
 
     setErrors(newErrors);
-    if (hasError) return;
+    if (hasError) {
+      // AUDIT 2026-07-28 CPF-004 — keyboard/screen-reader users were left on the
+      // Submit button with no way to reach the first error. Move focus to it.
+      const order: Array<'first_name' | 'last_name' | 'phone' | 'email' | 'zip'> =
+        ['first_name', 'last_name', 'phone', 'email', 'zip'];
+      const firstBad = order.find((k) => newErrors[k]);
+      requestAnimationFrame(() => {
+        const el = document.getElementById(fid(firstBad ?? 'tcpa_consent')) as HTMLElement | null;
+        el?.focus();
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      });
+      return;
+    }
 
     setSubmitting(true);
     setError(false);
@@ -330,29 +344,29 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3.5">
             <div>
               <label htmlFor={fid('first_name')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('First Name', 'Nombre')} *</label>
-              <input id={fid('first_name')} ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
-              {errors.first_name && <p role="alert" className="text-xs text-red-700 mt-1">{errors.first_name}</p>}
+              <input id={fid('first_name')} aria-invalid={errors.first_name ? true : undefined} aria-describedby={errors.first_name ? fid('first_name-err') : undefined} ref={firstNameRef} type="text" name="first_name" required autoComplete="given-name" value={formData.first_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('John', 'Juan')} />
+              {errors.first_name && <p id={fid('first_name-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.first_name}</p>}
             </div>
             <div>
               <label htmlFor={fid('last_name')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Last Name', 'Apellido')} *</label>
-              <input id={fid('last_name')} type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
-              {errors.last_name && <p role="alert" className="text-xs text-red-700 mt-1">{errors.last_name}</p>}
+              <input id={fid('last_name')} aria-invalid={errors.last_name ? true : undefined} aria-describedby={errors.last_name ? fid('last_name-err') : undefined} type="text" name="last_name" required autoComplete="family-name" value={formData.last_name} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder={t('Smith', 'García')} />
+              {errors.last_name && <p id={fid('last_name-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.last_name}</p>}
             </div>
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input id={fid('phone')} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="(d{3}) d{3}-d{4}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
-            {errors.phone && <p role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
+            <input id={fid('phone')} aria-invalid={errors.phone ? true : undefined} aria-describedby={errors.phone ? fid('phone-err') : undefined} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="\(\d{3}\) \d{3}-\d{4}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
+            {errors.phone && <p id={fid('phone-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
           </div>
           <div>
             <label htmlFor={fid('email')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Email', 'Correo')}</label>
-            <input id={fid('email')} type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
-            {errors.email && <p role="alert" className="text-xs text-red-700 mt-1">{errors.email}</p>}
+            <input id={fid('email')} aria-invalid={errors.email ? true : undefined} aria-describedby={errors.email ? fid('email-err') : undefined} type="email" name="email" autoComplete="email" value={formData.email} onChange={handleChange} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="you@example.com" />
+            {errors.email && <p id={fid('email-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.email}</p>}
           </div>
           <div>
             <label htmlFor={fid('zip')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('ZIP Code', 'Código Postal')} *</label>
-            <input id={fid('zip')} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} pattern="[0-9]{5}" value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
-            {errors.zip && <p role="alert" className="text-xs text-red-700 mt-1">{errors.zip}</p>}
+            <input id={fid('zip')} aria-invalid={errors.zip ? true : undefined} aria-describedby={errors.zip ? fid('zip-err') : undefined} type="text" name="zip" required autoComplete="postal-code" inputMode="numeric" maxLength={5} pattern="[0-9]{5}" value={formData.zip} onChange={handleZip} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="10001" />
+            {errors.zip && <p id={fid('zip-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.zip}</p>}
           </div>
           <div>
             <label className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
@@ -413,7 +427,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                   audit receipt always matches verbatim what the user saw (EN/ES). */}
               <span id={fid('tcpa_text')} className="text-sm text-earth-700 leading-relaxed">
                 {lang === 'es' ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
-                <Link to="/privacy-policy" className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
+                <Link to={lp('/privacy-policy')} className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>
               </span>
             </label>
             {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-700 mt-2">{errors.consent}</p>}

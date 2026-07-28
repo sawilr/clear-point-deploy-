@@ -362,6 +362,16 @@ export interface ConversationState {
   usedPhraseIndexes?: Record<string, number[]>;
   /** Plain-language conversation summary in user's own words (last 5 facts). */
   conversationSummary?: string[];
+  // ─── AUDIT 2026-07-28 CPF-001: life-safety emergency guardrail ───
+  /** TRUE once the 911 notice fired. While TRUE the lead flow is HARD-STOPPED
+   *  (no name/phone/ZIP, no handoff collector, no scheduling) for the rest of
+   *  the session, until the caller explicitly says it is not an emergency. */
+  emergencyMode?: boolean;
+  /** How many 911 notices were emitted this session (1 = full text, 2+ = short). */
+  emergencyNoticeCount?: number;
+  // ─── AUDIT 2026-07-28 CPF-002: out-of-area geo filter (mirrors voice agent) ───
+  /** Two-letter code of a NON-served state the caller stated (FL, CA, TX…). */
+  outOfAreaState?: string;
 }
 
 // ── ZIP prefix → state. NY/NJ/CT only (ClearPoint service area). ──
@@ -1821,6 +1831,471 @@ export function detectMedicalEmergency(text: string): boolean {
   return /\b(me duele el pecho|dolor (en |de )?(el )?pecho|opresi[oó]n en el pecho|chest pain|chest pressure|infarto|ataque al coraz[oó]n|heart attack|derrame( cerebral)?|stroke|no puedo respirar|cannot breathe|can'?t breathe|dificultad para respirar|me estoy ahogando)\b/i.test(t);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT 2026-07-28 — CPF-001 (P1, LIFE SAFETY)
+//
+// Live transcript: "This is an emergency and I cannot breathe." → Clara asked
+// "So the advisor can reach you, what's your name?" — the escalation collector
+// outranked the (existing but too-narrow, too-late) medical_emergency_911 path.
+//
+// EMERGENCY_RES is the widened bilingual net. It is intentionally tolerant of
+// missing accents, common misspellings and Spanglish ("emergensia", "no puedo
+// respirer") because a caller in distress types badly. Matching runs on the
+// accent-stripped lowercase text.
+// ─────────────────────────────────────────────────────────────────────────────
+const EMERGENCY_RES: RegExp[] = [
+  // EN — generic emergency + 911
+  /\b(this is (an? )?)?emerg[ea]n[csz](y|ia|ie)\b/,
+  /\b911\b/,
+  // EN — breathing
+  /\b(can'?t|cant|cannot|can not|couldn'?t|no puedo|not able to)\s+(breath?e?|breathe|breath|breather|respire?r?)\b/,
+  /\b(trouble|difficulty|struggling|hard time)\s+breath(ing|e)?\b/,
+  /\b(short(ness)? of breath|gasping for air|choking|suffocating)\b/,
+  // EN — cardiac / stroke / bleeding / consciousness
+  /\b(chest\s+(pain|pains|pressure|tightness)|heart\s+attack|cardiac\s+arrest)\b/,
+  /\b(stroke|having a stroke)\b/,
+  /\b(bleeding|blood\s+everywhere|hemorrhag\w*)\b/,
+  /\b(passed\s+out|pass(ing)?\s+out|unconscious|unresponsive|blacked\s+out|fainted)\b/,
+  /\b(overdos\w*|od'?ed)\b/,
+  /\b(suicid\w*|kill\s+myself)\b/,
+  // ES — generic emergency
+  /\bemerg[ea]n[csz](ia|ya|y)\b/,
+  // ES — breathing (tolerant of "respirer" / "respira" typos)
+  /\bno\s+puedo\s+respir\w*/,
+  /\b(me\s+falta\s+(el\s+)?aire|falta\s+de\s+aire|me\s+estoy\s+ahogando|no\s+me\s+llega\s+el\s+aire)\b/,
+  /\b(dificultad|problemas?)\s+para\s+respirar\b/,
+  // ES — cardiac / stroke / bleeding / consciousness
+  /\b(dolor\s+(de|en\s+el)\s+pecho|me\s+duele\s+el\s+pecho|opresion\s+en\s+el\s+pecho)\b/,
+  /\b(infarto|ataque\s+al\s+corazon|paro\s+cardiaco)\b/,
+  /\b(derrame(\s+cerebral)?|embolia)\b/,
+  /\b(estoy\s+sangrando|sangrando\s+mucho|hemorragia)\b/,
+  /\b(me\s+desmay\w*|se\s+desmay\w*|esta\s+inconsciente|estoy\s+inconsciente|perdio\s+el\s+conocimiento)\b/,
+  /\bsobredosis\b/,
+];
+
+/** Accent-stripped, lowercased normalization used by the emergency detectors. */
+function _emergencyNorm(text: string): string {
+  return (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
+/**
+ * TRUE when the message signals a medical / life-safety emergency in EN or ES.
+ * Deliberately WIDER than detectMedicalEmergency (which stays as-is for the
+ * WAVE 42 topic routing): a false positive costs one 911 notice, a false
+ * negative costs a life.
+ */
+export function detectEmergency(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  for (const re of EMERGENCY_RES) if (re.test(t)) return true;
+  return false;
+}
+
+/** TRUE when the caller explicitly cancels the emergency ("it's not an
+ *  emergency", "ya estoy bien", "no es emergencia"). ONLY this reopens the
+ *  normal flow once emergencyMode is set. */
+export function detectNotAnEmergency(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  return /\b(not\s+an?\s+emerg\w*|no\s+es\s+(una\s+)?emerg\w*|isn'?t\s+an?\s+emerg\w*|it'?s\s+not\s+urgent|no\s+es\s+urgente|ya\s+estoy\s+bien|estoy\s+bien\s+ahora|i'?m\s+ok(ay)?\s+now|i'?m\s+fine\s+now|ya\s+paso|ya\s+se\s+me\s+paso|false\s+alarm|falsa\s+alarma)\b/.test(t);
+}
+
+/** The exact CPF-001 911 copy (audit-mandated wording). */
+export const EMERGENCY_911_TEXT = {
+  en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
+  es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
+};
+const EMERGENCY_911_SHORT = {
+  en: "Please call 911 right now, or go to your nearest emergency room. I can't help with a medical emergency — your safety comes first.",
+  es: 'Por favor llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con una emergencia médica — su seguridad es lo primero.',
+};
+
+/**
+ * CPF-001 guardrail. Runs BEFORE every other path (human-escalation routing,
+ * handoff collector, LLM, any name/phone/ZIP question). Returns the 911 turn,
+ * or `null` when this turn is not an emergency turn.
+ *
+ * Once emergencyMode is set it STAYS set for the session: every later turn
+ * repeats a short 911 notice and never resumes data collection, unless the
+ * caller explicitly cancels ("it's not an emergency" / "ya estoy bien").
+ */
+export function _handleEmergency(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  // An explicit "it's not an emergency" always wins — both to reopen the flow
+  // and so the phrase itself never trips the detector.
+  if (detectNotAnEmergency(userMessage)) return null;
+  const inMode = !!state.emergencyMode;
+  const fresh = detectEmergency(userMessage);
+  if (!fresh && !inMode) return null;
+
+  const isEs = _turnLanguage(userMessage, state) === 'es';
+  const count = (state.emergencyNoticeCount || 0) + 1;
+  const bank = count === 1 ? EMERGENCY_911_TEXT : EMERGENCY_911_SHORT;
+  const out = isEs ? bank.es : bank.en;
+  const newState: ConversationState = {
+    ...state,
+    turnCount: (state.turnCount || 0) + 1,
+    emergencyMode: true,
+    emergencyNoticeCount: count,
+    // HARD STOP the lead flow — no collector, no scheduling, no menu.
+    advisorHandoffStarted: false,
+    schedulingCallback: false,
+    needsHuman: false,
+    // Keep the intake step when the language was never picked — a 911 notice
+    // must not silently skip the language question if the caller comes back.
+    step: state.language ? 'conversation' : state.step,
+    serviceCategory: 'medical_emergency_911',
+    activeCaseTopic: 'medical_emergency_911',
+    lastBotIntent: 'emergency_911',
+    lastBotEmittedMenu: false,
+    lastBotOfferedAdvisor: false,
+    quickReplies: [],
+    messages: [
+      ...(state.messages || []),
+      { role: 'user', content: userMessage, timestamp: Date.now() },
+      { role: 'bot', content: out, timestamp: Date.now() },
+    ],
+  };
+  return { response: out, newState, needsHuman: false };
+}
+
+/** Clears emergencyMode when the caller explicitly cancels the emergency. */
+function _clearEmergencyIfCancelled(userMessage: string, state: ConversationState): ConversationState {
+  if (!state.emergencyMode || !detectNotAnEmergency(userMessage)) return state;
+  return { ...state, emergencyMode: false, emergencyNoticeCount: 0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT 2026-07-28 — CPF-002 (P1): CONTEXT CONTAMINATION + GEO FILTER
+//
+// Live failures: (a) "What does zero-dollar premium mean?" answered with a
+// stale hospital-bill follow-up; (b) "Does Clear Point work for Medicare?"
+// got an escalation offer instead of the identity answer; (c) "I live in
+// Florida" started lead capture instead of the out-of-area message; (d) the
+// "I see I just repeated myself…" loop-breaker preempted answerable questions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Served states — the ONLY states ClearPoint's online experience supports. */
+const SERVED_STATES = new Set(['NY', 'NJ', 'CT']);
+
+// Every US state EXCEPT NY/NJ/CT, EN + ES spellings. Order matters: longer
+// names are matched first so "west virginia" never resolves as "virginia".
+const NON_SERVED_STATE_NAMES: [string, string][] = [
+  ['district of columbia', 'DC'], ['north carolina', 'NC'], ['south carolina', 'SC'],
+  ['north dakota', 'ND'], ['south dakota', 'SD'], ['west virginia', 'WV'],
+  ['new hampshire', 'NH'], ['new mexico', 'NM'], ['nuevo mexico', 'NM'],
+  ['rhode island', 'RI'], ['massachusetts', 'MA'], ['pennsylvania', 'PA'],
+  ['pensilvania', 'PA'], ['mississippi', 'MS'], ['california', 'CA'],
+  ['washington', 'WA'], ['minnesota', 'MN'], ['louisiana', 'LA'],
+  ['wisconsin', 'WI'], ['tennessee', 'TN'], ['carolina del norte', 'NC'],
+  ['carolina del sur', 'SC'], ['dakota del norte', 'ND'], ['dakota del sur', 'SD'],
+  ['virginia occidental', 'WV'], ['nueva hampshire', 'NH'], ['puerto rico', 'PR'],
+  ['colorado', 'CO'], ['delaware', 'DE'], ['maryland', 'MD'], ['michigan', 'MI'],
+  ['nebraska', 'NE'], ['oklahoma', 'OK'], ['arkansas', 'AR'], ['illinois', 'IL'],
+  ['kentucky', 'KY'], ['missouri', 'MO'], ['virginia', 'VA'], ['vermont', 'VT'],
+  ['alabama', 'AL'], ['arizona', 'AZ'], ['florida', 'FL'], ['georgia', 'GA'],
+  ['indiana', 'IN'], ['montana', 'MT'], ['wyoming', 'WY'], ['alaska', 'AK'],
+  ['hawaii', 'HI'], ['kansas', 'KS'], ['nevada', 'NV'], ['oregon', 'OR'],
+  ['texas', 'TX'], ['tejas', 'TX'], ['idaho', 'ID'], ['maine', 'ME'],
+  ['ohio', 'OH'], ['utah', 'UT'], ['iowa', 'IA'],
+];
+
+// A state name only counts as the CALLER'S location when a location cue sits
+// right before it. Without this, "my daughter in Texas" style mentions and
+// plan/program names would trip the filter.
+const LOCATION_CUE = '(?:vivo en|vivimos en|resido en|estoy en|estamos en|soy de|somos de|me mud[eé] a|nos mudamos a|aqu[ií] en|en el estado de|i live in|we live in|i am in|i\'?m in|im in|we are in|living in|i reside in|i moved to|i am from|i\'?m from|im from|based in|located in|in the state of|my state is|mi estado es)';
+
+/**
+ * Returns the two-letter code of a NON-served state the caller states as their
+ * own location, or `null`. ZIP codes are handled separately (the intake ZIP
+ * step owns those).
+ */
+export function detectOutOfAreaState(text: string): string | null {
+  const t = _emergencyNorm(text).replace(/[.,!?;]/g, ' ').replace(/\s+/g, ' ');
+  if (!t) return null;
+  // Served states stated explicitly win — never flag a NY/NJ/CT caller.
+  if (new RegExp(`\\b${LOCATION_CUE}\\s+(new york|nueva york|new jersey|nueva jersey|connecticut)\\b`).test(t)) return null;
+  for (const [name, code] of NON_SERVED_STATE_NAMES) {
+    if (new RegExp(`\\b${LOCATION_CUE}\\s+${name}\\b`).test(t)) return code;
+  }
+  return null;
+}
+
+/** Out-of-area ZIP stated mid-conversation (NOT during the intake ZIP step).
+ *  Requires an explicit ZIP cue so a dollar amount ("como 20000") is never
+ *  mistaken for a ZIP. */
+function _outOfAreaZip(text: string): string | null {
+  if (!/\b(zip|zipcode|zip code|postal code|c[oó]digo postal)\b/i.test(text || '')) return null;
+  const m = (text || '').match(/\b(\d{5})\b/);
+  if (!m) return null;
+  const st = getStateFromZip(m[1]);
+  if (st && SERVED_STATES.has(st)) return null;
+  return m[1];
+}
+
+/** Audit-mandated out-of-area copy. NO lead collection, no callback offer. */
+export const OUT_OF_AREA_TEXT = {
+  en: "Right now our office serves clients in New York, New Jersey, and Connecticut, so we're not able to help with plans in your state. For help where you live, you can call 1-800-MEDICARE or visit Medicare.gov.",
+  es: 'En este momento nuestra oficina atiende a clientes en Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con planes en su estado. Para recibir ayuda donde usted vive, puede llamar al 1-800-MEDICARE o visitar Medicare.gov.',
+};
+
+/**
+ * CPF-002 (5) — geo filter, mirroring the voice agent. A caller outside
+ * NY/NJ/CT gets the out-of-area message and NO name/phone/ZIP question and no
+ * callback offer. Skipped during the intake steps, which own ZIP validation.
+ */
+export function _handleOutOfArea(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  if (['asking_language', 'asking_zip', 'asking_zip_natural', 'asking_name', 'collecting_identity'].includes(String(state.step))) return null;
+  const declared = detectOutOfAreaState(userMessage);
+  const zip = declared ? null : _outOfAreaZip(userMessage);
+  if (!declared && !zip) return null;
+  const isEs = _turnLanguage(userMessage, state) === 'es';
+  const out = isEs ? OUT_OF_AREA_TEXT.es : OUT_OF_AREA_TEXT.en;
+  const newState: ConversationState = {
+    ...state,
+    turnCount: (state.turnCount || 0) + 1,
+    outOfAreaState: declared || 'OUT',
+    stateDeclaredByUser: declared || state.stateDeclaredByUser,
+    isValidState: false,
+    // HARD STOP the lead flow for an out-of-area caller.
+    advisorHandoffStarted: false,
+    schedulingCallback: false,
+    pendingAdvisorHandoff: false,
+    needsHuman: false,
+    lastBotIntent: 'out_of_area',
+    serviceCategory: 'out_of_area',
+    lastBotEmittedMenu: false,
+    lastBotOfferedAdvisor: false,
+    quickReplies: [],
+    messages: [
+      ...(state.messages || []),
+      { role: 'user', content: userMessage, timestamp: Date.now() },
+      { role: 'bot', content: out, timestamp: Date.now() },
+    ],
+  };
+  return { response: out, newState, needsHuman: false };
+}
+
+/** CPF-002 (2) — explicit topic reset. Clears the stale case so the LATEST
+ *  message can set a fresh topic. */
+export function detectTopicReset(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  return /\b(that\s+(isn'?t|is\s+not|was\s+not|wasn'?t)\s+what\s+i\s+said|that'?s\s+not\s+what\s+i\s+said|i'?m\s+not\s+(talking\s+about|asking\s+about)|start\s+over|starting\s+over|different\s+question|another\s+question|new\s+question|change\s+(the\s+)?(topic|subject)|forget\s+that|never\s+mind|no\s+es\s+eso|eso\s+no\s+es\s+lo\s+que\s+dije|no\s+es\s+lo\s+que\s+dije|no\s+estoy\s+hablando\s+de|otra\s+pregunta|otra\s+cosa|empecemos\s+de\s+nuevo|cambiemos\s+de\s+tema|olv[ií]delo|dej[ée]moslo)\b/.test(t);
+}
+
+/** Wipes the stale case topic so a NEW question is never answered with the
+ *  previous case's follow-up. Contact data and language are preserved. */
+function _clearStaleCaseTopic(state: ConversationState): ConversationState {
+  return {
+    ...state,
+    serviceCategory: undefined,
+    activeCaseTopic: undefined,
+    subIssue: undefined,
+    lastUserProblem: undefined,
+    currentProblem: '',
+    costFlowStage: undefined,
+    costChargeSource: undefined,
+    costFlowAttempts: 0,
+    billSource: undefined,
+    dualFlowStage: undefined,
+    dualIntentConfirmed: undefined,
+    lastBotQuestion: undefined,
+    lastFallbackResponse: undefined,
+  };
+}
+
+/** TRUE when the LATEST message is a fresh definitional / educational question
+ *  ("what does X mean", "what is X", "qué significa X", "qué es X"). */
+export function detectDefinitionalQuestion(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  // The negative lookahead keeps possessive/contact questions ("what is my
+  // ZIP", "what's your number") out — those are NOT topic-resetting.
+  const NOT_A_DEFINITION = '(?!my\\b|your\\b|it\\b|that\\b|this\\b|he\\b|she\\b|the\\s+(name|number|phone|address|zip)\\b)';
+  return new RegExp(
+    `\\b(what\\s+(does|do)\\s+[a-z0-9$'"\\-\\s]{1,40}\\s+mean`
+    + `|what\\s+(is|are)\\s+${NOT_A_DEFINITION}(a\\s+|an\\s+|the\\s+)?\\w`
+    + `|what'?s\\s+${NOT_A_DEFINITION}(a\\s+|an\\s+|the\\s+)?\\w`
+    + `|what\\s+exactly\\s+is\\s+${NOT_A_DEFINITION}\\w`
+    + `|explain\\s+(to\\s+me\\s+)?what\\s+\\w`
+    + `|que\\s+significa|que\\s+quiere\\s+decir`
+    + `|que\\s+es\\s+(un|una|el|la|eso)\\b|que\\s+son\\s+(los|las)\\b`
+    + `|me\\s+explica\\s+que\\s+es|expliqueme\\s+que\\s+es)`,
+  ).test(t);
+}
+
+// Deterministic bilingual glossary for the definitional questions the audit hit.
+// Compliance: educational only — no eligibility confirmation, no carrier names,
+// no personal price. An unlisted concept still CLEARS the stale case and falls
+// through to normal routing, so the previous case can never answer it.
+const DEFINITION_GLOSSARY: { key: string; re: RegExp; en: string; es: string }[] = [
+  {
+    key: 'zero_dollar_premium',
+    re: /(zero[- ]dollar|zero |\$ ?0|0 ?\$|cero d[oó]lares|cero |prima de \$?0)\s*(monthly\s+)?(premium|prima)|premium of \$?0|prima de cero/i,
+    en: 'A "zero-dollar premium" means the plan itself charges no monthly premium for its coverage. It does not mean Medicare is free: you generally still pay your Part B premium ($202.90/month standard in 2026), and the plan can still have deductibles, copays, coinsurance, and network rules. A licensed ClearPoint advisor can review what a specific plan would actually cost you, at no cost for the guidance.',
+    es: 'Una "prima de cero dólares" significa que ese plan no cobra prima mensual por su cobertura. No quiere decir que Medicare sea gratis: normalmente usted sigue pagando la prima de la Parte B ($202.90 al mes, estándar en 2026), y el plan aún puede tener deducibles, copagos, coseguro y reglas de red. Un asesor licenciado de ClearPoint puede revisar qué costaría realmente un plan específico; la orientación no tiene costo.',
+  },
+  {
+    key: 'premium',
+    re: /\b(premium|prima)\b/i,
+    en: 'A premium is the fixed monthly amount you pay to keep a coverage active — separate from what you pay when you actually use care. Most people pay the Part B premium ($202.90/month standard in 2026), and a Medicare Advantage or Part D plan may add its own premium on top, or charge none at all. Deductibles, copays and coinsurance are separate from the premium.',
+    es: 'La prima es la cantidad fija que se paga cada mes para mantener activa una cobertura — es aparte de lo que usted paga cuando realmente usa servicios. La mayoría paga la prima de la Parte B ($202.90 al mes, estándar en 2026), y un plan Medicare Advantage o Parte D puede añadir su propia prima, o no cobrar ninguna. El deducible, los copagos y el coseguro son aparte de la prima.',
+  },
+  {
+    key: 'deductible',
+    re: /\b(deductible|deducible)\b/i,
+    en: 'A deductible is the amount you pay out of pocket before the coverage starts paying its share. In 2026 the standard Part B deductible is $283 a year, the Part A hospital deductible is $1,736 per benefit period, and a Part D plan can have a deductible up to $615. Each plan sets its own within those limits.',
+    es: 'El deducible es lo que usted paga de su bolsillo antes de que la cobertura empiece a pagar su parte. En 2026 el deducible estándar de la Parte B es $283 al año, el deducible de hospital de la Parte A es $1,736 por período de beneficios, y un plan de la Parte D puede tener un deducible de hasta $615. Cada plan fija el suyo dentro de esos límites.',
+  },
+  {
+    key: 'copay',
+    re: /\b(copay|co-?payment|copago)\b/i,
+    en: 'A copay is the fixed amount you pay for a specific service or prescription — for example a set dollar amount per doctor visit. It is different from coinsurance, which is a percentage of the cost. The exact amounts depend on the plan, so a licensed advisor can review a specific plan with you.',
+    es: 'El copago es la cantidad fija que usted paga por un servicio o una receta — por ejemplo, un monto fijo por cada visita al doctor. Es distinto del coseguro, que es un porcentaje del costo. Los montos exactos dependen del plan, así que un asesor licenciado puede revisar un plan específico con usted.',
+  },
+  {
+    key: 'coinsurance',
+    re: /\b(coinsurance|co-?insurance|coseguro|coaseguro)\b/i,
+    en: 'Coinsurance is the percentage of a cost you pay after the deductible — for example 20% of the approved amount under Original Medicare Part B. A copay, by contrast, is a fixed dollar amount. The percentage depends on the coverage and the service.',
+    es: 'El coseguro es el porcentaje del costo que usted paga después del deducible — por ejemplo, el 20% del monto aprobado bajo la Parte B de Medicare Original. El copago, en cambio, es una cantidad fija en dólares. El porcentaje depende de la cobertura y del servicio.',
+  },
+  {
+    key: 'network',
+    re: /\b(network|in-?network|out-?of-?network|red de proveedores|la red)\b/i,
+    en: 'A network is the group of doctors, hospitals and pharmacies that have an agreement with a plan. In-network care usually costs less; out-of-network care can cost more or not be covered at all. Networks change, so only the plan\'s own directory or a licensed advisor can confirm whether a specific provider is in it.',
+    es: 'La red es el grupo de doctores, hospitales y farmacias que tienen un acuerdo con un plan. La atención dentro de la red normalmente cuesta menos; fuera de la red puede costar más o no estar cubierta. Las redes cambian, así que solo el directorio del propio plan o un asesor licenciado puede confirmar si un proveedor específico está en ella.',
+  },
+  {
+    key: 'formulary',
+    re: /\b(formulary|formulario de medicamentos|lista de medicamentos)\b/i,
+    en: "A formulary is the list of prescription drugs a Part D or Medicare Advantage drug plan covers, organized in tiers that determine what you pay. Formularies change, so only the plan's own formulary lookup or a licensed advisor can confirm whether a specific medication is on it.",
+    es: 'El formulario es la lista de medicamentos recetados que cubre un plan de la Parte D o un plan Medicare Advantage con medicamentos, organizada en niveles que determinan lo que usted paga. Los formularios cambian, así que solo la búsqueda de formulario del propio plan o un asesor licenciado puede confirmar si un medicamento específico está incluido.',
+  },
+  {
+    key: 'out_of_pocket_max',
+    re: /\b(out[- ]of[- ]pocket (maximum|max|limit)|moop|m[aá]ximo de (gastos de )?bolsillo|l[ií]mite de bolsillo)\b/i,
+    en: 'The out-of-pocket maximum is the most you would pay in a year for covered services before the plan pays 100% of covered costs. Medicare Advantage plans must have one; Original Medicare by itself does not. For drugs, Part D has a separate $2,100 out-of-pocket cap in 2026.',
+    es: 'El máximo de gastos de bolsillo es lo más que usted pagaría en un año por servicios cubiertos antes de que el plan pague el 100% de los costos cubiertos. Los planes Medicare Advantage deben tener uno; Medicare Original por sí solo no lo tiene. Para medicamentos, la Parte D tiene un tope aparte de $2,100 en 2026.',
+  },
+];
+
+/**
+ * CPF-002 (1) — LATEST-MESSAGE PRECEDENCE. A fresh definitional/educational
+ * question, or an explicit topic reset, clears the stale case topic so the
+ * previous case (bill / doctor / letter) can never capture it. When the
+ * concept is in the glossary the answer is deterministic; otherwise the
+ * cleared state falls through to normal routing.
+ *
+ * Returns `{ handled }` (a full turn) or `{ state }` (cleared state to continue with).
+ */
+function _applyLatestMessagePrecedence(
+  userMessage: string,
+  state: ConversationState,
+): { handled: { response: string; newState: ConversationState; needsHuman: boolean } | null; state: ConversationState } {
+  // Never interrupt the deterministic contact collector or intake.
+  if (['asking_language', 'asking_zip', 'asking_zip_natural', 'asking_name', 'collecting_identity'].includes(String(state.step))) {
+    return { handled: null, state };
+  }
+  const isReset = detectTopicReset(userMessage);
+  const isDefinitional = detectDefinitionalQuestion(userMessage);
+  if (!isReset && !isDefinitional) return { handled: null, state };
+  const cleared = _clearStaleCaseTopic(state);
+  if (!isDefinitional) return { handled: null, state: cleared };
+  const entry = DEFINITION_GLOSSARY.find((g) => g.re.test(userMessage));
+  if (!entry) return { handled: null, state: cleared };
+  const isEs = _turnLanguage(userMessage, state) === 'es';
+  const out = isEs ? entry.es : entry.en;
+  const newState: ConversationState = {
+    ...cleared,
+    turnCount: (state.turnCount || 0) + 1,
+    serviceCategory: 'medicare_basics',
+    lastBotIntent: 'definition_' + entry.key,
+    lastBotEmittedMenu: false,
+    quickReplies: [],
+    messages: [
+      ...(state.messages || []),
+      { role: 'user', content: userMessage, timestamp: Date.now() },
+      { role: 'bot', content: out, timestamp: Date.now() },
+    ],
+  };
+  return { handled: { response: out, newState, needsHuman: false }, state: cleared };
+}
+
+/** CPF-002 (4) — "Does Clear Point work for Medicare?" and friends. An IDENTITY
+ *  question, never a transfer offer. */
+export function detectIdentityQuestion(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  return /\b(clear\s?point|ustedes|you\s+(guys|people))\b[^?]{0,40}\b(work\s+(for|with|at)|part\s+of|affiliated|owned\s+by|trabaja[n]?\s+(para|con)|parte\s+de|del?\s+gobierno|son\s+medicare)\b/.test(t)
+    || /\b(do(es)?\s+(clear\s?point|you)\s+work\s+(for|with)\s+(medicare|cms|the\s+government|social\s+security))\b/.test(t)
+    || /\b(is\s+clear\s?point\s+(part\s+of|medicare|the\s+government))\b/.test(t)
+    || /\b(clear\s?point\s+trabaja\s+(para|con)\s+(medicare|el\s+gobierno))\b/.test(t)
+    || /\b(son\s+ustedes\s+medicare|es\s+clear\s?point\s+parte\s+de\s+medicare|are\s+you\s+medicare|are\s+you\s+the\s+government|son\s+del\s+gobierno)\b/.test(t);
+}
+
+/** The deterministic identity answer (same copy as the about_clearpoint
+ *  handler in processMessageInner — routed here so the LLM never owns it). */
+export function _handleIdentityQuestion(
+  userMessage: string,
+  state: ConversationState,
+): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  if (!detectIdentityQuestion(userMessage)) return null;
+  const isEs = _turnLanguage(userMessage, state) === 'es';
+  const out = isEs
+    ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno, y no trabajamos para Medicare. Nuestros asesores son **licenciados** y el servicio **no tiene costo para usted**. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
+    : "ClearPoint Senior Advisors is an independent licensed agency — we are NOT Medicare or the government, and we do not work for Medicare. Our advisors are **licensed** and the service is **at no cost to you**. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
+  const newState: ConversationState = {
+    ...state,
+    turnCount: (state.turnCount || 0) + 1,
+    serviceCategory: 'about_clearpoint',
+    lastBotIntent: 'about_clearpoint_identity',
+    lastBotEmittedMenu: false,
+    lastBotOfferedAdvisor: false,
+    quickReplies: [],
+    messages: [
+      ...(state.messages || []),
+      { role: 'user', content: userMessage, timestamp: Date.now() },
+      { role: 'bot', content: out, timestamp: Date.now() },
+    ],
+  };
+  return { response: out, newState, needsHuman: false };
+}
+
+/**
+ * CPF-002 (3) — TRUE when the LATEST message carries a NEW answerable intent
+ * (definitional, identity, cost, eligibility, or service-area question). The
+ * loop-breaker must answer these instead of preempting them with "I see I just
+ * repeated myself…".
+ */
+export function _hasNewAnswerableIntent(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  if (detectDefinitionalQuestion(text) || detectIdentityQuestion(text)) return true;
+  if (detectOutOfAreaState(text)) return true;
+  // Cost / eligibility / service-area questions.
+  return /\b(how\s+much|what\s+(does|do|will)\s+it\s+cost|cost\s+of|cu[aá]nto\s+(cuesta|es|cobran|sale)|what\s+is\s+the\s+(price|premium|deductible|copay)|do\s+i\s+qualify|am\s+i\s+eligible|who\s+qualifies|calific\w*|elegib\w*|requisitos|what\s+states|which\s+states|do\s+you\s+(serve|cover|work\s+in)|qu[eé]\s+estados|atienden\s+en|sirven\s+en)\b/.test(t);
+}
+
+/** TRUE when the caller genuinely asked (near-)the same thing at least twice
+ *  before this turn — the only case where the loop-breaker should preempt. */
+function _sameQuestionAskedTwice(userMessage: string, state: ConversationState): boolean {
+  const cur = _normalizeForCompare(userMessage);
+  if (cur.length < 8) return false;
+  let hits = 0;
+  for (const m of state.messages || []) {
+    if (m.role !== 'user') continue;
+    const prev = _normalizeForCompare(m.content);
+    if (prev === cur || (prev.length >= 8 && _jaccardSimilarity(prev, cur) >= 0.75)) hits++;
+  }
+  return hits >= 2;
+}
+
 // AUDIT 2026-07-03 Phase 4 — detectPHILeak moved VERBATIM to src/lib/phiPatterns.ts
 // (zero-import module) so sensitiveGuard/Zara on the homepage no longer drag this
 // entire engine into their chunk. Imported for internal use below and re-exported
@@ -2755,6 +3230,21 @@ export function processMessage(
   state: ConversationState,
   meta?: { source?: 'chip' | 'text' | 'system'; intentHint?: string },
 ): { response: string; newState: ConversationState; needsHuman: boolean } {
+  // AUDIT 2026-07-28 CPF-001 (P1, LIFE SAFETY) — the emergency guardrail runs
+  // BEFORE everything else: before closing intent, before the cost flow, before
+  // the handoff collector, before any name/phone/ZIP question.
+  const _emergency = _handleEmergency(userMessage, state);
+  if (_emergency) return _emergency;
+  state = _clearEmergencyIfCancelled(userMessage, state);
+  // AUDIT 2026-07-28 CPF-002 — geo filter, identity answer, and latest-message
+  // precedence all outrank the stale-case routing below.
+  const _ooa = _handleOutOfArea(userMessage, state);
+  if (_ooa) return _ooa;
+  const _ident = _handleIdentityQuestion(userMessage, state);
+  if (_ident) return _ident;
+  const _fresh = _applyLatestMessagePrecedence(userMessage, state);
+  if (_fresh.handled) return _fresh.handled;
+  state = _fresh.state;
   // PHASE A — stamp the action type + chip hint onto state BEFORE running the
   // inner pipeline. processMessageInner reads these to bypass classification.
   const seededState: ConversationState = {
@@ -3771,7 +4261,12 @@ export function processMessage(
   // share enough tokens to be treated as a repeat). Threshold 0.75.
   const _nearDup = !exactDup && !!prevBotText && !!respText
     && _jaccardSimilarity(respText, prevBotText) >= 0.75;
-  if (exactDup || menuDup || _nearDup) {
+  // AUDIT 2026-07-28 CPF-002 (3) — the loop-breaker must NOT preempt an
+  // answerable question. It only fires when the caller has no NEW answerable
+  // intent this turn, or genuinely asked the same thing ≥2 times already.
+  const _loopBreakerAllowed = !_hasNewAnswerableIntent(userMessage)
+    || _sameQuestionAskedTwice(userMessage, state);
+  if (_loopBreakerAllowed && (exactDup || menuDup || _nearDup)) {
     const isEs = result.newState.language === 'es';
     // WAVE 52 — when the user's CURRENT message is yes-equivalent and we're
     // about to pivot to "would you like an advisor?", just start the handoff
@@ -3873,7 +4368,7 @@ export function processMessage(
   // prior bot message in the conversation, the engine just repeated itself
   // through a different code path. Force escalation or re-prompt depending
   // on whether the handoff is already in progress.
-  if (respText) {
+  if (respText && _loopBreakerAllowed) {
     const _allPriorBot = (state.messages || [])
       .filter((m) => m.role === 'bot')
       .map((m) => _normalizeForCompare(m.content));
@@ -4856,6 +5351,24 @@ export function _runStructuralFirst(
   userMessage: string,
   state: ConversationState,
 ): { response: string; newState: ConversationState; needsHuman: boolean } | null {
+  // AUDIT 2026-07-28 CPF-001 (P1, LIFE SAFETY) — FIRST, ahead of every other
+  // branch (intake steps, the handoff collector, detectHumanEscalation, the
+  // LLM). The live failure was the collector answering "I cannot breathe" with
+  // "what's your name?"; nothing may run before this.
+  const _emergency = _handleEmergency(userMessage, state);
+  if (_emergency) return _emergency;
+  state = _clearEmergencyIfCancelled(userMessage, state);
+  // AUDIT 2026-07-28 CPF-002 — geo filter + identity answer + latest-message
+  // precedence run BEFORE the handoff collector and before the LLM, so an
+  // out-of-area caller is never lead-captured and a fresh definitional /
+  // identity question is never answered by the previous case.
+  const _ooaS = _handleOutOfArea(userMessage, state);
+  if (_ooaS) return _ooaS;
+  const _identS = _handleIdentityQuestion(userMessage, state);
+  if (_identS) return _identS;
+  const _freshS = _applyLatestMessagePrecedence(userMessage, state);
+  if (_freshS.handled) return _freshS.handled;
+  state = _freshS.state;
   // Step 0 — language not set yet, or asking_language step → use sync engine.
   if (!state.language || state.step === 'asking_language') {
     return processMessage(userMessage, state);
