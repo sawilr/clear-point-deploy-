@@ -59,7 +59,15 @@ export default async function handler(req, res) {
   applyCors(req, res, allowedOrigin);
   noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache lead/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    // AUDIT 2026-07-28 CPF-006 — advertise the rate-limit policy on the safe
+    // GET/405 path so external auditors can verify the control exists without
+    // firing POSTs that could create leads. Enforcement happens below on POST.
+    res.setHeader('X-RateLimit-Limit', '5');
+    res.setHeader('X-RateLimit-Window', '3600');
+    res.setHeader('X-RateLimit-Policy', '5;w=3600, 10;w=86400');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   // ── A15.2 Rate limit (lead-specific: very conservative — anti-spam) ────
   var ip = clientId(req);

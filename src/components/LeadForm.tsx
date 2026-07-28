@@ -416,6 +416,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 name="tcpa_consent"
                 required
                 aria-required="true"
+                aria-invalid={errors.consent ? true : undefined}
                 aria-labelledby={fid('tcpa_text')}
                 aria-describedby={errors.consent ? fid('consent_err') : undefined}
                 checked={formData.tcpa_consent}
