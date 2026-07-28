@@ -94,8 +94,10 @@ export function initGA4IfConsented(): void {
   // and never sends a single hit (confirmed live: 0 beacons vs 204 with arguments).
   // eslint-disable-next-line prefer-rest-params
   function gtag() { w.dataLayer.push(arguments); }
-  (w as any).gtag = gtag;
-  gtag('js', new Date());
+  w.gtag = gtag;
+  // Call through `w` (typed any) so the 0-arg signature doesn't trip tsc -b's
+  // strict arg-count check while the body still pushes a real `arguments`.
+  w.gtag('js', new Date());
   // anonymize_ip: senior/health-adjacent site — never store full IPs.
-  gtag('config', GA4_ID, { anonymize_ip: true });
+  w.gtag('config', GA4_ID, { anonymize_ip: true });
 }
