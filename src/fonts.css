@@ -1,0 +1,30 @@
+/* ── SELF-HOSTED FONTS (Sawil 2026-07-28 · privacy/perf) ──
+   Replaces the Google Fonts <link> in index.html. Latin subset (covers EN + ES
+   diacritics). These are VARIABLE fonts: one WOFF2 per family serves every
+   weight the site uses (Inter 300-700, Playfair 400-700), so 3 files replace
+   what would be 10 static ones. font-display: swap keeps text visible during
+   load (no FOIT). Visitor IPs never touch fonts.googleapis / fonts.gstatic. */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/fonts/inter-var.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/playfair-display-var.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/playfair-display-italic-var.woff2') format('woff2');
+}

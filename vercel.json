@@ -1,66 +1,212 @@
 {
   "trailingSlash": false,
   "redirects": [
-    { "source": "/privacy", "destination": "/privacy-policy", "permanent": true },
-    { "source": "/annual-review", "destination": "/#annual-review", "permanent": true },
-    { "source": "/education", "destination": "/resources", "permanent": true },
-    { "source": "/enrollment-periods", "destination": "/resources", "permanent": true },
-    { "source": "/medicare-basics", "destination": "/resources", "permanent": true },
-    { "source": "/medicare-supplement", "destination": "/resources", "permanent": true },
+    {
+      "source": "/privacy",
+      "destination": "/privacy-policy",
+      "permanent": true
+    },
+    {
+      "source": "/annual-review",
+      "destination": "/#annual-review",
+      "permanent": true
+    },
+    {
+      "source": "/education",
+      "destination": "/resources",
+      "permanent": true
+    },
+    {
+      "source": "/enrollment-periods",
+      "destination": "/resources",
+      "permanent": true
+    },
+    {
+      "source": "/medicare-basics",
+      "destination": "/resources",
+      "permanent": true
+    },
+    {
+      "source": "/medicare-supplement",
+      "destination": "/resources",
+      "permanent": true
+    },
     {
       "source": "/(.*)",
-      "has": [{ "type": "host", "value": "www.clearpointsenioradvisors.com" }],
+      "has": [
+        {
+          "type": "host",
+          "value": "www.clearpointsenioradvisors.com"
+        }
+      ],
       "destination": "https://clearpointsenioradvisors.com/$1",
       "permanent": true
     }
   ],
   "rewrites": [
-    { "source": "/", "destination": "/index.html" },
-    { "source": "/about", "destination": "/index.html" },
-    { "source": "/medicare-advantage", "destination": "/index.html" },
-    { "source": "/part-d", "destination": "/index.html" },
-    { "source": "/extra-help", "destination": "/index.html" },
-    { "source": "/help-paying-costs", "destination": "/index.html" },
-    { "source": "/otc-benefits", "destination": "/index.html" },
-    { "source": "/support", "destination": "/index.html" },
-    { "source": "/resources", "destination": "/index.html" },
-    { "source": "/contact", "destination": "/index.html" },
-    { "source": "/privacy-policy", "destination": "/index.html" },
-    { "source": "/accessibility", "destination": "/index.html" },
-    { "source": "/terms", "destination": "/index.html" },
-    { "source": "/thank-you", "destination": "/index.html" },
-    { "source": "/soa/:token", "destination": "/index.html" },
-    { "source": "/es", "destination": "/index.html" },
-    { "source": "/es/about", "destination": "/index.html" },
-    { "source": "/es/medicare-advantage", "destination": "/index.html" },
-    { "source": "/es/part-d", "destination": "/index.html" },
-    { "source": "/es/extra-help", "destination": "/index.html" },
-    { "source": "/es/help-paying-costs", "destination": "/index.html" },
-    { "source": "/es/otc-benefits", "destination": "/index.html" },
-    { "source": "/es/support", "destination": "/index.html" },
-    { "source": "/es/resources", "destination": "/index.html" },
-    { "source": "/es/contact", "destination": "/index.html" },
-    { "source": "/es/privacy-policy", "destination": "/index.html" },
-    { "source": "/es/accessibility", "destination": "/index.html" },
-    { "source": "/es/terms", "destination": "/index.html" }
+    {
+      "source": "/",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/about",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/medicare-advantage",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/part-d",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/extra-help",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/help-paying-costs",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/otc-benefits",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/support",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/resources",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/privacy-policy",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/accessibility",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/thank-you",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/soa/:token",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/about",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/medicare-advantage",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/part-d",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/extra-help",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/help-paying-costs",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/otc-benefits",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/support",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/resources",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/contact",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/privacy-policy",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/accessibility",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/es/terms",
+      "destination": "/index.html"
+    }
   ],
   "headers": [
     {
+      "source": "/fonts/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
-        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" },
-        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com https://rest.gohighlevel.com https://services.leadconnectorhq.com https://clearpoint-deploy.vercel.app; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';" }
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "DENY"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "X-XSS-Protection",
+          "value": "1; mode=block"
+        },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self' https://www.google.com https://www.gstatic.com https://www.googletagmanager.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com https://rest.gohighlevel.com https://services.leadconnectorhq.com https://clearpoint-deploy.vercel.app; frame-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';"
+        }
       ]
     },
     {
       "source": "/assets/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
       ]
     }
   ]
