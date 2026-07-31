@@ -5631,7 +5631,7 @@ export function ChatBot() {
             </button>
           </div>
 
-          <form onSubmit={handleText} className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
+          <form onSubmit={handleText} method="post" action="#" className="px-3 pb-3 pt-2 border-t border-cream-200 flex-shrink-0 overflow-x-hidden">
             <div className="flex gap-2 min-w-0 items-end">
               <textarea
                 ref={zaraTextareaRef}

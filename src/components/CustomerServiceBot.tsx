@@ -1984,6 +1984,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
 
       {/* Input row */}
       <form
+        method="post"
+        action="#"
         onSubmit={(e) => {
           e.preventDefault();
           handleSendMessage(inputValue);

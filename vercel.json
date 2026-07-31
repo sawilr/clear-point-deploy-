@@ -171,6 +171,10 @@
       "source": "/(.*)",
       "headers": [
         {
+          "key": "Access-Control-Allow-Origin",
+          "value": "https://clearpointsenioradvisors.com"
+        },
+        {
           "key": "X-Content-Type-Options",
           "value": "nosniff"
         },

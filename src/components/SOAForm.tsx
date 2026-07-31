@@ -88,7 +88,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   };
 
   return (
-    <form onSubmit={handleSubmit} noValidate className="space-y-8">
+    <form onSubmit={handleSubmit} method="post" action="#" noValidate className="space-y-8">
       <header className="border-b border-cream-200 pb-6">
         <p className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-600 mb-2">ClearPoint Senior Advisors</p>
         <h1 className="font-serif text-2xl sm:text-3xl text-earth-900 leading-snug">{tLabel('title', L)}</h1>

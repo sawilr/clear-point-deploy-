@@ -323,7 +323,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3.5" noValidate aria-labelledby="lead-form-heading">
+        <form onSubmit={handleSubmit} method="post" action="#" className="space-y-3.5" noValidate aria-labelledby="lead-form-heading">
           {/* Honeypot anti-bot field — hidden from sight, keyboard, and screen
               readers. Real users never see or touch this. Bots that scrape
               and auto-fill every input will populate it; the API discards
