@@ -8314,8 +8314,8 @@ function processMessageInner(
       newState.routingLevel = 'A';
       newState.serviceCategory = 'id_card';
       const out = isSpanish
-        ? 'Ok. Generalmente la tarjeta del plan se reemplaza llamando a Member Services del plan o entrando al portal del carrier.\n\nNo me envíe su Medicare ID aquí. Si quiere, le ayudo a organizar qué información tener lista antes de llamar.'
-        : "Ok. The plan card is usually replaced by calling the plan's Member Services or logging into the carrier portal.\n\nPlease don't send your Medicare ID here. If you'd like, I can help you organize what to have ready before calling.";
+        ? 'Ok. Depende de cuál tarjeta: la tarjeta del PLAN se reemplaza llamando a Member Services del plan o entrando al portal del carrier. La tarjeta ORIGINAL de Medicare (roja, blanca y azul) se puede imprimir de inmediato desde su cuenta en Medicare.gov, o pedir por 1-800-MEDICARE (1-800-633-4227) — por correo puede tardar hasta 30 días.\n\nNo me envíe su Medicare ID aquí. Si quiere, le ayudo a organizar qué información tener lista antes de llamar.'
+        : "Ok. It depends on which card: the PLAN card is replaced by calling the plan's Member Services or logging into the carrier portal. The ORIGINAL Medicare card (red, white, and blue) can be printed immediately from your Medicare.gov account, or requested via 1-800-MEDICARE (1-800-633-4227) — a mailed replacement can take up to 30 days.\n\nPlease don't send your Medicare ID here. If you'd like, I can help you organize what to have ready before calling.";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }
