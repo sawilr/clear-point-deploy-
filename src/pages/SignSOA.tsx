@@ -28,7 +28,10 @@ interface LeadHydrate {
   leadSource: 'customer_service' | 'smart_review';
 }
 
-type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'ready' | 'submitting' | 'success' | 'error';
+// CP-01 (2026-08-13) — 'unavailable' added so a server-side 503 (SOA workflow off) is
+// distinguishable from a transient network 'error'. They need opposite affordances:
+// one is worth retrying, the other never is.
+type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'ready' | 'submitting' | 'success' | 'error' | 'unavailable';
 
 export default function SignSOA() {
   const params = useParams<{ token: string }>();
@@ -37,6 +40,9 @@ export default function SignSOA() {
   const [lead, setLead] = useState<LeadHydrate | null>(null);
   const [signedResult, setSignedResult] = useState<SOAFormResult | null>(null);
   const [error, setError] = useState<string>('');
+  // CP-01 (2026-08-13) — bumping this re-runs the hydration effect so "Try again"
+  // actually re-fetches instead of switching to a phase that cannot render.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // ── Fetch token status on mount ────────────────────────────────────────
   useEffect(() => {
@@ -51,6 +57,15 @@ export default function SignSOA() {
         clearTimeout(timer);
         if (cancelled) return;
         if (r.status === 404) { setPhase('notFound'); return; }
+        // CP-01 (2026-08-13) — 503 is NOT a transient failure, it means the SOA
+        // workflow is switched off server-side (soa-status returns SOA_DISABLED while
+        // SOA_ENABLED is false). Previously this fell into the generic 'error' phase,
+        // which offered a "Try again" button that could never succeed. Anyone holding
+        // a bookmarked or emailed /soa/:token link — the links are valid for 24h, so
+        // this is a real person, not a hypothetical — saw a retry loop instead of an
+        // explanation. Route it to a distinct state that tells the truth and gives
+        // them a working way to reach a human.
+        if (r.status === 503) { setPhase('unavailable'); return; }
         if (!r.ok) { setPhase('error'); setError('status_failed'); return; }
         const data = await r.json();
         if (!data.exists) { setPhase('notFound'); return; }
@@ -66,7 +81,7 @@ export default function SignSOA() {
       }
     })();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, reloadKey]);
 
   const language: 'en' | 'es' = lead?.language || 'es';
 
@@ -167,12 +182,41 @@ export default function SignSOA() {
             </div>
           )}
 
+          {/* CP-01 (2026-08-13) — SOA workflow disabled server-side. No retry button:
+              retrying cannot succeed, and offering it wastes a senior's time on a dead
+              control. The phone number is the actual next step, and the SOA can be
+              completed by phone or on paper with the advisor, so nothing is lost. */}
+          {phase === 'unavailable' && (
+            <div className="text-center py-12">
+              <h1 className="font-serif text-2xl mb-4 text-earth-900">
+                {language === 'es'
+                  ? 'La firma en línea no está disponible por ahora'
+                  : 'Online signing is not available right now'}
+              </h1>
+              <p className="text-earth-600 mb-2">
+                {language === 'es'
+                  ? 'No hay ningún problema con su solicitud y no se perdió nada. En este momento el formulario de Scope of Appointment se completa directamente con su asesor licenciado.'
+                  : "There is nothing wrong with your request and nothing was lost. Right now the Scope of Appointment is completed directly with your licensed advisor."}
+              </p>
+              <p className="text-earth-600">
+                {language === 'es'
+                  ? 'Llámenos al 1-855-720-8555 y su asesor lo resuelve en la misma llamada.'
+                  : 'Call us at 1-855-720-8555 and your advisor will take care of it on the same call.'}
+              </p>
+            </div>
+          )}
+
           {phase === 'error' && (
             <div className="text-center py-12">
               <h1 className="font-serif text-2xl mb-3 text-earth-900">{tLabel('error_title', language)}</h1>
               <p className="text-earth-600 mb-4">{tLabel('error_retry', language)}</p>
+              {/* CP-01 (2026-08-13) — this used to call setPhase('ready'), but on a
+                  hydration failure `lead` is still null and the 'ready' branch requires
+                  `lead &&`, so "Try again" rendered a BLANK card with no way forward —
+                  a dead end, worse than the error it replaced. Retry the actual fetch
+                  by remounting the effect instead. */}
               <button
-                onClick={() => { setPhase('ready'); setError(''); }}
+                onClick={() => { setError(''); setPhase('loading'); setReloadKey((k) => k + 1); }}
                 className="px-6 py-3 bg-gold-500 text-white rounded-full font-medium hover:bg-gold-600 transition-colors"
               >
                 {language === 'es' ? 'Reintentar' : 'Try again'}

@@ -5,6 +5,10 @@ import { submitLeadToGHL } from '../lib/ghl';
 import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validateEmail, validatePersonName } from '../lib/validation';
 import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
+// CP-01 (2026-08-13) — single source of truth for whether the SOA workflow exists.
+// The API mirrors this constant; the client must consult the SAME flag so the UI can
+// never solicit, promise, or report an SOA the backend will refuse.
+import { SOA_ENABLED } from '../lib/soaContent';
 import { CheckIcon, ChevronRight } from './icons';
 import {
   type LeadType,
@@ -256,7 +260,14 @@ export function SmartMedicareReview() {
       // Special-situation education requests are not MA/PDP product sales,
       // so no Scope of Appointment is fetched.
       lead_source: 'smart_review',
-      soa_pending: isQualifiedSalesRoute(lt),
+      // CP-01 (2026-08-13) — DATA-INTEGRITY FIX. This reported soa_pending:true to the
+      // CRM whenever the route was a qualified sales path, regardless of whether the
+      // SOA workflow actually exists. With SOA_ENABLED=false no SOA can be produced,
+      // so the advisor's record asserted a pending CMS-required artifact that was
+      // never coming and could never arrive. A false "pending" on a compliance
+      // document is worse than an absent one: it tells the operator to expect
+      // something instead of prompting them to collect it another way.
+      soa_pending: SOA_ENABLED && isQualifiedSalesRoute(lt),
       created_at: new Date().toISOString(),
       // Honeypot value forwarded to API for anti-bot gate
       website_url: websiteUrl,
@@ -271,7 +282,16 @@ export function SmartMedicareReview() {
       // the CMS-required Scope of Appointment link. Only for qualified MA/PDP
       // sales paths; special-situation education requests skip SOA.
       // PHASE 6 — 12s timeout so success view doesn't hang on bad networks.
-      if (isQualifiedSalesRoute(lt)) {
+      // CP-01 (2026-08-13) — do not transmit PII to an endpoint known to refuse it.
+      // This block fired on every qualified sales submission and POSTed fullName,
+      // phone, email and zip to /api/soa-token, which returns 503 SOA_NOT_CONFIGURED
+      // because SOA_ENABLED is false. The 503 was swallowed (`if (r.ok)` never ran) so
+      // nothing broke visibly, which is exactly why it survived: a guaranteed-to-fail
+      // request carrying a real person's contact details, on every single lead.
+      // Gating on the same flag the server uses means the data never leaves the
+      // browser while the workflow is disabled. When SOA_ENABLED flips to true this
+      // reverts to its original behavior with no further change.
+      if (SOA_ENABLED && isQualifiedSalesRoute(lt)) {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), 12_000);
         try {

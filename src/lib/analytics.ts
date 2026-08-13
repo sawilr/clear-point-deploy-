@@ -99,5 +99,21 @@ export function initGA4IfConsented(): void {
   // strict arg-count check while the body still pushes a real `arguments`.
   w.gtag('js', new Date());
   // anonymize_ip: senior/health-adjacent site — never store full IPs.
-  w.gtag('config', GA4_ID, { anonymize_ip: true });
+  // CP-04 (2026-08-13) — cookie_flags added. gtag.js writes the _ga and
+  // _ga_<container> cookies itself via document.cookie, so no server Set-Cookie
+  // header is involved and no CDN or platform setting can add the attributes for us:
+  // this parameter is the ONLY place they can be set. Without it the cookies were
+  // written with neither Secure nor an explicit SameSite.
+  //
+  // Secure is the finding; SameSite=Lax is included because a cookie set with Secure
+  // but no SameSite gets the browser's default, and being explicit is what makes the
+  // header auditable. Lax rather than None on purpose — None means "send on cross-site
+  // requests", which analytics here does not need, and widening it to satisfy a
+  // hardening finding would be a net loss.
+  //
+  // Honest scope: these are first-party analytics identifiers, not authentication
+  // cookies, the origin is HTTPS, and the whole loader is consent-gated (it only runs
+  // when the banner recorded "all"), so real-world exploitability was low. It is still
+  // one parameter to be correct rather than explained away.
+  w.gtag('config', GA4_ID, { anonymize_ip: true, cookie_flags: 'SameSite=Lax;Secure' });
 }

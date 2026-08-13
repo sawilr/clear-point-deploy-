@@ -34,13 +34,28 @@ export const TPMO_DISCLAIMER_VERSION = '2024-10';
 export const TPMO_CARRIER_COUNT_PLACEHOLDER = '[X]';
 export const TPMO_PRODUCT_COUNT_PLACEHOLDER = '[Y]';
 
-/** PHASE 7 — SOA workflow gate.
+/** PHASE 7 — SOA workflow gate. Mirrored by api/soa-token.js, api/soa-status.js and
+ *  api/sign-soa.js, and — since CP-01 — consulted by the CLIENT too, so the UI can
+ *  never solicit, promise, or report an SOA the backend will refuse.
+ *
  *  TRUE  → SOA token issuance + signing routes work normally.
- *  FALSE → /api/soa-token returns 503, /api/sign-soa returns 503, the
- *          /soa/:token page shows a "temporarily unavailable" notice,
- *          and the bots silently skip the SOA hand-off link.
- *  Flip this to TRUE in the same commit that replaces the [X] / [Y]
- *  placeholders above with real, FMO-confirmed integer counts. */
+ *  FALSE → /api/soa-token, /api/soa-status and /api/sign-soa all return 503; the
+ *          /soa/:token page renders the 'unavailable' state (a plain explanation plus
+ *          the phone number, and deliberately NO retry button); SmartMedicareReview
+ *          does not request a token at all, so no PII is sent to a refusing endpoint;
+ *          it reports soa_pending:false to the CRM rather than claiming a pending
+ *          document that cannot arrive; and both bots skip the hand-off link.
+ *
+ *  CP-01 (2026-08-13) — the previous version of this comment claimed the /soa/:token
+ *  page "shows a temporarily unavailable notice". It did not. A 503 fell into the
+ *  generic error phase whose retry button could never succeed and, worse, rendered a
+ *  blank card. The behavior now matches the description; the description was fiction
+ *  until the code caught up with it, which is a reminder that a comment asserting a
+ *  behavior is not evidence the behavior exists.
+ *
+ *  Flip this to TRUE in the same commit that replaces the [X] / [Y] placeholders above
+ *  with real, FMO-confirmed integer counts — and see SOA_PRECONDITIONS below, which
+ *  enforces that mechanically rather than trusting this sentence. */
 export const SOA_ENABLED = false;
 
 // ── AUDIT 2026-08-13 (O-10, P1 latent) — ENABLEMENT PRECONDITIONS ───────────
