@@ -37,6 +37,7 @@ import type { ConversationState } from '../customerServiceEngine';
 // PHASE D — canonical preferred_language mapping. Engine 'en' → 'English',
 // 'es' → 'Spanish', null → 'Unknown'.
 import { preferredLanguageForGHL } from './languagePolicy';
+import { scrubSensitiveText } from '../phiPatterns';
 
 // ── ALLOW-LISTS (controlled vocabulary) ─────────────────────────────────────
 
@@ -338,12 +339,14 @@ function buildUserProblemSummary(
     .filter((m) => m.sender === 'user')
     .map((m) => (m.text || '').trim())
     .filter((t) => t.length > 1 && !/^(english|español|spanish|ingl[eé]s)$/i.test(t) && !/^\d{5}$/.test(t));
-  const last = userTurns[userTurns.length - 1] || '';
+  // AUDIT 2026-08-13 (O-06, P1) — these two quotes also land in a permanent CRM
+  // note, so they get the same client-side scrub as the transcript block.
+  const last = scrubSensitiveText(userTurns[userTurns.length - 1] || '');
   // Quote up to 200 chars verbatim — advisor wants the user's words.
   const verbatim = last.length > 200 ? last.slice(0, 197).trim() + '…' : last;
   const whatUserSaid = verbatim || (language === 'es' ? 'No proporcionado.' : 'Not provided.');
   // Transcript summary = first user turn (topic) + customerStatus tag.
-  const first = userTurns[0] || '';
+  const first = scrubSensitiveText(userTurns[0] || '');
   const firstClipped = first.length > 120 ? first.slice(0, 117).trim() + '…' : first;
   const transcriptSummary = `${customerStatus} · "${firstClipped}"`;
   return { whatUserSaid, transcriptSummary };
@@ -647,13 +650,20 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
   ].join('\n');
 
   // ── OPTIONAL TRANSCRIPT (collapsed reference) ─────────────────────────────
-  // We include up to 20 most-recent turns, with PHI placeholders preserved.
+  // AUDIT 2026-08-13 (O-06, P1) — these turns land VERBATIM in a CRM note,
+  // which is permanent storage. The old comment claimed "with PHI placeholders
+  // preserved", but that only held when an earlier gate had already replaced
+  // the value; nothing scrubbed HERE. The server scrub was the only thing
+  // between a pattern it missed and a permanent record of a beneficiary's SSN.
+  // The two scrubbers catch DIFFERENT variants (client: dot-separated SSN, bank
+  // phrases, soft health tier; server: IBAN/HICN/routing), so running both
+  // raises real coverage instead of duplicating work.
   const tx = transcript.slice(-20);
   const transcriptBlock = tx.length > 0
     ? [
         '',
         `TRANSCRIPT (${tx.length} of ${transcript.length} turns)`,
-        ...tx.map((m) => `[${m.sender === 'bot' ? 'BOT' : 'USER'}]: ${m.text}`),
+        ...tx.map((m) => `[${m.sender === 'bot' ? 'BOT' : 'USER'}]: ${scrubSensitiveText(m.text || '')}`),
       ].join('\n')
     : '';
 

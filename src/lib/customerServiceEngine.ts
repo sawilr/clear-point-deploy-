@@ -23,6 +23,7 @@ import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler
 import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailStrict } from './validation.ts';
 import { TCPA_CONSENT_TEXT_EN as _TCPA_EN, TCPA_CONSENT_TEXT_ES as _TCPA_ES } from './disclaimerVersion.ts';
 import { hasSessionOptOut } from './optOutGuard.ts';
+import { SOA_ENABLED } from './soaContent.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -3932,7 +3933,14 @@ export function processMessage(
       // required and it wrongly frames a service request as a sales appointment.
       // Only these serviceCategories are product/plan-selection ("marketing"):
       const _MARKETING_SOA = new Set(['compare_plans', 'new_to_medicare', 'medigap', 'plan_change']);
-      const _soaRequired = _MARKETING_SOA.has(state.serviceCategory || '');
+      // AUDIT 2026-08-13 (O-02, P1) — LIVE DEFECT: the SOA flow is hard-disabled
+      // (SOA_ENABLED=false; /api/soa-token returns 503), yet Clara still told
+      // marketing-category callers "I'll open it for you now" and set soaPending.
+      // The form never opened and Clara never corrected itself, leaving the
+      // caller waiting on a document that cannot exist. Gate the PROMISE on the
+      // same flag that gates the ENDPOINT: with SOA off, hand off to the advisor
+      // without mentioning a form.
+      const _soaRequired = SOA_ENABLED && _MARKETING_SOA.has(state.serviceCategory || '');
       const _soaBlockEs = _soaRequired
         ? `\n\nComo pidió comparar opciones de planes, antes de esa conversación puede ser necesario completar un **Scope of Appointment** — un formulario breve que documenta los temas que desea discutir, sin obligación. Se lo abro ahora.`
         : '';

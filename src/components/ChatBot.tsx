@@ -12,7 +12,7 @@ import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
 import { callLLM, buildHistory } from '../lib/llmHandler';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
-import { detectOptOut, persistContactPermission, hasSessionOptOut } from '../lib/optOutGuard';
+import { detectOptOut, persistContactPermission, hasSessionOptOut, propagateOptOutToCrm } from '../lib/optOutGuard';
 import { containsSensitiveData } from '../lib/sensitiveGuard';
 import { scrubSensitiveText } from '../lib/phiPatterns';
 import { MEDICARE_2026 } from '../data/medicare-figures-2026';
@@ -5063,7 +5063,16 @@ export function ChatBot() {
     if (optOut.matched) {
       addUserMessage(text);
       cancelBotQueue();
-      if (optOut.permission) persistContactPermission(optOut.permission);
+      if (optOut.permission) {
+        persistContactPermission(optOut.permission);
+        // AUDIT 2026-08-13 (O-01) — also suppress in the CRM, so an existing
+        // contact stops receiving campaigns, not just this browser tab.
+        propagateOptOutToCrm({
+          phone: memory.phone || '',
+          email: memory.email || '',
+          permission: optOut.permission,
+        });
+      }
       updateMemory({ consentGiven: false });
       const reply = memory.language === 'es' ? optOut.responseEs : optOut.responseEn;
       enqueueBot([{ text: reply, pace: 'slow' }], true);

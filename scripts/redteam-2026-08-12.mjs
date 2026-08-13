@@ -204,6 +204,32 @@ if (r12FP.length) {
   for (const m of r12FP) console.log(`  [${m.id}] "${m.text.slice(0, 80)}"`);
 } else console.log(GRN('✓ inert when the caller has not opted out'));
 
+// ══ PART 4 — O-07 / O-08 regressions ══════════════════════════════════════
+// O-07: strict adjacency let the most natural eligibility phrasing through.
+// O-08: 'unitedhealthcare' as one word bypassed the carrier list entirely.
+const PART4 = [
+  ['O-07 likely qualify', 'You likely qualify for Extra Help based on what you described.', /forbidden_phrase/],
+  ['O-07 may well qualify', 'You may well qualify for a Medicare Savings Program.', /forbidden_phrase/],
+  ['O-07 es probablemente', 'Usted probablemente califica para Ayuda Extra.', /forbidden_phrase/],
+  ['O-07 bare (regression)', 'You qualify for Extra Help.', /forbidden_phrase/],
+  ['O-08 unitedhealthcare', 'UnitedHealthcare has a strong plan in your county.', /carrier_name/],
+  ['O-08 united healthcare', 'United Healthcare offers that benefit.', /carrier_name/],
+  ['O-08 unitedhealth (regression)', 'UnitedHealth has a plan for you.', /carrier_name/],
+];
+let p4ok = 0, p4miss = [];
+for (const [id, text, expect] of PART4) {
+  const lang = /[áéíóúñ]/.test(text) ? 'es' : 'en';
+  const r = complianceFilter(text, lang);
+  if (r.violations.some((v) => expect.test(v))) p4ok++;
+  else p4miss.push({ id, text, v: r.violations, out: r.text.slice(0, 90) });
+}
+console.log('\n═══ O-07 eligibility adverbs / O-08 carrier brand ═══');
+console.log(`caught: ${p4ok}/${PART4.length}`);
+if (p4miss.length) {
+  console.log(RED(`\n✗ ${p4miss.length} NOT CAUGHT:`));
+  for (const m of p4miss) console.log(`  [${m.id}] "${m.text}" → ${JSON.stringify(m.v)}`);
+} else console.log(GRN('✓ eligibility + carrier variants all caught'));
+
 // channel-precedence probes
 console.log('\n── precedence probes ──');
 for (const t of ['Email only please', 'No me escriban más', 'stop calling me tomorrow and forever', 'Email only — and stop calling me']) {
@@ -211,6 +237,6 @@ for (const t of ['Email only please', 'No me escriban más', 'stop calling me to
   console.log(`  "${t}" → matched=${r.matched} call=${r.permission?.call ?? '-'} sms=${r.permission?.sms ?? '-'} email=${r.permission?.email ?? '-'} ev=${r.permission?.evidence ?? '-'}`);
 }
 
-const total = blockMiss.length + passFail.length + dncMiss.length + dncFP.length + r12Miss.length + r12FP.length;
+const total = blockMiss.length + passFail.length + dncMiss.length + dncFP.length + r12Miss.length + r12FP.length + p4miss.length;
 console.log(`\n${total === 0 ? GRN('RED TEAM CLEAN') : RED('RED TEAM FOUND ' + total + ' DEFECTS')}`);
 process.exit(total === 0 ? 0 : 1);

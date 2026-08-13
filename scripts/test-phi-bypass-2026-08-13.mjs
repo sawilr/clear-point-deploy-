@@ -62,3 +62,30 @@ if (fails.length) {
   process.exit(1);
 }
 console.log('\x1b[32m✓ PHI bypass suite clean — both gates block all variants, no false positives\x1b[0m');
+
+// ══ O-06: CRM note transcript must be scrubbed client-side ═════════════════
+import { buildLeadNote } from '../src/lib/orchestrator/leadNoteBuilder.ts';
+const noteRes = buildLeadNote({
+  state: { name: 'Test User', phoneNumber: '3478752430', state: 'NY', language: 'en', serviceCategory: 'bill' },
+  transcript: [
+    { sender: 'user', text: 'my ssn is 123-45-6789' },
+    { sender: 'bot', text: 'Please do not share that.' },
+    { sender: 'user', text: 'and my medicare number is 1EG4-TE5-MK73' },
+    { sender: 'user', text: 'my social is one two three four five six seven eight nine' },
+  ],
+});
+const note = noteRes.noteText || '';
+const leaks = [];
+if (/123-45-6789/.test(note)) leaks.push('raw SSN in CRM note');
+if (/1EG4-TE5-MK73/.test(note)) leaks.push('raw MBI in CRM note');
+if (!/TRANSCRIPT/.test(note)) leaks.push('transcript block absent - test did not exercise the scrub path');
+if (!/\[REDACTED-SSN\]/.test(note)) leaks.push('SSN not redacted in note');
+if (!/\[REDACTED-MBI\]/.test(note)) leaks.push('MBI not redacted in note');
+if (/one two three four five six/.test(note)) leaks.push('spelled-out SSN persisted verbatim');
+console.log('\n── O-06 CRM note scrub ──');
+if (leaks.length) {
+  console.error('\x1b[31m✗ ' + leaks.length + ' LEAK(S):\x1b[0m');
+  for (const l of leaks) console.error('  ' + l);
+  process.exit(1);
+}
+console.log('\x1b[32m✓ CRM note carries no raw SSN/MBI — client scrub applied before persistence\x1b[0m');

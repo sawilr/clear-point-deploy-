@@ -122,6 +122,16 @@ function detectPHILeakRaw(text: string): boolean {
 export function scrubSensitiveText(text: string): string {
   if (!text) return text;
   let out = text;
+  // AUDIT 2026-08-13 (SDL-11 / O-06) — dictated and spelled-out identifiers.
+  // detectPHILeak now normalizes before matching, but this scrubber is what
+  // rewrites text that gets PERSISTED (LLM history, CRM note). Without this it
+  // would happily write "my social is one two three ... nine" into a CRM note
+  // verbatim. When an SSN/social context word is present, collapse a run of 4+
+  // number-words (or 7+ separated digits) into a placeholder.
+  if (SSN_CONTEXT_RE.test(out)) {
+    out = out.replace(new RegExp('(?:' + NUM_WORD_TOKEN + '){4,}', 'gi'), '[REDACTED-SSN] ');
+    out = out.replace(/(?:\d[\s.\-_/,]*){7,}/g, '[REDACTED-SSN]');
+  }
   // MBI first (alphanumeric — must run before generic digit rules).
   out = out.replace(/\b[1-9][A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z]\d{2}\b/gi, '[REDACTED-MBI]');
   // Cards (16-digit, then Amex 15-digit).

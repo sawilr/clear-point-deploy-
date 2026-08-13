@@ -303,3 +303,40 @@ export function hasSessionOptOut(): boolean {
 export function __resetSessionOptOutForTests(): void {
   sessionOptOut = false;
 }
+
+/**
+ * AUDIT 2026-08-13 (O-01, P1) — propagate the revocation to the CRM.
+ *
+ * The session flag above only governs THIS browser tab. If the person already
+ * submitted a lead, a CRM contact exists with consent flags set and an open
+ * opportunity, and a later campaign would still reach them. This tells the
+ * server to apply platform-level suppression (DND + tags + an audit note).
+ *
+ * Fire-and-forget by design: the acknowledgment the user already saw must not
+ * depend on this round-trip, and a CRM failure must never re-enable contact.
+ * Only an identifier the user themselves provided earlier in the session is
+ * sent — never the raw message text.
+ */
+export function propagateOptOutToCrm(input: {
+  phone?: string;
+  email?: string;
+  permission: ContactPermission;
+}): void {
+  const { phone, email, permission } = input;
+  if (!phone && !email) return; // nothing to match on; session flag still holds
+  try {
+    void fetch('/api/opt-out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: phone || '',
+        email: email || '',
+        evidence: permission.evidence,
+        channels: { email: permission.email },
+      }),
+      keepalive: true, // survive a tab close right after the user says STOP
+    }).catch(() => { /* suppression is best-effort; never surface an error here */ });
+  } catch {
+    /* fetch unavailable — session flag still governs this tab */
+  }
+}

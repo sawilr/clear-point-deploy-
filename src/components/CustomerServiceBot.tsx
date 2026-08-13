@@ -53,7 +53,7 @@ import {
   inferTopic,
 } from '../lib/claraOuterFlow';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
-import { detectOptOut, persistContactPermission, hasSessionOptOut } from '../lib/optOutGuard';
+import { detectOptOut, persistContactPermission, hasSessionOptOut, propagateOptOutToCrm } from '../lib/optOutGuard';
 import { containsSensitiveData, sensitiveWarning } from '../lib/sensitiveGuard';
 // Phase A — ZIP → city/county lookup, used to answer "cuál es mi zona"
 // accurately (no fabricated neighborhoods). Read-only data utility.
@@ -702,7 +702,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         const isEs = outerState.language === 'es' || pageLang === 'es';
         pushUserMessageDirect(text.trim());
         setInputValue('');
-        if (optOut.permission) persistContactPermission(optOut.permission);
+        if (optOut.permission) {
+          persistContactPermission(optOut.permission);
+          // AUDIT 2026-08-13 (O-01) — propagate to the CRM as well.
+          propagateOptOutToCrm({
+            phone: outerState.phone || '',
+            email: outerState.email || '',
+            permission: optOut.permission,
+          });
+        }
         // AUDIT 2026-08-13 (F-04, P1) — acknowledgment alone was not enough:
         // the outer flow stayed parked on its collection step, so the caller's
         // NEXT message was consumed as a name/phone and a lead could still be

@@ -40,7 +40,10 @@ function carrierRe(name) {
   return new RegExp('\\b' + pattern + '\\b', 'gi');
 }
 const CARRIER_NAMES = [
-  'unitedhealth', 'united health', 'uhc', 'aarp', 'optum',
+  // AUDIT 2026-08-13 (O-08, P1) — 'unitedhealthcare' as one word was absent, and
+  // the trailing \b on 'unitedhealth' fails when followed by 'care', so the
+  // largest MA brand passed the filter unblocked. Longest variants first.
+  'unitedhealthcare', 'united healthcare', 'unitedhealth', 'united health', 'uhc', 'aarp', 'optum',
   'humana', 'humanna', 'aetna', 'aetnia', 'cvs health',
   'wellcare', 'centene', 'anthem', 'elevance',
   'cigna', 'kaiser', 'kaiser permanente',
@@ -56,7 +59,14 @@ const PLAN_LETTER_RE = /\b(plan|plans?)\s+[A-N]\b/gi;
 // ── Forbidden compliance phrases ────────────────────────────────────────
 const FORBIDDEN_PHRASES = [
   // Eligibility confirmations
-  /\b(you|usted)\s+(qualify|are\s+eligible|califica|cumple\s+los?\s+requisitos)\b/gi,
+  // AUDIT 2026-08-13 (O-07, P1) — strict adjacency let the single most natural
+  // phrasing through: "You LIKELY qualify for Extra Help", "usted PROBABLEMENTE
+  // califica". Allow 0-3 filler words, mirroring the SEP rule at :238.
+  // The negative lookahead hands SEP claims to rule 4, which produces a clean
+  // purpose-built rewrite; without it the generic inline replacement truncated
+  // mid-sentence and left "…for a Special Enrollment Period to switch now."
+  // dangling (caught by regression B4 EN).
+  /\b(you|usted)\s+(?:\w+\s+){0,3}(qualify|are\s+eligible|califica|cumple\s+los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi,
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
   // Network / formulary confirmations
   /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
