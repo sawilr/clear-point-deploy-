@@ -166,6 +166,44 @@ if (dncFP.length) {
   for (const m of dncFP) console.log(`  [${m.id}] "${m.text}"  evidence=${m.ev}`);
 } else console.log(GRN('✓ no false-positive DNC'));
 
+// ══ PART 3 — RULE 12: post-revocation outreach suppression ═════════════════
+// Runtime finding 2026-08-13: after a revocation, an affirmative "have an
+// advisor call me" made the model ask for RE-CONSENT while the submit gate was
+// fail-closed — asking for consent we cannot act on. Rule 12 replaces any
+// outreach/contact-detail language once contactOptedOut is set.
+const RULE12_MUST_REPLACE = [
+  ['reconsent-en', 'Before I connect you with a licensed ClearPoint advisor, do you authorize a ClearPoint advisor to contact you by phone, text, or email?'],
+  ['reconsent-es', '¿Autoriza que un asesor licenciado de ClearPoint le contacte por teléfono, texto o email?'],
+  ['advisor-will-call', 'Perfect — an advisor will call you this afternoon.'],
+  ['asks-phone', 'What is your phone number so we can reach you?'],
+  ['asks-name-es', '¿Cuál es su nombre completo?'],
+  ['someone-will-call', 'Someone will call you shortly to review your options.'],
+];
+let r12Miss = [], r12Ok = 0;
+for (const [id, text] of RULE12_MUST_REPLACE) {
+  const lang = /[áéíóúñ¿]/.test(text) ? 'es' : 'en';
+  const r = complianceFilter(text, lang, { contactOptedOut: true });
+  if (r.violations.includes('post_revocation_outreach') && /1-855-720-8555/.test(r.text)) r12Ok++;
+  else r12Miss.push({ id, text, out: r.text.slice(0, 110), v: r.violations });
+}
+// And must NOT fire when the caller has not opted out.
+let r12FP = [];
+for (const [id, text] of RULE12_MUST_REPLACE) {
+  const lang = /[áéíóúñ¿]/.test(text) ? 'es' : 'en';
+  const r = complianceFilter(text, lang, { contactOptedOut: false });
+  if (r.violations.includes('post_revocation_outreach')) r12FP.push({ id, text });
+}
+console.log('\n═══ RULE 12 (post-revocation outreach) ═══');
+console.log(`suppressed when opted out: ${r12Ok}/${RULE12_MUST_REPLACE.length}   |   untouched when NOT opted out: ${RULE12_MUST_REPLACE.length - r12FP.length}/${RULE12_MUST_REPLACE.length}`);
+if (r12Miss.length) {
+  console.log(RED(`\n✗ ${r12Miss.length} NOT SUPPRESSED:`));
+  for (const m of r12Miss) console.log(`  [${m.id}] "${m.text.slice(0, 80)}" → ${JSON.stringify(m.v)}`);
+} else console.log(GRN('✓ all outreach suppressed after revocation'));
+if (r12FP.length) {
+  console.log(RED(`\n✗ ${r12FP.length} FIRED WITHOUT AN OPT-OUT (would break normal intake):`));
+  for (const m of r12FP) console.log(`  [${m.id}] "${m.text.slice(0, 80)}"`);
+} else console.log(GRN('✓ inert when the caller has not opted out'));
+
 // channel-precedence probes
 console.log('\n── precedence probes ──');
 for (const t of ['Email only please', 'No me escriban más', 'stop calling me tomorrow and forever', 'Email only — and stop calling me']) {
@@ -173,6 +211,6 @@ for (const t of ['Email only please', 'No me escriban más', 'stop calling me to
   console.log(`  "${t}" → matched=${r.matched} call=${r.permission?.call ?? '-'} sms=${r.permission?.sms ?? '-'} email=${r.permission?.email ?? '-'} ev=${r.permission?.evidence ?? '-'}`);
 }
 
-const total = blockMiss.length + passFail.length + dncMiss.length + dncFP.length;
+const total = blockMiss.length + passFail.length + dncMiss.length + dncFP.length + r12Miss.length + r12FP.length;
 console.log(`\n${total === 0 ? GRN('RED TEAM CLEAN') : RED('RED TEAM FOUND ' + total + ' DEFECTS')}`);
 process.exit(total === 0 ? 0 : 1);

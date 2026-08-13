@@ -28,6 +28,8 @@ export interface LLMContext {
   serviceCategory?: string;
   advisorOfferDismissed?: boolean;
   clarificationCount?: number;
+  /** AUDIT 2026-08-13 — caller revoked contact this session (rule 12). */
+  contactOptedOut?: boolean;
 }
 
 export interface LLMResponse {

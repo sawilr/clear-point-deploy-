@@ -410,6 +410,28 @@ export function complianceFilter(text, lang, opts) {
     }
   }
 
+  // ── AUDIT 2026-08-13 — post-revocation outreach net (rule 12) ────────────
+  // Runtime finding: after the caller revoked contact ("Do not contact me.
+  // Delete my information."), a later "please have an advisor call me" made the
+  // model ask for RE-CONSENT — while the client-side submit gate is fail-closed,
+  // so granting it would have silently failed. Asking for consent we cannot act
+  // on is worse than either extreme. Once revoked, no contact offer, no
+  // re-consent ask, and no advisor-will-call promise for the rest of the
+  // session; the caller is given the self-initiated route instead. Re-enabling
+  // contact after a revocation is a deliberate business/compliance decision
+  // (needs a preserved revocation + new consent receipt), not a chat side effect.
+  var optedOut = !!(opts && opts.contactOptedOut);
+  if (optedOut) {
+    var OUTREACH_RE = /\b(?:do\s+you\s+authorize|autoriza\s+que|authorize\s+a\s+licensed|advisor\s+(?:will|can|may)\s+(?:call|contact|reach)|asesor\s+(?:le\s+)?(?:llamar|contactar|puede\s+llamar)|have\s+(?:an\s+)?advisor\s+call|connect\s+you\s+with\s+a\s+licensed|le\s+conecto\s+con|someone\s+(?:will|can)\s+call\s+you|le\s+llame|what\s+(?:is|'?s)\s+your\s+(?:phone|number|name)|cu[aá]l\s+es\s+su\s+(?:tel[eé]fono|n[uú]mero|nombre))\b/i;
+    if (OUTREACH_RE.test(out)) {
+      violations.push('post_revocation_outreach');
+      out = lang === 'en'
+        ? "You asked us not to contact you, and we respect that — I won't set up a call or ask for your details. If you'd like to speak with a licensed advisor, you're welcome to call us directly at 1-855-720-8555."
+        : 'Usted nos pidió no contactarle, y lo respetamos — no programaré una llamada ni le pediré sus datos. Si desea hablar con un asesor licenciado, puede llamarnos directamente al 1-855-720-8555.';
+      return { text: out, violations: violations };
+    }
+  }
+
   // ── AUDIT 2026-08-12 — SSN-advice net (rule 11) ──────────────────────────
   // Live transcript: replying to a lost-Medicare-card question, the LLM said
   // "you just need your Social Security number to prove eligibility at the

@@ -482,6 +482,11 @@ export default async function handler(req, res) {
   conversationContext.conversationClosed = rawCtx.conversationClosed === true;
   conversationContext.advisorHandoffStarted = rawCtx.advisorHandoffStarted === true;
   conversationContext.advisorOfferDismissed = rawCtx.advisorOfferDismissed === true;
+  // AUDIT 2026-08-13 — the caller revoked contact permission earlier in this
+  // session. Drives compliance-filter rule 12: no contact offer, no re-consent
+  // ask, no advisor-will-call promise. Client-supplied, but fail-closed by
+  // construction since its ONLY effect is to SUPPRESS outreach language.
+  conversationContext.contactOptedOut = rawCtx.contactOptedOut === true;
   var _cc = parseInt(rawCtx.clarificationCount, 10);
   conversationContext.clarificationCount = (isFinite(_cc) && _cc >= 0 && _cc <= 50) ? _cc : 0;
   if (!userMessage) return res.status(400).json({ error: 'userMessage required' });
@@ -709,7 +714,11 @@ export default async function handler(req, res) {
     // CPF-001 / CPF-002 (2026-07-28) — rules 8 and 9 key off the LATEST user
     // message only, so an emergency or a state named 6 turns ago cannot rewrite
     // every later reply.
-    var filtered = complianceFilter(cleanText, lang, { userText: _userTextAll, latestUserText: userMessage });
+    var filtered = complianceFilter(cleanText, lang, {
+      userText: _userTextAll,
+      latestUserText: userMessage,
+      contactOptedOut: conversationContext.contactOptedOut === true,
+    });
     cleanText = filtered.text;
     if (filtered.violations.length) {
       console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);

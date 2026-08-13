@@ -22,6 +22,7 @@ import { callLLM as _callLLM, buildHistory as _buildHistory } from './llmHandler
 // so the bot and the Smart Review form enforce the SAME junk-lead rules.
 import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailStrict } from './validation.ts';
 import { TCPA_CONSENT_TEXT_EN as _TCPA_EN, TCPA_CONSENT_TEXT_ES as _TCPA_ES } from './disclaimerVersion.ts';
+import { hasSessionOptOut } from './optOutGuard.ts';
 
 export type Language = 'en' | 'es' | null;
 
@@ -5678,6 +5679,8 @@ export async function processMessageAsync(
     serviceCategory: state.serviceCategory,
     advisorOfferDismissed: state.advisorOfferDismissed,
     clarificationCount: state.clarificationCount,
+    // AUDIT 2026-08-13 — suppress all outreach language after a revocation.
+    contactOptedOut: hasSessionOptOut(),
   });
 
   if (!llmRes.ok) {
