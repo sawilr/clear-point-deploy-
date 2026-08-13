@@ -53,7 +53,7 @@ import {
   inferTopic,
 } from '../lib/claraOuterFlow';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
-import { detectOptOut, persistContactPermission } from '../lib/optOutGuard';
+import { detectOptOut, persistContactPermission, hasSessionOptOut } from '../lib/optOutGuard';
 import { containsSensitiveData, sensitiveWarning } from '../lib/sensitiveGuard';
 // Phase A — ZIP → city/county lookup, used to answer "cuál es mi zona"
 // accurately (no fabricated neighborhoods). Read-only data utility.
@@ -601,6 +601,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         derived_state: s.state || '',
         website_url: '',
       };
+      // AUDIT 2026-08-13 (F-04, P1) — fail-closed DNC gate: never submit a
+      // lead after the caller revoked contact in this session.
+      if (hasSessionOptOut()) { setSubmitState('failed'); return; }
       const ok = await submitLeadToGHL(payload as any);
       setSubmitState(ok ? 'submitted' : 'failed');
       // FASE 18 — CRM outcome metric (PII-free: booleans only).
@@ -700,6 +703,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         pushUserMessageDirect(text.trim());
         setInputValue('');
         if (optOut.permission) persistContactPermission(optOut.permission);
+        // AUDIT 2026-08-13 (F-04, P1) — acknowledgment alone was not enough:
+        // the outer flow stayed parked on its collection step, so the caller's
+        // NEXT message was consumed as a name/phone and a lead could still be
+        // submitted. Move the flow off any collection step and end intake.
+        setOuterInProgress(false);
+        setOuterState((s) => ({ ...s, step: 'path_select' }));
         pushBotMessageDirect(isEs ? optOut.responseEs : optOut.responseEn);
         return;
       }
@@ -1451,6 +1460,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         phone: extras.phone || outerState.phone || '',
         problemSummary: extras.summary || outerState.problemSummary || '',
       };
+      // AUDIT 2026-08-13 (F-04, P1) — fail-closed DNC gate on the advisor-
+      // callback submission path as well. Returns false (not an exception) so
+      // the caller's existing failure handling runs unchanged.
+      if (hasSessionOptOut()) {
+        setSubmitState('failed');
+        setIsTyping(false);
+        return false;
+      }
       const payload = buildGhlPayload(merged, {
         // FASE 2 audit J — the caller reached lead submission by EXPLICITLY
         // providing their phone for an advisor callback, AFTER the TCPA consent

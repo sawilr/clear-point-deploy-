@@ -73,7 +73,10 @@ const UNIVERSAL_STOP_RES: RegExp[] = [
   /\bopt\s*-?\s*out\s+(?:me|of\s+(?:everything|all))\b/i,
   /\bleave\s+me\s+alone\b/i,
   /\bdo\s+not\s+contact\b|\bdon'?t\s+contact\b/i,
-  /\b(?:remove|take)\s+(?:me|my\s+(?:number|name|phone|info(?:rmation)?|email))\s+(?:from|off|out\s+of)?\b/i,
+  // F-03 (P1): the trailing preposition was OPTIONAL, so "take me back to the
+  // topics" and "take me to the enrollment page" fired a permanent DNC and
+  // locked the visitor out of every intake path. It is now mandatory.
+  /\b(?:remove|take)\s+(?:me|my\s+(?:number|name|phone|info(?:rmation)?|email))\s+(?:from|off|out\s+of)\b/i,
   /\b(?:s[aá]quen?me|qu[ií]ten?me|b[oó]rren?me|elim[ií]nen?me)\s+(?:de|del)\b/i,
   /\bcancelar?\s+todo\s+contacto\b/i,
   /\bno\s+(?:quiero|deseo)\s+m[aá]s\s+(?:mensajes|llamadas|contacto|correos)\b/i,
@@ -84,7 +87,7 @@ const UNIVERSAL_STOP_RES: RegExp[] = [
 
 /** Negation bound to a contact verb (broad; refined by the guards below). */
 const NEGATED_CONTACT_RE =
-  /\b(?:don'?t|do\s+not|never|stop|quit|rather\s+you\s+didn'?t|didn'?t)\s+(?:ever\s+|again\s+)?(?:call|contact|text|message|messaging|email|phone|ring|bother|calling|contacting|texting|emailing|phoning|bothering)\b|\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame|llamen|llames|llamar|contacte|contacten|contactar|escriba|escriban|escribir|manden|mandar|env[ií]en|enviar|molesten|molestar|busquen|buscar)\b|\bno\s+(?:quiero|deseo)\s+que\s+me\s+(?:llamen|llames|contacten|escriban|manden|env[ií]en|busquen)\b/i;
+  /\b(?:don'?t|do\s+not|never|stop|quit|rather\s+you\s+didn'?t)\s+(?:ever\s+|again\s+)?(?:call|contact|text|message|messaging|email|phone|ring|bother|calling|contacting|texting|emailing|phoning|bothering)\b|\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame|llamen|llames|llamar|contacte|contacten|contactar|escriba|escriban|escribir|manden|mandar|env[ií]en|enviar|molesten|molestar|busquen|buscar)\b|\bno\s+(?:quiero|deseo)\s+que\s+me\s+(?:llamen|llames|contacten|escriban|manden|env[ií]en|busquen)\b/i;
 
 /**
  * The negated verb's object is CONTENT, not the person — "don't text that
@@ -100,6 +103,16 @@ const THIRD_PARTY_OBJECT_RE =
 /** Permanence markers — make a revocation permanent regardless of day talk. */
 const PERMANENCE_RE =
   /\b(?:ever|again|any\s?more|at\s+all|never|forever|permanently|nunca|jam[aá]s|m[aá]s|para\s+siempre|definitivamente)\b/i;
+
+/**
+ * A COMPLAINT that we failed to call — "you didn't call me back like you
+ * promised", "nobody called me". The caller WANTS contact; treating this as a
+ * revocation would block the callback they are asking for (F-09).
+ */
+// The `(?<!rather\s)` guard keeps "I'd rather you didn't call me" — a real
+// revocation — out of the complaint bucket.
+const MISSED_CALL_COMPLAINT_RE =
+  /(?<!rather\s)\b(?:you|nobody|no\s+one|nadie)\s+(?:never\s+|didn'?t\s+|did\s+not\s+|no\s+me\s+)?(?:called|llam[oó]|contacted)\b|\bnever\s+(?:called|got\s+a\s+call)\b|\bno\s+me\s+(?:han\s+)?llamad[oa]\b|\bstill\s+waiting\s+for\s+(?:the\s+|a\s+)?call\b/i;
 
 /** Rescheduling preference ("call Friday instead") — not a revocation. */
 const RESCHEDULE_RE =
@@ -176,32 +189,52 @@ export function detectOptOut(userMessage: string): OptOutResult {
   };
   if (!t) return none;
 
-  // ── Step 1-2: not-about-us / not-about-contact exclusions ────────────────
-  // "No quiero más mensajes de mi aseguradora" is a complaint about the
-  // CARRIER; "Remove me from that plan" is a coverage request. Neither is a
-  // revocation of Clear Point's contact permission.
-  if (THIRD_PARTY_SENDER_RE.test(t) || COVERAGE_TARGET_RE.test(t)) return none;
+  // ── PER-CLAUSE EVALUATION ────────────────────────────────────────────────
+  // Whole-message evaluation was wrong in BOTH directions (found by red team
+  // after the F-02 fix):
+  //   • "No me llamen más. Ya tengo cobertura de mi aseguradora." — a genuine
+  //     revocation whose SECOND sentence mentions the carrier was vetoed.
+  //   • "No quiero más mensajes de mi aseguradora" — a carrier complaint whose
+  //     universal-stop phrasing bypassed the veto entirely.
+  // The signal and the exclusion must be judged in the SAME clause: an
+  // explanation in a different sentence cannot cancel a revocation, and a
+  // same-clause third-party/coverage reference still can.
+  const clauses = t
+    .split(/(?<=[.!?])\s+|\s*(?:,\s*(?:but|pero|however|aunque)\s+|;\s*|\s+—\s+)/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const units = clauses.length ? clauses : [t];
 
-  const wantsDeletion = anyMatch(DELETION_RES, t);
-  const universal = anyMatch(UNIVERSAL_STOP_RES, t);
-  const negatedContact = NEGATED_CONTACT_RE.test(t);
+  const wantsDeletion = units.some((c) => anyMatch(DELETION_RES, c) && !COVERAGE_TARGET_RE.test(c));
   const emailOnly = anyMatch(EMAIL_ONLY_RES, t);
-  const callOnly = anyMatch(OPTOUT_CALL_RES, t);
-  const smsOnly = anyMatch(OPTOUT_SMS_RES, t);
 
-  if (!universal && !negatedContact && !emailOnly && !wantsDeletion) return none;
-
-  // ── Step 4 guards on the broad negated-contact match ─────────────────────
-  if (negatedContact && !universal && !wantsDeletion) {
+  /** A clause is a revocation when it carries a signal and no same-clause veto. */
+  function clauseRevokes(c: string): { universal: boolean; negated: boolean } | null {
+    const uni = anyMatch(UNIVERSAL_STOP_RES, c);
+    const neg = NEGATED_CONTACT_RE.test(c);
+    if (!uni && !neg) return null;
+    // Not about Clear Point's contact at all.
+    if (THIRD_PARTY_SENDER_RE.test(c)) return null;
+    // A coverage/plan request, not a contact revocation.
+    if (COVERAGE_TARGET_RE.test(c)) return null;
     // "They should stop calling my doctor" — object is a third party.
-    if (THIRD_PARTY_OBJECT_RE.test(t)) return none;
+    if (THIRD_PARTY_OBJECT_RE.test(c)) return null;
     // "Don't text that information here" — object is content, not the person.
-    if (CONTENT_OBJECT_RE.test(t)) return none;
-    // "Don't call me tomorrow, call Friday" is a reschedule; but "don't EVER
-    // call me AGAIN, not tomorrow, not Friday" is a revocation — permanence
-    // markers win over day/time talk.
-    if (RESCHEDULE_RE.test(t) && !PERMANENCE_RE.test(t)) return none;
+    if (CONTENT_OBJECT_RE.test(c)) return null;
+    // A complaint that we FAILED to call is a request FOR contact (F-09).
+    if (MISSED_CALL_COMPLAINT_RE.test(c)) return null;
+    // Reschedule without a permanence marker is a preference, not a revocation.
+    if (!uni && RESCHEDULE_RE.test(c) && !PERMANENCE_RE.test(c)) return null;
+    return { universal: uni, negated: neg };
   }
+
+  const hits = units.map(clauseRevokes).filter(Boolean) as Array<{ universal: boolean; negated: boolean }>;
+  const universal = hits.some((h) => h.universal);
+  const negatedContact = hits.some((h) => h.negated);
+  const callOnly = units.some((c) => clauseRevokes(c) && anyMatch(OPTOUT_CALL_RES, c));
+  const smsOnly = units.some((c) => clauseRevokes(c) && anyMatch(OPTOUT_SMS_RES, c));
+
+  if (!hits.length && !emailOnly && !wantsDeletion) return none;
 
   const all = universal || negatedContact;
 
@@ -233,23 +266,40 @@ export function detectOptOut(userMessage: string): OptOutResult {
 /** sessionStorage key for the recorded permission (PII-free by construction). */
 export const CONTACT_PERMISSION_KEY = 'cp_contact_permission_v1';
 
+/**
+ * In-memory backstop. INDEPENDENT REVIEW 2026-08-13 (F-05, P2): the previous
+ * comment promised "the in-memory session flag still governs" on storage
+ * failure, but no such flag existed — in a storage-blocked browser the DNC
+ * guard failed OPEN. This is that flag, and it is set BEFORE the storage write
+ * so it holds even when sessionStorage throws.
+ */
+let sessionOptOut = false;
+
 /** Persist the permission record; never throws (private mode etc.). */
 export function persistContactPermission(p: ContactPermission): void {
+  if (p.automatedFollowup === 'BLOCKED') sessionOptOut = true;
   try {
     sessionStorage.setItem(CONTACT_PERMISSION_KEY, JSON.stringify(p));
   } catch {
-    /* storage unavailable — the in-memory session flag still governs */
+    /* storage unavailable — the in-memory flag above still governs */
   }
 }
 
 /** TRUE when this session has an active opt-out on record. */
 export function hasSessionOptOut(): boolean {
+  if (sessionOptOut) return true;
   try {
     const raw = sessionStorage.getItem(CONTACT_PERMISSION_KEY);
     if (!raw) return false;
-    const p = JSON.parse(raw) as ContactPermission;
-    return p && p.automatedFollowup === 'BLOCKED';
+    const p = JSON.parse(raw) as ContactPermission | null;
+    // F-13: `p &&` could return null from a `: boolean` signature.
+    return !!p && p.automatedFollowup === 'BLOCKED';
   } catch {
     return false;
   }
+}
+
+/** Test-only reset of the in-memory backstop. */
+export function __resetSessionOptOutForTests(): void {
+  sessionOptOut = false;
 }

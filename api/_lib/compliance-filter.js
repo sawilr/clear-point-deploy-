@@ -433,9 +433,13 @@ export function complianceFilter(text, lang, opts) {
   // reference unless the sentence is about the benefit/check/agency.
   var SSN_POSSESSIVE_ES_RE = /\b(su|tu)\s+seguro\s+social\b/i;
   // Social Security as AGENCY or BENEFIT PAYMENT — never an SSN reference.
-  var SS_BENEFIT_CTX_RE = /\b(check|cheque|benefit|beneficio|payment|pago|paga|income|ingreso|retirement|jubilaci|monthly|mensual|premium|prima|deduct|descuent|deducen|taken\s+from|administration|administraci|office|oficina|ssa\.gov|772-1213|apply|solicit)/i;
-  // Explicit protective warning — must survive untouched.
-  var SSN_WARNING_RE = /(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:never|don'?t|do\s+not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
+  // F-07: added recib|cada mes|al mes — "¿Ya recibe usted su Seguro Social cada
+  // mes?" was being deleted and replaced with off-topic card guidance.
+  var SS_BENEFIT_CTX_RE = /\b(check|cheque|benefit|beneficio|payment|pago|paga|income|ingreso|retirement|jubilaci|monthly|mensual|premium|prima|deduct|descuent|deducen|taken\s+from|administration|administraci|office|oficina|ssa\.gov|772-1213|apply|solicit|recib|cada\s+mes|al\s+mes)/i;
+  // Explicit protective warning — must survive untouched. F-07: allow an
+  // optional modal ("we WILL never ask", "we would not need") in the
+  // we/I-never alternative.
+  var SSN_WARNING_RE = /(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:will|would|do|shall)?\s*(?:never|don'?t|do\s+not|not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
   function isSsnAdviceSentence(s) {
     var hasToken = SSN_TOKEN_RE.test(s);
     if (!hasToken && SSN_POSSESSIVE_ES_RE.test(s) && !SS_BENEFIT_CTX_RE.test(s)) hasToken = true;
@@ -444,14 +448,32 @@ export function complianceFilter(text, lang, opts) {
     if (!SSN_TOKEN_RE.test(s) && SS_BENEFIT_CTX_RE.test(s)) return false;
     return true;
   }
-  if (isSsnAdviceSentence(out)) {
-    // Split on sentence punctuation AND newlines (bullet lists carry advice too).
+  // F-06 (P2): the warning exemption was evaluated over the WHOLE sentence, so
+  // "Don't share your Medicare number, but you can use your Social Security
+  // number at the pharmacy." was kept intact — the warning governed the MBI
+  // while the SSN advice rode along. Segment on clause boundaries so each
+  // clause is judged on its own.
+  var CLAUSE_SPLIT_RE = /(?<=[.!?])\s+|\n+|\s*(?:,\s*(?:but|pero|however|although|though|aunque)\s+|;\s*|\s+—\s+|\s+-\s+|\s+—\s+)/;
+  function splitClauses(text) {
+    return String(text).split(CLAUSE_SPLIT_RE).filter(function (x) { return x && x.trim(); });
+  }
+  var anySsnClause = splitClauses(out).some(isSsnAdviceSentence);
+  if (anySsnClause) {
+    // Sentence-level split for reassembly (keeps output readable), then a
+    // clause-level check inside each sentence.
     var ssnSentences = out.split(/(?<=[.!?])\s+|\n+/);
     var ssnHit = false;
-    var ssnClean = ssnSentences.filter(function (s) {
-      if (isSsnAdviceSentence(s)) { ssnHit = true; return false; }
-      return true;
-    });
+    var ssnClean = ssnSentences.map(function (s) {
+      // Drop only the offending CLAUSE, keeping any compliant clauses in the
+      // same sentence (e.g. the MBI warning survives; the SSN advice does not).
+      var clauses = splitClauses(s);
+      if (!clauses.some(isSsnAdviceSentence)) return s;
+      ssnHit = true;
+      var kept = clauses.filter(function (c) { return !isSsnAdviceSentence(c); });
+      if (!kept.length) return '';
+      var joined = kept.join(' ').trim().replace(/[,;]\s*$/, '');
+      return /[.!?]$/.test(joined) ? joined : joined + '.';
+    }).filter(function (s) { return s && s.trim(); });
     if (ssnHit) {
       violations.push('ssn_advice');
       var ssnSafe = lang === 'en'

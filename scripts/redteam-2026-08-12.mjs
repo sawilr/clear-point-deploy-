@@ -29,6 +29,11 @@ const MUST_BLOCK = [
   ['tell-the-doctor', 'Tell the doctor your Social Security number so they can bill Medicare.'],
   ['keep-handy', 'Keep your Social Security number handy for the appointment.'],
   ['mixed-lang', 'You can usar su número de Seguro Social to prove eligibility at the pharmacy.'],
+  // ── Added from INDEPENDENT REVIEW 2026-08-13 (F-06) ──────────────────────
+  // A single sentence whose warning governs the MBI while SSN advice rides along.
+  ['clause-split-mbi-warning', "Don't share your Medicare number, but you can use your Social Security number at the pharmacy."],
+  ['clause-split-semicolon', 'Never enter your Medicare ID here; your Social Security number will confirm coverage at the desk.'],
+  ['clause-split-however', 'We protect your data. However, the pharmacy can look you up with your Social Security number.'],
 ];
 
 // MUST_PASS: legitimate strings that must survive UNCHANGED.
@@ -43,6 +48,10 @@ const MUST_PASS = [
   ['card-guidance', 'To show proof of Medicare coverage, use your Medicare card. You can print one from your Medicare.gov account.'],
   ['no-ssn-mention', 'Your Initial Enrollment Period is a seven-month window around your 65th birthday.'],
   ['do-not-enter', 'For your security, please do not enter your Medicare ID, Social Security number, or banking information in this chat.'],
+  // ── Added from INDEPENDENT REVIEW 2026-08-13 (F-07) ──────────────────────
+  ['es-benefit-question', '¿Ya recibe usted su Seguro Social cada mes?'],
+  ['en-will-never-ask', 'We will never ask for your Social Security number in this chat.'],
+  ['es-recibe-al-mes', 'Si usted recibe su Seguro Social al mes, el programa puede ayudarle con la prima.'],
 ];
 
 let blockMiss = [], blockOk = 0, passFail = [], passOk = 0;
@@ -100,6 +109,12 @@ const MUST_DNC = [
   ['spanglish', 'No calls please, no me llamen.'],
   ['es-no-mas-mensajes', 'No quiero más mensajes.'],
   ['es-solo-email', 'Solo correo electrónico, no llamadas.'],
+  // ── Added from INDEPENDENT REVIEW 2026-08-13 (F-02) ──────────────────────
+  // Genuine revocations that EXPLAIN themselves — the explanation must never
+  // veto the revocation.
+  ['explains-has-coverage', 'Do not contact me. I already have coverage from my plan.'],
+  ['explains-es-aseguradora', 'No me llamen más. Ya tengo cobertura de mi aseguradora.'],
+  ['explains-medicare-direct', 'Stop calling me. I get everything from Medicare already.'],
 ];
 
 const MUST_NOT_DNC = [
@@ -116,6 +131,16 @@ const MUST_NOT_DNC = [
   ['carrier-messages', 'No quiero más mensajes de mi aseguradora'],
   ['stop-calling-doctor', 'They should stop calling my doctor'],
   ['education-q', '¿Qué es la Parte D de Medicare?'],
+  // ── Added from INDEPENDENT REVIEW 2026-08-13 (F-03, F-09) ────────────────
+  // Navigation phrases must never create a permanent DNC.
+  ['nav-take-me-back', 'take me back to the topics'],
+  ['nav-take-me-to', 'Take me to the enrollment page'],
+  ['nav-take-me-through', 'Take me through the options again'],
+  // A complaint that we FAILED to call is a request FOR contact, not against it.
+  ['complaint-didnt-call', "You didn't call me back like you promised"],
+  ['complaint-nobody-called', 'Nobody called me yesterday'],
+  ['complaint-es-no-llamaron', 'No me han llamado todavía'],
+  ['complaint-still-waiting', 'I am still waiting for the call'],
 ];
 
 let dncMiss = [], dncOk = 0, dncFP = [], dncPassOk = 0;

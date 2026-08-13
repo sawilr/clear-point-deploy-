@@ -28,13 +28,13 @@ dist-ssr
 # Environment variables — explicit safety net. Real secrets live in Vercel
 # project env vars, never in repo. The `.env` line catches any accidental
 # `.env` file (without .local suffix) created by future developers.
-.env
-.env.local
-.env.*.local
+# AUDIT 2026-08-13 (F-11): one rule, no future gap — bare .env.<name>
+# files (.env.production, .env.staging) were NOT covered before.
+.env*
+!.env.example
 
 *.BACKUP_*
 backups/
-.env*.local
 
 # Local tooling / scratch — never in repo (Sawil 2026-06)
 ruvector.db
@@ -48,4 +48,3 @@ scripts/.*.cjs
 .gstack/
 deploy-*.log
 prod*.log
-.env.ghl-mission

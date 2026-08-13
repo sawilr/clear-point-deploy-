@@ -3305,6 +3305,20 @@ export function ChatBot() {
   /* ---------- Plan review flow (unchanged) ---------- */
 
   function startPlanReview(interestType = memory.interestType || 'Plan review') {
+    // AUDIT 2026-08-13 (F-08, P2) — the DNC gate lived only in
+    // startOrResumeReview, but startPlanReview has two other call sites (the
+    // resume_lead chip and the REVIEW_KEYWORDS text route). After an opt-out a
+    // typed "I still want to speak with an advisor" restarted full name/phone/
+    // DOB intake. Gating at the source means every caller inherits it.
+    if (hasSessionOptOut()) {
+      enqueueBot([{
+        text: memoryRef.current.language === 'es'
+          ? 'Usted nos pidió no contactarle, y lo respetamos — no iniciaré una solicitud de llamada. Si desea ayuda, puede llamarnos directamente al 1-855-720-8555.'
+          : 'You asked us not to contact you, and we respect that — I won\'t start a callback request. If you\'d like help, you can call us directly at 1-855-720-8555.',
+        pace: 'slow',
+      }], true);
+      return;
+    }
     const leadReset = {
       wantsPlanReview: true, interestType,
       firstName: '', lastName: '', phone: '',
