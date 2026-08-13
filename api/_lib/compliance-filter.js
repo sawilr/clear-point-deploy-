@@ -196,6 +196,74 @@ function normLoose(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
+// ── CP-03 (2026-08-13) — clinical-concern net, server mirror ─────────────────
+// Mirror of the 'clinical_concern' tier in src/lib/safetyRouter.ts. Both exist because
+// Zara answers many turns from her client-side classifier without ever reaching this
+// endpoint, while her LLM fallback and all of Clara's LLM turns come through here. A
+// safety net present on only one of those paths is not a safety net.
+//
+// The audit case: "I take warfarin and I've been really dizzy for two days" matched
+// NOTHING and received ordinary Medicare education. This fires on the CONJUNCTION of a
+// high-risk medication and a new symptom, vetoed by cost/coverage framing so that
+// "my warfarin copay went up" — a core service question — is never escalated.
+// See safetyRouter.ts for why this is a separate tier rather than a wider 911 net.
+var HIGH_RISK_MED_RE = /\b(warfarin|warfarina|coumadin|jantoven|blood\s*thinner(s)?|anticoagulant\w*|anticoagulante|eliquis|apixaban|xarelto|rivaroxaban|pradaxa|dabigatran|savaysa|plavix|clopidogrel|insulin|insulina|digoxin|digoxina|lanoxin|lithium|litio|methotrexate|metotrexato|amiodarone|amiodarona|prednisone|prednisona)\b/i;
+// Excludes bleeding / chest pain / breathing / fainting — those are already 911, and
+// matchesEmergency runs first, so an acute case can never be downgraded to this tier.
+var CONCERN_SYMPTOM_RE = new RegExp([
+  '\\b(dizzy|dizziness|light[\\s-]?headed|weak|weakness|fatigued|exhausted)\\b',
+  '\\b(bruis(e|es|ing)|nose\\s?bleed(s)?)\\b',
+  '\\b(confus(ed|ion)|disoriented)\\b',
+  '\\b(vomiting|throwing\\s+up|nausea|nauseous)\\b',
+  '\\b(black\\s+stool|tarry\\s+stool|dark\\s+urine|blurr?(y|ed)\\s+vision)\\b',
+  // Overt blood signs. These matched NEITHER net before: matchesEmergency requires the
+  // literal word "bleeding" (or "blood everywhere"), so "blood in my stool" — a GI-bleed
+  // sign that is exactly why warfarin monitoring exists — fell straight through to
+  // ordinary Medicare education. Placed in this tier rather than the 911 net on purpose:
+  // the copy here already tells the person to call 911 if it is severe or worsening,
+  // which leaves the severity judgment with them and their clinician instead of Clear
+  // Point asserting a triage decision it is not qualified to make.
+  '\\b(blood\\s+in\\s+(my\\s+|the\\s+)?(stool|urine|vomit|phlegm|spit)|bloody\\s+(stool|urine|nose)|coughing\\s+up\\s+blood|spitting\\s+blood)\\b',
+  '\\b(palpitations|heart\\s+racing|irregular\\s+heartbeat|swollen|swelling)\\b',
+  '\\b(fell|falling|unsteady|off\\s+balance)\\b',
+  '\\b(maread[oa]|mareos?|aturdid[oa]|debil|debilidad|agotad[oa])\\b',
+  '\\b(moreton(es)?|hematoma|sangrado\\s+de\\s+nariz)\\b',
+  '\\b(confundid[oa]|confusion|desorientad[oa])\\b',
+  '\\b(vomito|vomitando|nauseas?)\\b',
+  '\\b(heces\\s+negras|orina\\s+oscura|vision\\s+borrosa)\\b',
+  '\\b(sangre\\s+en\\s+(las\\s+|la\\s+|el\\s+)?(heces|orina|vomito|popo)|tosiendo\\s+sangre|escupiendo\\s+sangre)\\b',
+  '\\b(palpitaciones|corazon\\s+acelerado|hinchad[oa]|hinchazon)\\b',
+  '\\b(me\\s+cai|caidas|desequilibrio)\\b',
+].join('|'), 'i');
+var CONCERN_VETO_RE = new RegExp([
+  '\\b(co-?pay(ment)?s?|copago|cost(s)?|costo|cuesta|precio|price|expensive|caro|afford)\\b',
+  '\\b(coverage|covered|cobertura|cubierto|cubre|formulary|formulario|tier|nivel)\\b',
+  '\\b(refill|resurtir|pharmac(y|ies)|farmacia|prior\\s+authorization|autorizacion\\s+previa)\\b',
+  '\\b(deductible|deducible|premium|prima|donut\\s+hole|coverage\\s+gap)\\b',
+  '\\b(went\\s+up|subio|extra\\s+help|ayuda\\s+extra|switch\\s+plans|cambiar\\s+de\\s+plan)\\b',
+].join('|'), 'i');
+
+var CLINICAL_CONCERN_REPLY = {
+  en: "I'm not able to give any medical guidance, and I don't want to guess about a symptom while you're on that medication — please contact your prescriber or your pharmacist today and tell them exactly what you told me. A pharmacist can usually speak with you the same day without an appointment. If the symptom is severe, or it gets worse, call 911 or go to an emergency room. I'm here for the Medicare side whenever you want to come back to it — and a licensed advisor is at 1-855-720-8555.",
+  es: 'No puedo darle ninguna indicación médica, y no quiero adivinar sobre un síntoma mientras usted toma ese medicamento — por favor comuníquese hoy con su médico o su farmacéutico y dígale exactamente lo que me dijo. Un farmacéutico normalmente puede atenderle el mismo día sin cita. Si el síntoma es fuerte, o empeora, llame al 911 o vaya a una sala de emergencias. Yo sigo aquí para lo de Medicare cuando quiera retomarlo — y un asesor licenciado está al 1-855-720-8555.',
+};
+
+/**
+ * CP-03 — TRUE when the user reports a symptom while naming a high-risk medication and
+ * is NOT asking about cost or coverage. Call AFTER matchesEmergency.
+ */
+export function matchesClinicalConcern(text) {
+  var t = normLoose(text);
+  if (!t || t.length < 4) return false;
+  if (CONCERN_VETO_RE.test(t)) return false;
+  return HIGH_RISK_MED_RE.test(t) && CONCERN_SYMPTOM_RE.test(t);
+}
+
+/** CP-03 — bilingual copy for the clinical-concern tier. */
+export function clinicalConcernReply(lang) {
+  return CLINICAL_CONCERN_REPLY[lang === 'en' ? 'en' : 'es'];
+}
+
 /** TRUE when the text matches any emergency phrase (EN/ES, typo-tolerant). */
 export function matchesEmergency(text) {
   var t = normLoose(text);

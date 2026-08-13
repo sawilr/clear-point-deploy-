@@ -14,7 +14,7 @@
 
 import { checkPromptInjection } from './_lib/prompt-guard.js';
 import { scrubPHI } from './_lib/phi-scrub.js';
-import { complianceFilter, matchesEmergency } from './_lib/compliance-filter.js';
+import { complianceFilter, matchesEmergency, matchesClinicalConcern, clinicalConcernReply } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { enforceKill } from './_lib/kill-switch.js';
 import { noStorePII } from './_lib/security-headers.js';
@@ -536,6 +536,28 @@ export default async function handler(req, res) {
     return res.status(200).json({
       response: _emText,
       meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'medical_emergency' },
+    });
+  }
+
+  // ── CP-03 (2026-08-13) — clinical-concern tier ─────────────────────────
+  // Placed immediately AFTER the 911 check and BEFORE the injection guard and the
+  // model call. Order matters in both directions: anything acute has already been
+  // routed to 911 above and cannot be softened to this tier, and a symptom report
+  // must not reach the model, which would answer the Medicare question and leave the
+  // symptom unaddressed — the exact CP-03 failure.
+  //
+  // Before the injection guard on purpose too: a person describing a medication and a
+  // symptom in their own words should never be met with an injection refusal.
+  if (matchesClinicalConcern(userMessage)) {
+    var _ccLang = _turnLang || conversationContext.language || 'es';
+    console.warn('[CHAT] clinical-concern guardrail fired, LLM skipped, ip=' + ip);
+    return res.status(200).json({
+      response: clinicalConcernReply(_ccLang),
+      // wantHandoff stays false: the right next contact is a clinician, not a licensed
+      // insurance advisor, and queuing a sales callback off the back of a symptom
+      // report would be the wrong instinct. The phone number is in the copy for
+      // whenever they choose to come back to the Medicare question.
+      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'clinical_concern' },
     });
   }
 
