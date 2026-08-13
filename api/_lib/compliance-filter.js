@@ -419,13 +419,37 @@ export function complianceFilter(text, lang, opts) {
   // (ssa.gov contact info) don't match — only "Social Security number"/SSN
   // advice forms do. Offending sentences are stripped and replaced with the
   // Medicare-card / official-channels guidance.
-  var SSN_ADVICE_RE = /\b(need|needs|use|using|show|give|gave|provide|bring|present|carry|share)\b[^.!?]{0,60}\b(your|su|tu)\s+(social\s+security\s+number|n[uú]mero\s+de\s+(el\s+)?seguro\s+social|SSN)\b|\b(your|su|tu)\s+(social\s+security\s+number|n[uú]mero\s+de\s+(el\s+)?seguro\s+social|SSN)\b[^.!?]{0,40}\b(to\s+prove|to\s+verify|to\s+show|para\s+(probar|demostrar|verificar|comprobar))\b/i;
-  var SSN_NEGATED_RE = /\b(don'?t|do\s+not|never|not|no|nunca|jam[aá]s)\b[^.!?]{0,50}\b(share|give|provide|send|type|reveal|comparta|compartir|env[ií]e|enviar|d[eé]|dar|escriba|revele)\b|\bplease\s+don'?t\b|\bpor\s+favor\s+no\b/i;
-  if (SSN_ADVICE_RE.test(out)) {
-    var ssnSentences = out.split(/(?<=[.!?])\s+/);
+  // DESIGN (revised after adversarial red team, 2026-08-12): enumerating advice
+  // verbs failed — 15 of 20 attack strings walked past it ("the pharmacy will
+  // ASK for your SSN", "they can LOOK YOU UP with your Social", "your SSN WORKS
+  // AS ID", "your Medicare number IS your SSN", "S.S.N.", "su número DEL Seguro
+  // Social"...). Inverted to DEFAULT-DENY: any mention of the beneficiary's SSN
+  // token is stripped unless it is an explicit do-not-share warning or is about
+  // the Social Security ADMINISTRATION / benefit payment. Clara and Zara have no
+  // legitimate reason to discuss a caller's SSN except to warn against sharing.
+  // s[.\s-]?s[.\s-]?n covers SSN, S.S.N., S S N, S-S-N (red team: "S S N" slipped).
+  var SSN_TOKEN_RE = /\bs[\s.\-]?s[\s.\-]?n\b|\bsocial\s+security\s+(?:number|card|#)\b|\bn[uú]mero\s+de[l]?\s+seguro\s+social\b|\btarjeta\s+de[l]?\s+seguro\s+social\b/i;
+  // Possessive Spanish "su seguro social" without the word "número" — an SSN
+  // reference unless the sentence is about the benefit/check/agency.
+  var SSN_POSSESSIVE_ES_RE = /\b(su|tu)\s+seguro\s+social\b/i;
+  // Social Security as AGENCY or BENEFIT PAYMENT — never an SSN reference.
+  var SS_BENEFIT_CTX_RE = /\b(check|cheque|benefit|beneficio|payment|pago|paga|income|ingreso|retirement|jubilaci|monthly|mensual|premium|prima|deduct|descuent|deducen|taken\s+from|administration|administraci|office|oficina|ssa\.gov|772-1213|apply|solicit)/i;
+  // Explicit protective warning — must survive untouched.
+  var SSN_WARNING_RE = /(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:never|don'?t|do\s+not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
+  function isSsnAdviceSentence(s) {
+    var hasToken = SSN_TOKEN_RE.test(s);
+    if (!hasToken && SSN_POSSESSIVE_ES_RE.test(s) && !SS_BENEFIT_CTX_RE.test(s)) hasToken = true;
+    if (!hasToken) return false;
+    if (SSN_WARNING_RE.test(s)) return false;      // protective warning — keep
+    if (!SSN_TOKEN_RE.test(s) && SS_BENEFIT_CTX_RE.test(s)) return false;
+    return true;
+  }
+  if (isSsnAdviceSentence(out)) {
+    // Split on sentence punctuation AND newlines (bullet lists carry advice too).
+    var ssnSentences = out.split(/(?<=[.!?])\s+|\n+/);
     var ssnHit = false;
     var ssnClean = ssnSentences.filter(function (s) {
-      if (SSN_ADVICE_RE.test(s) && !SSN_NEGATED_RE.test(s)) { ssnHit = true; return false; }
+      if (isSsnAdviceSentence(s)) { ssnHit = true; return false; }
       return true;
     });
     if (ssnHit) {

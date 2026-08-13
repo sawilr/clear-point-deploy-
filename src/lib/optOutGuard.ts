@@ -39,52 +39,95 @@ export interface OptOutResult {
   responseEs: string;
 }
 
-// Full opt-out (all channels). EN + ES, accent-tolerant via normalization.
-const OPTOUT_ALL_RES: RegExp[] = [
-  /\b(don'?t|do\s+not|never)\s+contact\s+me\b/i,
-  /\b(remove|take)\s+me\s+(from|off)\b/i,
+// ── DECISION PROCEDURE (rewritten after adversarial red team 2026-08-12) ────
+// The first version enumerated exact revocation phrasings; 12 of 28 real
+// revocations walked past it ("Do not contact.", "Don't ever call me again",
+// "I'd rather you didn't call", "take my number off", "opt me out", "no me
+// vuelvan a llamar", "quítenme del sistema", "ya no quiero que me busquen",
+// "borre mi número") while 3 non-revocations wrongly triggered a permanent DNC
+// ("Remove me from that plan", "No quiero más mensajes DE MI ASEGURADORA",
+// "They should stop calling MY DOCTOR").
+//
+// Replaced with a compositional decision procedure:
+//   1. THIRD-PARTY SENDER  → not our contact at all            → no DNC
+//   2. COVERAGE TARGET     → a plan/enrollment request         → no DNC
+//   3. UNIVERSAL STOP      → unconditional revocation          → DNC
+//   4. NEGATED CONTACT     → revocation, unless the object is a third party,
+//                            or it is a reschedule with no permanence marker
+//   5. DELETION            → revocation + deletion request
+//   6. EMAIL ONLY          → channel preference (email stays open)
+
+/** Speaker is complaining about someone ELSE contacting them. */
+const THIRD_PARTY_SENDER_RE =
+  /\b(?:from|de|del)\s+(?:my|mi|the|la|el)?\s*(?:aseguradora|insurance|insurer|carrier|plan|medicare|medicaid|hospital|doctor|farmacia|pharmacy|company|compa[ñn][ií]a)\b/i;
+
+/** The request is about a PLAN/enrollment, not about contact permission. */
+const COVERAGE_TARGET_RE =
+  /\b(?:from|de|del)\s+(?:that|this|my|ese|este|mi|el|la)?\s*(?:plan|coverage|cobertura|policy|p[oó]liza|enrollment|inscripci[oó]n|medicare\s+advantage|part\s+d)\b|\bstop\s+(?:my|the)\s+(?:plan|coverage|enrollment)\b|\bcancel(?:ar)?\s+(?:mi|el|my|the)\s+(?:plan|cobertura|coverage)\b/i;
+
+/** Unconditional revocation keywords — no object or context needed. */
+const UNIVERSAL_STOP_RES: RegExp[] = [
+  /^\s*(?:(?:stop|alto|basta|para|parar)[\s.,!]*)+$/i,          // "STOP", "STOP STOP STOP", "stop."
   /\bunsubscribe\b/i,
-  /\bno\s+more\s+(messages|calls|texts|contact)\b/i,
+  /\bopt\s+me\s+out\b/i,
+  /\bopt\s*-?\s*out\s+(?:me|of\s+(?:everything|all))\b/i,
   /\bleave\s+me\s+alone\b/i,
-  /\bstop\s+(contacting|calling|texting|messaging)\s+me\b/i,
-  /\bno\s+(quiero|deseo)\s+que\s+me\s+(llamen|llames|contacten|escriban|manden|env[ií]en)\b/i,
-  /\bno\s+me\s+(contacten|contacte|molesten)\s*(m[aá]s)?\b/i,
-  /\bs[aá]quen?me\s+de\s+(la|su)\s+lista\b/i,
+  /\bdo\s+not\s+contact\b|\bdon'?t\s+contact\b/i,
+  /\b(?:remove|take)\s+(?:me|my\s+(?:number|name|phone|info(?:rmation)?|email))\s+(?:from|off|out\s+of)?\b/i,
+  /\b(?:s[aá]quen?me|qu[ií]ten?me|b[oó]rren?me|elim[ií]nen?me)\s+(?:de|del)\b/i,
   /\bcancelar?\s+todo\s+contacto\b/i,
-  /\bno\s+quiero\s+m[aá]s\s+(mensajes|llamadas|contacto)\b/i,
+  /\bno\s+(?:quiero|deseo)\s+m[aá]s\s+(?:mensajes|llamadas|contacto|correos)\b/i,
+  /\bno\s+more\s+(?:messages|calls|texts|contact|emails)\b/i,
+  /\bnot\s+interested\b[^.!?]{0,40}\b(?:don'?t|do\s+not|no)\s+(?:follow\s*up|contact|call|text)\b/i,
+  /\bya\s+no\s+quiero\s+que\s+me\s+(?:llamen|contacten|busquen|escriban|molesten)\b/i,
 ];
 
-// Channel-specific.
+/** Negation bound to a contact verb (broad; refined by the guards below). */
+const NEGATED_CONTACT_RE =
+  /\b(?:don'?t|do\s+not|never|stop|quit|rather\s+you\s+didn'?t|didn'?t)\s+(?:ever\s+|again\s+)?(?:call|contact|text|message|messaging|email|phone|ring|bother|calling|contacting|texting|emailing|phoning|bothering)\b|\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame|llamen|llames|llamar|contacte|contacten|contactar|escriba|escriban|escribir|manden|mandar|env[ií]en|enviar|molesten|molestar|busquen|buscar)\b|\bno\s+(?:quiero|deseo)\s+que\s+me\s+(?:llamen|llames|contacten|escriban|manden|env[ií]en|busquen)\b/i;
+
+/**
+ * The negated verb's object is CONTENT, not the person — "don't text that
+ * information here" is a data-privacy preference, not a contact revocation.
+ */
+const CONTENT_OBJECT_RE =
+  /\b(?:text|send|email|write|type|message|share|post|put)\s+(?:me\s+)?(?:that|this|it|those|these|the|any|eso|esa|esta|eso)\b/i;
+
+/** The contact object is someone OTHER than the speaker. */
+const THIRD_PARTY_OBJECT_RE =
+  /\b(?:call|calling|contact|contacting|text|texting|bother|bothering)\s+(?:my|mi|the|el|la|su)\s+(?:doctor|m[eé]dico|mother|madre|father|padre|wife|esposa|husband|esposo|son|hijo|daughter|hija|office|oficina|pharmacy|farmacia|plan|insurance|aseguradora|neighbor|vecino)\b/i;
+
+/** Permanence markers — make a revocation permanent regardless of day talk. */
+const PERMANENCE_RE =
+  /\b(?:ever|again|any\s?more|at\s+all|never|forever|permanently|nunca|jam[aá]s|m[aá]s|para\s+siempre|definitivamente)\b/i;
+
+/** Rescheduling preference ("call Friday instead") — not a revocation. */
+const RESCHEDULE_RE =
+  /\b(?:ma[ñn]ana|m[aá]s\s+tarde|luego|otro\s+d[ií]a|otra\s+hora|el\s+(?:lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo)|tomorrow|later|another\s+(?:day|time)|instead|next\s+week|la\s+pr[oó]xima|mejor\s+(?:a|en|el))\b/i;
+
+// Channel-specific (only consulted once a revocation is established).
 const OPTOUT_CALL_RES: RegExp[] = [
-  /\b(stop|quit)\s+calling\b/i,
-  /\bdo\s+not\s+call\b/i,
-  /\bno\s+me\s+llamen?\b/i,
+  /\b(?:stop|quit)\s+calling\b/i,
+  /\bdo\s+not\s+call\b|\bdon'?t\s+call\b/i,
+  /\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame[ns]?|llamar)\b/i,
 ];
 const OPTOUT_SMS_RES: RegExp[] = [
-  /\b(stop|quit)\s+texting\b/i,
+  /\b(?:stop|quit)\s+texting\b/i,
   /\bno\s+more\s+texts\b/i,
-  /\bno\s+me\s+(manden|env[ií]en)\s+(m[aá]s\s+)?(mensajes|textos|correos)\b/i,
-  /\bno\s+me\s+escriban\s*(m[aá]s)?\b/i,
+  /\bno\s+me\s+(?:manden|env[ií]en)\s+(?:m[aá]s\s+)?(?:mensajes|textos|correos)\b/i,
+  /\bno\s+me\s+escriban?\s*(?:m[aá]s)?\b/i,
 ];
 const EMAIL_ONLY_RES: RegExp[] = [
   /\bemail\s+only\b/i,
-  /\bonly\s+(by\s+)?email\b/i,
-  /\bsolo\s+(por\s+)?correo(\s+electr[oó]nico)?\b/i,
+  /\bonly\s+(?:by\s+)?email\b/i,
+  /\bsolo\s+(?:por\s+)?correo(?:\s+electr[oó]nico)?\b/i,
 ];
 
-// Data-deletion request.
+/** Data-deletion request (info, data, records, phone number). */
 const DELETION_RES: RegExp[] = [
-  /\b(delete|erase|remove)\s+(my|all\s+my)\s+(info(rmation)?|data|records?)\b/i,
-  /\bborr[ae]n?\s+(mi|toda\s+mi|mis)\s+(informaci[oó]n|datos?)\b/i,
-  /\belimin[ae]n?\s+(mi|toda\s+mi|mis)\s+(informaci[oó]n|datos?)\b/i,
+  /\b(?:delete|erase|remove|wipe)\s+(?:my|all\s+my)\s+(?:info(?:rmation)?|data|records?|number|phone|details?|account)\b/i,
+  /\b(?:borr[ae]n?|elimin[ae]n?|quiten)\s+(?:mi|toda\s+mi|mis|el)\s+(?:informaci[oó]n|datos?|n[uú]mero|expediente|registro)\b/i,
 ];
-
-// A bare "STOP" message is the SMS-style universal keyword.
-const BARE_STOP_RE = /^\s*(stop|alto|basta)\s*[.!]*\s*$/i;
-
-// Rescheduling talk ("call me tomorrow instead", "no me llamen mañana, mejor
-// el lunes") is a preference, not a revocation — exempt to avoid false DNC.
-const RESCHEDULE_RE = /\b(ma[ñn]ana|m[aá]s\s+tarde|luego|otro\s+d[ií]a|otra\s+hora|el\s+(lunes|martes|mi[eé]rcoles|jueves|viernes)|tomorrow|later|another\s+(day|time)|instead|mejor\s+(a|en)\b)/i;
 
 function normLoose(s: string): string {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -133,18 +176,34 @@ export function detectOptOut(userMessage: string): OptOutResult {
   };
   if (!t) return none;
 
+  // ── Step 1-2: not-about-us / not-about-contact exclusions ────────────────
+  // "No quiero más mensajes de mi aseguradora" is a complaint about the
+  // CARRIER; "Remove me from that plan" is a coverage request. Neither is a
+  // revocation of Clear Point's contact permission.
+  if (THIRD_PARTY_SENDER_RE.test(t) || COVERAGE_TARGET_RE.test(t)) return none;
+
   const wantsDeletion = anyMatch(DELETION_RES, t);
-  const bareStop = BARE_STOP_RE.test(t);
-  const all = bareStop || anyMatch(OPTOUT_ALL_RES, t);
+  const universal = anyMatch(UNIVERSAL_STOP_RES, t);
+  const negatedContact = NEGATED_CONTACT_RE.test(t);
+  const emailOnly = anyMatch(EMAIL_ONLY_RES, t);
   const callOnly = anyMatch(OPTOUT_CALL_RES, t);
   const smsOnly = anyMatch(OPTOUT_SMS_RES, t);
-  const emailOnly = anyMatch(EMAIL_ONLY_RES, t);
 
-  if (!all && !callOnly && !smsOnly && !emailOnly && !wantsDeletion) return none;
+  if (!universal && !negatedContact && !emailOnly && !wantsDeletion) return none;
 
-  // Rescheduling exemption applies only to channel-specific phrasing —
-  // a full "don't contact me" or deletion request is never a reschedule.
-  if (!all && !wantsDeletion && RESCHEDULE_RE.test(t)) return none;
+  // ── Step 4 guards on the broad negated-contact match ─────────────────────
+  if (negatedContact && !universal && !wantsDeletion) {
+    // "They should stop calling my doctor" — object is a third party.
+    if (THIRD_PARTY_OBJECT_RE.test(t)) return none;
+    // "Don't text that information here" — object is content, not the person.
+    if (CONTENT_OBJECT_RE.test(t)) return none;
+    // "Don't call me tomorrow, call Friday" is a reschedule; but "don't EVER
+    // call me AGAIN, not tomorrow, not Friday" is a revocation — permanence
+    // markers win over day/time talk.
+    if (RESCHEDULE_RE.test(t) && !PERMANENCE_RE.test(t)) return none;
+  }
+
+  const all = universal || negatedContact;
 
   if (emailOnly && !all) {
     return {
