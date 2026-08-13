@@ -1,9 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 9A — Unified PHI/PII scrubber.
 //
-// Single source of truth. Strips Medicare ID (MBI), SSN, banking, DOB-only,
-// and other sensitive identifiers from any user-provided string BEFORE it
+// Single source of truth. Strips Medicare ID (MBI), SSN, banking, and other
+// sensitive numeric identifiers from any user-provided string BEFORE it
 // reaches an LLM, a CRM (GHL), or a persistent log.
+// NOTE (audit 2026-08-12, F8): DOB is NOT handled here — full dates of birth
+// are extracted/redacted by the date-grounding step in api/chat.js and by the
+// client-side soft tier in src/lib/phiPatterns.ts. This module is numbers-only.
 //
 // Returns the redacted text plus a list of detected categories (for audit).
 // Patterns are conservative: false-positives are preferred over leaks.

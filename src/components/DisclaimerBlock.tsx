@@ -1,4 +1,5 @@
 import { useLanguage } from '../hooks/useLanguage';
+import { tpmoDisclaimerText } from '../lib/tpmoConfig';
 
 interface DisclaimerBlockProps {
   variant?: 'full' | 'compact' | 'inline' | 'privacy';
@@ -65,12 +66,13 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
           'ClearPoint Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos, formularios, redes de farmacias y costos pueden variar según el plan, área de servicio y elegibilidad. Un agente de seguros licenciado puede contactarle para hablar sobre opciones relacionadas con Medicare. También puede contactar Medicare.gov, 1-800-MEDICARE o su Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información oficial y sobre todas sus opciones.'
         )}
       </p>
-      <p>
-        {t(
-          'We do not offer every plan available in your area. Any information we provide is limited to the plans we offer in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your plan options.',
-          'No ofrecemos todos los planes disponibles en su área. Cualquier información que proporcionamos se limita a los planes que ofrecemos en su área. Comuníquese con Medicare.gov o 1-800-MEDICARE para obtener información sobre todas sus opciones de planes.'
-        )}
-      </p>
+      {/* AUDIT 2026-08-12 — the (e)(41) TPMO sentence now comes from the
+          controlled config (src/lib/tpmoConfig.ts). While counts are
+          unverified (status BLOCKED_COUNTS_REQUIRED) this renders the same
+          count-less fallback as before; once compliance approves the real
+          organization/product figures there, the required counts variant
+          renders automatically — no copy edits scattered across the site. */}
+      <p>{t(tpmoDisclaimerText('en'), tpmoDisclaimerText('es'))}</p>
       <p>
         {t(
           'Submitting a form or requesting a consultation does not enroll you in a Medicare plan. A licensed insurance agent may contact you to discuss Medicare-related options.',

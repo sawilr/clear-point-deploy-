@@ -4,7 +4,7 @@ import { defineConfig } from "vite"
 import { inspectAttr } from 'kimi-plugin-inspect-react'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // Sawil 2026-06-15 — ABSOLUTE asset base. With the old relative base ('./'),
   // the JS bundle was referenced as "./assets/…", which resolves correctly on
   // no-slash deep links (/about → /assets/…) but BREAKS on trailing-slash URLs
@@ -15,7 +15,10 @@ export default defineConfig({
   // makes /assets/… resolve correctly at ANY URL depth. Site is served at the
   // domain root, so this is the correct, lower-risk base.
   base: '/',
-  plugins: [inspectAttr(), react()],
+  // AUDIT 2026-08-12 (IP scrub) — inspectAttr() stamps `code-path="src/…"`
+  // attributes on every DOM element; in production that publishes internal
+  // source paths to any visitor. Dev-only from now on.
+  plugins: [...(command === 'serve' ? [inspectAttr()] : []), react()],
   // PHASE A15 — strip console.* and debugger from production bundles.
   esbuild: {
     drop: ['console', 'debugger'],
@@ -65,4 +68,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

@@ -18,6 +18,10 @@
 //      MUST contain the 911 instruction — otherwise it is replaced outright
 //   9. GEO (audit 2026-07-28, CPF-002): a caller outside NY/NJ/CT never gets a
 //      name/phone request — the reply is replaced by the out-of-area message
+//  10. STORAGE (audit 2026-07-28, CPF-007): never promise non-storage — rewritten
+//      to the Privacy-Policy wording
+//  11. SSN ADVICE (audit 2026-08-12): never advise using/carrying/giving out the
+//      Social Security number — replaced with Medicare-card/official-channel text
 
 // ── Forbidden carriers / brands (expand as ClearPoint adds carriers) ─────
 // A15.9 — HIGH fix: carrier patterns now tolerate dashes, dots, and spaces
@@ -403,6 +407,34 @@ export function complianceFilter(text, lang, opts) {
         out = uaClean.join(' ').trim();
         out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + uaSafe : uaSafe;
       }
+    }
+  }
+
+  // ── AUDIT 2026-08-12 — SSN-advice net (rule 11) ──────────────────────────
+  // Live transcript: replying to a lost-Medicare-card question, the LLM said
+  // "you just need your Social Security number to prove eligibility at the
+  // doctor or pharmacy". The bot must NEVER advise using/carrying/giving out
+  // the SSN. Negated safety warnings ("please don't share your Social
+  // Security number") are exempt; mentions of the Social Security AGENCY
+  // (ssa.gov contact info) don't match — only "Social Security number"/SSN
+  // advice forms do. Offending sentences are stripped and replaced with the
+  // Medicare-card / official-channels guidance.
+  var SSN_ADVICE_RE = /\b(need|needs|use|using|show|give|gave|provide|bring|present|carry|share)\b[^.!?]{0,60}\b(your|su|tu)\s+(social\s+security\s+number|n[uú]mero\s+de\s+(el\s+)?seguro\s+social|SSN)\b|\b(your|su|tu)\s+(social\s+security\s+number|n[uú]mero\s+de\s+(el\s+)?seguro\s+social|SSN)\b[^.!?]{0,40}\b(to\s+prove|to\s+verify|to\s+show|para\s+(probar|demostrar|verificar|comprobar))\b/i;
+  var SSN_NEGATED_RE = /\b(don'?t|do\s+not|never|not|no|nunca|jam[aá]s)\b[^.!?]{0,50}\b(share|give|provide|send|type|reveal|comparta|compartir|env[ií]e|enviar|d[eé]|dar|escriba|revele)\b|\bplease\s+don'?t\b|\bpor\s+favor\s+no\b/i;
+  if (SSN_ADVICE_RE.test(out)) {
+    var ssnSentences = out.split(/(?<=[.!?])\s+/);
+    var ssnHit = false;
+    var ssnClean = ssnSentences.filter(function (s) {
+      if (SSN_ADVICE_RE.test(s) && !SSN_NEGATED_RE.test(s)) { ssnHit = true; return false; }
+      return true;
+    });
+    if (ssnHit) {
+      violations.push('ssn_advice');
+      var ssnSafe = lang === 'en'
+        ? 'To show proof of Medicare coverage, use your Medicare card — never your Social Security number. If you need a replacement card or coverage confirmation, you can print one from your Medicare.gov account or call 1-800-MEDICARE (1-800-633-4227).'
+        : 'Para demostrar su cobertura de Medicare, use su tarjeta de Medicare — nunca su número de Seguro Social. Si necesita una tarjeta de reemplazo o confirmar su cobertura, puede imprimirla desde su cuenta de Medicare.gov o llamar al 1-800-MEDICARE (1-800-633-4227).';
+      out = ssnClean.join(' ').trim();
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + ssnSafe : ssnSafe;
     }
   }
 

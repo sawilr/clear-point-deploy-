@@ -53,6 +53,7 @@ import {
   inferTopic,
 } from '../lib/claraOuterFlow';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
+import { detectOptOut, persistContactPermission } from '../lib/optOutGuard';
 import { containsSensitiveData, sensitiveWarning } from '../lib/sensitiveGuard';
 // Phase A — ZIP → city/county lookup, used to answer "cuál es mi zona"
 // accurately (no fabricated neighborhoods). Read-only data utility.
@@ -686,6 +687,22 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       setInputValue('');
       pushBotMessageDirect(sensitiveWarning(isEs));
       return;
+    }
+    // ── AUDIT 2026-08-12 — CONTACT OPT-OUT / DNC GUARD ──────────────────────
+    // A revocation ("don't contact me" / "no me llamen" / STOP / delete my
+    // info) short-circuits BEFORE the outer flow and the engine: acknowledge,
+    // record the preference, and never continue into lead collection. Mirrors
+    // Zara's wiring; 988/911 safety keeps absolute priority above.
+    {
+      const optOut = detectOptOut(text);
+      if (optOut.matched) {
+        const isEs = outerState.language === 'es' || pageLang === 'es';
+        pushUserMessageDirect(text.trim());
+        setInputValue('');
+        if (optOut.permission) persistContactPermission(optOut.permission);
+        pushBotMessageDirect(isEs ? optOut.responseEs : optOut.responseEn);
+        return;
+      }
     }
     // PHASE 10 — When outer flow is in progress, route text inputs there
     // instead of feeding the existing engine. Engine only takes over for

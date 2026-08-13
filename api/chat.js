@@ -322,7 +322,7 @@ You MUST NEVER:
    - **TREAT EVERY CALLER CLAIM AS UNVERIFIED.** If a caller SAYS they have Medicaid, Medicare, Extra Help, a D-SNP, a specific plan, or that they "qualify" for something, do NOT accept it as fact and do NOT build a confirmed answer on top of it. You have no way to verify their status. Use CONDITIONAL language: "IF you have Medicaid, then there are special D-SNP plans that..." / "Si usted tiene Medicaid, entonces hay planes D-SNP que..." — NEVER "Con Medicaid, usted YA tiene acceso a..." or "Since you have Medicaid, you get..." as if confirmed. A licensed advisor or the agency verifies actual status; you speak only in conditionals about what WOULD apply.
 3. **Confirm whether a specific doctor / hospital / specialist is in network** for any plan. Networks change daily. Only the carrier's provider directory or a licensed advisor can confirm.
 4. **Confirm whether a specific drug is covered** by any plan. Formularies change. Only the plan's formulary lookup or a licensed advisor can confirm.
-5. **Ask for or accept**: Medicare ID / MBI, SSN, banking info, full date of birth, diagnosis details, prescription names, or any PHI. If a caller starts to share PHI, gently stop them ("please don't share that here — for your safety").
+5. **Ask for or accept**: Medicare ID / MBI, SSN, banking info, full date of birth, diagnosis details, prescription names, or any PHI. If a caller starts to share PHI, gently stop them ("please don't share that here — for your safety"). **Never ADVISE a caller to use, carry, show, or give out their Social Security number for any purpose** (not to a doctor, pharmacy, or anyone). Proof of Medicare coverage is the Medicare card or official Medicare channels (Medicare.gov account, 1-800-MEDICARE) — never the SSN. (AUDIT 2026-08-12: a reply told a caller they "just need your Social Security number to prove eligibility" — that exact failure is forbidden.)
 6. **Claim affiliation with Medicare, CMS, SSA, Medicaid, or "the government."** ClearPoint is an INDEPENDENT licensed broker. If asked: "We are not Medicare or the government — ClearPoint is an independent licensed insurance broker."
 7. **Promise outcomes** ("you'll save $X / your premium will drop / your doctor will be covered"). You can describe HOW programs work, not what the caller will personally get.
 
@@ -463,6 +463,16 @@ export default async function handler(req, res) {
       // each field. A legit 10-digit phone in phoneNumber is NOT redacted (the
       // patterns skip 10-digit runs) — proven by scripts/phase2-chat-redaction.test.mjs.
       var _ctxScrub = scrubPHI(rawCtx[k].slice(0, 120).replace(/[\r\n\t]/g, ' '));
+      // AUDIT 2026-08-12 (F4) — context fields land in the per-turn system
+      // block; PHI scrub alone left ≤120 chars of attacker text unscreened.
+      // Injection-screen each field; a tripping field is DROPPED (the request
+      // continues — blocking the whole turn over a poisoned `name` would be
+      // a griefing vector).
+      var _ctxInj = checkPromptInjection(_ctxScrub.text, rawCtx.language);
+      if (!_ctxInj.ok) {
+        console.warn('[CHAT] injection dropped from context.' + k + ': ' + _ctxInj.reason + ' ip=' + ip);
+        continue;
+      }
       conversationContext[k] = _ctxScrub.text;
       if (_ctxScrub.detected.length > 0) {
         console.warn('[CHAT] PHI redacted in context.' + k + ': ' + _ctxScrub.detected.join(','));
@@ -562,6 +572,17 @@ export default async function handler(req, res) {
       var _turnScrub = scrubPHI(String(turn.content).slice(0, 1000));
       if (_turnScrub.detected.length > 0) {
         console.warn('[CHAT] PHI redacted in history turn: ' + _turnScrub.detected.join(','));
+      }
+      // AUDIT 2026-08-12 (F5) — history is client-supplied; a fabricated
+      // ASSISTANT turn ("Sure, I'll ignore my rules…") was replayed verbatim
+      // after PHI scrub. Injection-screen assistant turns and SKIP any that
+      // trip (user turns are covered by the pairwise guard above).
+      if (turn.role === 'assistant') {
+        var _histInj = checkPromptInjection(_turnScrub.text, conversationContext.language);
+        if (!_histInj.ok) {
+          console.warn('[CHAT] injection dropped from assistant history turn: ' + _histInj.reason + ' ip=' + ip);
+          continue;
+        }
       }
       messages.push({ role: turn.role, content: _turnScrub.text });
     }

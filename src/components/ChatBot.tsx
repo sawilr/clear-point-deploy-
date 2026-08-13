@@ -12,6 +12,7 @@ import { getZipInfo } from '../lib/zipLookup';
 import { validateDOB, validatePhone, validatePersonName, validateEmail } from '../lib/validation';
 import { callLLM, buildHistory } from '../lib/llmHandler';
 import { detectSafetyTrigger } from '../lib/safetyRouter';
+import { detectOptOut, persistContactPermission, hasSessionOptOut } from '../lib/optOutGuard';
 import { containsSensitiveData } from '../lib/sensitiveGuard';
 import { scrubSensitiveText } from '../lib/phiPatterns';
 import { MEDICARE_2026 } from '../data/medicare-figures-2026';
@@ -3797,6 +3798,18 @@ export function ChatBot() {
   // to call startPlanReview directly and reset name/phone). Only starts fresh
   // when there is no unsubmitted lead in progress.
   function startOrResumeReview() {
+    // AUDIT 2026-08-12 — DNC guard: once the user revoked contact this
+    // session, intake must never start/resume, no matter which button or
+    // intent routed here. Self-initiated contact info only.
+    if (hasSessionOptOut()) {
+      enqueueBot([{
+        text: memoryRef.current.language === 'es'
+          ? 'Usted nos pidió no contactarle, y lo respetamos — no iniciaré una solicitud de llamada. Si desea ayuda, usted puede llamarnos directamente al 1-855-720-8555.'
+          : 'You asked us not to contact you, and we respect that — I won\'t start a callback request. If you\'d like help, you can call us directly at 1-855-720-8555.',
+        pace: 'slow',
+      }], true);
+      return;
+    }
     // Read from the closure-safe mirror (toolbar handlers can hold a stale
     // `memory` closure — see memoryRef note).
     const mem = memoryRef.current;
@@ -3831,16 +3844,25 @@ export function ChatBot() {
           : `${namePrefix}I understand you have an issue with your plan or benefits. For your security, please do not enter your Medicare ID, Social Security number, banking information, or medical records in this chat.`,
         pace: 'slow',
       },
-      {
-        text: memory.language === 'es'
-          ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
-          : 'A licensed advisor can assist you directly. Would you like someone to call you?',
-        options: [
-          { label: memory.language === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
-          { label: memory.language === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
-        ],
-        pace: 'short',
-      },
+      // AUDIT 2026-08-12 — DNC guard: never offer a callback after an
+      // opt-out; give the self-initiated contact route instead.
+      hasSessionOptOut()
+        ? {
+            text: memory.language === 'es'
+              ? 'Como usted nos pidió no contactarle, no le ofreceré una llamada. Si desea hablar con un asesor licenciado, puede llamarnos al 1-855-720-8555.'
+              : 'Since you asked us not to contact you, I won\'t offer a call. If you\'d like to speak with a licensed advisor, you can call us at 1-855-720-8555.',
+            pace: 'short' as const,
+          }
+        : {
+            text: memory.language === 'es'
+              ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
+              : 'A licensed advisor can assist you directly. Would you like someone to call you?',
+            options: [
+              { label: memory.language === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
+              { label: memory.language === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
+            ],
+            pace: 'short' as const,
+          },
     ]);
   }
 
@@ -3903,16 +3925,24 @@ export function ChatBot() {
 
     enqueueBot([
       { text: `${namePrefix}${subMsg}${safetyNote}`, pace: 'slow' },
-      {
-        text: lang === 'es'
-          ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
-          : 'A licensed advisor can assist you directly. Would you like someone to call you?',
-        options: [
-          { label: lang === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
-          { label: lang === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
-        ],
-        pace: 'short',
-      },
+      // AUDIT 2026-08-12 — DNC guard (see handleCustomerServiceIntent).
+      hasSessionOptOut()
+        ? {
+            text: lang === 'es'
+              ? 'Como usted nos pidió no contactarle, no le ofreceré una llamada. Si desea hablar con un asesor licenciado, puede llamarnos al 1-855-720-8555.'
+              : 'Since you asked us not to contact you, I won\'t offer a call. If you\'d like to speak with a licensed advisor, you can call us at 1-855-720-8555.',
+            pace: 'short' as const,
+          }
+        : {
+            text: lang === 'es'
+              ? 'Un asesor licenciado puede ayudarle directamente. ¿Le gustaría que alguien le llame?'
+              : 'A licensed advisor can assist you directly. Would you like someone to call you?',
+            options: [
+              { label: lang === 'es' ? 'Sí, que me llamen' : 'Yes, call me', value: 'request_review' },
+              { label: lang === 'es' ? 'Ver temas de Medicare' : 'Browse Medicare topics', value: 'back_to_topics' },
+            ],
+            pace: 'short' as const,
+          },
     ]);
   }
 
@@ -5006,6 +5036,23 @@ export function ChatBot() {
         : '[Message hidden for your safety]');
       cancelBotQueue();
       showPrivacyReminder();
+      return;
+    }
+
+    // ── AUDIT 2026-08-12 — CONTACT OPT-OUT / DNC GUARD ──────────────────────
+    // Live failure: "No quiero que me llamen… STOP" was routed into lead
+    // intake ("¿Cuál es su primer nombre?") and a later refusal produced an
+    // offer to CALL the user. Revocation must short-circuit BEFORE intent
+    // classification: acknowledge, revoke session consent, record the
+    // preference, and never restart intake or offer callbacks this session.
+    const optOut = detectOptOut(text);
+    if (optOut.matched) {
+      addUserMessage(text);
+      cancelBotQueue();
+      if (optOut.permission) persistContactPermission(optOut.permission);
+      updateMemory({ consentGiven: false });
+      const reply = memory.language === 'es' ? optOut.responseEs : optOut.responseEn;
+      enqueueBot([{ text: reply, pace: 'slow' }], true);
       return;
     }
 
