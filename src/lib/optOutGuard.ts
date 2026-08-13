@@ -86,8 +86,11 @@ const UNIVERSAL_STOP_RES: RegExp[] = [
 ];
 
 /** Negation bound to a contact verb (broad; refined by the guards below). */
+// AUDIT 2026-08-13 (§22 collision C6b) — Spanglish: an English negation followed
+// by a SPANISH verb ("stop llamando", "don't llamar", "no more llamadas") is how
+// a bilingual caller actually revokes, and it defeated the English-only verb list.
 const NEGATED_CONTACT_RE =
-  /\b(?:don'?t|do\s+not|never|stop|quit|rather\s+you\s+didn'?t)\s+(?:ever\s+|again\s+)?(?:call|contact|text|message|messaging|email|phone|ring|bother|calling|contacting|texting|emailing|phoning|bothering)\b|\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame|llamen|llames|llamar|contacte|contacten|contactar|escriba|escriban|escribir|manden|mandar|env[ií]en|enviar|molesten|molestar|busquen|buscar)\b|\bno\s+(?:quiero|deseo)\s+que\s+me\s+(?:llamen|llames|contacten|escriban|manden|env[ií]en|busquen)\b/i;
+  /\b(?:don'?t|do\s+not|never|stop|quit|rather\s+you\s+didn'?t)\s+(?:ever\s+|again\s+)?(?:call|contact|text|message|messaging|email|phone|ring|bother|calling|contacting|texting|emailing|phoning|bothering|llamar|llamando|llamen|contactar|contactando|escribir|escribiendo|molestar|molestando)\b|\bno\s+me\s+(?:vuelvan?\s+a\s+)?(?:llame|llamen|llames|llamar|contacte|contacten|contactar|escriba|escriban|escribir|manden|mandar|env[ií]en|enviar|molesten|molestar|busquen|buscar)\b|\bno\s+(?:quiero|deseo)\s+que\s+me\s+(?:llamen|llames|contacten|escriban|manden|env[ií]en|busquen)\b/i;
 
 /**
  * The negated verb's object is CONTENT, not the person — "don't text that
