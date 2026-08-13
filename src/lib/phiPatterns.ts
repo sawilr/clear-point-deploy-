@@ -16,8 +16,74 @@
 // 123456789" through). English + Spanish.
 const SSN_CONTEXT_RE = /\b(ssn|social security|social|seguro social|mi social)\b/i;
 
+/**
+ * AUDIT 2026-08-13 (SDL-09/10/11, P1) — three real bypasses of BOTH the client
+ * and server gates were reproduced and are closed here:
+ *   • separators the patterns never accepted: "123/45/6789", "123_45_6789",
+ *     "123,45,6789";
+ *   • one digit per token — how a careful senior dictates: "1 2 3 4 5 6 7 8 9";
+ *   • the number SPELLED OUT, EN and ES: "one two three ... nine" /
+ *     "uno dos tres ... nueve".
+ * Each reached React state, the model, and (via the escalation transcript) the
+ * CRM with the value intact. Fix: NORMALIZE before matching — collapse
+ * inter-digit separators so every separator variant becomes the already-covered
+ * contiguous case, and digitize bilingual number-words so spelled-out numbers
+ * become digit runs.
+ */
+const NUM_WORDS: Record<string, string> = {
+  zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4', five: '5',
+  six: '6', seven: '7', eight: '8', nine: '9',
+  cero: '0', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5',
+  seis: '6', siete: '7', ocho: '8', nueve: '9',
+};
+const NUM_WORD_TOKEN = '\\b(?:' + Object.keys(NUM_WORDS).join('|') + ')\\b[\\s\\-,]*';
+
+/** Collapse separators between single digits: "1 2 3" / "1-2-3" -> "123". */
+function collapseInterDigit(s: string): string {
+  let out = s;
+  for (let i = 0; i < 12; i++) {
+    const next = out.replace(/(\d)[\s.\-_/,]+(?=\d)/g, '$1');
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+/** Convert runs of 4+ consecutive bilingual number-words into digits. */
+function digitizeNumberWords(s: string, hasContext = false): string {
+  // With an explicit SSN/social context word, 2 consecutive number-words are
+  // already suspicious ("my social is one two three 45 6789"); without context
+  // require 4+ so ordinary prose is untouched.
+  const minRun = hasContext ? 2 : 4;
+  return s.replace(new RegExp('(?:' + NUM_WORD_TOKEN + '){' + minRun + ',}', 'gi'), (match) =>
+    match.replace(new RegExp(NUM_WORD_TOKEN, 'gi'), (w) => {
+      const key = w.replace(/[\s\-,]+$/, '').toLowerCase();
+      return NUM_WORDS[key] ?? '';
+    }),
+  );
+}
+
+/**
+ * Spans that must NOT be fused by the collapse step, or they become false
+ * 9-digit "SSNs": ZIP+4 ("10458-1234") and formatted phone numbers.
+ */
+/** Canonical form used by the numeric rules. Exported for the server mirror. */
+export function normalizeForPhiMatch(text: string, hasContext = false): string {
+  // Inline literal: a fresh regex per evaluation, so no shared lastIndex state.
+  const masked = String(text || '').replace(/\d{5}-\d{4}|\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g, (m) => 'X'.repeat(m.length));
+  return collapseInterDigit(digitizeNumberWords(masked, hasContext));
+}
+
 /** Returns true if message contains Medicare ID (MBI), SSN, or card number. */
-export function detectPHILeak(text: string): boolean {
+export function detectPHILeak(rawText: string): boolean {
+  // Run BOTH forms: the original preserves formats the normalizer would fuse
+  // (a legitimate phone number), the normalized form closes the bypasses.
+  const normalized = normalizeForPhiMatch(rawText, SSN_CONTEXT_RE.test(rawText));
+  if (normalized !== rawText && detectPHILeakRaw(normalized)) return true;
+  return detectPHILeakRaw(rawText);
+}
+
+function detectPHILeakRaw(text: string): boolean {
   // Medicare Beneficiary Identifier (MBI) — official CMS format is
   //   C A AN N A AN N A A N N    (C=1-9, A=letter, N=digit, AN=letter|digit)
   // Example: 1EG4-TE5-MK72. We allow optional dashes/spaces between blocks.
