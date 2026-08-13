@@ -18,7 +18,24 @@ export default defineConfig(({ command }) => ({
   // AUDIT 2026-08-12 (IP scrub) — inspectAttr() stamps `code-path="src/…"`
   // attributes on every DOM element; in production that publishes internal
   // source paths to any visitor. Dev-only from now on.
-  plugins: [...(command === 'serve' ? [inspectAttr()] : []), react()],
+  plugins: [
+    ...(command === 'serve' ? [inspectAttr()] : []),
+    react(),
+    // AUDIT 2026-08-13 (IP-04) — index.html carried 4 engineering comments that
+    // were replicated into all 28 prerendered shells (108 occurrences) and
+    // shipped to every visitor. They disclosed an internal audit CADENCE and
+    // DATES, an internal severity taxonomy ("(P2)"), and an internal component
+    // name (RouteMeta) — free reconnaissance with zero user value. The rationale
+    // stays in the SOURCE file for the next developer; it just no longer ships.
+    // Build-only: dev keeps them visible while working.
+    ...(command === 'build' ? [{
+      name: 'cp-strip-html-comments',
+      transformIndexHtml(html: string) {
+        // Preserve conditional comments; strip plain ones.
+        return html.replace(/<!--(?!\[if)[\s\S]*?-->/g, '');
+      },
+    }] : []),
+  ],
   // PHASE A15 — strip console.* and debugger from production bundles.
   esbuild: {
     drop: ['console', 'debugger'],
@@ -65,6 +82,20 @@ export default defineConfig(({ command }) => ({
           // no longer re-downloads the icon set.
           'icons-vendor': ['lucide-react'],
         },
+        // AUDIT 2026-08-13 (IP-05) — chunk BASENAMES were derived from module
+        // names and shipped to every visitor, so the asset manifest advertised
+        // internal capabilities: `sensitiveGuard-*.js` tells an attacker a
+        // client-side sensitive-data guardrail exists and exactly which file to
+        // read to study its trigger terms, and `SignSOA-*.js` names an unshipped
+        // workflow. Route-level splitting inherently reveals PUBLIC route names
+        // (About, Contact, PartD) and that is fine — those are already public —
+        // but capability names are gratuitous. Opaque hashes for everything
+        // except the long-cache vendor chunks, whose stable names are the point.
+        chunkFileNames: (chunkInfo) => (
+          /vendor$/.test(chunkInfo.name || '')
+            ? 'assets/[name]-[hash].js'
+            : 'assets/[hash].js'
+        ),
       },
     },
   },

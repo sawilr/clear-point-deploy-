@@ -2512,15 +2512,59 @@ function containsAny(text: string, keywords: string[]) {
 }
 
 
+// AUDIT 2026-08-13 (P2 → compliance-relevant) — TWO defects fixed here.
+//
+// 1. SPANISH STATE NAMES WERE NOT RECOGNIZED. A Spanish-speaking caller typing
+//    "Nueva York" fell straight through to '' and was told "no pude identificar
+//    el estado" — on a bilingual Medicare site whose whole premise is serving
+//    Spanish speakers. Reproduced live.
+//
+// 2. OUT-OF-AREA STATES PRODUCED A LOOP, NOT THE DECLINE. The old comment said
+//    returning '' "routes florida to the neutral out-of-area path", but the
+//    caller only reaches that path when detectState returns something TRUTHY:
+//        if (detected && SUPPORTED.includes(detected)) -> select
+//        else if (detected)                            -> 'other'  <-- needs truthy
+//        (falls through to the retry loop)             <-- '' landed here
+//    So a Florida caller got "I couldn't identify the state" twice and then an
+//    LLM fallback, instead of the clean licensing decline. That is the opposite
+//    of the intended behavior and it is compliance-relevant: an out-of-area
+//    caller must be told plainly that Clear Point is licensed in NY/NJ/CT and
+//    referred to 1-800-MEDICARE — never left in a loop.
+//
+// Now: served states return their code; ANY other recognized U.S. state returns
+// 'other' so the out-of-area path fires; only genuinely unrecognizable text
+// returns '' and reaches the retry/LLM fallback. memory.state still never
+// becomes 'FL' (or any other non-served code), so no out-of-area branch can
+// surface state-specific content.
+const OTHER_US_STATES_RE = new RegExp(
+  '\\b(' + [
+    'AL','AK','AZ','AR','CA','CO','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA',
+    'ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NM','NC','ND','OH','OK','OR','PA',
+    'PR','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY',
+    'ALABAMA','ALASKA','ARIZONA','ARKANSAS','CALIFORNIA','COLORADO','DELAWARE',
+    'FLORIDA','GEORGIA','HAWAII','IDAHO','ILLINOIS','INDIANA','IOWA','KANSAS','KENTUCKY',
+    'LOUISIANA','MAINE','MARYLAND','MASSACHUSETTS','MICHIGAN','MINNESOTA','MISSISSIPPI',
+    'MISSOURI','MONTANA','NEBRASKA','NEVADA','NEW HAMPSHIRE','NEW MEXICO','NORTH CAROLINA',
+    'NORTH DAKOTA','OHIO','OKLAHOMA','OREGON','PENNSYLVANIA','PUERTO RICO','RHODE ISLAND',
+    'SOUTH CAROLINA','SOUTH DAKOTA','TENNESSEE','TEXAS','UTAH','VERMONT','VIRGINIA',
+    'WASHINGTON','WEST VIRGINIA','WISCONSIN','WYOMING',
+    // Spanish spellings a bilingual caller will actually type.
+    'CAROLINA DEL NORTE','CAROLINA DEL SUR','DAKOTA DEL NORTE','DAKOTA DEL SUR',
+    'NUEVO MEXICO','NUEVO MÉXICO','NUEVA HAMPSHIRE','PENSILVANIA','TEJAS',
+    'VIRGINIA OCCIDENTAL','LUISIANA','FLORIDA',
+  ].join('|') + ')\\b',
+  'i',
+);
+
 function detectState(text: string): string {
   const normalized = text.trim().toUpperCase();
-  if (normalized.match(/\bNY\b|\bNEW YORK\b|\bNEW\s?YORK\b/i)) return 'NY';
-  if (normalized.match(/\bNJ\b|\bNEW JERSEY\b|\bNEW\s?JERSEY\b/i)) return 'NJ';
-  if (normalized.match(/\bCT\b|\bCONNECTICUT\b/i)) return 'CT';
-  // Florida intentionally NOT detected (audit rule #4: FL is out of service area).
-  // Returning '' routes "florida"/"fl" to the neutral out-of-area path and keeps
-  // memory.state from ever becoming 'FL', so every `state === 'FL'` branch below
-  // is unreachable dead code that can never surface Florida content to a user.
+  // Served states — English AND Spanish spellings.
+  if (normalized.match(/\bNY\b|\bNEW\s?YORK\b|\bNUEVA\s?YORK\b/i)) return 'NY';
+  if (normalized.match(/\bNJ\b|\bNEW\s?JERSEY\b|\bNUEVA\s?JERSEY\b/i)) return 'NJ';
+  if (normalized.match(/\bCT\b|\bCONNECTICUT\b|\bCONNECTICUT\b/i)) return 'CT';
+  // Any OTHER recognized U.S. state → 'other', which triggers the out-of-area
+  // decline. Checked AFTER the served states so "New York" can never fall here.
+  if (OTHER_US_STATES_RE.test(normalized)) return 'other';
   return '';
 }
 

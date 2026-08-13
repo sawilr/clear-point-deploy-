@@ -8840,6 +8840,25 @@ function processMessageInner(
     if (problemType === 'complaint' || problemType === 'billing_dispute') {
       newState.routingLevel = 'C';
       newState.serviceCategory = problemType;
+      // ── AUDIT 2026-08-13 (8S, P2) — SPLIT THE COMPLAINT INTENT ────────────
+      // Both cases were conflated: a complaint ABOUT CLEAR POINT or its advisor
+      // was answered with "take it to the carrier's Member Services, then the
+      // Medicare Ombudsman" — routing the beneficiary AWAY from the organization
+      // they were complaining about, and creating no internal record. That is a
+      // governance gap: an agency must be able to show it captured and escalated
+      // complaints against ITSELF. Never discourage the complaint, and never
+      // auto-label it as a reportable violation — capture, escalate, preserve
+      // the beneficiary's independent rights.
+      const ABOUT_US_RE = /\b(clear\s?point|clearpoint|su\s+asesor|mi\s+asesor|your\s+advisor|my\s+advisor|el\s+agente|the\s+agent|ustedes|you\s+people|su\s+empresa|your\s+company|esta\s+empresa|this\s+company)\b/i;
+      if (ABOUT_US_RE.test(userMessage || '')) {
+        newState.serviceCategory = 'complaint_about_clearpoint';
+        newState.needsHuman = true;
+        const outUs = isSpanish
+          ? 'Gracias por decírmelo, y lamento su experiencia. Una queja sobre ClearPoint o sobre uno de nuestros asesores la atendemos nosotros directamente — no lo voy a mandar con la aseguradora para esto.\n\nEstoy registrando su caso para que una persona responsable lo revise y le responda. Usted también conserva el derecho de acudir a **1-800-MEDICARE**, a su programa **SHIP** estatal o al **Departamento de Seguros** de su estado cuando quiera.'
+          : "Thank you for telling me, and I'm sorry about your experience. A complaint about ClearPoint or one of our advisors is ours to handle — I'm not going to send you to the insurance company for this.\n\nI'm recording your case so a responsible person reviews it and gets back to you. You also keep the right to contact **1-800-MEDICARE**, your state **SHIP** program, or your state **Department of Insurance** at any time.";
+        newState.messages.push({ role: 'bot', content: outUs, timestamp: Date.now() });
+        return { response: outUs, newState, needsHuman: true };
+      }
       const out = isSpanish
         ? 'Lamento que esté pasando por esto. Una queja formal contra un plan puede ir a Member Services del carrier, luego al Medicare Beneficiary Ombudsman si no se resuelve.\n\nUn asesor licenciado puede ayudarle a organizar el caso y los documentos.'
         : "I'm sorry you're going through this. A formal complaint against a plan can go to the carrier's Member Services, then the Medicare Beneficiary Ombudsman if unresolved.\n\nA licensed advisor can help you organize the case and documents.";
