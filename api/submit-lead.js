@@ -10,6 +10,7 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 // the raw notes.
 import { analyzeLeadIntelligence, formatIntelForGhlNotes } from './_lib/lead-intel.js';
 import { noStorePII } from './_lib/security-headers.js';
+import { enforceKill } from './_lib/kill-switch.js';
 // AUDIT 2026-07-03 Phase 1 — server-side PHI net. phi-scrub's own contract says it
 // must run before any LLM / CRM / persistent-log sink; this file hit all three
 // (Anthropic lead-intel, GHL customFields, GHL note) with unscrubbed free text.
@@ -129,6 +130,11 @@ export default async function handler(req, res) {
     // probe further and so legitimate edge cases don't surface an error.
     return res.status(200).json({ success: true, message: 'Received' });
   }
+
+  // AUDIT 2026-08-13 (§12) — lead-capture kill switch. Placed AFTER the honeypot
+  // so bots still receive the benign fake success and learn nothing, and BEFORE
+  // the env/consent work so a tripped switch does no CRM or LLM work at all.
+  if (enforceKill(res, 'leads', body && body.preferred_language === 'Spanish' ? 'es' : 'en')) return;
 
   var token = process.env.HIGHLEVEL_TOKEN;
   var locationId = process.env.HIGHLEVEL_LOCATION_ID;

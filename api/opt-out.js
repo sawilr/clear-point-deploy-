@@ -28,6 +28,7 @@
 
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
+import { enforceKill } from './_lib/kill-switch.js';
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 const GHL_VERSION = '2021-07-28';
@@ -47,6 +48,12 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // AUDIT 2026-08-13 (§12) — present for completeness, but note the asymmetry:
+  // killing THIS endpoint stops us HONORING revocations, which is the opposite of
+  // safe. It exists only for a scenario where the endpoint itself is being abused,
+  // and the refusal copy still routes the caller to a human who can record it.
+  if (enforceKill(res, 'optout', 'en')) return;
 
   const ip = clientId(req);
   // Deliberately generous: a person hammering "stop" must never be rate-limited

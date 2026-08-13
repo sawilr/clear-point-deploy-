@@ -16,6 +16,7 @@ import { checkPromptInjection } from './_lib/prompt-guard.js';
 import { scrubPHI } from './_lib/phi-scrub.js';
 import { complianceFilter, matchesEmergency } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
+import { enforceKill } from './_lib/kill-switch.js';
 import { noStorePII } from './_lib/security-headers.js';
 // UMKE — Unified Medicare Knowledge Engine (single source of truth for every
 // Clear Point assistant). Zara AND Clara both flow through this endpoint, so
@@ -390,6 +391,11 @@ export default async function handler(req, res) {
   noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache chat/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // AUDIT 2026-08-13 (§12) — runtime kill switch, checked BEFORE any rate-limit
+  // accounting, body parsing or provider call, so a tripped switch costs nothing
+  // and cannot be exhausted. Env-var driven: no redeploy, and no dependency that
+  // an outage could take out. Falls through untouched when unset.
+  if (enforceKill(res, 'ai', (req.body && req.body.context && req.body.context.language) || 'en')) return;
 
   // ── A15.2 Rate limit (IP-based, KV-backed when available) ──────────────
   var ip = clientId(req);

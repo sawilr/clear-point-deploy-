@@ -48,3 +48,5 @@ scripts/.*.cjs
 .gstack/
 deploy-*.log
 prod*.log
+
+.vercel
