@@ -43,6 +43,72 @@ export const TPMO_PRODUCT_COUNT_PLACEHOLDER = '[Y]';
  *  placeholders above with real, FMO-confirmed integer counts. */
 export const SOA_ENABLED = false;
 
+// ── AUDIT 2026-08-13 (O-10, P1 latent) — ENABLEMENT PRECONDITIONS ───────────
+// The comment above ("flip this in the same commit that replaces [X]/[Y]") was
+// the only thing standing between a future edit and a non-compliant signed SOA.
+// A comment is not a control. Discovery found FOUR independent blockers, any one
+// of which makes enabling unsafe:
+//
+//   1. TPMO COUNTS — the placeholders here AND a second, independent copy in
+//      api/sign-soa.js. Filling src/lib/tpmoConfig.ts alone does NOT fix the
+//      PDF: a signed CMS disclaimer containing "[X] organizations" is an audit
+//      failure. The three sources must be unified first.
+//   2. PDF NOT PERSISTED — sign-soa generates the PDF, hashes it, and discards
+//      it; the "attach" step posts a placeholder NOTE, not the file. Clear Point
+//      could not produce the signed document on request.
+//   3. SIGNED RECORD SELF-DESTRUCTS — after signing, the record is written back
+//      through the same 24-hour-TTL store, so the SOA evidence disappears a day
+//      later. It needs its own retention aligned to the confirmed requirement.
+//   4. NO APPOINTMENT LINKAGE — there is no appointment date/time FIELD in the
+//      SOA data model at all, so "was scope documented before the appointment?"
+//      is unanswerable. (Note: the CY2027 rule REMOVES the 48-hour advance
+//      requirement effective for CY2027 marketing from 2026-10-01, so do NOT
+//      implement a 48-hour gate — implement the linkage and ordering.)
+//
+// These flags make each precondition explicit and machine-checkable.
+// assertSoaEnablementSafe() below refuses to let SOA_ENABLED=true ship while any
+// remain false — it throws at module load, so the build/tests fail loudly rather
+// than a beneficiary signing an invalid document.
+export const SOA_PRECONDITIONS = {
+  /** Real FMO-confirmed integers in ALL THREE sources (here, tpmoConfig, sign-soa). */
+  tpmoCountsVerifiedEverywhere: false,
+  /** Signed PDF bytes persisted to durable storage with a retrievable URI. */
+  signedPdfPersisted: false,
+  /** Signed SOA record has its own retention, NOT the 24h signing-token TTL. */
+  signedRecordDurableRetention: false,
+  /** appointmentAt + appointmentChannel captured and linked to the booking. */
+  appointmentLinkageCaptured: false,
+  /** soa-status requires a second factor (not a bare UUID returning PII). */
+  statusEndpointSecondFactor: false,
+} as const;
+
+/** Names of every precondition still unmet. Empty array = safe to enable. */
+export function soaBlockers(): string[] {
+  return Object.entries(SOA_PRECONDITIONS)
+    .filter(([, ok]) => !ok)
+    .map(([name]) => name);
+}
+
+/**
+ * Change-control guard. Throws if someone flips SOA_ENABLED to true while any
+ * precondition is unmet. Intentionally evaluated at module load: an unsafe
+ * enablement must fail the build, not reach production.
+ */
+export function assertSoaEnablementSafe(): void {
+  if (!SOA_ENABLED) return;
+  const blockers = soaBlockers();
+  if (blockers.length) {
+    throw new Error(
+      'SOA_ENABLED is true but these preconditions are still unmet: '
+      + blockers.join(', ')
+      + '. Enabling SOA now would produce a signed CMS disclaimer that is an audit '
+      + 'failure and/or an SOA record that cannot be retrieved. See the block above '
+      + 'in src/lib/soaContent.ts.',
+    );
+  }
+}
+assertSoaEnablementSafe();
+
 /** CMS October 2024 TPMO disclaimer — verbatim, EN. DO NOT EDIT WORDING. */
 export const TPMO_DISCLAIMER_EN = (
   `We do not offer every plan available in your area. Currently we represent ${TPMO_CARRIER_COUNT_PLACEHOLDER} organizations which offer ${TPMO_PRODUCT_COUNT_PLACEHOLDER} products in your area. Please contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Program (SHIP) to get information on all of your options.`

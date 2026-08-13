@@ -5404,6 +5404,20 @@ export function ChatBot() {
         setMode('education');
         setStepSync('question');
         enqueueBot([{ text: result.response, pace: 'long' }]);
+        // AUDIT 2026-08-13 (O-03, P1) — Zara and Clara share ONE server-side
+        // system prompt, so the model can decide a handoff is warranted and emit
+        // the bridge sentence ("Let me connect you with a licensed ClearPoint
+        // advisor."). The server strips the [HANDOFF] tag and returns the
+        // decision in meta — but Zara only ever read result.response, so the
+        // caller was PROMISED a human connection that no code path initiated.
+        // Consume the intent and route into Zara's existing advisor flow.
+        // Gated on the DNC state: after a revocation we must not start intake.
+        if (result.meta?.wantHandoff && !hasSessionOptOut()) {
+          timersRef.current.push(setTimeout(() => {
+            if (gen !== generationRef.current) return;
+            handleAdvisorRequestIntent();
+          }, 900));
+        }
         return;
       }
     } catch {

@@ -516,6 +516,9 @@ export default async function handler(req, res) {
       });
     }
     void usedExisting; // available for downstream conditional logic if needed
+    // AUDIT 2026-08-13 (O-05) — true when this submission matched an EXISTING
+    // contact and we refreshed it instead of dropping the request.
+    var _repeatRequest = false;
     if (!ghlRes.ok) {
       // Sawil 2026-06-29 SECURITY HOTFIX (finding 19) — sanitize CRM errors and
       // handle duplicates. NEVER leak the upstream status/detail/body to the
@@ -526,15 +529,70 @@ export default async function handler(req, res) {
       // Privacy: log status + duplicate-flag ONLY — never the body (may echo PII).
       console.error('[GHL] Contact creation failed: HTTP ' + ghlRes.status + (_isDuplicate ? ' (duplicate)' : ''));
       if (_isDuplicate) {
-        return res.status(409).json({
-          error: 'DUPLICATE_LEAD',
-          message: 'We already have your request on file. A licensed advisor will follow up.',
+        // ── AUDIT 2026-08-13 (O-05, P1) ────────────────────────────────────
+        // Returning here DISCARDED the new request. A prospect who submitted
+        // three weeks ago, was never reached, and submits again today with a
+        // different best-time-to-call and a fresh consent got a friendly
+        // "we already have your request" and nothing was recorded: the note
+        // block and the opportunity block both sit BELOW this return, so the
+        // advisor never learned they asked again. A duplicate is the SIGNAL
+        // that they are still waiting — not an error to swallow.
+        //
+        // Resolve the existing contact so the note/opportunity logic below runs
+        // against it. Fail-safe: if the id cannot be resolved we fall back to
+        // the original 409 rather than guessing.
+        var _dupId = '';
+        try {
+          var _q = phone10 || email || '';
+          if (_q) {
+            var _dupRes = await ghlFetchRetry(
+              'https://services.leadconnectorhq.com/contacts/?locationId=' + encodeURIComponent(locationId)
+                + '&limit=5&query=' + encodeURIComponent(_q),
+              { headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Accept': 'application/json' } },
+            );
+            if (_dupRes.ok) {
+              var _dupJson = await _dupRes.json().catch(function () { return {}; });
+              var _cands = Array.isArray(_dupJson.contacts) ? _dupJson.contacts : [];
+              var _hit = _cands.find(function (c) {
+                var cDigits = String((c && c.phone) || '').replace(/\D/g, '').slice(-10);
+                if (phone10 && cDigits === phone10) return true;
+                if (email && String((c && c.email) || '').toLowerCase() === email.toLowerCase()) return true;
+                return false;
+              });
+              if (_hit && _hit.id) _dupId = _hit.id;
+            }
+          }
+        } catch (e) {
+          console.error('[GHL] duplicate resolution failed: ' + String(e).slice(0, 120));
+        }
+        if (!_dupId) {
+          return res.status(409).json({
+            error: 'DUPLICATE_LEAD',
+            message: 'We already have your request on file. A licensed advisor will follow up.',
+          });
+        }
+        console.warn('[GHL] duplicate contact — refreshing the existing record instead of dropping the request');
+        // Refresh the mutable fields (best-time, consent flags, language,
+        // interest) on the existing contact using the payload already built.
+        try {
+          await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/' + encodeURIComponent(_dupId), {
+            method: 'PUT',
+            headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(contact),
+          });
+        } catch (e) {
+          console.error('[GHL] duplicate refresh PUT failed: ' + String(e).slice(0, 120));
+        }
+        // Hand the downstream note/opportunity logic a 2xx-shaped result so a
+        // repeat request produces a visible, advisor-facing record.
+        _repeatRequest = true;
+        ghlRes = { ok: true, status: 200, json: async function () { return { contact: { id: _dupId } }; } };
+      } else {
+        return res.status(502).json({
+          error: 'CRM_UNAVAILABLE',
+          message: 'We could not submit your request right now. Please call us at 1-855-720-8555.',
         });
       }
-      return res.status(502).json({
-        error: 'CRM_UNAVAILABLE',
-        message: 'We could not submit your request right now. Please call us at 1-855-720-8555.',
-      });
     }
     // Sawil 2026-06-30 AUDIT FIX C3/BUG-003 — GHL can return a 2xx with an empty
     // or non-JSON body (gateway 204, truncated proxy response). An unguarded
@@ -574,7 +632,12 @@ export default async function handler(req, res) {
           await fetch('https://services.leadconnectorhq.com/contacts/'+contactId+'/notes',{
             method:'POST',
             headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
-            body:JSON.stringify({body:noteBody})
+            // AUDIT 2026-08-13 (O-05) — flag a repeat submission at the TOP of
+            // the note so the advisor immediately sees this person asked again
+            // and was not reached the first time.
+            body:JSON.stringify({body:(_repeatRequest
+              ? '*** REPEAT REQUEST — this person already had a record and submitted again. They are still waiting for contact. ***\n\n'
+              : '') + noteBody})
           });
         } catch(e) {
           console.error('[GHL] Note creation exception: ' + (e && e.message ? e.message : String(e)));

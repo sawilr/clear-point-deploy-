@@ -61,6 +61,17 @@ const WEB_SEARCH_MAX_USES = 1; // minimal: KB-first; search is a rare last resor
 // loop unbounded on the server search loop.
 const MAX_PAUSE_CONTINUATIONS = 3;
 
+// AUDIT 2026-08-13 (O-09, P1) — the CY2026 dollar amounts are hardcoded inside
+// the CACHED system prompt, and the only protection was a comment asking a human
+// to remember. CY2027 figures publish around Oct 2026 and AEP starts Oct 15,
+// so this WILL go stale on a known date. FIGURES_YEAR makes the staleness
+// machine-detectable: buildContextSummary compares it to the real current year
+// and, on mismatch, injects a hard instruction telling the model its figures are
+// out of date and to stop stating dollar amounts as current. Fail-safe by
+// design — a forgotten update degrades to "I need to verify that figure"
+// instead of confidently asserting a stale premium.
+const FIGURES_YEAR = 2026;
+
 // ── System prompt — ClearPoint identity, CMS TPMO compliance, behavior ──
 // Cached on Anthropic's side so it only costs the full price on the FIRST
 // turn of each conversation. Subsequent turns pay ~10% of the system prompt.
@@ -263,7 +274,7 @@ When the conversation is about plans, coverage, costs, or you are setting up an 
 # these are the correct 2026 standard figures. The "as of 2026" qualifier below lets
 # the bot degrade gracefully (state the year) rather than assert a stale number as
 # timeless fact if this review is missed.
-It is 2026. When asked about STANDARD Medicare costs, you MAY state these public, official 2026 figures confidently — attach "as of 2026" (or "para 2026") when you state a dollar amount so the caller knows the year. They are public facts, not a plan recommendation:
+The dollar figures below are the CY2026 standard amounts. Do NOT infer the current year from them — the real date is supplied every turn in the [Context for this turn] block; trust that, not this list. When asked about STANDARD Medicare costs you MAY state these confidently, always attaching the year the figure belongs to ("as of 2026" / "para 2026") so the caller knows its vintage. They are public facts, not a plan recommendation:
 - Part B standard premium: $202.90/month (2026). It can be HIGHER for higher incomes (IRMAA).
 - Part B annual deductible: $283 (2026).
 - Part A inpatient hospital deductible: $1,736 per benefit period (2026).
@@ -685,9 +696,30 @@ export default async function handler(req, res) {
     }
 
     var assistantText = '';
+    // AUDIT 2026-08-13 (O-04, P1) — the loop below kept ONLY text blocks and
+    // discarded server_tool_use / web_search_tool_result unread, so the URLs the
+    // model actually consulted were thrown away. An FMO asking "why did the AI
+    // say this?" could not be answered. Capture the provenance (domains only —
+    // never page content, never PII) for the audit record emitted below.
+    var _searchUsed = false;
+    var _searchDomains = [];
     if (data && Array.isArray(data.content)) {
       for (var j = 0; j < data.content.length; j++) {
-        if (data.content[j].type === 'text') assistantText += data.content[j].text;
+        var _blk = data.content[j];
+        if (_blk.type === 'text') assistantText += _blk.text;
+        else if (_blk.type === 'server_tool_use') _searchUsed = true;
+        else if (_blk.type === 'web_search_tool_result') {
+          _searchUsed = true;
+          var _res = Array.isArray(_blk.content) ? _blk.content : [];
+          for (var k = 0; k < _res.length; k++) {
+            var _u = _res[k] && _res[k].url;
+            if (!_u) continue;
+            try {
+              var _host = new URL(_u).hostname.replace(/^www\./, '');
+              if (_searchDomains.indexOf(_host) === -1) _searchDomains.push(_host);
+            } catch (e) { /* unparseable url — skip */ }
+          }
+        }
       }
     }
 
@@ -729,6 +761,39 @@ export default async function handler(req, res) {
       cleanText = ustedPostFilter(cleanText);
     }
 
+    // ── AUDIT 2026-08-13 (O-04, P1) — AI ANSWER AUDIT RECORD ────────────────
+    // Nothing was logged about WHY an answer was given, so "why did the AI say
+    // this?" was unanswerable — a gap for §16 evidence packages. One structured
+    // line per turn, deliberately PHI-FREE: no message text, no reply text, no
+    // name/phone/email, no ZIP. Only a content HASH (so a specific reply can be
+    // matched to this record later), the provenance domains, the model and
+    // prompt/figures versions, and which compliance rules fired. Retention and
+    // shipping to durable storage is an ops decision — emitting the line is the
+    // prerequisite, and stdout is already captured by the platform.
+    try {
+      var _hash = 0;
+      for (var hi = 0; hi < cleanText.length; hi++) {
+        _hash = ((_hash << 5) - _hash + cleanText.charCodeAt(hi)) | 0;
+      }
+      console.log('[AI-AUDIT] ' + JSON.stringify({
+        ts: new Date().toISOString(),
+        model: MODEL,
+        figures_year: FIGURES_YEAR,
+        prompt_len: SYSTEM_PROMPT.length,   // proxy for prompt version
+        lang: lang,
+        turn_lang: _turnLang || null,
+        history_turns: recent.length,
+        search_used: _searchUsed,
+        search_domains: _searchDomains,     // hostnames only — never page content
+        violations: filtered.violations,    // which compliance rules fired
+        want_handoff: wantHandoff,
+        want_schedule: wantSchedule,
+        reply_len: cleanText.length,
+        reply_fingerprint: (_hash >>> 0).toString(16),
+        opted_out: conversationContext.contactOptedOut === true,
+      }));
+    } catch (e) { /* auditing must never break a reply */ }
+
     return res.status(200).json({
       response: cleanText,
       meta: {
@@ -750,8 +815,21 @@ function buildContextSummary(ctx, turnLang, now) {
   // born in 1950 was told they were "turning 65 in January 2015" as a future
   // event. Injected in THIS dynamic block (not the cached SYSTEM_PROMPT) so
   // the prompt cache never goes stale as the date changes.
-  var iso = (now || new Date()).toISOString().slice(0, 10);
+  var _now = now || new Date();
+  var iso = _now.toISOString().slice(0, 10);
   lines.push("Today's date: " + iso + '. Use it for ALL age and enrollment-period calculations — never assume a different current year, and never describe a past year as upcoming.');
+  // AUDIT 2026-08-13 (O-09, P1) — machine-detected staleness of the hardcoded
+  // figures. Fires automatically the moment the calendar passes FIGURES_YEAR.
+  if (_now.getFullYear() !== FIGURES_YEAR) {
+    lines.push(
+      'FIGURE STALENESS WARNING: the standard Medicare dollar amounts in your instructions are for '
+      + FIGURES_YEAR + ', but the current year is ' + _now.getFullYear()
+      + '. Those amounts are NO LONGER CURRENT. Do NOT state any specific premium, deductible,'
+      + ' or out-of-pocket dollar figure as current. Instead say you want to verify the current'
+      + " year's amount and point the caller to Medicare.gov or 1-800-MEDICARE, or offer a licensed"
+      + ' advisor. You MAY still explain how each cost works conceptually without quoting a number.',
+    );
+  }
   ctx = ctx || {};
   // AUDIT 2026-07-27 (BUG 4b) — per-message language mirror. The LATEST
   // message's detected language outranks the session preference; live
