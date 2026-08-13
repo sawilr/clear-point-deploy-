@@ -78,12 +78,22 @@ export interface ConversationState {
   lastUserProblem?: string;
   /** Sawil 2026-06-15 — DETERMINISTIC Medicare COST flow (turns 4-7, LLM-free).
    *  source → Part B confirm → income → net/gross → MSP/QMB/SLMB/QI education. */
-  costFlowStage?: 'ask_source' | 'confirm_part_b' | 'ask_income' | 'ask_net_gross' | 'offered_advisor' | 'done';
+  // AUDIT 2026-08-13 (INTENT-FIRST) — 'confirm_problem' added between source
+  // classification and any financial screening. See _handleCostFlow.
+  costFlowStage?: 'ask_source' | 'confirm_problem' | 'confirm_part_b' | 'ask_income' | 'ask_net_gross' | 'offered_advisor' | 'done';
   costChargeSource?: 'social_security' | 'pharmacy' | 'provider' | 'bill' | 'unknown';
   costMonthlyAmount?: string;
   incomeMonthly?: string;
   incomeIsNet?: boolean;
   costFlowAttempts?: number;
+  /** AUDIT 2026-08-13 — STICKY refusal. Once the caller declines to discuss income,
+   *  or objects to being asked, no branch may ask again for the rest of the
+   *  conversation. Previously a decline was handled locally at the ask_income stage
+   *  and a later branch could re-enter and ask a second time. */
+  incomeRefused?: boolean;
+  /** AUDIT 2026-08-13 — the caller said they are testing/auditing. Suppresses lead
+   *  qualification and eligibility screening; see §8 of the remediation brief. */
+  auditMode?: boolean;
   intent: string;
   emotionalState: string;
   turnCount: number;
@@ -4493,6 +4503,59 @@ function _mentionsMedicaid(m: string): boolean {
   return /\bmedicaid\b/.test(m);
 }
 
+// ── AUDIT 2026-08-13 — INTENT-FIRST remediation helpers ─────────────────────
+//
+// THE INCIDENT. A caller said, in garbled speech-to-text Spanish, roughly "I have a
+// notice that came about my plan, or not the plan, from the hospital, and I find it
+// far too expensive, I need…". Clara replied by asking for their MONTHLY INCOME. The
+// tester objected that Clara had not understood the problem and should not be asking
+// about income yet — and Clara asked for income AGAIN.
+//
+// ROOT CAUSE, two separate defects:
+//  (A) _classifyCostSource saw "hospital" and returned 'provider', and the
+//      provider/bill branch routed STRAIGHT to costFlowStage 'ask_income'. It never
+//      established what the charge was or what the caller wanted. Note the adjacent
+//      branches did this correctly — 'unknown' asks a clarifying question and
+//      'social_security' asks a confirming one — so the shape already existed and
+//      provider/bill was the branch that skipped it.
+//  (B) The only objection detector in the flow was `isPushback`, which matches
+//      "ya te dije" / "I already told you" — a caller asserting they ALREADY ANSWERED.
+//      An objection to the QUESTION ITSELF ("no me entendiste", "no me preguntes eso")
+//      matched nothing, so the turn fell through to the re-ask branch and repeated the
+//      income question verbatim.
+//
+// The distinction between those two intents is the crux and is why a new detector was
+// needed rather than widening isPushback: "I already told you" means re-ask or
+// re-parse; "you misunderstood / stop asking that" means STOP and back up. Treating
+// them the same is what produced the repeat.
+
+/** TRUE when the caller objects to the QUESTION or to Clara's reading of the problem —
+ *  distinct from `isPushback` ("I already told you"), which asserts they answered. */
+function _isUserCorrection(m: string): boolean {
+  // NO TRAILING \b ON THE GROUP. These are deliberate STEMS — "entend" must match
+  // "entendiste"/"entendio", "pregunt" must match "preguntes"/"pregunto". A trailing
+  // \b breaks every one of them: there is no word boundary between "entend" and
+  // "iste". This file already carries the same warning on _classifyCostSource, and
+  // the first draft of this function reintroduced the bug anyway — the detector
+  // matched nothing and Clara repeated the rejected question in testing.
+  return /\b(no me entend|no entend|no entiend|no me est[aá]s? entendiendo|no es eso|eso no (fue|es) lo que|no dije eso|yo no dije|no me pregunt|deja de pregunt|no preguntes|primero entiend|entiende primero|no has entendido|est[aá]s? asumiendo|no asumas|eso est[aá] mal|eso no aplica|nada que ver)/i.test(m)
+    || /\b(you (mis)?understood|you did ?n'?t understand|that'?s not what i (said|asked|meant)|i did ?n'?t say that|stop asking|don'?t ask me|do not ask me|quit asking|you'?re assuming|stop assuming|don'?t assume|understand (the problem |my problem )?first|that'?s wrong|that'?s not it|not what i meant)/i.test(m);
+}
+
+/** TRUE when the caller declines to share income, in any of the natural phrasings.
+ *  Kept separate from _isUserCorrection: a refusal is not a correction, and it must
+ *  be STICKY for the rest of the conversation rather than handled once. */
+function _isIncomeRefusal(m: string): boolean {
+  return /\b(no s[eé]|no lo s[eé]|prefiero no|no quiero (decir|dar|hablar|compartir|dec[ií]r)\w*|no (le|te) voy a (decir|dar)\w*|es privado|eso es privado|no le importa|no es asunto)/i.test(m)
+    || /\b(don'?t know|dunno|not sure|rather not|prefer not|private|none of your|not telling|won'?t say|no comment)\b/i.test(m);
+}
+
+/** TRUE when the caller says they are testing/auditing rather than seeking service. */
+function _isAuditDeclaration(m: string): boolean {
+  return /\b(te estoy auditando|estoy auditando|esto es una prueba|es una prueba|estoy probando|estoy haciendo (una )?prueba|estoy verificando|estoy testeando|no soy (un )?cliente|hago testing|haciendo testing)\b/i.test(m)
+    || /\b(i'?m auditing|i am auditing|auditing you|this is a test|i'?m testing|i am testing|just testing|doing (a )?test|qa test|i'?m not a (real )?customer|verifying the system)\b/i.test(m);
+}
+
 /** Deterministic Medicare COST diagnosis flow. Returns a full turn result when
  *  it owns the turn (entering or mid-flow), else null so the normal engine runs. */
 function _handleCostFlow(
@@ -4539,11 +4602,7 @@ function _handleCostFlow(
   };
 
   const isPushback = /\b(ya te dije|ya le dije|ya dije|ya lo dije|te dije|le dije|i already (told|said)|told you|i said)\b/.test(m);
-  const sourceQ = isEs
-    ? '¿Ese cobro sale de su cheque del Seguro Social (la prima de la Parte B), de una farmacia, de un doctor u hospital, o de una factura que recibió?'
-    : 'Does that charge come from your Social Security check (the Part B premium), a pharmacy, a doctor or hospital, or a bill you received?';
 
-  // restate on "ya te dije" → re-ask the CURRENT question, never reset
   const restate = (question: string, intent: string) => {
     // Sawil 2026-06-23 — restate ONCE, then stop. A human acknowledges and re-asks
     // the first time you push back; the SECOND consecutive push on the same step,
@@ -4604,6 +4663,76 @@ function _handleCostFlow(
     return emit(prefix + body + offerText(), { ...patch, costFlowStage: 'offered_advisor', lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_educate' });
   };
 
+  // ── AUDIT 2026-08-13 — §8 AUDIT/TEST MODE ───────────────────────────────────
+  // The caller says they are testing rather than seeking service. Ordinary intake
+  // logic must not keep pushing eligibility screening at someone who has told us they
+  // are not a beneficiary — that is how a tester ends up being asked for income twice,
+  // which is exactly what happened in the incident that prompted this work.
+  //
+  // SCOPE, stated plainly: this suppresses FINANCIAL SCREENING within the cost flow
+  // and records state.auditMode. It is NOT a full engine-wide audit mode — lead
+  // capture, appointment booking and the other workflows are untouched, and a
+  // complete implementation would gate those too. Wiring the flag here rather than
+  // engine-wide keeps the change proportionate to the defect being fixed; the flag is
+  // on the state object so a broader gate can read it later without another migration.
+  if (_isAuditDeclaration(m)) {
+    return emit(
+      isEs
+        ? 'Entendido — está probando el sistema, no buscando servicio. Entonces no le voy a pedir datos personales ni información de ingresos. Con gusto le muestro cómo respondo a cualquier situación que quiera evaluar.'
+        : "Understood — you're testing the system, not looking for service. In that case I won't ask you for personal details or income information. I'm happy to show you how I respond to any scenario you want to evaluate.",
+      { auditMode: true, costFlowStage: 'done', costFlowAttempts: 0, lastBotIntent: 'costflow_audit_mode' },
+    );
+  }
+  // Once declared, keep suppressing screening for the rest of the conversation.
+  if (state.auditMode && (stage === 'ask_income' || stage === 'confirm_problem')) {
+    return goEducate({});
+  }
+
+  // ── AUDIT 2026-08-13 — USER CORRECTION OVERRIDE (defect B), highest priority ──
+  // Runs BEFORE the stage machine, so no stage can repeat a question the caller has
+  // just rejected. The previous code only knew `isPushback` ("I already told you"),
+  // which means re-ask; an objection to the question itself means STOP and back up,
+  // and conflating the two is what made Clara ask for income a second time
+  // immediately after being told not to.
+  //
+  // On correction: acknowledge once, DROP the inferred charge source rather than
+  // keep building on it (§5 — an inference must never harden into a fact), reset the
+  // stage to the clarifying question, and — critically — do not re-emit the rejected
+  // question. If the correction was specifically about being asked for income, the
+  // refusal is recorded as STICKY so no later branch can ask again.
+  if (_isUserCorrection(m)) {
+    const _objectedToIncome = state.costFlowStage === 'ask_income'
+      || state.lastBotIntent === 'costflow_ask_income'
+      || /\b(ingreso|income|gano|earn|gana)\b/i.test(m);
+    return emit(
+      isEs
+        ? 'Tiene razón, y le pido disculpas — me adelanté. No voy a asumir que necesita ayuda financiera. Volvamos a lo suyo: cuénteme con sus palabras qué fue lo que recibió o qué le cobraron, y yo lo sigo desde ahí.'
+        : "You're right, and I apologize — I got ahead of myself. I'm not going to assume you need financial help. Let's go back to your situation: tell me in your own words what you received or what you were charged, and I'll follow from there.",
+      {
+        // Roll back the unsupported interpretation.
+        costChargeSource: undefined,
+        costFlowStage: 'ask_source',
+        costFlowAttempts: 0,
+        incomeRefused: _objectedToIncome ? true : state.incomeRefused,
+        lastBotIntent: 'costflow_correction_ack',
+      },
+    );
+  }
+
+  // ── AUDIT 2026-08-13 — STICKY INCOME REFUSAL ────────────────────────────────
+  // A decline used to be handled only inside the ask_income stage, so a later
+  // re-entry could ask again. Once recorded, the flow skips financial screening
+  // entirely and goes to education plus a licensed-advisor offer, which is the
+  // genuinely useful next step and needs no income figure at all.
+  if (_isIncomeRefusal(m) && (state.costFlowStage === 'ask_income' || state.lastBotIntent === 'costflow_ask_income')) {
+    return goEducate({ incomeRefused: true });
+  }
+  const sourceQ = isEs
+    ? '¿Ese cobro sale de su cheque del Seguro Social (la prima de la Parte B), de una farmacia, de un doctor u hospital, o de una factura que recibió?'
+    : 'Does that charge come from your Social Security check (the Part B premium), a pharmacy, a doctor or hospital, or a bill you received?';
+
+  // restate on "ya te dije" → re-ask the CURRENT question, never reset
+
   // ── ENTRY (not in flow yet): classify the source from the complaint, then
   //    route straight to the right next step (no generic menu, source-first). ──
   if (!inFlow) {
@@ -4657,10 +4786,24 @@ function _handleCostFlow(
     }
     if (_mentionsMedicaid(m)) return goEducate({ ...base, dualEligible: true, costChargeSource: eSrc === 'unknown' ? undefined : eSrc });
     if (eSrc === 'pharmacy') return goEducate({ ...base, costChargeSource: 'pharmacy' });
+    // ── AUDIT 2026-08-13 — INTENT-FIRST GATE (defect A) ─────────────────────
+    // This branch used to jump straight to 'ask_income'. Seeing the word "hospital"
+    // or "factura" tells us WHERE a charge came from; it tells us nothing about WHAT
+    // the caller wants — they may be disputing it, not understanding it, asking why
+    // Medicare did not pay, or unable to afford it. Only the last of those makes
+    // financial screening relevant, and asking a senior for their income before
+    // knowing which one it is reads as an interrogation and collects data we may
+    // have no reason to hold.
+    //
+    // So: one clarifying question first. This mirrors what the 'unknown' and
+    // 'social_security' branches already did — the shape existed and this branch was
+    // the one skipping it.
     if (eSrc === 'provider' || eSrc === 'bill') {
       return emit(
-        isEs ? 'Entiendo. Para orientarle sobre ayuda con esos costos, ¿cuál es aproximadamente su ingreso mensual? Es solo para orientar, no para decidir si califica.' : 'Got it. To guide you on help with those costs, what is your monthly income, roughly? Just to orient, not to decide eligibility.',
-        { ...base, costChargeSource: eSrc, costFlowStage: 'ask_income', lastBotIntent: 'costflow_ask_income' },
+        isEs
+          ? 'Entiendo, y quiero ayudarle con eso. Antes de hablar de posibles ayudas, déjeme entender bien qué pasó: ¿lo que necesita es entender por qué le cobraron esa cantidad, o es que ya sabe de qué es y el problema es poder pagarlo?'
+          : "I understand, and I want to help with that. Before we talk about any assistance, let me make sure I understand what happened: do you need to understand WHY you were charged that amount, or do you already know what it is and the problem is affording it?",
+        { ...base, costChargeSource: eSrc, costFlowStage: 'confirm_problem', lastBotIntent: 'costflow_confirm_problem' },
       );
     }
     if (eSrc === 'social_security' || /\b(parte b|part b|la b|prima|del cheque|seguro social)\b/.test(m)) {
@@ -4701,25 +4844,107 @@ function _handleCostFlow(
       );
     }
     if (src === 'pharmacy') return goEducate({ costChargeSource: 'pharmacy', costMonthlyAmount: amtStr });
+    // AUDIT 2026-08-13 — same INTENT-FIRST gate as the entry branch above.
     if (src === 'provider' || src === 'bill') {
       return emit(
-        isEs ? 'Entendido. Para orientarle sobre ayuda con esos costos, ¿cuál es aproximadamente su ingreso mensual? Es solo para orientar, no para decidir si califica.' : 'Got it. To guide you on help with those costs, what is your monthly income, roughly? Just to orient, not to decide eligibility.',
-        { costFlowStage: 'ask_income', costChargeSource: src, costMonthlyAmount: amtStr, costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+        isEs
+          ? 'Entendido. Para orientarle bien: ¿lo que necesita es entender por qué le cobraron esa cantidad, o ya sabe de qué es y el problema es poder pagarlo?'
+          : "Got it. So I guide you properly: do you need to understand WHY you were charged that amount, or do you already know what it is and the problem is affording it?",
+        { costFlowStage: 'confirm_problem', costChargeSource: src, costMonthlyAmount: amtStr, costFlowAttempts: 0, lastBotIntent: 'costflow_confirm_problem' },
       );
     }
+    // AUDIT 2026-08-13 — this used to ASSUME the Part B premium after one unclear
+    // answer and ask for income on that assumption. Assuming the most common case and
+    // then screening on it is precisely the ungrounded-inference pattern §5 forbids:
+    // it converts a guess into the premise of the next question. Offer the assumption
+    // as a question the caller can reject instead.
     if (attempts >= 1) {
       return emit(
-        isEs ? 'Para no darle vueltas, lo más común es la prima de la Parte B. ¿Cuál es aproximadamente su ingreso mensual? (solo para orientar)' : "To keep it simple, the most common is the Part B premium. What's your monthly income, roughly? (just to orient)",
-        { costFlowStage: 'ask_income', costChargeSource: 'social_security', costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+        isEs
+          ? 'No quiero adivinar. Lo más común es la prima de la Parte B, que se descuenta del Seguro Social cada mes — ¿es ese su caso, o el cobro viene de otro lado?'
+          : "I don't want to guess. The most common one is the Part B premium, taken out of Social Security each month — is that your case, or does the charge come from somewhere else?",
+        { costFlowStage: 'confirm_part_b', costChargeSource: 'social_security', costFlowAttempts: 0, lastBotIntent: 'costflow_confirm_part_b' },
       );
     }
     return emit(isEs ? `Para orientarle bien: ${sourceQ}` : `To guide you well: ${sourceQ}`, { costFlowAttempts: attempts + 1, lastBotIntent: 'costflow_ask_source' });
+  }
+
+  // ── AUDIT 2026-08-13 — INTENT-FIRST: the confirm_problem stage ──────────────
+  // The caller has told us WHERE the charge came from; this establishes WHAT they
+  // want, which is what decides whether financial screening is relevant at all.
+  //   "why / I don't understand / Medicare didn't pay"  → explain, never screen.
+  //   "I can't afford it"                               → assistance is now relevant.
+  //   anything unclear                                  → educate + advisor, no income.
+  // Note what is NOT here: a path that reaches income without the caller having said
+  // affordability is the problem.
+  if (stage === 'confirm_problem') {
+    const wantsUnderstanding = /\b(entender|no entiendo|por qu[eé]|porque|no s[eé] de qu[eé]|qu[eé] es|explic|no pag[oó]|medicare no|denegaron|rechaz|no cubri|understand|why|what is|explain|didn'?t pay|denied|not covered|dispute|wrong|error|mistake)\b/i.test(m);
+    const cannotAfford = /\b(no puedo pagar\w*|no me alcanza|no tengo (con qu[eé]|dinero|para)|muy caro|demasiado caro|est[aá] caro|no puedo con|ayuda para pagar\w*|necesito ayuda|no me da para|can'?t afford|cannot afford|too expensive|too much money|need help paying|struggling to pay|can'?t pay)/i.test(m);
+    // Understanding wins a tie: explaining a charge is always safe, whereas screening
+    // someone who only wanted an explanation is the defect this whole change fixes.
+    if (wantsUnderstanding && !cannotAfford) {
+      const src = state.costChargeSource;
+      const whoEs = src === 'bill' ? 'quien le envió la factura' : 'el consultorio o el hospital';
+      const whoEn = src === 'bill' ? 'whoever sent the bill' : "the doctor's office or hospital";
+      return emit(
+        isEs
+          ? `Entendido — entonces lo que queremos es entender el cobro, no llenar papeles. Lo más útil es comparar ese cobro con el resumen que Medicare le manda (el MSN) o con la explicación de beneficios de su plan (el EOB): ahí dice qué se cubrió y qué quedó a su cargo. No ignore la fecha de pago mientras lo revisa, y ${whoEs} le puede desglosar el cargo por teléfono. Un asesor licenciado de ClearPoint puede revisarlo con usted sin costo — ¿le parece bien que le contacte?`
+          : `Got it — so what we want is to understand the charge, not fill out paperwork. The most useful step is to compare it against the summary Medicare sends you (the MSN) or your plan's explanation of benefits (the EOB): those show what was covered and what was left to you. Don't ignore the due date while you review it, and ${whoEn} can itemize the charge for you by phone. A licensed ClearPoint advisor can go through it with you at no cost — is it okay if they reach out?`,
+        { costFlowStage: 'offered_advisor', costFlowAttempts: 0, lastBotIntent: 'costflow_educate', lastBotOfferedAdvisor: true },
+      );
+    }
+    if (cannotAfford) {
+      // Affordability is now CONFIRMED by the caller, not inferred — so a financial
+      // pathway is legitimately relevant. Still gated on the sticky refusal.
+      if (state.incomeRefused) return goEducate({});
+      return emit(
+        isEs
+          ? 'Gracias por aclararlo. Entonces sí vale la pena revisar si califica para un programa que ayude con esos costos. Para orientarle — y solo para orientar, no para decidir si califica — ¿cuál es aproximadamente su ingreso mensual?'
+          : "Thanks for clarifying. Then it is worth checking whether you qualify for a program that helps with those costs. To orient you — only to orient, not to decide eligibility — what is your monthly income, roughly?",
+        { costFlowStage: 'ask_income', costFlowAttempts: 0, lastBotIntent: 'costflow_ask_income' },
+      );
+    }
+    // Unclear after one try: stop asking and hand to a human. Never fall through to
+    // an income question on an unanswered clarification.
+    if (attempts >= 1) return goEducate({});
+    return emit(
+      isEs
+        ? 'Para no equivocarme: ¿quiere saber por qué le cobraron eso, o necesita ayuda para poder pagarlo?'
+        : 'So I get this right: do you want to know why you were charged, or do you need help being able to pay it?',
+      { costFlowAttempts: attempts + 1, lastBotIntent: 'costflow_confirm_problem' },
+    );
   }
 
   if (stage === 'confirm_part_b') {
     if (isPushback) return restate(isEs ? '¿Esos cargos se los descuentan del cheque del Seguro Social cada mes?' : 'Are those charges taken from your Social Security check each month?', 'costflow_confirm_part_b');
     const no = /\b(no|nop|para nada|no es|qu[eé] va)\b/.test(m) && !/\bs[ií]\b/.test(m);
     if (no) return emit(isEs ? 'Entendido. Entonces, ¿de dónde sale ese cobro — de una farmacia, de un doctor u hospital, o de una factura?' : 'Got it. Then where does that charge come from — a pharmacy, a doctor or hospital, or a bill?', { costFlowStage: 'ask_source', costChargeSource: undefined, costFlowAttempts: 0, lastBotIntent: 'costflow_ask_source' });
+    // AUDIT 2026-08-13 — this branch used to treat ANY reply that was not an explicit
+    // "no" as a YES, and then ask for income on that inference. A caller answering
+    // "quiero entender por qué me cobraron eso" was recorded as having confirmed a Part
+    // B deduction they never confirmed — the same ungrounded-inference pattern (§5) as
+    // the reported defect, one stage further along. Require a real affirmative.
+    // NOTE the boundary style. `` is ASCII-based, so a trailing  after an
+    // accented character never matches: /s[ií]/ fails on "sí" because the
+    // boundary between "í" and "," does not exist as far as  is concerned. Using
+    // explicit non-letter delimiters makes this work whether or not `m` arrived
+    // accent-stripped. The adjacent `no` check above has the same latent issue.
+    const _yes = /(^|[^a-záéíóúñ])(s[ií]|yes|yeah|correcto|exacto|as[ií] es|es correcto|claro|afirmativo|eso es|that'?s right|thats right|correct)([^a-záéíóúñ]|$)/i.test(m);
+    if (!_yes) {
+      // They answered something else entirely — most often they are telling us what
+      // they actually want. Route back to understanding rather than screening.
+      return emit(
+        isEs
+          ? 'Perdón, quiero asegurarme de entenderle. ¿Lo que necesita es entender por qué le cobran esa cantidad, o necesita ayuda para poder pagarla?'
+          : "Sorry — I want to make sure I understand you. Do you need to understand why you're being charged that amount, or do you need help being able to pay it?",
+        { costFlowStage: 'confirm_problem', costFlowAttempts: 0, lastBotIntent: 'costflow_confirm_problem' },
+      );
+    }
+    // AUDIT 2026-08-13 — respect a refusal recorded earlier in the conversation. This
+    // is a legitimate income question (the caller confirmed an ongoing Part B premium,
+    // which is exactly the MSP/Extra Help pathway), so it is NOT removed — §15 is
+    // explicit that the goal is not "never ask income". It is simply gated.
+    if (state.incomeRefused) return goEducate({ costChargeSource: 'social_security' });
     return emit(
       isEs
         ? 'Entendido — es la prima de la Parte B (en 2026 la estándar es $202.90 al mes; puede ser más por ingresos altos). Con ese costo, si su ingreso es modesto, podría valer la pena revisar programas de ayuda. ¿Cuál es aproximadamente su ingreso mensual? Es solo para orientar.'
@@ -4729,10 +4954,20 @@ function _handleCostFlow(
   }
 
   if (stage === 'ask_income') {
-    if (isPushback) return restate(isEs ? '¿Cuál es aproximadamente su ingreso mensual? Es solo para orientar.' : 'What is your monthly income, roughly? Just to orient.', 'costflow_ask_income');
+    // AUDIT 2026-08-13 — a sticky refusal recorded earlier means this stage must not
+    // ask at all, even if the flow re-enters it.
+    if (state.incomeRefused) return goEducate({});
+    // AUDIT 2026-08-13 — "ya te dije" here previously RESTATED the income question.
+    // For most steps a restate is right (the caller says they answered and we failed
+    // to parse it), but income is different: repeating a request for financial
+    // information at someone who is pushing back is the behavior the incident
+    // exposed, and the value of one more attempt does not justify it. Go to the
+    // education plus advisor path, which needs no income figure.
+    if (isPushback) return goEducate({ incomeRefused: true });
     if (_mentionsMedicaid(m)) return goEducate({ dualEligible: true });
     // User declines / doesn't know the income — never force it; go to advisor review.
-    if (/\b(no s[eé]|no lo s[eé]|prefiero no|no quiero (decir|dar)|es privado|privado|no le importa|don'?t know|dunno|not sure|rather not|prefer not|private)\b/.test(m)) return goEducate({});
+    // Now also RECORDS the refusal so no later branch re-asks.
+    if (_isIncomeRefusal(m)) return goEducate({ incomeRefused: true });
     const inc = _costMoney(raw);
     if (inc == null) {
       if (attempts >= 1) return goEducate({});
