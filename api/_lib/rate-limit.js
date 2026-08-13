@@ -22,6 +22,37 @@ if (!KV_AVAILABLE && (process.env.VERCEL || process.env.VERCEL_ENV)) {
   console.error('[rate-limit][ALERT] KV_NOT_CONFIGURED on Vercel — rate limits are per-instance only (weak). Set KV_REST_API_URL + KV_REST_API_TOKEN.');
 }
 
+/**
+ * CP-06 / external audit 2026-08-13 — expose the storage tier so the gap is a
+ * machine-readable fact rather than a line in a report.
+ *
+ * VERIFIED 2026-08-13: production has exactly three environment variables
+ * (ANTHROPIC_API_KEY, HIGHLEVEL_LOCATION_ID, HIGHLEVEL_TOKEN) and NONE of the KV or
+ * Upstash variables. So KV_AVAILABLE is false in production today and every limit in
+ * this module is per-instance.
+ *
+ * WHY THAT MATTERS MORE THAN THE ORDERING FINDING: Vercel serves each concurrent
+ * request from its own function instance, each with its own `memoryStore` Map, and a
+ * cold start begins at zero. The effective ceiling is therefore (limit x live
+ * instances), which an attacker controls simply by sending requests in parallel. The
+ * published "5 per hour, 10 per day" describes intent, not enforced behavior.
+ *
+ * This cannot be fixed in code: it needs a KV/Upstash store provisioned on the
+ * account and two environment variables set, which has billing implications and is an
+ * owner action. Recorded as BLOCKED - EXTERNAL ACTION REQUIRED. Until then, treat
+ * every rate limit here as best-effort, and do not describe them as enforced.
+ */
+export function rateLimitStorageTier() {
+  return {
+    tier: KV_AVAILABLE ? 'shared-kv' : 'per-instance-memory',
+    enforced: KV_AVAILABLE,
+    onVercel: !!(process.env.VERCEL || process.env.VERCEL_ENV),
+    // Never expose the URL or token — only whether each is present.
+    hasUrl: !!KV_URL,
+    hasToken: !!KV_TOKEN,
+  };
+}
+
 // ── In-memory store (fallback) ──────────────────────────────────────────
 // Per-Vercel-instance. Resets when the function cold-starts, but at
 // least caps a single hot instance from being abused.

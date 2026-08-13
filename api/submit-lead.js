@@ -70,23 +70,51 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // ── A15.2 Rate limit (lead-specific: very conservative — anti-spam) ────
+  // ── CP-06 (2026-08-13) — TWO-TIER RATE LIMIT ──────────────────────────────
+  // THE FINDING: a 5/hour/IP limit was charged HERE, before the body was parsed,
+  // before the honeypot, and before validation. So a legitimate person who fumbled
+  // the form five times — a mistyped phone, a ZIP typo, a flaky mobile connection
+  // that retried — locked themselves out for an hour of a business whose entire
+  // purpose is being reachable. For a senior filling in a Medicare form, five
+  // attempts is not an unusual afternoon.
+  //
+  // WHY NOT SIMPLY MOVE THE COUNTER AFTER VALIDATION, which is the obvious fix:
+  // then an attacker sends unlimited MALFORMED requests for free, and each one
+  // still costs a body parse and a function invocation. That is a cheap probing and
+  // bill-inflation amplifier, and the limiter exists precisely to stop bill
+  // inflation. Neither ordering is right on its own.
+  //
+  // TWO TIERS, each charged for what it actually protects:
+  //   TIER 1 (here, pre-parse) — a HIGH-ceiling flood guard. Its job is only to
+  //     stop a machine hammering the endpoint. A human cannot reach 40/hour by
+  //     fumbling a form, so it never touches a real user.
+  //   TIER 2 (post-honeypot, post-validation) — the strict BUSINESS limit of
+  //     5/hour that the published policy describes. Charged only for a submission
+  //     that was well-formed and not a bot, so the quota is spent on real
+  //     submissions rather than on typos.
+  // The phone and phone+zip limits further down (3/hour, 5/hour) already followed
+  // this principle; this brings the IP limit into line with them.
+  //
+  // SCALE NOTE: single-operator, pre-launch, low legitimate volume. 40/hour is
+  // deliberately generous rather than tuned for a call centre.
   var ip = clientId(req);
-  var rlHour = await rateLimit(ip, { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-h' });
+  var rlFlood = await rateLimit(ip, { max: 40, windowMs: 60 * 60 * 1000, prefix: 'lead-flood-h' });
   // Re-audit 2026-07-27 (AS-01): surface the limit as standard headers so the
   // control is externally observable without exhausting the quota (a POST that
   // fails validation still returns these). Purely informational — the 429 gate
   // below is what enforces.
+  // The advertised numbers still describe the STRICT tier, because that is the one
+  // that governs real submissions, so the published policy remains accurate.
   res.setHeader('X-RateLimit-Limit', '5');
-  res.setHeader('X-RateLimit-Remaining', String(Math.max(0, rlHour.remaining != null ? rlHour.remaining : 0)));
   res.setHeader('X-RateLimit-Window', '3600');
-  if (!rlHour.ok) {
-    res.setHeader('Retry-After', String(rlHour.retryAfter));
+  res.setHeader('X-RateLimit-Policy', '5;w=3600, 10;w=86400');
+  if (!rlFlood.ok) {
+    res.setHeader('Retry-After', String(rlFlood.retryAfter));
     return res.status(429).json({ error: 'Too many submissions, try again later' });
   }
-  var rlDay = await rateLimit(ip, { max: 10, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-d' });
-  if (!rlDay.ok) {
-    res.setHeader('Retry-After', String(rlDay.retryAfter));
+  var rlFloodDay = await rateLimit(ip, { max: 120, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-flood-d' });
+  if (!rlFloodDay.ok) {
+    res.setHeader('Retry-After', String(rlFloodDay.retryAfter));
     return res.status(429).json({ error: 'Daily submission limit reached' });
   }
 
@@ -416,6 +444,26 @@ export default async function handler(req, res) {
       console.warn('[ANTI-BOT] Min-fill-time gate triggered (' + Math.round(_elapsed) + 'ms) — submission discarded');
       return res.status(200).json({ success: true, message: 'Received' });
     }
+    // ── CP-06 (2026-08-13) — TIER 2: the strict business limit ────────────────
+    // This is the 5/hour the published policy advertises, and it is charged HERE:
+    // after the honeypot, after the min-fill-time gate, and after phone/name/ZIP
+    // validation have all passed. So the quota is spent on submissions that were
+    // real and well-formed, never on a senior's typo or a mobile retry — which was
+    // the whole finding. Tier 1 above (40/hour, pre-parse) still absorbs floods, so
+    // moving this later costs no flood protection.
+    var rlStrict = await rateLimit(ip, { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-ok-h' });
+    res.setHeader('X-RateLimit-Remaining', String(Math.max(0, rlStrict.remaining != null ? rlStrict.remaining : 0)));
+    if (!rlStrict.ok) {
+      res.setHeader('Retry-After', String(rlStrict.retryAfter));
+      console.warn('[RATE-LIMIT] strict per-IP submission window exceeded');
+      return res.status(429).json({ error: 'Too many submissions, try again later' });
+    }
+    var rlStrictDay = await rateLimit(ip, { max: 10, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-ok-d' });
+    if (!rlStrictDay.ok) {
+      res.setHeader('Retry-After', String(rlStrictDay.retryAfter));
+      return res.status(429).json({ error: 'Daily submission limit reached' });
+    }
+
     // (2) Per-phone rate limit (3/hour) + per phone+ZIP (5/hour): stops one actor
     //     rotating IPs to spam the same identity. Keyed on the VALIDATED national
     //     number — never logged raw; the limiter stores only prefixed keys.

@@ -2464,20 +2464,61 @@ function getStoredMemory(initialLanguage: ChatLanguage): ChatMemory {
   try {
     const stored = sessionStorage.getItem(SESSION_KEY);
     if (!stored) return { ...DEFAULT_MEMORY, language: initialLanguage };
-    const parsed = JSON.parse(stored) as Partial<ChatMemory>;
+    const parsed = JSON.parse(stored) as Partial<ChatMemory> & { _piiStamp?: number };
+    // CP-05 (2026-08-13) — age out the identifying remainder. Everything else
+    // (language, topic, flow position) is non-identifying and survives, so an
+    // abandoned tab resumes the conversation WITHOUT resuming the person: Zara keeps
+    // her place and asks for the name again rather than greeting a stranger by the
+    // previous user's name. A missing stamp is treated as stale, which is the
+    // fail-closed direction and also handles blobs written before this change.
+    const stamp = typeof parsed._piiStamp === 'number' ? parsed._piiStamp : 0;
+    const piiExpired = !stamp || (Date.now() - stamp) > SESSION_PII_TTL_MS;
+    const identifying = piiExpired
+      ? { firstName: '', lastName: '', zip: '', city: '', county: '', derivedState: '', state: '' }
+      : {};
     return {
       ...DEFAULT_MEMORY,
       ...parsed,
+      // Re-scrubbed on READ as well as on write. Defence in depth: a blob written by an
+      // older build, or hand-edited in DevTools, still cannot reintroduce these.
       phone: '',
       email: '',
       dob: '',
       calculatedAge: 0,
+      ...identifying,
       language: initialLanguage,
     };
   } catch {
     return { ...DEFAULT_MEMORY, language: initialLanguage };
   }
 }
+
+// CP-05 (2026-08-13) — staleness bound for the identifying remainder.
+//
+// The audit found the chat memory "capable of persisting PII in sessionStorage".
+// Reproduced and scoped precisely: phone, email, dob, calculatedAge and raw user input
+// were ALREADY stripped by BUG 9 and the 2026-07-22 audit, and persistentMemory
+// (localStorage) holds no PII at all and migrates legacy PII off disk. What remained was
+// firstName, lastName and zip, kept deliberately for conversational continuity — and
+// with NO staleness bound, so they lived for the entire tab lifetime however long that
+// was.
+//
+// The concrete harm is a shared computer, which is not hypothetical for this audience: a
+// senior at a library or senior-centre machine starts a chat, gives a name and ZIP,
+// walks away without closing the tab, and the next person is greeted by the previous
+// person's name. sessionStorage being tab-scoped and never sent to the server is what
+// keeps this LOW, not what makes it a non-issue.
+//
+// WHY A TTL RATHER THAN DROPPING THE FIELDS. Removing name and ZIP would make Zara
+// re-ask for them after any reload, which is worse for the user AND a net privacy loss:
+// the same PII gets collected again, and a bot that forgets mid-intake is the kind of
+// product people abandon. A TTL keeps continuity for a live conversation — the actual
+// requirement — while bounding retention for an abandoned one. persistentMemory already
+// uses exactly this pattern with a 60-day TTL; sessionStorage simply never got one.
+//
+// 4 hours: comfortably longer than any real Medicare conversation including
+// interruptions, comfortably shorter than "until someone reboots the library PC".
+const SESSION_PII_TTL_MS = 4 * 3600 * 1000;
 
 function getMemoryForStorage(memory: ChatMemory) {
   // BUG 9 — never persist sensitive PII to sessionStorage. phone/email/dob are
@@ -2486,7 +2527,12 @@ function getMemoryForStorage(memory: ChatMemory) {
   // AUDIT 2026-07-22 — lastValidUserInput is raw free text the user typed; it
   // can contain anything (an SSN, a card number). Continuity metadata only —
   // never persist raw user input.
-  const safeMemory = { ...memory, phone: '', email: '', dob: '', calculatedAge: 0, lastValidUserInput: '' };
+  const safeMemory = {
+    ...memory,
+    phone: '', email: '', dob: '', calculatedAge: 0, lastValidUserInput: '',
+    // CP-05 — stamp the write so the read path can age out the identifying remainder.
+    _piiStamp: Date.now(),
+  };
   return safeMemory;
 }
 
