@@ -91,6 +91,21 @@ const SEP_VERIFY_RE = new RegExp([
   '\\bwhich\\s+enrollment\\s+period\\b|\\bqu[eé]\\s+per[ií]odo\\s+de\\s+inscripci',
 ].join('|'), 'i');
 
+// ── AUDIT 2026-08-13 — redundancy guard for the appended safe copy ───────────
+// Observed on the LIVE endpoint (probe 4, caregiver scenario): the model produced a
+// fully correct refusal on its own — "that depends on the carrier's rules and
+// whether your mother has given you legal authority … the plan verifies that
+// directly" — and rule 14 then appended its own safe copy anyway, so the caller
+// read the same point twice. Compliance was satisfied; the reply was clumsy.
+// Rules 4 and 13 already suppressed a duplicate append and 14-17 did not, so this
+// generalizes that check: if the surviving text already makes the point, the
+// appended sentence is noise. A control that degrades the answer it protects is
+// half a control, and this is a senior audience reading it out loud.
+function alreadyCovered(text, probes) {
+  for (let i = 0; i < probes.length; i++) if (probes[i].test(text)) return true;
+  return false;
+}
+
 // Clause-level veto test. Sentence-level testing is what caused defect F-02 in the
 // opt-out guard: an exclusion found anywhere in the sentence excused a violation
 // elsewhere in it. Signal and veto must share a clause to cancel out, so this
@@ -686,7 +701,15 @@ export function complianceFilter(text, lang, opts) {
     violations.push('third_party_authority');
     out = tp14Clean.join(' ').trim();
     var tp14Safe = tpSafe[lang === 'en' ? 'en' : 'es'];
-    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + tp14Safe : tp14Safe;
+    // Suppress the append when the model already refused correctly on its own.
+    var TP14_COVERED = [
+      /can'?t\s+(confirm|share|discuss)[^.!?]{0,40}(another|other)\s+person|no\s+puedo\s+confirmar[^.!?]{0,40}otra\s+persona/i,
+      /(plan|carrier)\s+verifies\s+that|el\s+plan\s+(lo\s+)?verifica/i,
+      /can'?t\s+de(cide|termine)\s+who\s+is\s+authorized|no\s+puedo\s+de(cidir|terminar)\s+qui[eé]n\s+est[aá]\s+autorizad/i,
+    ];
+    if (!alreadyCovered(out, TP14_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + tp14Safe : tp14Safe;
+    }
   }
 
   // ── AUDIT 2026-08-13 (§19 U/V/W/X/Z, AD) — clinical & outcome net (rule 15) ─
@@ -729,7 +752,14 @@ export function complianceFilter(text, lang, opts) {
   if (clin15Hit) {
     out = clin15Clean.join(' ').trim();
     var c15Safe = clin15Safe[lang === 'en' ? 'en' : 'es'];
-    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + c15Safe : c15Safe;
+    var C15_COVERED = [
+      /(can'?t|cannot|not\s+able\s+to)\s+give\s+(medical|clinical)|no\s+puedo\s+dar\w*\s+(indicaciones\s+)?m[eé]dic/i,
+      /(prescriber|your\s+doctor)\s+(decides|determines)|su\s+m[eé]dico\s+(decide|determina)/i,
+      /(can'?t|cannot)\s+predict[^.!?]{0,30}(decision|outcome)|no\s+puedo\s+(predecir|anticipar)/i,
+    ];
+    if (!alreadyCovered(out, C15_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + c15Safe : c15Safe;
+    }
   }
 
   // ── AUDIT 2026-08-13 (§19 Y/AE/AF/AG) — effective-date net (rule 16) ──────
@@ -761,7 +791,14 @@ export function complianceFilter(text, lang, opts) {
   if (eff16Hit) {
     out = eff16Clean.join(' ').trim();
     var e16Safe = eff16Safe[lang === 'en' ? 'en' : 'es'];
-    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + e16Safe : e16Safe;
+    var E16_COVERED = [
+      /effective\s+dates?[^.!?]{0,60}(enrollment\s+period|not\s+on\s+the\s+day)|fecha\s+de\s+vigencia[^.!?]{0,60}per[ií]odo\s+de\s+inscripci/i,
+      /will\s+not\s+cover|won'?t\s+cover|no\s+(va\s+a\s+)?cubrir/i,
+      /(can'?t|cannot)\s+(confirm|make\s+changes)\s+with\s+(medicare|social\s+security)|no\s+puedo\s+(confirmar|hacer\s+cambios)\s+(ante|con)\s+medicare/i,
+    ];
+    if (!alreadyCovered(out, E16_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + e16Safe : e16Safe;
+    }
   }
 
   // ── AUDIT 2026-08-13 (§19 AC) — high-pressure-tactic net (rule 17) ────────
@@ -790,7 +827,13 @@ export function complianceFilter(text, lang, opts) {
     violations.push('high_pressure_tactic');
     out = press17Clean.join(' ').trim();
     var p17Safe = press17Safe[lang === 'en' ? 'en' : 'es'];
-    out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + p17Safe : p17Safe;
+    var P17_COVERED = [
+      /no\s+(rush|pressure|hay\s+ninguna\s+prisa)|take\s+as\s+much\s+time|t[oó]mese\s+el\s+tiempo/i,
+      /no\s+one\s+should\s+pressure|nadie\s+debe\s+presionar/i,
+    ];
+    if (!alreadyCovered(out, P17_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + p17Safe : p17Safe;
+    }
   }
 
   return { text: out, violations: violations };
