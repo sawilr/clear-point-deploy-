@@ -13,7 +13,7 @@ import { writeFileSync } from 'node:fs';
 
 const PREVIEW_BASE = 'https://clearpoint-deploy-h5ly6xs85-sawil-reyess-projects.vercel.app';
 const ENDPOINT = `${PREVIEW_BASE}/api/submit-lead`;
-const SHARE_TOKEN = 'dlyrOcILfDoNlt8YN4AWQ5rTTiByYTqF'; // Vercel SSO bypass (23-hr lifetime; refresh via get_access_to_vercel_url if expired)
+const SHARE_TOKEN = process.env.VERCEL_SHARE_TOKEN || ''; // Vercel SSO bypass (23-hr lifetime; refresh via get_access_to_vercel_url if expired)
 const SHARE_URL = `${PREVIEW_BASE}/?_vercel_share=${SHARE_TOKEN}`;
 
 // ── Warmup: visit share URL, follow redirects, capture _vercel_jwt cookie ──

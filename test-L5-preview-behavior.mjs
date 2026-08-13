@@ -4,7 +4,7 @@
 
 const PREVIEW_BASE = 'https://clearpoint-deploy-h5ly6xs85-sawil-reyess-projects.vercel.app';
 const ENDPOINT = `${PREVIEW_BASE}/api/submit-lead`;
-const SHARE_TOKEN = 'yndXlE2uftR5jcFNrFtRu9u4NeukcLdB';
+const SHARE_TOKEN = process.env.VERCEL_SHARE_TOKEN || '';
 const SHARE_URL = `${PREVIEW_BASE}/?_vercel_share=${SHARE_TOKEN}`;
 
 // Warmup — collect _vercel_jwt cookie (no values printed)
