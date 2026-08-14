@@ -87,8 +87,31 @@ export function normalizeForPhiMatch(text, hasContext) {
   return collapseInterDigit(digitizeNumberWords(masked, hasContext));
 }
 
-export function scrubPHI(text) {
+// RED TEAM 2026-08-13 (P3) — contact PII in FREE TEXT bound for the LLM.
+// A phone or email typed into a chat message ("call me at 555-123-4567",
+// "escríbame a maria@x.com") reached OpenAI verbatim: this module is
+// numbers-only by contract and normalizeForPhiMatch deliberately MASKS
+// phone-shaped runs to keep them out of SSN detection. That carve-out is
+// correct for its consumers (submit-lead notes; the structured phoneNumber
+// context field the prompt references) — so contact-stripping is OPT-IN via
+// { stripContact: true }, used ONLY by the LLM-bound call sites in
+// api/chat.js. The model never collects contact details (hard rule in the
+// client engine), so it never needs a raw phone/email in free text.
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+const PHONE_TEXT_RE = /\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g;
+
+export function scrubPHI(text, opts) {
   if (!text || typeof text !== 'string') return { text: text || '', detected: [] };
+  if (opts && opts.stripContact === true) {
+    var detectedContact = [];
+    var pre = text;
+    if (EMAIL_RE.test(pre)) { EMAIL_RE.lastIndex = 0; pre = pre.replace(EMAIL_RE, '[email]'); detectedContact.push('EMAIL'); }
+    EMAIL_RE.lastIndex = 0;
+    if (PHONE_TEXT_RE.test(pre)) { PHONE_TEXT_RE.lastIndex = 0; pre = pre.replace(PHONE_TEXT_RE, '[phone]'); detectedContact.push('PHONE'); }
+    PHONE_TEXT_RE.lastIndex = 0;
+    var inner = scrubPHI(pre);
+    return { text: inner.text, detected: inner.detected.concat(detectedContact) };
+  }
   // Detect on the normalized copy; if it trips a rule the original did not,
   // the whole numeric span is replaced (we cannot map offsets back reliably).
   const normalized = normalizeForPhiMatch(text, /\b(?:ssn|social security|social|seguro social)\b/i.test(text));

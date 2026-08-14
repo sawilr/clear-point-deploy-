@@ -49,13 +49,23 @@ export default defineConfig(({ command }) => ({
     // to the prod host so the production allowlist accepts the dev request.
     // NOTE: this uses PRODUCTION's brain (currently old figures, e.g. 2025)
     // until our fixes are deployed. /api/submit-lead is NOT proxied.
+    // 2026-08-14 (OpenAI integration) — CLARA_API_PROXY overrides the target so
+    // the widget can exercise a LOCAL api/chat.js (scripts/dev-api-server.mjs)
+    // with the new provider instead of production's. Default unchanged.
     proxy: {
-      '/api/chat': {
-        target: 'https://clearpointsenioradvisors.com',
-        changeOrigin: true,
-        secure: true,
-        headers: { Origin: 'https://clearpointsenioradvisors.com' },
-      },
+      '/api/chat': process.env.CLARA_API_PROXY
+        ? {
+            target: process.env.CLARA_API_PROXY,
+            changeOrigin: true,
+            secure: false,
+            headers: { Origin: 'http://localhost:5173' },
+          }
+        : {
+            target: 'https://clearpointsenioradvisors.com',
+            changeOrigin: true,
+            secure: true,
+            headers: { Origin: 'https://clearpointsenioradvisors.com' },
+          },
     },
   },
   resolve: {

@@ -14,7 +14,7 @@
 
 import { checkPromptInjection } from './_lib/prompt-guard.js';
 import { scrubPHI } from './_lib/phi-scrub.js';
-import { complianceFilter, matchesEmergency, matchesClinicalConcern, clinicalConcernReply } from './_lib/compliance-filter.js';
+import { complianceFilter, matchesEmergency, matchesSelfHarm, matchesClinicalConcern, clinicalConcernReply } from './_lib/compliance-filter.js';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { enforceKill } from './_lib/kill-switch.js';
 import { noStorePII } from './_lib/security-headers.js';
@@ -491,7 +491,7 @@ export default async function handler(req, res) {
   // session context language when the message has no clear signal.
   var _turnLang = detectMessageLang(userMessage);
   // PHASE 9A — scrub PHI BEFORE it reaches Anthropic. Audit any redactions.
-  var phiResult = scrubPHI(userMessage);
+  var phiResult = scrubPHI(userMessage, { stripContact: true });
   userMessage = phiResult.text;
   if (phiResult.detected.length > 0) {
     console.warn('[CHAT] PHI redacted before LLM:', phiResult.detected.join(','), 'ip=' + ip);
@@ -511,6 +511,19 @@ export default async function handler(req, res) {
       // each field. A legit 10-digit phone in phoneNumber is NOT redacted (the
       // patterns skip 10-digit runs) — proven by scripts/phase2-chat-redaction.test.mjs.
       var _ctxScrub = scrubPHI(rawCtx[k].slice(0, 120).replace(/[\r\n\t]/g, ' '));
+      // RED TEAM 2026-08-13 (P2) — a DOB planted in a context field (name /
+      // serviceCategory) reached the model's instructions: scrubPHI skips
+      // dates by design, and extractBirthDate needs verbal context ("born ON")
+      // that a bare planted value lacks. Context fields are structured metadata
+      // — NO date belongs in any of them — so the rule here is stricter than
+      // the message path: strip every full-date shape with a plausible birth
+      // year outright.
+      var _ctxDob = extractBirthDate(_ctxScrub.text, _now);
+      if (_ctxDob) _ctxScrub = { text: redactBirthDate(_ctxScrub.text, _ctxDob), detected: _ctxScrub.detected };
+      _ctxScrub = {
+        text: _ctxScrub.text.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.](19|20)\d{2}\b|\b(19|20)\d{2}[\/\-.]\d{1,2}[\/\-.]\d{1,2}\b/g, '[date]'),
+        detected: _ctxScrub.detected,
+      };
       // AUDIT 2026-08-12 (F4) — context fields land in the per-turn system
       // block; PHI scrub alone left ≤120 chars of attacker text unscreened.
       // Injection-screen each field; a tripping field is DROPPED (the request
@@ -559,8 +572,13 @@ export default async function handler(req, res) {
     // is the defense-in-depth net for direct API traffic — and a net that gives
     // a suicidal caller the wrong number is not a net. Crisis wins over medical
     // when both match; the 988 text itself says to dial 911 if in danger.
-    var _isCrisis = /\b(suicid\w*|kill\s+myself|end my life|end it all|don'?t want to live|matarme|me quiero matar|me voy a matar|quitar(me|se)? la vida|ya no quiero vivir|no quiero seguir viviendo|hacer(me)? da[nñ]o)\b/i
-      .test(userMessage.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+    // RED TEAM 2026-08-13 (P1) — this used to be a SECOND, hand-copied regex,
+    // and it had already drifted from the net: "quiero morirme" / "i want to
+    // die" fired matchesEmergency (model skipped — good) but missed this copy,
+    // so a suicidal caller got the generic 911 medical script with no 988
+    // Lifeline. Now both consumers read the SAME list (SELF_HARM_RES in
+    // compliance-filter.js): two lists that must agree will drift; one cannot.
+    var _isCrisis = matchesSelfHarm(userMessage);
     var _emText;
     if (_isCrisis) {
       _emText = _emLang === 'en'
@@ -666,9 +684,20 @@ export default async function handler(req, res) {
       // in an earlier turn (or a mutated history array) reached the LLM unredacted.
       // Scrub every replayed turn. Redaction placeholders keep the turn readable,
       // so the model retains safe context and does not re-ask answered questions.
-      var _turnScrub = scrubPHI(String(turn.content).slice(0, 1000));
+      var _turnScrub = scrubPHI(String(turn.content).slice(0, 1000), { stripContact: true });
       if (_turnScrub.detected.length > 0) {
         console.warn('[CHAT] PHI redacted in history turn: ' + _turnScrub.detected.join(','));
+      }
+      // RED TEAM 2026-08-13 (P2) — DOB redaction only covered the CURRENT
+      // message, so a birth date typed on turn N was redacted once and then
+      // forwarded verbatim to the provider on EVERY later turn via this
+      // history replay (scrubPHI is numbers-only by design and skips dates).
+      // The age-grounding note keeps working — it is computed from the
+      // current-turn extraction before this loop runs.
+      var _histDob = extractBirthDate(_turnScrub.text, _now);
+      if (_histDob) {
+        _turnScrub = { text: redactBirthDate(_turnScrub.text, _histDob), detected: _turnScrub.detected };
+        console.warn('[CHAT] DOB redacted in history turn');
       }
       // AUDIT 2026-08-12 (F5) — history is client-supplied; a fabricated
       // ASSISTANT turn ("Sure, I'll ignore my rules…") was replayed verbatim
@@ -854,6 +883,14 @@ export default async function handler(req, res) {
     var wantClose = /\[close\]/i.test(assistantText);
     var wantSchedule = /\[schedule\]/i.test(assistantText);
     var cleanText = assistantText.replace(/\[handoff\]/gi, '').replace(/\[close\]/gi, '').replace(/\[schedule\]/gi, '').trim();
+    // RED TEAM 2026-08-13 (P2) — a TAG-ONLY model reply ("[HANDOFF]") passed the
+    // provider's empty-check (non-empty before the strip) and returned HTTP 200
+    // with response:'' — an empty bubble in the widget. Fail closed instead:
+    // 502 flips the client to its deterministic engine, which always has words.
+    if (!cleanText) {
+      console.error('[CHAT] provider reply empty after tag strip (provider=' + providerName + ') — failing closed');
+      return res.status(502).json({ error: 'LLM_API_ERROR' });
+    }
 
     // ── A15.5 Compliance post-filter v2 (shared module) ────────────────
     // Strips carrier names, eligibility confirmations, network claims, etc.

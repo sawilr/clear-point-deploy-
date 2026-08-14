@@ -61,7 +61,10 @@ ok('submit-lead scrub runs BEFORE note POST', submitSrc.indexOf('_scrubNotes') <
 ok('submit-lead PHI log is category-only (no raw text)', /PHI redacted before LLM\/CRM/.test(submitSrc));
 ok('chat.js scrubs replayed history turns', /_turnScrub = scrubPHI\(String\(turn\.content\)/.test(chatSrc));
 ok('chat.js scrubs context fields', /_ctxScrub = scrubPHI\(rawCtx\[k\]/.test(chatSrc));
-ok('chat.js still scrubs current message', /var phiResult = scrubPHI\(userMessage\)/.test(chatSrc));
+// 2026-08-13 (OpenAI integration): the LLM-bound call sites now pass
+// { stripContact: true } — the scrub is a superset of what this assertion
+// originally protected (adds free-text phone/email stripping).
+ok('chat.js still scrubs current message', /var phiResult = scrubPHI\(userMessage(, \{ stripContact: true \})?\)/.test(chatSrc));
 
 // ── (d) Phase 3: best_time_to_contact end-to-end wiring ─────────────────────
 ok('ghl.ts forwards best_time_to_contact', /body\.best_time_to_contact = payload\.best_time_to_contact/.test(ghlSrc));

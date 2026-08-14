@@ -44,7 +44,9 @@ await env(BASE, async () => {
   check('1.3 instructions = system prompt + context block', captured.body.instructions === 'SYS PROMPT\n\nCTX BLOCK');
   check('1.4 messages become input array', Array.isArray(captured.body.input) && captured.body.input[0].content === 'hola');
   check('1.5 max_output_tokens defaulted', captured.body.max_output_tokens === 1024);
-  check('1.6 temperature defaults to 0.2', captured.body.temperature === 0.2, `temp: ${captured.body.temperature}`);
+  // LIVE EVIDENCE 2026-08-13: gpt-5.6-luna 400s on `temperature` — the param
+  // must be ABSENT unless explicitly configured for a model that accepts it.
+  check('1.6 temperature ABSENT by default (reasoning models reject it)', !('temperature' in captured.body), `temp: ${captured.body.temperature}`);
   check('1.7 web search tool ABSENT by default', captured.body.tools === undefined, 'tools sent without the opt-in flag');
   check('1.8 happy path returns text', r.ok === true && r.text === 'respuesta');
   check('1.9 usage + latency + model surfaced', r.usage && r.usage.total_tokens === 49 && typeof r.latencyMs === 'number' && r.model === 'gpt-5.6-luna');
@@ -131,11 +133,17 @@ await env(BASE, async () => {
 });
 
 // ══ 5. Config knobs ══════════════════════════════════════════════════════════
+await env({ ...BASE, OPENAI_TEMPERATURE: '0.2' }, async () => {
+  let captured = null;
+  __setLLMTestFetch(async (url, init) => { captured = JSON.parse(init.body); return okResponse('x'); });
+  await callOpenAI(PAYLOAD);
+  check('5.1 explicit OPENAI_TEMPERATURE=0.2 sends the parameter', captured.temperature === 0.2, `temp: ${captured.temperature}`);
+});
 await env({ ...BASE, OPENAI_TEMPERATURE: '' }, async () => {
   let captured = null;
   __setLLMTestFetch(async (url, init) => { captured = JSON.parse(init.body); return okResponse('x'); });
   await callOpenAI(PAYLOAD);
-  check('5.1 OPENAI_TEMPERATURE="" omits the parameter entirely', !('temperature' in captured), `temp: ${captured.temperature}`);
+  check('5.1b OPENAI_TEMPERATURE="" also omits it', !('temperature' in captured), `temp: ${captured.temperature}`);
 });
 await env({ ...BASE, OPENAI_ENABLE_WEB_SEARCH: '1' }, async () => {
   let captured = null;

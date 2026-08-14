@@ -99,10 +99,10 @@ try {
     check('1.1 PRODUCTION handler invokes the OpenAI transport (dead-route detector)', calls > 0,
       'the mock transport never fired — the provider is wired into a route production does not use');
     check('1.2 endpoint is the Responses API', outbound && /\/v1\/responses$/.test(outbound.url), `url: ${outbound && outbound.url}`);
-    check('1.3 QA model outside production env', outbound.body.model === 'gpt-5.6-luna', `model: ${outbound.body.model}`);
-    check('1.4 Clara identity prompt travels as instructions', /ClearPoint Senior Advisors/.test(outbound.body.instructions));
-    check('1.5 per-turn context block rides with the instructions', /Caller ZIP: 11375/.test(outbound.body.instructions), 'ZIP context missing — state-aware answers would break');
-    check('1.6 handler returns the model text to the client', res.statusCode === 200 && /con gusto le ayudo/i.test(res.jsonBody.response));
+    check('1.3 QA model outside production env', outbound && outbound.body.model === 'gpt-5.6-luna', `model: ${outbound && outbound.body.model}`);
+    check('1.4 Clara identity prompt travels as instructions', outbound && /ClearPoint Senior Advisors/.test(outbound.body.instructions));
+    check('1.5 per-turn context block rides with the instructions', outbound && /Caller ZIP: 11375/.test(outbound.body.instructions), 'ZIP context missing — state-aware answers would break');
+    check('1.6 handler returns the model text to the client', res.statusCode === 200 && res.jsonBody && /con gusto le ayudo/i.test(res.jsonBody.response), `status=${res.statusCode}`);
     check('1.7 usage metadata surfaced in meta', res.jsonBody.meta && res.jsonBody.meta.usage && res.jsonBody.meta.usage.total_tokens === 15);
   }
 
@@ -215,6 +215,67 @@ try {
     check('C.3 widget uses processMessageAsync (the path that calls the LLM)', /processMessageAsync/.test(bot));
     check('C.4 engine falls back to deterministic path on 503', /no_api/.test(lh) && /processMessage\(userMessage, state/.test(engine));
   }
+
+  // ══ 8. RED-TEAM ROUND (2026-08-13) — the five reproduced defects, pinned ════
+  {
+    // RT-P1: crisis phrases that DRIFTED out of the hand-copied _isCrisis regex.
+    let calls = 0;
+    __setLLMTestFetch(async () => { calls++; return okResponse('never'); });
+    for (const [msg, lang] of [['quiero morirme, ya no aguanto', 'es'], ['i want to die', 'en'], ['prefiero morir', 'es'], ['no point in living', 'en'], ['terminar con todo', 'es']]) {
+      const r = await callChat({ userMessage: msg, context: { ...CTX, language: lang }, history: [] });
+      check(`8.1 "${msg}" → 988 Lifeline (single-source self-harm list)`,
+        r.jsonBody && /988/.test(r.jsonBody.response) && r.jsonBody.meta.blocked === 'crisis_988',
+        `got: ${r.jsonBody && JSON.stringify(r.jsonBody.meta)} ${r.jsonBody && String(r.jsonBody.response).slice(0, 80)}`);
+    }
+    check('8.2 zero provider calls on all crisis turns', calls === 0, `calls=${calls}`);
+  }
+  {
+    // RT-P2a: DOB in HISTORY and CONTEXT must never reach the provider.
+    let outbound = null;
+    __setLLMTestFetch(async (url, init) => { outbound = JSON.parse(init.body); return okResponse('Entendido.'); });
+    await callChat({
+      userMessage: 'what is part b',
+      context: { ...CTX, language: 'en', serviceCategory: 'born 01/02/1950 needs help' },
+      history: [
+        { role: 'user', content: 'I was born on 01/02/1950' },
+        { role: 'assistant', content: 'Thank you.' },
+      ],
+    });
+    const raw = JSON.stringify(outbound);
+    check('8.3 DOB in replayed history never reaches OpenAI', !raw.includes('01/02/1950'), 'DOB from a prior turn forwarded to the provider');
+    check('8.4 DOB planted in a context field never reaches OpenAI', !/1950/.test(outbound.instructions || ''), 'DOB in serviceCategory reached instructions');
+  }
+  {
+    // RT-P2b: tag-only model reply must fail closed, not render an empty bubble.
+    for (const tagOnly of ['[HANDOFF]', '[CLOSE]', '  [SCHEDULE] ', '[HANDOFF] [CLOSE]']) {
+      __setLLMTestFetch(async () => okResponse(tagOnly));
+      const r = await callChat({ userMessage: 'necesito ayuda con mi plan por favor', context: CTX, history: [] });
+      check(`8.5 tag-only reply ${JSON.stringify(tagOnly).slice(0, 18)} → 502 (deterministic fallback)`, r.statusCode === 502,
+        `status=${r.statusCode} body=${JSON.stringify(r.jsonBody).slice(0, 100)}`);
+    }
+  }
+  {
+    // RT-P3a: contact PII in free text is stripped on the LLM path.
+    let outbound = null;
+    __setLLMTestFetch(async (url, init) => { outbound = JSON.parse(init.body); return okResponse('Con gusto.'); });
+    await callChat({
+      userMessage: 'call me at 555-123-4567 or email me at jane@test.com about part d',
+      context: { ...CTX, language: 'en', phoneNumber: '7185551234' },
+      history: [{ role: 'user', content: 'my other number is (718) 555-9999' }, { role: 'assistant', content: 'Noted.' }],
+    });
+    const raw = JSON.stringify(outbound);
+    check('8.6 free-text phone stripped from the outbound payload', !/555-123-4567/.test(raw) && !/555-9999/.test(raw), 'a dashed phone reached the provider');
+    check('8.7 free-text email stripped from the outbound payload', !/jane@test\.com/.test(raw), 'an email reached the provider');
+    check('8.8 the STRUCTURED phoneNumber context field is preserved (prompt depends on it)', /7185551234/.test(outbound.instructions || ''),
+      'the deliberate carve-out for the captured phone was lost');
+  }
+  {
+    // RT-P3b: whitespace-only model env must fall back to defaults, not model:"".
+    const { resolveOpenAIModels } = await import('../api/_lib/llm-provider.js');
+    const m = resolveOpenAIModels({ VERCEL_ENV: 'production', OPENAI_MODEL_PRODUCTION: '   ' });
+    check('8.9 whitespace-only model env falls back to the default', m.active === 'gpt-5.6-terra', `active=${JSON.stringify(m.active)}`);
+  }
+
 } finally {
   __setLLMTestFetch(null);
   restoreBase();

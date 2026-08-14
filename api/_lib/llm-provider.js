@@ -56,8 +56,11 @@ export function selectLLMProvider() {
 
 /** Resolve the model roles from env. Pure + exported for tests. */
 export function resolveOpenAIModels(env = process.env) {
-  const production = (env.OPENAI_MODEL_PRODUCTION || 'gpt-5.6-terra').trim();
-  const qa = (env.OPENAI_MODEL_QA || 'gpt-5.6-luna').trim();
+  // RED TEAM 2026-08-13 (P3) — trim BEFORE the || default. A whitespace-only
+  // env value is truthy, so `(v || d).trim()` collapsed to '' and every request
+  // sent model:"" → non-retrying 400 → silent full-endpoint outage.
+  const production = (env.OPENAI_MODEL_PRODUCTION || '').trim() || 'gpt-5.6-terra';
+  const qa = (env.OPENAI_MODEL_QA || '').trim() || 'gpt-5.6-luna';
   const override = (env.OPENAI_MODEL_OVERRIDE || '').trim();
   const isProd = env.VERCEL_ENV === 'production';
   const active = override || (isProd ? production : qa);
@@ -149,7 +152,10 @@ export async function callOpenAI(payload) {
   if (!apiKey) return { ok: false, status: 503, code: 'no_key', httpStatus: null, model: null, detail: 'OPENAI_API_KEY not configured' };
 
   const models = resolveOpenAIModels();
-  const timeoutMs = _clampInt(process.env.OPENAI_TIMEOUT_MS, 1000, 30000, 9000);
+  // Default 10.5s: LIVE EVIDENCE (scenario D t7) — a long-history Luna turn
+  // exceeded 9s and 502'd; the browser client aborts at 12s, so 10.5s keeps a
+  // margin under the client while absorbing the reasoning-model tail.
+  const timeoutMs = _clampInt(process.env.OPENAI_TIMEOUT_MS, 1000, 30000, 10500);
 
   const client = new OpenAI({
     apiKey,
@@ -169,13 +175,15 @@ export async function callOpenAI(payload) {
     input,
     max_output_tokens: payload.maxOutputTokens || 1024,
   };
-  // Temperature parity with the Anthropic path (0.2 — compliance-critical
-  // answers want determinism). Env-controlled because some reasoning-class
-  // models reject the parameter: set OPENAI_TEMPERATURE="" to omit it entirely
-  // without a code change; any finite number overrides the default.
+  // Temperature is OPT-IN, not default. LIVE EVIDENCE (2026-08-13, first real
+  // call): gpt-5.6-luna returns 400 "Unsupported parameter: 'temperature'" —
+  // the target models are reasoning-class and reject it, so a 0.2 default
+  // (Anthropic parity) would 400 EVERY production call. Set OPENAI_TEMPERATURE
+  // to a number only for models that accept it; determinism for compliance
+  // comes from the deterministic post-filters either way.
   const tempRaw = process.env.OPENAI_TEMPERATURE;
-  if (tempRaw !== '') {
-    const t = parseFloat(tempRaw == null ? '0.2' : tempRaw);
+  if (tempRaw != null && tempRaw !== '') {
+    const t = parseFloat(tempRaw);
     if (isFinite(t)) req.temperature = t;
   }
   // Web search — OFF by default. The Anthropic path domain-locks search to

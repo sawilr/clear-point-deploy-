@@ -148,6 +148,33 @@ const FORBIDDEN_PHRASES = [
   /\ble\s+recomiend[oa]\s+(el|este|ese)\s+plan\b/gi,
 ];
 
+// ── SELF-HARM — SINGLE SOURCE OF TRUTH (2026-08-13, red team P1) ─────────
+// One list, two consumers: (1) spread into EMERGENCY_USER_RES below so
+// matchesEmergency() skips the model, and (2) matchesSelfHarm() so
+// api/chat.js routes the SAME phrases to the 988 Lifeline instead of the
+// generic 911 medical script. The red team found the previous arrangement —
+// a second, hand-copied regex in chat.js — had already drifted: "quiero
+// morirme" and "i want to die" skipped the model (net fired) but got the
+// MEDICAL script because the chat.js copy lacked them. Two lists that must
+// agree will drift; one list cannot.
+const SELF_HARM_RES = [
+  /\b(suicid\w*|kill\s+myself)\b/,
+  // ES — real callers say "matarme"/"quitarme la vida", not the clinical word.
+  /\b(matarme|me\s+quiero\s+matar|me\s+voy\s+a\s+matar|quitar(me|se)?\s+la\s+vida|ya\s+no\s+quiero\s+vivir|no\s+quiero\s+seguir\s+viviendo|quiero\s+morirme|me\s+quiero\s+morir|prefiero\s+morir|terminar\s+con\s+todo|acabar\s+con\s+todo|hacerme\s+da[nñ]o)\b/,
+  /\b(end\s+my\s+life|end\s+it\s+all|don'?t\s+want\s+to\s+live|wanna\s+die|i\s+want\s+to\s+die|better\s+off\s+dead|no\s+point\s+in\s+living)\b/,
+];
+
+/** TRUE when the (raw) user text carries self-harm language. Used by
+ *  api/chat.js to pick the 988 crisis script over the 911 medical script —
+ *  always a subset of matchesEmergency(), so the model is already skipped. */
+export function matchesSelfHarm(text) {
+  var t = String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (var i = 0; i < SELF_HARM_RES.length; i++) {
+    if (SELF_HARM_RES[i].test(t)) return true;
+  }
+  return false;
+}
+
 // ── AUDIT 2026-07-28 CPF-001 — LIFE-SAFETY net (rule 8) ─────────────────
 // Mirrors detectEmergency() in src/lib/customerServiceEngine.ts. Kept as a
 // literal copy because this module is intentionally zero-import (it runs in
@@ -165,15 +192,8 @@ const EMERGENCY_USER_RES = [
   /\b(bleeding|blood\s+everywhere|hemorrhag\w*)\b/,
   /\b(passed\s+out|pass(ing)?\s+out|unconscious|unresponsive|blacked\s+out|fainted)\b/,
   /\b(overdos\w*|od'?ed)\b/,
-  /\b(suicid\w*|kill\s+myself)\b/,
-  // 2026-08-13 (found by the §15 wiring suite) — the net had NO Spanish
-  // self-harm phrases: "me quiero matar" sailed past this list and reached the
-  // LLM. The stem `suicid` only covers the clinical word; real callers say
-  // "matarme" / "quitarme la vida" / "ya no quiero vivir". Mirrors the client
-  // engine's detectCrisisLanguage ES list. api/chat.js routes these to the 988
-  // Lifeline (crisis wins over the generic 911 medical script).
-  /\b(matarme|me\s+quiero\s+matar|me\s+voy\s+a\s+matar|quitar(me|se)?\s+la\s+vida|ya\s+no\s+quiero\s+vivir|no\s+quiero\s+seguir\s+viviendo|quiero\s+morirme|me\s+quiero\s+morir|prefiero\s+morir|terminar\s+con\s+todo|acabar\s+con\s+todo|hacerme\s+da[nñ]o)\b/,
-  /\b(end\s+my\s+life|end\s+it\s+all|don'?t\s+want\s+to\s+live|wanna\s+die|i\s+want\s+to\s+die|better\s+off\s+dead|no\s+point\s+in\s+living)\b/,
+  // Self-harm — see SELF_HARM_RES below (single source of truth, spread here).
+  ...SELF_HARM_RES,
   /\bemerg[ea]n[csz](ia|ya|y)\b/,
   /\bno\s+puedo\s+respir\w*/,
   /\b(me\s+falta\s+(el\s+)?aire|falta\s+de\s+aire|me\s+estoy\s+ahogando|no\s+me\s+llega\s+el\s+aire)\b/,
