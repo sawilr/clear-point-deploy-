@@ -1948,12 +1948,77 @@ export function _handleEmergency(
   // An explicit "it's not an emergency" always wins — both to reopen the flow
   // and so the phrase itself never trips the detector.
   if (detectNotAnEmergency(userMessage)) return null;
+  // AUDIT 2026-08-13 (SHIP-GATE V47 11.2, pre-existing) — SELF-HARM IS 988, NOT 911.
+  // EMERGENCY_RES includes suicid*/kill myself (correctly: a suicidal caller IS an
+  // emergency and nothing may run before this handler), but this handler answered
+  // with the generic MEDICAL script. "I want to kill myself" got "call 911, I can't
+  // help with medical emergencies" — no 988 Suicide & Crisis Lifeline, needsHuman
+  // false, while a dedicated crisis reply with 988 sat unreachable further down.
+  // detectCrisisLanguage's own comment says to keep the paths separate; separate
+  // them AT THE INTERCEPTION POINT, keeping this handler's priority. Crisis wins
+  // over medical when both match — the 988 script itself also says to dial 911 if
+  // in immediate danger, so nothing is lost in the ambiguous case.
+  if (detectCrisisLanguage(userMessage)) {
+    const crisisEs = _turnLanguage(userMessage, state) === 'es';
+    const crisisOut = crisisEs
+      ? 'Lo que está sintiendo es importante y usted no está solo. Por favor llame ahora mismo a la **Línea 988 de Crisis y Suicidio** — llame o envíe un mensaje al **988**. Hay personas disponibles 24 horas que hablan español y le pueden ayudar gratis. Si está en peligro inmediato, marque **911**. Yo aquí no soy la persona adecuada para esto — usted merece hablar con alguien capacitado ahora.'
+      : "What you're feeling matters and you are not alone. Please contact the **988 Suicide and Crisis Lifeline** right now — call or text **988**. People are available 24 hours a day, in English and Spanish, free of charge. If you are in immediate danger, dial **911**. I'm not the right help for this — you deserve to talk to someone trained right now.";
+    const crisisState: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      advisorHandoffStarted: false,
+      schedulingCallback: false,
+      needsHuman: true,
+      // emergencyMode stays TRUE for a crisis too — it is what hard-stops the lead
+      // flow on FOLLOWING turns (CPF-001), and a suicidal caller needs that
+      // persistence exactly as much as a cardiac one. The 343-suite caught this
+      // when the first version of this branch dropped it.
+      emergencyMode: true,
+      emergencyNoticeCount: (state.emergencyNoticeCount || 0) + 1,
+      step: state.language ? 'conversation' : state.step,
+      serviceCategory: 'crisis_988',
+      activeCaseTopic: 'crisis_988',
+      lastBotIntent: 'crisis_988',
+      lastBotEmittedMenu: false,
+      lastBotOfferedAdvisor: false,
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: crisisOut, timestamp: Date.now() },
+      ],
+    };
+    return { response: crisisOut, newState: crisisState, needsHuman: true };
+  }
   const inMode = !!state.emergencyMode;
   const fresh = detectEmergency(userMessage);
   if (!fresh && !inMode) return null;
 
   const isEs = _turnLanguage(userMessage, state) === 'es';
   const count = (state.emergencyNoticeCount || 0) + 1;
+  // A conversation in CRISIS mode continues with the 988 reminder, not the medical
+  // 911 short text — the mode persists but must keep its own script.
+  if (inMode && state.serviceCategory === 'crisis_988') {
+    const short = isEs
+      ? 'Sigo aquí, pero la ayuda que usted necesita ahora es la **Línea 988** — llame o envíe un mensaje al **988** (24 horas, gratis, en español). Si está en peligro inmediato, marque **911**.'
+      : "I'm still here, but the help you need right now is the **988 Lifeline** — call or text **988** (24 hours, free). If you are in immediate danger, dial **911**.";
+    return {
+      response: short,
+      newState: {
+        ...state,
+        turnCount: (state.turnCount || 0) + 1,
+        emergencyNoticeCount: count,
+        needsHuman: true,
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: short, timestamp: Date.now() },
+        ],
+      },
+      needsHuman: true,
+    };
+  }
   const bank = count === 1 ? EMERGENCY_911_TEXT : EMERGENCY_911_SHORT;
   const out = isEs ? bank.es : bank.en;
   const newState: ConversationState = {
