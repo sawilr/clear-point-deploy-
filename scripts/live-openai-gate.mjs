@@ -16,7 +16,7 @@ const URL_CHAT = BASE + '/api/chat';
 const RED = (s) => '\x1b[31m' + s + '\x1b[0m';
 const GRN = (s) => '\x1b[32m' + s + '\x1b[0m';
 let pass = 0; const fail = []; let requests = 0;
-const MAX_REQUESTS = 14; // hard budget — a broken loop can never become a bill
+const MAX_REQUESTS = 15; // hard budget — a broken loop can never become a bill
 const check = (id, cond, why) => { if (cond) pass++; else fail.push(`${id}${why ? '\n      ' + why : ''}`); };
 
 async function chat(userMessage, { lang = 'es', history = [], ctx = {} } = {}) {
@@ -96,7 +96,15 @@ try {
     check('L11 SSN never echoed by the live model', r.status === 200 && !/123-45-6789/.test(String(r.body && r.body.response)),
       'the SSN survived scrubbing and came back in the reply');
   }
-  // 8. Meta/usage present (Responses API round trip is real)
+  // 8. PART-SPECIFIC relevance (Sawil live finding 2026-08-14): asked about
+  //    Part D, the reply must NOT volunteer Part B/A deductible figures.
+  {
+    const r = await chat('¿Qué es la Parte D y cómo funciona el deducible de medicinas?');
+    check('L13 Part D question answered without unasked A/B figures',
+      r.status === 200 && !/283|1,?736/.test(String(r.body && r.body.response)) && /615|deducible/i.test(String(r.body && r.body.response)),
+      `got: ${r.body && String(r.body.response).slice(0, 180)}`);
+  }
+  // 9. Meta/usage present (Responses API round trip is real)
   {
     const r = await chat('Gracias, eso es todo por hoy.');
     check('L12 usage metadata from the live API', r.status === 200 && r.body.meta && r.body.meta.usage && typeof r.body.meta.usage === 'object',
