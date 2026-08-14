@@ -518,6 +518,10 @@ export default async function handler(req, res) {
   // ask, no advisor-will-call promise. Client-supplied, but fail-closed by
   // construction since its ONLY effect is to SUPPRESS outreach language.
   conversationContext.contactOptedOut = rawCtx.contactOptedOut === true;
+  // RE-AUDIT 2026-08-13 (CF-03) — self-declared tester. Same fail-closed shape as
+  // contactOptedOut above: client-supplied, but its ONLY effect is to SUPPRESS data
+  // collection, so a forged `true` costs a lead and can never leak anything.
+  conversationContext.auditMode = rawCtx.auditMode === true;
   var _cc = parseInt(rawCtx.clarificationCount, 10);
   conversationContext.clarificationCount = (isFinite(_cc) && _cc >= 0 && _cc <= 50) ? _cc : 0;
   if (!userMessage) return res.status(400).json({ error: 'userMessage required' });
@@ -894,6 +898,12 @@ function buildContextSummary(ctx, turnLang, now) {
   if (ctx.serviceCategory) lines.push('Current topic: ' + ctx.serviceCategory);
   if (ctx.advisorOfferDismissed) lines.push('NOTE: Caller already deferred an advisor offer — treat next "Más tarde" as SCHEDULE, not handoff.');
   if (ctx.clarificationCount && ctx.clarificationCount >= 2) lines.push('NOTE: Caller has asked for clarification ' + ctx.clarificationCount + ' times — offer advisor instead of more re-explanation.');
+  // RE-AUDIT 2026-08-13 (CF-03, §4B) — AUDIT/TEST MODE, second layer. The engine
+  // guard (_handleAuditModeGuard) intercepts the turns it can recognise, but not
+  // every phrasing of "I want an advisor" trips detectHumanEscalation, and those
+  // turns reach this model instead. Without this line the model would ask a
+  // self-declared tester for their name — the exact promise the guard just made.
+  if (ctx.auditMode) lines.push('AUDIT/TEST MODE: the caller has explicitly stated they are TESTING this system and are NOT a real customer. Do NOT ask for their name, phone number, email, address, date of birth or income, and do NOT push a lead capture or an advisor callback. Answer their questions and demonstrate how you would handle the scenario; if they ask for an advisor, DESCRIBE what would happen in a real case instead of collecting anything. If they say they are actually a real customer, resume normal behavior.');
   if (!lines.length) return '';
   return '[Context for this turn]\n' + lines.join('\n');
 }

@@ -30,6 +30,10 @@ export interface LLMContext {
   clarificationCount?: number;
   /** AUDIT 2026-08-13 — caller revoked contact this session (rule 12). */
   contactOptedOut?: boolean;
+  /** RE-AUDIT 2026-08-13 (CF-03) — caller declared they are testing, not a customer.
+   *  Suppresses contact collection on the LLM path too; the engine guard cannot
+   *  intercept every phrasing that asks for an advisor. */
+  auditMode?: boolean;
 }
 
 export interface LLMResponse {
