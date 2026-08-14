@@ -27,6 +27,13 @@ import { MEDICARE_KNOWLEDGE } from './_lib/medicare-knowledge.js';
 // language mirroring (BUG 4b). See each module for the audit transcripts.
 import { extractBirthDate, buildAgeGroundingNote, redactBirthDate } from './_lib/date-grounding.js';
 import { detectMessageLang } from './_lib/lang-detect.js';
+// 2026-08-13 — OpenAI production integration. Provider mechanics (SDK client,
+// Responses API, model routing, timeout, bounded retry, error taxonomy) live in
+// the provider module; EVERYTHING Clara — guards, PHI scrub, injection screens,
+// compliance filter, tag parsing, audit record — stays HERE and runs identically
+// for every provider. The deterministic structural layer in the client remains
+// authoritative regardless of which model answers (mission §5).
+import { selectLLMProvider, callOpenAI, sanitizeDetail } from './_lib/llm-provider.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -447,8 +454,18 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── Provider selection (2026-08-13, OpenAI integration) ─────────────────
+  // Explicit LLM_PROVIDER env wins; otherwise key presence decides (OpenAI
+  // preferred when both exist). 'none' keeps the EXACT legacy contract: 503 →
+  // the browser engine flips to the deterministic regex path (llmHandler.ts
+  // treats 503 as no_api). No provider ever receives a turn the deterministic
+  // guards below have not already screened.
+  var providerName = selectLLMProvider();
+  if (providerName === 'none') {
+    return res.status(503).json({ error: 'LLM_UNAVAILABLE', message: 'API key not configured' });
+  }
   var apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
+  if (providerName === 'anthropic' && !apiKey) {
     // Fallback: tell the engine the API is unavailable so it uses regex path.
     return res.status(503).json({ error: 'LLM_UNAVAILABLE', message: 'API key not configured' });
   }
@@ -533,13 +550,31 @@ export default async function handler(req, res) {
   // client engine's _handleEmergency so both paths are covered.
   if (matchesEmergency(userMessage)) {
     var _emLang = _turnLang || conversationContext.language || 'es';
-    var _emText = _emLang === 'en'
-      ? "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first."
-      : 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.';
-    console.warn('[CHAT] medical emergency guardrail fired, LLM skipped, ip=' + ip);
+    // 2026-08-13 (mirrors the client fix of the same date) — SELF-HARM IS 988,
+    // NOT THE GENERIC 911 MEDICAL SCRIPT. The emergency net rightly includes
+    // suicide language (nothing may run before this guard, model included), but
+    // it used to answer it with "call 911, I can't help with medical
+    // emergencies" — no Suicide & Crisis Lifeline. In production the CLIENT
+    // engine intercepts crisis before /api/chat is ever called, so this branch
+    // is the defense-in-depth net for direct API traffic — and a net that gives
+    // a suicidal caller the wrong number is not a net. Crisis wins over medical
+    // when both match; the 988 text itself says to dial 911 if in danger.
+    var _isCrisis = /\b(suicid\w*|kill\s+myself|end my life|end it all|don'?t want to live|matarme|me quiero matar|me voy a matar|quitar(me|se)? la vida|ya no quiero vivir|no quiero seguir viviendo|hacer(me)? da[nñ]o)\b/i
+      .test(userMessage.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
+    var _emText;
+    if (_isCrisis) {
+      _emText = _emLang === 'en'
+        ? "What you're feeling matters and you are not alone. Please contact the **988 Suicide and Crisis Lifeline** right now — call or text **988**. People are available 24 hours a day, in English and Spanish, free of charge. If you are in immediate danger, dial **911**. I'm not the right help for this — you deserve to talk to someone trained right now."
+        : 'Lo que está sintiendo es importante y usted no está solo. Por favor llame ahora mismo a la **Línea 988 de Crisis y Suicidio** — llame o envíe un mensaje al **988**. Hay personas disponibles 24 horas que hablan español y le pueden ayudar gratis. Si está en peligro inmediato, marque **911**. Yo aquí no soy la persona adecuada para esto — usted merece hablar con alguien capacitado ahora.';
+    } else {
+      _emText = _emLang === 'en'
+        ? "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first."
+        : 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.';
+    }
+    console.warn('[CHAT] ' + (_isCrisis ? 'crisis (988)' : 'medical emergency') + ' guardrail fired, LLM skipped, ip=' + ip);
     return res.status(200).json({
       response: _emText,
-      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'medical_emergency' },
+      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: _isCrisis ? 'crisis_988' : 'medical_emergency' },
     });
   }
 
@@ -658,8 +693,50 @@ export default async function handler(req, res) {
   // grounds every age/enrollment statement on code-computed figures.
   messages.push({ role: 'user', content: ageGroundingNote ? userMessage + '\n\n' + ageGroundingNote : userMessage });
 
-  // Anthropic API call
+  // LLM call — provider-branched. Both branches produce the SAME four outputs
+  // (assistantText, _searchUsed, _searchDomains, _usage) so everything after —
+  // tag parsing, compliance filter, USTED normalization, audit record — runs
+  // identically no matter which provider answered. That invariant is what
+  // keeps the deterministic compliance layer authoritative (mission §5).
   try {
+    var assistantText = '';
+    var _searchUsed = false;
+    var _searchDomains = [];
+    var _usage = null;
+    var _provModel = MODEL;
+    var _provRequestId = null;
+    var _provLatencyMs = null;
+    var _provModelRole = null;
+
+    if (providerName === 'openai') {
+      var llmResult = await callOpenAI({
+        systemPrompt: SYSTEM_PROMPT,
+        contextSummary: contextSummary,
+        messages: messages,
+        maxOutputTokens: 1024,
+        webSearchAllowedDomains: WEB_SEARCH_ALLOWED_DOMAINS,
+      });
+      if (!llmResult.ok) {
+        if (llmResult.status === 503) {
+          // Same contract as a missing Anthropic key: client flips to the
+          // deterministic regex engine. No key material in the response.
+          return res.status(503).json({ error: 'LLM_UNAVAILABLE', message: 'API key not configured' });
+        }
+        // A15.10 parity — full detail server-side only; generic 502 to the
+        // browser. sanitizeDetail strips anything key-shaped as defense in depth.
+        console.error('[CHAT] OpenAI provider error', llmResult.code, llmResult.httpStatus || '', sanitizeDetail(llmResult.detail));
+        return res.status(502).json({ error: 'LLM_API_ERROR' });
+      }
+      assistantText = llmResult.text;
+      _searchUsed = llmResult.searchUsed === true;
+      _searchDomains = llmResult.searchDomains || [];
+      _usage = llmResult.usage || null;
+      _provModel = llmResult.model;
+      _provRequestId = llmResult.requestId || null;
+      _provLatencyMs = llmResult.latencyMs != null ? llmResult.latencyMs : null;
+      _provModelRole = llmResult.modelRole || null;
+    } else {
+    // ── Anthropic path — pre-existing, byte-equivalent behavior ──────────
     // Reusable request body. `messages` is the only field we mutate across
     // pause_turn continuations (we append the assistant's partial content and
     // re-send so the server-side search loop can resume — the documented way to
@@ -741,14 +818,13 @@ export default async function handler(req, res) {
       break;
     }
 
-    var assistantText = '';
     // AUDIT 2026-08-13 (O-04, P1) — the loop below kept ONLY text blocks and
     // discarded server_tool_use / web_search_tool_result unread, so the URLs the
     // model actually consulted were thrown away. An FMO asking "why did the AI
     // say this?" could not be answered. Capture the provenance (domains only —
     // never page content, never PII) for the audit record emitted below.
-    var _searchUsed = false;
-    var _searchDomains = [];
+    // (assistantText/_searchUsed/_searchDomains are declared at the top of the
+    // provider branch — this block fills them for the Anthropic path.)
     if (data && Array.isArray(data.content)) {
       for (var j = 0; j < data.content.length; j++) {
         var _blk = data.content[j];
@@ -768,7 +844,10 @@ export default async function handler(req, res) {
         }
       }
     }
+    _usage = (data && data.usage) || null;
+    } // end anthropic branch
 
+    // ── Shared post-processing — runs for EVERY provider ─────────────────
     // Detect tags
     var lower = assistantText.toLowerCase();
     var wantHandoff = /\[handoff\]/i.test(assistantText);
@@ -823,7 +902,11 @@ export default async function handler(req, res) {
       }
       console.log('[AI-AUDIT] ' + JSON.stringify({
         ts: new Date().toISOString(),
-        model: MODEL,
+        provider: providerName,
+        model: _provModel,
+        model_role: _provModelRole,           // production | qa | override (openai only)
+        request_id: _provRequestId,           // provider-issued id — never a secret
+        latency_ms: _provLatencyMs,
         figures_year: FIGURES_YEAR,
         prompt_len: SYSTEM_PROMPT.length,   // proxy for prompt version
         lang: lang,
@@ -846,7 +929,7 @@ export default async function handler(req, res) {
         wantHandoff: wantHandoff,
         wantClose: wantClose,
         wantSchedule: wantSchedule,
-        usage: data.usage || null,
+        usage: _usage,
       },
     });
   } catch (e) {

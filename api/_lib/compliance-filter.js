@@ -166,6 +166,14 @@ const EMERGENCY_USER_RES = [
   /\b(passed\s+out|pass(ing)?\s+out|unconscious|unresponsive|blacked\s+out|fainted)\b/,
   /\b(overdos\w*|od'?ed)\b/,
   /\b(suicid\w*|kill\s+myself)\b/,
+  // 2026-08-13 (found by the §15 wiring suite) — the net had NO Spanish
+  // self-harm phrases: "me quiero matar" sailed past this list and reached the
+  // LLM. The stem `suicid` only covers the clinical word; real callers say
+  // "matarme" / "quitarme la vida" / "ya no quiero vivir". Mirrors the client
+  // engine's detectCrisisLanguage ES list. api/chat.js routes these to the 988
+  // Lifeline (crisis wins over the generic 911 medical script).
+  /\b(matarme|me\s+quiero\s+matar|me\s+voy\s+a\s+matar|quitar(me|se)?\s+la\s+vida|ya\s+no\s+quiero\s+vivir|no\s+quiero\s+seguir\s+viviendo|quiero\s+morirme|me\s+quiero\s+morir|prefiero\s+morir|terminar\s+con\s+todo|acabar\s+con\s+todo|hacerme\s+da[nñ]o)\b/,
+  /\b(end\s+my\s+life|end\s+it\s+all|don'?t\s+want\s+to\s+live|wanna\s+die|i\s+want\s+to\s+die|better\s+off\s+dead|no\s+point\s+in\s+living)\b/,
   /\bemerg[ea]n[csz](ia|ya|y)\b/,
   /\bno\s+puedo\s+respir\w*/,
   /\b(me\s+falta\s+(el\s+)?aire|falta\s+de\s+aire|me\s+estoy\s+ahogando|no\s+me\s+llega\s+el\s+aire)\b/,
