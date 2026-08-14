@@ -4605,7 +4605,7 @@ function _isUserCorrection(m: string): boolean {
     // RT-11: `primero entiend` fired on "primero entiendo que debo pagar la prima,
     // ¿luego qué?" — ordinary reasoning, 1st person, a QUESTION. Requires the
     // imperative/2nd-person object now. Same 1st-vs-2nd-person trap as CF-02.
-    /\b(no es eso|eso no (fue|es) lo que|no dije eso|yo no dije|no me pregunt|deja de pregunt|no preguntes|primero entiend[ae]|entienda primero|entiende primero|est[aá]s? asumiendo|no asumas|eso no aplica|nada que ver)/i.test(m)
+    /\b(no es eso|eso no (fue|es) lo que|no dije eso|yo no dije|no me pregunte|no me preguntes|deja de pregunt|no preguntes|primero entiend[ae]|entienda primero|entiende primero|est[aá]s? asumiendo|no asumas|eso no aplica|nada que ver)/i.test(m)
     || /\bme (malinterpret|entendi[oó] mal)/i.test(m)
     || /\bme entendite\b/i.test(m)
     || /\b(that'?s not what i (said|asked|meant)|i did ?n'?t say that|stop asking|don'?t ask me|do not ask me|quit asking|you'?re assuming|stop assuming|don'?t assume|understand (the problem |my problem )?first|that'?s not it|not what i meant|you got me wrong|you have me wrong)/i.test(m);
@@ -4699,8 +4699,19 @@ function _isAuditDeclaration(m: string): boolean {
     // harm CF-05 was written to stop, one clause over, and it argues the false-positive
     // direction is the worse one. So: the denial must not name a third party ("de X")
     // and must not ride along with a concrete service intent.
+    // RED TEAM ROUND 2 — TWO MORE SHAPES NEEDED VETOING, AND THEY ARE THE TWO MOST
+    // VALUABLE INBOUND CALLS THERE ARE:
+    //   PROSPECT  — "no soy cliente AÚN / TODAVÍA, ¿me pueden ayudar?"
+    //   CAREGIVER — "no soy beneficiario, soy la hija y llamo por mi mamá"
+    // Both were told "you're testing the system, not looking for service" and had
+    // their lead suppressed. 8 of 10 realistic non-tester sentences misfired. A denial
+    // of CURRENT customer status is a normal thing for a new caller to say; only a
+    // denial with nothing else attached reads as a tester.
     || (/\bno soy (un[a]? )?(cliente|paciente|beneficiario|usuario)( real| de verdad)?\b/i.test(m)
         && !/\bno soy (un[a]? )?(cliente|paciente|beneficiario|usuario)\w*\s+(de|del|de la)\b/i.test(m)
+        && !/\b(a[uú]n|todav[ií]a|apenas|por ahora|de momento)\b/i.test(m)
+        && !/\b(llamo por|pregunto por|es para mi|soy (la|el) (hija|hijo|esposa|esposo|nuera|yerno|sobrin)|mi (mam[aá]|pap[aá]|esposo|esposa|madre|padre|t[ií]a|t[ií]o))\b/i.test(m)
+        && !/\b(me pueden ayudar|pueden ayudarme|quiero informaci[oó]n|quiero saber|c[oó]mo funciona|qu[eé] ofrecen|necesito)\b/i.test(m)
         && !/\b(cobr|factura|medicaid|medicare|farmacia|doctor|m[eé]dic|hospital|plan|prima|copago|receta|medicament)/i.test(m))
     || /\b(modo (de )?prueba|hago testing|haciendo testing|prueba del sistema|auditor[ií]a del sistema)\b/i.test(m)
     || /\b(i'?m|i am) (auditing|testing|evaluating) (you|clara|this|the (system|bot|chat|assistant))\b/i.test(m)
@@ -4712,6 +4723,7 @@ function _isAuditDeclaration(m: string): boolean {
         // Same third-party / concrete-intent veto as the Spanish clause above:
         // "I am not a patient at that clinic and they keep billing me" is a real caller.
         && !/\bnot a (real )?(customer|client|patient|user)\s+(of|at|with)\b/i.test(m)
+        && !/\b(yet|still|calling (for|about)|for my (husband|wife|mother|father|mom|dad|son|daughter)|can you help|want information|need)\b/i.test(m)
         && !/\b(charg|bill|medicaid|medicare|pharmacy|doctor|hospital|plan|premium|copay|prescription|medication)/i.test(m))
     || /\b(qa test|test mode|verifying the system|testing the system|system test)\b/i.test(m);
   if (strong) return true;
@@ -4743,19 +4755,30 @@ function _isAuditExit(m: string): boolean {
   // no es una prueba de orina" and "¿es en serio que respondes así?" were both
   // switching audit mode off. An exit must be a deliberate statement, not a phrase
   // that happens to collide with medical or rhetorical speech.
-  const negated = /\b(no|nunca|jam[aá]s|ya le dije que no|ya te dije que no)\s+(soy|es|estoy)\b/i.test(m)
-    || /\b(i'?m|i am) not a\b/i.test(m);
-  const clinicalOrRhetorical = /\b(sangre|orina|laboratorio|covid|diabetes|coraz[oó]n|az[uú]car|presi[oó]n|medicament|medicina|doctor|m[eé]dic[oa]|hospital|cl[ií]nica|examen|copago|receta)\b/i.test(m)
-    || /\b(blood|urine|lab|covid|diabetes|heart|sugar|pressure|medication|medicine|doctor|hospital|clinic|copay|prescription)\b/i.test(m)
-    || /\?\s*$/.test(m.trim());
-  if (clinicalOrRhetorical) return false;
-  const claimsRealCustomer = /\b(s[ií] soy (un[a]? )?cliente|soy (un[a]? )?cliente( real| de verdad)?|esto es real|ya no estoy probando|es un caso real)\b/i.test(m)
-    || /\b(i am a (real )?(customer|client)|i'?m a (real )?(customer|client)|this is real|this is ?n'?t a test|this is not a test|not testing anymore)\b/i.test(m);
-  if (claimsRealCustomer && negated) return false;
-  return claimsRealCustomer
-    || (/\bno es (una )?prueba\b/i.test(m) && !negated)
-    || /\bnecesito ayuda de verdad\b/i.test(m)
-    || /\bi really need help\b/i.test(m);
+  // RED TEAM ROUND 2 — MY FIRST VERSION CREATED A LOCKOUT, WHICH IS WORSE THAN THE
+  // BUG IT FIXED. 9 of 12 genuine exits failed: "no estoy probando, soy un cliente
+  // real" was vetoed by the blanket negation guard; "sí soy cliente real, me cobran
+  // mucho el COPAGO" by the clinical veto; anything phrased as a question by the "?"
+  // rule; and `ya no estoy probando` was listed INSIDE claimsRealCustomer while the
+  // negation guard made it unreachable — dead code. A caregiver calling about her
+  // husband was told she was testing the system and then could not get out.
+  //
+  // This guard must FAIL OPEN toward normal service: the cost of a wrong exit is one
+  // unnecessary contact ask, the cost of a wrong lockout is a denied caller and a lost
+  // lead. So only an explicit RE-AFFIRMATION of tester status blocks the exit; every
+  // other reading of "I'm real" is honoured.
+  if (/\bno soy (un[a]? )?(cliente|paciente|beneficiario|usuario)\b/i.test(m)) return false;
+  if (/\b(sigo|todav[ií]a estoy|a[uú]n estoy) (probando|testeando|auditando)\b/i.test(m)) return false;
+  if (/\b(i'?m|i am) (still )?(testing|not a)\b/i.test(m)) return false;
+  // COLLISION, resolved deliberately: round 1 required clinical speech not to flip the
+  // flag ("…y no es una prueba DE ORINA" is a caller describing lab work); round 2
+  // required a bare "no es una prueba" to exit (the lockout is the worse failure).
+  // Both hold if the veto is scoped to "prueba" WITH a clinical complement in the same
+  // phrase — the medical reading always names what the test is of, the exit never does.
+  const _pruebaClinical = /\bprueba de (sangre|orina|laboratorio|esfuerzo|covid|embarazo|glucosa|az[uú]car|colesterol|rutina)/i.test(m);
+  return (!_pruebaClinical && /\b(esto no es (una )?prueba|no es (una )?prueba|ya no es prueba)\b/i.test(m))
+    || /\b(s[ií] soy (un[a]? )?cliente|soy (un[a]? )?cliente|soy cliente real|esto es real|ya no estoy probando|necesito ayuda de verdad|es un caso real|caso real)\b/i.test(m)
+    || /\b(i am a (real )?(customer|client)|i'?m a (real )?(customer|client)|this is real|this is ?n'?t a test|this is not a test|not testing anymore|i really need help)\b/i.test(m);
 }
 
 /** Deterministic Medicare COST diagnosis flow. Returns a full turn result when
@@ -4826,9 +4849,10 @@ function _handleCostFlow(
   /** Which rung of the shared escalation ladder this turn is on (1-based). */
   const _recoveryRung = (): number =>
     (_prevRecovery ? ((state.correctionCount || 0) + (state.confusionCount || 0)) : 0) + 1;
-  /** Carry the OTHER ladder's count forward so the shared rung keeps climbing. */
-  const _carry = (field: 'correctionCount' | 'confusionCount'): number =>
-    _prevRecovery ? (state[field] || 0) : 0;
+  // The rung is written into ONE counter and the other is ZEROED, so the sum always
+  // equals the rung. My first version carried the other counter forward as well, which
+  // double-counted it: two recovery turns summed to 3 and the ladder skipped rung 3's
+  // advisor offer and jumped straight to the phone number.
 
   const restate = (question: string, intent: string) => {
     // Sawil 2026-06-23 — restate ONCE, then stop. A human acknowledges and re-asks
@@ -4973,7 +4997,7 @@ function _handleCostFlow(
         {
           costFlowStage: 'done',
           costFlowAttempts: 0,
-          correctionCount: corrections, confusionCount: _carry('confusionCount'),
+          correctionCount: corrections, confusionCount: 0,
           needsHuman: true,
           lastBotIntent: 'costflow_correction_final',
         },
@@ -4989,7 +5013,7 @@ function _handleCostFlow(
           costChargeSource: undefined,
           costFlowStage: 'offered_advisor',
           costFlowAttempts: 0,
-          correctionCount: corrections, confusionCount: _carry('confusionCount'),
+          correctionCount: corrections, confusionCount: 0,
           lastBotOfferedAdvisor: true,
           lastBotIntent: 'costflow_correction_escalate',
         },
@@ -5007,7 +5031,7 @@ function _handleCostFlow(
         costChargeSource: undefined,
         costFlowStage: 'ask_source',
         costFlowAttempts: 0,
-        correctionCount: corrections, confusionCount: _carry('confusionCount'),
+        correctionCount: corrections, confusionCount: 0,
         incomeRefused: _objectedToIncome ? true : state.incomeRefused,
         lastBotIntent: 'costflow_correction_ack',
       },
@@ -5034,7 +5058,7 @@ function _handleCostFlow(
         isEs
           ? 'Perdone — por escrito no me estoy explicando bien. Llame al 1-855-720-8555 y una persona de ClearPoint se lo explica con calma, sin costo.'
           : "I'm sorry — I'm not explaining this well in writing. Please call 1-855-720-8555 and a person at ClearPoint will walk you through it calmly, at no cost.",
-        { costFlowStage: 'done', confusionCount: confusions, correctionCount: _carry('correctionCount'), needsHuman: true, lastBotIntent: 'costflow_confusion_final' },
+        { costFlowStage: 'done', confusionCount: confusions, correctionCount: 0, needsHuman: true, lastBotIntent: 'costflow_confusion_final' },
         true,
       );
     }
@@ -5050,7 +5074,7 @@ function _handleCostFlow(
           isEs
             ? 'Perdone — mejor no seguimos por escrito. Llame al 1-855-720-8555 y una persona de ClearPoint se lo explica con calma, sin costo.'
             : "I'm sorry — let's not keep doing this in writing. Please call 1-855-720-8555 and a person at ClearPoint will explain it calmly, at no cost.",
-          { costFlowStage: 'done', confusionCount: confusions, correctionCount: _carry('correctionCount'), needsHuman: true, lastBotIntent: 'costflow_confusion_final' },
+          { costFlowStage: 'done', confusionCount: confusions, correctionCount: 0, needsHuman: true, lastBotIntent: 'costflow_confusion_final' },
           true,
         );
       }
@@ -5058,11 +5082,11 @@ function _handleCostFlow(
         isEs
           ? 'Perdone. Lo digo simple: puedo pedirle a un asesor licenciado de ClearPoint que le llame y le explique esto sin costo. ¿Quiere que le llamen? Con "sí" o "no" me basta.'
           : 'Sorry. Simply put: I can have a licensed ClearPoint advisor call you and explain this at no cost. Would you like them to call? "Yes" or "no" is enough.',
-        { confusionCount: confusions, correctionCount: _carry('correctionCount'), lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_confusion_offered_advisor' },
+        { confusionCount: confusions, correctionCount: 0, lastBotOfferedAdvisor: true, lastBotIntent: 'costflow_confusion_offered_advisor' },
       );
     }
     if (confusions >= 2) {
-      const r = goEducate({ confusionCount: confusions, correctionCount: _carry('correctionCount') }, isEs
+      const r = goEducate({ confusionCount: confusions, correctionCount: 0 }, isEs
         ? 'Disculpe — creo que le estoy complicando la explicación. Se lo dejo simple. '
         : "I'm sorry — I think I'm overcomplicating this. Let me keep it simple. ");
       // Tag it as a recovery turn so the SHARED ladder keeps climbing; goEducate's
@@ -5084,9 +5108,9 @@ function _handleCostFlow(
     // ask_income / ask_net_gross: a caller who cannot follow a question about their
     // own finances must not be pressed on it a second time. Drop the screening.
     if (stage === 'ask_income' || stage === 'ask_net_gross') {
-      return goEducate({ confusionCount: confusions, correctionCount: _carry('correctionCount'), incomeRefused: true });
+      return goEducate({ confusionCount: confusions, correctionCount: 0, incomeRefused: true });
     }
-    return emit(simpler, { confusionCount: confusions, correctionCount: _carry('correctionCount'), lastBotIntent: `costflow_confusion_${stage}` });
+    return emit(simpler, { confusionCount: confusions, correctionCount: 0, lastBotIntent: `costflow_confusion_${stage}` });
   }
 
   // ── AUDIT 2026-08-13 — STICKY INCOME REFUSAL ────────────────────────────────
@@ -5094,7 +5118,14 @@ function _handleCostFlow(
   // re-entry could ask again. Once recorded, the flow skips financial screening
   // entirely and goes to education plus a licensed-advisor offer, which is the
   // genuinely useful next step and needs no income figure at all.
-  if (_isIncomeRefusal(m) && (state.costFlowStage === 'ask_income' || state.lastBotIntent === 'costflow_ask_income')) {
+  // RED TEAM ROUND 2 — A HEDGED ANSWER IS STILL AN ANSWER. This ran before the amount
+  // was parsed, so "no sé, como 1200 al mes" and "es privado pero le digo, 1100" were
+  // scored as refusals: the figure the caller had just volunteered was discarded AND
+  // screening was disabled for the rest of the session. Worst case "i have a private
+  // pension of 1400" — no refusal in it at all — matched on the bare word `private`.
+  // If the turn carries a number, it is an answer; the refusal check does not apply.
+  if (_isIncomeRefusal(m) && _costMoney(raw) == null
+      && (state.costFlowStage === 'ask_income' || state.lastBotIntent === 'costflow_ask_income')) {
     return goEducate({ incomeRefused: true });
   }
   const sourceQ = isEs
@@ -5289,9 +5320,23 @@ function _handleCostFlow(
     // _isAuditExit ("no soy un cliente" matching "soy cliente"): in Spanish the negation
     // is a separate word before the verb, so any affirmative pattern matches its own
     // negation unless the negation is excluded explicitly.
-    const _explicitlyCannot = /\b(no puedo pagar\w*|no me alcanza|no tengo (con qu[eé]|dinero|para)|no puedo con (esto|eso|el pago)|ayuda para pagar\w*|no me da para|se me hace imposible pagar|can'?t afford|cannot afford|ca ?n'?t manage to pay|need help paying|help paying|struggling to pay|can'?t pay|cannot pay)/i.test(m);
-    const _explicitlyCan = /\b(s[ií] puedo pagar|no es problema pagar|i can (afford|pay)|able to pay|paying (it )?is ?n'?t the problem)/i.test(m)
-      || (/\bpuedo pagar/i.test(m) && !/\bno puedo pagar/i.test(m));
+    // RED TEAM ROUND 2 — MY NARROWING WENT TOO FAR THE OTHER WAY. Only 5 of 18 genuine
+    // Spanish hardship statements still reached screening: "apenas me alcanza para
+    // comer", "no me queda dinero para las medicinas", "es mucho para mi pensión",
+    // "vivo del seguro social nomás y no me queda nada", "me está ahogando ese pago",
+    // "no puedo con tanto gasto" all matched nothing. Those callers lost MSP/Extra Help
+    // screening entirely — the mirror-image harm of the premature-screening defect, and
+    // just as real. Widened to cover how seniors actually describe hardship, while
+    // still requiring an INABILITY (a bare "es caro" remains a complaint, not a
+    // confirmation; "caro PARA MÍ" is personal and does count).
+    const _explicitlyCannot = /\b(no puedo pagar\w*|no me alcanza|apenas me alcanza|no alcanzo a pagar|no me queda (dinero|nada)|no tengo (con qu[eé]|dinero|para)|no puedo con (esto|eso|el pago|tanto)|ayuda para pagar\w*|que me ayuden con el pago|no me da para|se me hace (dif[ií]cil|imposible) pagar|me est[aá] ahogando|apretado de dinero|es mucho para mi (pensi[oó]n|ingreso|presupuesto)|(muy|demasiado) caro para m[ií]|vivo del seguro social)/i.test(m)
+      || /\b(can'?t afford|cannot afford|ca ?n'?t manage to pay|not able to pay|unable to pay|need help paying|help paying|struggling to pay|can'?t pay|cannot pay|too expensive for me|barely afford|can barely|fixed income)/i.test(m);
+    // NEGATION-GUARDED ON BOTH SIDES. The English half of my first version was not,
+    // so "i can't afford it and i'm NOT ABLE TO PAY" — more hardship, not less —
+    // vetoed itself and lost the screening.
+    const _explicitlyCan = (/\b(s[ií] puedo pagar|no es problema pagar|puedo pagar)/i.test(m) && !/\bno puedo pagar/i.test(m))
+      || (/\bi can (afford|pay)\b/i.test(m) && !/\b(ca ?n'?t|cannot|do ?n'?t think i can|not able|barely)\b/i.test(m))
+      || (/\bable to pay\b/i.test(m) && !/\b(not|un)\s?able to pay\b/i.test(m));
     const cannotAfford = _explicitlyCannot && !_explicitlyCan;
     // Understanding wins a tie: explaining a charge is always safe, whereas screening
     // someone who only wanted an explanation is the defect this whole change fixes.
@@ -5364,10 +5409,37 @@ function _handleCostFlow(
     //       "si señorita eso es"). As a conjunction it is never the first word.
     // Unrecognised phrasings fall through to the confirm_problem clarification, which
     // is the safe direction: ask again, never assume a confirmation.
-    const _uncertainty = /\b(no s[e]\b|no estoy segur|no me acuerdo|no recuerdo|quien sabe|puede que|tal vez|quiza|no tengo idea|preguntele|digame usted|no estoy clar|averigu)/i;
-    const _yesToken = /(^|[^a-záéíóúñ])(yes|yeah|yep|correcto|exacto|exactamente|as[ií] es|es correcto|claro|afirmativo|eso es|that'?s right|thats right|correct)([^a-záéíóúñ]|$)/i;
-    const _leadingSi = /^\s*s[ií]\b/i;
-    const _yes = !_uncertainty.test(m) && (_yesToken.test(m) || _leadingSi.test(m));
+    // RED TEAM ROUND 2 — MY FIRST FIX FOR THIS WAS TOO NARROW IN BOTH DIRECTIONS.
+    // `_leadingSi` alone rejected 13 of 26 natural affirmatives ("eso sí", "así mismo",
+    // "efectivamente", "sip", "ujum", "pues sí", "ya se lo dije que sí"), and a
+    // confirmed Part B premium is THE MSP/Extra Help pathway — every one of those
+    // callers silently lost access to screening. Meanwhile "si le entendí bien, usted
+    // me está preguntando del cheque?" was read as consent to the question.
+    // Three properties, each earning its place:
+    //   • a bare "sí" counts when it OPENS or CLOSES the reply — the conjunction
+    //     always sits mid-clause with the clause continuing after it;
+    //   • a reply that is itself a QUESTION is never a confirmation;
+    //   • an explicit denial of the Social Security source beats any "sí" in the same
+    //     sentence. "sí me lo quitan pero NO del cheque, es de la farmacia" was being
+    //     recorded as a Social Security deduction and screened for income — the worst
+    //     single output found in this round.
+    const _endsQuestion = /\?\s*$/.test(raw.trim());
+    const _uncertainty = /\b(no s[e]\b|no estoy segur|no me acuerdo|no recuerdo|quien sabe|puede que|tal vez|quiza|no tengo idea|preguntele|digame usted|no estoy clar|averigu|si supiera|si acaso)/i;
+    const _deniesSS = /\bno\b[^.?!]{0,20}\b(cheque|seguro social)\b/i.test(m)
+      || /\bes de (la |el )?(farmacia|doctor|hospital|clinica)\b/i.test(m);
+    const _yesToken = /(^|[^a-z])(yes|yeah|yep|yup|sip|sep|ujum|ajam|aja|correcto|exacto|exactamente|efectivamente|positivo|asi es|asi mismo|es correcto|claro|por supuesto|desde luego|seguro que si|eso es|eso si|pues si|si senor|si senora|si senorita|afirmativo|that'?s right|thats right|correct)([^a-z]|$)/i;
+    const _siAffirm = /^\s*s[ií]\b(?!\s+(supiera|acaso))/i.test(m) || /\bs[ií]\s*[.!]*$/i.test(m.trim());
+    const _yes = !_endsQuestion && !_uncertainty.test(m) && !_deniesSS
+      && (_yesToken.test(m) || _siAffirm);
+    // An explicit "it is NOT from the check" is a NO even when the sentence opens
+    // with "sí" — route back to source selection rather than confirming.
+    if (_deniesSS && !no) {
+      return emit(
+        isEs ? 'Entendido, entonces no es del cheque del Seguro Social. ¿De dónde sale ese cobro — de una farmacia, de un doctor u hospital, o de una factura?'
+             : "Got it, so it's not from the Social Security check. Where does that charge come from — a pharmacy, a doctor or hospital, or a bill?",
+        { costFlowStage: 'ask_source', costChargeSource: undefined, costFlowAttempts: 0, lastBotIntent: 'costflow_ask_source' },
+      );
+    }
     if (!_yes) {
       // They answered something else entirely — most often they are telling us what
       // they actually want. Route back to understanding rather than screening.
@@ -5405,7 +5477,11 @@ function _handleCostFlow(
     if (_mentionsMedicaid(m)) return goEducate({ dualEligible: true });
     // User declines / doesn't know the income — never force it; go to advisor review.
     // Now also RECORDS the refusal so no later branch re-asks.
-    if (_isIncomeRefusal(m)) return goEducate({ incomeRefused: true });
+    // RED TEAM ROUND 2 (R2-06) — but a HEDGED ANSWER IS AN ANSWER: "no sé, como 1200
+    // al mes" carries the figure. The pre-flow guard got this gate and this in-stage
+    // check did not, so the number was still being discarded here and incomeRefused
+    // pinned. Same rule in both places: a turn with a number is never a refusal.
+    if (_isIncomeRefusal(m) && _costMoney(raw) == null) return goEducate({ incomeRefused: true });
     const inc = _costMoney(raw);
     if (inc == null) {
       if (attempts >= 1) return goEducate({});
@@ -5705,8 +5781,13 @@ function _handleAuditModeGuard(
   // "¿Cuál es su nombre, por favor?" in four turns, which is the exact regression
   // CF-03 claimed to have closed. Consenting to an advisor offer is now treated as
   // what it is: the start of contact collection.
+  // RED TEAM ROUND 2 — an ENUMERATED consent list leaks by construction: "perfecto"
+  // was not on it, so a self-declared tester reached "¿Cuál es su nombre, por favor?"
+  // in four turns — the same escape this gate was added to close. Widened, and the
+  // shape of the rule is the lesson: enumerating affirmatives is the pattern that
+  // keeps failing here.
   const _consentedToOffer = !!state.lastBotOfferedAdvisor
-    && /^\s*(s[ií]|yes|yeah|ok|okay|dale|claro|por favor|please|acepto|autorizo|est[aá] bien|adelante|bueno)\b/i.test(m);
+    && /^\s*(s[ií]|yes|yeah|yep|ok|okay|dale|claro|por favor|please|acepto|autorizo|est[aá] bien|esta bien|adelante|bueno|buen[ií]simo|perfecto|excelente|de acuerdo|me parece|listo|h[aá]galo|hagalo|quiero|sure|go ahead|sounds good)\b/i.test(m);
   const _wouldCollect = detectHumanEscalation(userMessage)
     || state.advisorHandoffStarted
     || state.schedulingCallback
