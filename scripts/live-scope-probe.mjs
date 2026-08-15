@@ -63,6 +63,9 @@ for (const c of CASES) {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          // The endpoint enforces an Origin allowlist (A15.1) — a same-origin
+          // header is required against production; localhost dev allows none.
+          ...(BASE.startsWith('https://') ? { origin: BASE } : {}),
           'x-forwarded-for': '10.77.' + Math.floor(Math.random() * 250) + '.' + Math.floor(Math.random() * 250),
         },
         body: JSON.stringify({ userMessage: c.q, context: { language: c.lang || 'es', zipCode: '11375', state: 'NY' }, history: [] }),
