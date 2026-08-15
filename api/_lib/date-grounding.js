@@ -47,13 +47,24 @@ const DATE_FORMS = [
 export function extractBirthDate(text, now) {
   if (!text || !BIRTH_CONTEXT_RE.test(text)) return null;
   const ref = now || new Date();
+  // RED TEAM R2 2026-08-14 (P2) — leftmost-match + age≥0 chose the WRONG year in
+  // "I'm looking at a 2026 plan, and I was born in 1955": it picked 2026 (age 0),
+  // redacted the harmless plan year, forwarded the real birth year 1955 to the
+  // provider, and told the model the caller turns 65 in 2091. Two changes:
+  //   • scan ALL candidates of each form (matchAll), not just the leftmost;
+  //   • require a plausible ADULT age (18–120). This is a Medicare context —
+  //     under-65 beneficiaries exist (disability), but nobody calling about
+  //     their own coverage was born 0–17 years ago, while CURRENT plan years
+  //     (2019–2026+) fall exactly in that window. Ambiguity resolves to the
+  //     candidate that could actually be a caller's birth year.
   for (const [re, parse] of DATE_FORMS) {
-    const m = text.match(re);
-    if (!m) continue;
-    const parsed = parse(m);
-    const age = ref.getFullYear() - parsed.y;
-    if (age < 0 || age > 120) continue; // implausible → keep scanning
-    return { ...parsed, matched: m[0] };
+    const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g');
+    for (const m of text.matchAll(g)) {
+      const parsed = parse(m);
+      const age = ref.getFullYear() - parsed.y;
+      if (age < 18 || age > 120) continue; // implausible for a caller → next candidate
+      return { ...parsed, matched: m[0] };
+    }
   }
   return null;
 }

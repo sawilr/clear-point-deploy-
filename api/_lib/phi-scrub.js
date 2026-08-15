@@ -99,6 +99,13 @@ export function normalizeForPhiMatch(text, hasContext) {
 // client engine), so it never needs a raw phone/email in free text.
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const PHONE_TEXT_RE = /\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b/g;
+// RED TEAM R2 2026-08-14 (P2) — the MOST COMMON way a caller types a number is
+// contiguous ("5551234567"), which the separator-requiring pattern missed, and
+// no numeric rule covers a 10-digit run (NINE_DIGIT is exactly 9, CC needs 13+).
+// US area codes never start with 0/1, which keeps ZIP+ZIP collisions out.
+// Obfuscated emails ("jane [at] test dot com") also bypassed EMAIL_RE.
+const PHONE_CONTIG_RE = /\b[2-9]\d{9}\b/g;
+const EMAIL_OBFUSCATED_RE = /\b[A-Za-z0-9._%+-]+\s*(?:\[\s*at\s*\]|\(\s*at\s*\)|\bat\b)\s*[A-Za-z0-9-]+\s*(?:\[\s*dot\s*\]|\(\s*dot\s*\)|\bdot\b)\s*[A-Za-z]{2,}\b/gi;
 
 export function scrubPHI(text, opts) {
   if (!text || typeof text !== 'string') return { text: text || '', detected: [] };
@@ -107,8 +114,12 @@ export function scrubPHI(text, opts) {
     var pre = text;
     if (EMAIL_RE.test(pre)) { EMAIL_RE.lastIndex = 0; pre = pre.replace(EMAIL_RE, '[email]'); detectedContact.push('EMAIL'); }
     EMAIL_RE.lastIndex = 0;
+    if (EMAIL_OBFUSCATED_RE.test(pre)) { EMAIL_OBFUSCATED_RE.lastIndex = 0; pre = pre.replace(EMAIL_OBFUSCATED_RE, '[email]'); detectedContact.push('EMAIL_OBFUSCATED'); }
+    EMAIL_OBFUSCATED_RE.lastIndex = 0;
     if (PHONE_TEXT_RE.test(pre)) { PHONE_TEXT_RE.lastIndex = 0; pre = pre.replace(PHONE_TEXT_RE, '[phone]'); detectedContact.push('PHONE'); }
     PHONE_TEXT_RE.lastIndex = 0;
+    if (PHONE_CONTIG_RE.test(pre)) { PHONE_CONTIG_RE.lastIndex = 0; pre = pre.replace(PHONE_CONTIG_RE, '[phone]'); detectedContact.push('PHONE_CONTIG'); }
+    PHONE_CONTIG_RE.lastIndex = 0;
     var inner = scrubPHI(pre);
     return { text: inner.text, detected: inner.detected.concat(detectedContact) };
   }

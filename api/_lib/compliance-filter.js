@@ -158,10 +158,21 @@ const FORBIDDEN_PHRASES = [
 // MEDICAL script because the chat.js copy lacked them. Two lists that must
 // agree will drift; one list cannot.
 const SELF_HARM_RES = [
-  /\b(suicid\w*|kill\s+myself)\b/,
-  // ES — real callers say "matarme"/"quitarme la vida", not the clinical word.
-  /\b(matarme|me\s+quiero\s+matar|me\s+voy\s+a\s+matar|quitar(me|se)?\s+la\s+vida|ya\s+no\s+quiero\s+vivir|no\s+quiero\s+seguir\s+viviendo|quiero\s+morirme|me\s+quiero\s+morir|prefiero\s+morir|terminar\s+con\s+todo|acabar\s+con\s+todo|hacerme\s+da[nñ]o)\b/,
-  /\b(end\s+my\s+life|end\s+it\s+all|don'?t\s+want\s+to\s+live|wanna\s+die|i\s+want\s+to\s+die|better\s+off\s+dead|no\s+point\s+in\s+living)\b/,
+  // RED TEAM R2 (2026-08-14) — both directions fixed at once:
+  //   UNDER (P1): "hurt/harm/cut myself", "prefiero estar muerto", "no quiero
+  //   vivir más" (without the leading "ya"), "no le veo sentido a la vida",
+  //   "desaparecer para siempre", "ojalá no despertara" all missed the net —
+  //   a suicidal caller reached the model as an ordinary Medicare turn.
+  //   OVER (P2): bare /terminar|acabar con todo/ fired on the everyday senior
+  //   idiom "quiero terminar con todo este papeleo", refusing a frustrated
+  //   caller's Medicare question with a suicide-hotline script. The negative
+  //   lookahead splits the senses: the phrase ENDING at "todo" (or followed by
+  //   emphasis like "de una vez") stays crisis; "todo + determiner + noun"
+  //   ("todo este papeleo", "todo esto del plan") is mundane and passes.
+  /\b(suicid\w*|kill\s+myself|hurt\s+myself|harm\s+myself|cut\s+myself)\b/,
+  /\b(matarme|me\s+quiero\s+matar|me\s+voy\s+a\s+matar|quitar(me|se)?\s+la\s+vida|(ya\s+)?no\s+quiero\s+vivir|no\s+quiero\s+seguir\s+viviendo|quiero\s+morirme|me\s+quiero\s+morir|prefiero\s+morir|prefiero\s+estar\s+muert[oa]|no\s+le\s+veo\s+sentido\s+a\s+la\s+vida|desaparecer\s+para\s+siempre|me\s+quiero\s+desaparecer|ojala\s+no\s+despert\w*|hacerme\s+da[nñ]o)\b/,
+  /\b(terminar|acabar)\s+con\s+todo(?!\s+(este|esta|estos|estas|el|la|los|las|esto|ese|esa|eso|mi|mis|su|sus)\b)/,
+  /\b(end\s+my\s+life|end\s+it\s+all|don'?t\s+want\s+to\s+live|wanna\s+die|i\s+want\s+to\s+die|better\s+off\s+dead|no\s+point\s+in\s+living|no\s+reason\s+left\s+to\s+live)\b/,
 ];
 
 /** TRUE when the (raw) user text carries self-harm language. Used by
