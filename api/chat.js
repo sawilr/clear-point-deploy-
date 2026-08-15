@@ -34,6 +34,8 @@ import { detectMessageLang } from './_lib/lang-detect.js';
 // for every provider. The deterministic structural layer in the client remains
 // authoritative regardless of which model answers (mission §5).
 import { selectLLMProvider, callOpenAI, sanitizeDetail } from './_lib/llm-provider.js';
+// 2026-08-15 — PARTD-001: deterministic Medicare entity scoping. See module header.
+import { resolveScope, scopeGate, buildScopeNote } from './_lib/entity-scope.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -297,16 +299,17 @@ When the conversation is about plans, coverage, costs, or you are setting up an 
 # these are the correct 2026 standard figures. The "as of 2026" qualifier below lets
 # the bot degrade gracefully (state the year) rather than assert a stale number as
 # timeless fact if this review is missed.
-The dollar figures below are the CY2026 standard amounts. Do NOT infer the current year from them — the real date is supplied every turn in the [Context for this turn] block; trust that, not this list. When asked about STANDARD Medicare costs you MAY state these confidently, always attaching the year the figure belongs to ("as of 2026" / "para 2026") so the caller knows its vintage. They are public facts, not a plan recommendation:
-- Part B standard premium: $202.90/month (2026). It can be HIGHER for higher incomes (IRMAA).
-- Part B annual deductible: $283 (2026).
-- Part A inpatient hospital deductible: $1,736 per benefit period (2026).
-- Part D out-of-pocket cap: $2,100 (2026) — once a member's covered drug costs reach this, they pay $0 for covered drugs the rest of the year.
+The dollar figures below are the CY2026 standard amounts. Do NOT infer the current year from them — the real date is supplied every turn in the [Context for this turn] block; trust that, not this list. When asked about STANDARD Medicare costs you MAY state these confidently, always attaching the year the figure belongs to ("as of 2026" / "para 2026") so the caller knows its vintage. They are public facts, not a plan recommendation.
+EACH figure below is tagged with the ONE Part it belongs to. A figure may ONLY appear in an answer about ITS OWN Part (or in a comparison the caller explicitly requested). Sharing a word like "deductible" with another Part is NEVER a reason to cite that other Part's figure — see PART-SPECIFIC FIGURES above. (PARTD-001, 2026-08-15: entity-atomic records — the old mixed list let "deducible" pull Part A/B figures into a Part D answer.)
+- [Part B] standard premium: $202.90/month (2026). It can be HIGHER for higher incomes (IRMAA).
+- [Part B] annual deductible: $283 (2026).
+- [Part A] inpatient hospital deductible: $1,736 per benefit period (2026).
+- [Part D] out-of-pocket cap: $2,100 (2026) — once a member's covered drug costs reach this, they pay $0 for covered drugs the rest of the year.
 NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG now).
-More 2026 standard figures (state these confidently when asked; public facts):
-- Part A premium: most people pay $0 (40+ work quarters). $311/month with 30-39 quarters; $565/month with fewer than 30 quarters.
-- Part A hospital coinsurance: days 61-90 $434/day; lifetime-reserve days $868/day. Skilled nursing (SNF) days 21-100: $217/day.
-- Part D maximum deductible: $615 (2026). The $2,100 out-of-pocket cap (above) is the yearly drug-cost ceiling.
+More 2026 standard figures (state these confidently when asked about THEIR Part; public facts):
+- [Part A] premium: most people pay $0 (40+ work quarters). $311/month with 30-39 quarters; $565/month with fewer than 30 quarters.
+- [Part A] hospital coinsurance: days 61-90 $434/day; lifetime-reserve days $868/day. Skilled nursing (SNF) days 21-100: $217/day.
+- [Part D] maximum deductible: $615 (2026) — plans may charge less or $0. The $2,100 out-of-pocket cap (above) is the yearly drug-cost ceiling. A plan's ACTUAL deductible varies: never present the $615 maximum as the caller's own deductible.
 - Extra Help / LIS 2026 income guidelines: roughly $1,995/month single, $2,705/month married (resource limits about $18,090 single / $36,100 married). These are GUIDELINES; the agency confirms actual eligibility.
 
 # Enrollment periods (stable rules; state from memory, do NOT search for these)
@@ -686,6 +689,20 @@ export default async function handler(req, res) {
 
   // Build the message list for Claude
   var contextSummary = buildContextSummary(conversationContext, _turnLang, _now);
+  // ── ENTITY SCOPE LOCK (2026-08-15, PARTD-001) ───────────────────────────
+  // Resolve which Medicare entities the caller actually implicated — current
+  // message first, inherited from recent user turns for bare follow-ups. The
+  // scope note steers generation from the DYNAMIC block (cache-friendly: the
+  // big cached system block never changes); the output gate after the
+  // compliance filters is the deterministic guarantee. Both halves log.
+  var _scopePriorUserTexts = conversationHistory
+    .filter(function (t) { return t && t.role === 'user' && typeof t.content === 'string'; })
+    .map(function (t) { return t.content; });
+  var _scope = resolveScope(userMessage, _scopePriorUserTexts);
+  if (_scope.entities.length) {
+    var _scopeNote = buildScopeNote(_scope.entities);
+    contextSummary = contextSummary ? contextSummary + '\n' + _scopeNote : _scopeNote;
+  }
   var messages = [];
   // Replay last 12 turns as user/assistant pairs (Anthropic format)
   var recent = conversationHistory.slice(-12);
@@ -950,6 +967,27 @@ export default async function handler(req, res) {
       cleanText = ustedPostFilter(cleanText);
     }
 
+    // ── ENTITY SCOPE GATE (2026-08-15, PARTD-001) — deterministic backstop ──
+    // The prompt rule (3712b92) lowers the leak probability; sampling means it
+    // cannot reach zero. This strips any surviving sentence that attributes
+    // cost figures to a Medicare Part the caller did not ask about. Runs LAST
+    // so no later pass can reintroduce stripped content. Fail-safe inside the
+    // gate: a reply is never emptied.
+    var _scopeGated = scopeGate(cleanText, _scope.entities);
+    if (_scopeGated.failSafe) {
+      // RED TEAM 2026-08-15 (P2) — the reply was 100% foreign cost content, so
+      // stripping would have emptied it and the original went through. That is
+      // the WORST leak this gate exists for; it must be loud, never silent.
+      console.warn('[CHAT] SCOPE_LEAK_UNRESOLVED (fail-safe): reply was entirely unrequested '
+        + _scopeGated.strippedEntities.join(',') + ' cost content (scope='
+        + _scope.entities.join(',') + '/' + _scope.source + ') — delivered unfiltered rather than blank. ip=' + ip);
+    } else if (_scopeGated.strippedCount > 0) {
+      console.warn('[CHAT] SCOPE_LEAK_PREVENTED: stripped ' + _scopeGated.strippedCount
+        + ' sentence(s) attributing cost to unrequested ' + _scopeGated.strippedEntities.join(',')
+        + ' (scope=' + _scope.entities.join(',') + '/' + _scope.source + ') ip=' + ip);
+      cleanText = _scopeGated.text;
+    }
+
     // ── AUDIT 2026-08-13 (O-04, P1) — AI ANSWER AUDIT RECORD ────────────────
     // Nothing was logged about WHY an answer was given, so "why did the AI say
     // this?" was unanswerable — a gap for §16 evidence packages. One structured
@@ -979,6 +1017,11 @@ export default async function handler(req, res) {
         search_used: _searchUsed,
         search_domains: _searchDomains,     // hostnames only — never page content
         violations: filtered.violations,    // which compliance rules fired
+        scope: _scope.entities,             // entity scope lock (PARTD-001)
+        scope_source: _scope.source,        // current | inherited | none
+        scope_stripped: _scopeGated.strippedCount,
+        scope_stripped_entities: _scopeGated.strippedEntities,
+        scope_failsafe: _scopeGated.failSafe === true,
         want_handoff: wantHandoff,
         want_schedule: wantSchedule,
         reply_len: cleanText.length,

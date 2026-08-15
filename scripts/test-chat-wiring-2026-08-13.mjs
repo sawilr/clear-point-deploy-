@@ -276,6 +276,73 @@ try {
     check('8.9 whitespace-only model env falls back to the default', m.active === 'gpt-5.6-terra', `active=${JSON.stringify(m.active)}`);
   }
 
+  // ══ 9. ENTITY SCOPE LOCK (PARTD-001, 2026-08-15) — through the REAL handler ═
+  // The live incident: Part D question answered with Part A/B deductibles. The
+  // prompt rule steers; these cases prove the DETERMINISTIC output gate on the
+  // production route, plus the steering note in the outbound request.
+  {
+    const LEAKY =
+      'Un deducible es lo que usted paga antes de que su plan comience a pagar. ' +
+      'El deducible de la Parte B en 2026 es de $283 al año. ' +
+      'El deducible del hospital de la Parte A es de $1,736 por período de beneficio. ' +
+      'En la Parte D, cada plan fija su propio deducible de medicamentos; muchos planes tienen deducibles más bajos o de $0.';
+    let outbound = null;
+    __setLLMTestFetch(async (url, init) => { outbound = JSON.parse(init.body); return okResponse(LEAKY); });
+    const res = await callChat({
+      userMessage: '¿Qué es la Parte D y cómo funciona el deducible de medicinas?',
+      context: CTX, history: [],
+    });
+    const out = (res.jsonBody && res.jsonBody.response) || '';
+    check('9.1 PARTD-001: leaked Part B figure stripped on the production route', out.indexOf('283') === -1, out);
+    check('9.2 PARTD-001: leaked Part A figure stripped', out.indexOf('1,736') === -1, out);
+    check('9.3 PARTD-001 critical assert: NOT contains Parte A / Parte B',
+      !/parte a\b/i.test(out) && !/parte b\b/i.test(out), out);
+    check('9.4 the Part D answer itself survives', /parte d/i.test(out) && /deducible/i.test(out), out);
+    check('9.5 steering note travels in the outbound instructions',
+      outbound && /SCOPE THIS TURN/.test(outbound.instructions) && /Part D ONLY/.test(outbound.instructions),
+      'scope note missing from the dynamic context block');
+    check('9.6 SCOPE_LEAK_PREVENTED logged with entities',
+      _logs.some((l) => l.indexOf('SCOPE_LEAK_PREVENTED') !== -1 && /A|B/.test(l)));
+    check('9.7 audit record carries scope fields',
+      _logs.some((l) => l.indexOf('[AI-AUDIT]') !== -1 && l.indexOf('"scope":["D"]') !== -1 && l.indexOf('"scope_stripped":2') !== -1),
+      'no [AI-AUDIT] line with scope:["D"] + scope_stripped:2');
+  }
+  {
+    // Comparison explicitly requested → BOTH figures must survive untouched.
+    const BOTH = 'El deducible de la Parte B en 2026 es $283 al año. El deducible de la Parte D varía por plan.';
+    __setLLMTestFetch(async () => okResponse(BOTH));
+    const res = await callChat({
+      userMessage: '¿Cuál es la diferencia entre el deducible de Parte B y el de Parte D?',
+      context: CTX, history: [],
+    });
+    const out = (res.jsonBody && res.jsonBody.response) || '';
+    check('9.8 CROSS-SCOPE-001: requested comparison keeps both figures', out.indexOf('283') !== -1 && /parte d/i.test(out), out);
+  }
+  {
+    // No entity implicated → gate inactive → a general cost survey survives.
+    const SURVEY = 'La Parte A tiene un deducible de $1,736, la Parte B de $283, y los planes de la Parte D fijan el suyo.';
+    __setLLMTestFetch(async () => okResponse(SURVEY));
+    const res = await callChat({ userMessage: '¿Cómo funcionan los costos de Medicare en general?', context: CTX, history: [] });
+    const out = (res.jsonBody && res.jsonBody.response) || '';
+    check('9.9 no-entity question → gate inactive, survey intact', out.indexOf('1,736') !== -1 && out.indexOf('283') !== -1, out);
+  }
+  {
+    // Bare follow-up inherits scope from the previous user turn.
+    let outbound = null;
+    __setLLMTestFetch(async (url, init) => { outbound = JSON.parse(init.body); return okResponse('El deducible de la Parte D varía por plan; muchos son de $0.'); });
+    await callChat({
+      userMessage: '¿y cuánto es el deducible?',
+      context: CTX,
+      history: [
+        { role: 'user', content: '¿Qué es la Parte D?' },
+        { role: 'assistant', content: 'La Parte D es la cobertura de medicamentos recetados.' },
+      ],
+    });
+    check('9.10 inherited scope from prior user turn reaches the steering note',
+      outbound && /SCOPE THIS TURN/.test(outbound.instructions) && /Part D ONLY/.test(outbound.instructions),
+      'follow-up turn lost the Part D scope');
+  }
+
 } finally {
   __setLLMTestFetch(null);
   restoreBase();
