@@ -17,6 +17,8 @@ import crypto from 'node:crypto';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { setSoaToken, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
+// AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
+import { readJsonBody } from './_lib/read-body.js';
 
 // PHASE 7 — SOA gate. Mirror of src/lib/soaContent.ts SOA_ENABLED.
 // Until the owner confirms the FMO carrier/product counts, we refuse to
@@ -46,27 +48,10 @@ export default async function handler(req, res) {
   }
 
   // ── Read body — PHASE 6: cap at 32 KB (small payload only) ──────────────
-  var body = {};
-  try { body = req.body || {}; } catch (e1) {
-    try {
-      body = await new Promise(function (resolve, reject) {
-        var chunks = []; var total = 0; var MAX = 32 * 1024;
-        req.on('data', function (c) {
-          total += c.length;
-          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
-          chunks.push(c);
-        });
-        req.on('end', function () {
-          var raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
-        });
-        req.on('error', reject);
-      });
-    } catch (e2) {
-      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
-      return res.status(400).json({ error: 'Cannot read body' });
-    }
-  }
+  // AUDIT 2026-08-15 — shared reader (_lib/read-body.js) fixes the
+  // malformed-JSON hang; it answers 400/413 itself and returns null.
+  var body = await readJsonBody(req, res, { maxBytes: 32 * 1024 });
+  if (body === null) return;
 
   // ── Validate required lead context ─────────────────────────────────────
   var fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';

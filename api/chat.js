@@ -27,6 +27,8 @@ import { MEDICARE_KNOWLEDGE } from './_lib/medicare-knowledge.js';
 // language mirroring (BUG 4b). See each module for the audit transcripts.
 import { extractBirthDate, buildAgeGroundingNote, redactBirthDate } from './_lib/date-grounding.js';
 import { detectMessageLang } from './_lib/lang-detect.js';
+// AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
+import { readJsonBody } from './_lib/read-body.js';
 // 2026-08-13 — OpenAI production integration. Provider mechanics (SDK client,
 // Responses API, model routing, timeout, bounded retry, error taxonomy) live in
 // the provider module; EVERYTHING Clara — guards, PHI scrub, injection screens,
@@ -420,7 +422,12 @@ export default async function handler(req, res) {
   // accounting, body parsing or provider call, so a tripped switch costs nothing
   // and cannot be exhausted. Env-var driven: no redeploy, and no dependency that
   // an outage could take out. Falls through untouched when unset.
-  if (enforceKill(res, 'ai', (req.body && req.body.context && req.body.context.language) || 'en')) return;
+  // AUDIT 2026-08-15 — touching req.body THROWS on malformed JSON (platform
+  // parser). The kill-switch language hint must never crash the request, so
+  // read it defensively; the real body read below handles the 400.
+  var _killLang = 'en';
+  try { _killLang = (req.body && req.body.context && req.body.context.language) || 'en'; } catch (_e) { _killLang = 'en'; }
+  if (enforceKill(res, 'ai', _killLang)) return;
 
   // ── A15.2 Rate limit (IP-based, KV-backed when available) ──────────────
   var ip = clientId(req);
@@ -436,27 +443,11 @@ export default async function handler(req, res) {
   }
 
   // Read body. PHASE 6 — cap raw stream at 64 KB to prevent memory DoS.
-  var body = {};
-  try { body = req.body || {}; } catch (e1) {
-    try {
-      body = await new Promise(function (resolve, reject) {
-        var chunks = []; var total = 0; var MAX = 64 * 1024;
-        req.on('data', function (c) {
-          total += c.length;
-          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
-          chunks.push(c);
-        });
-        req.on('end', function () {
-          var raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
-        });
-        req.on('error', reject);
-      });
-    } catch (e2) {
-      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
-      return res.status(400).json({ error: 'Cannot read body' });
-    }
-  }
+  // AUDIT 2026-08-15 — shared reader (_lib/read-body.js): the old inline
+  // fallback re-read an already-consumed stream on malformed JSON and hung the
+  // invocation. The reader answers 400/413 itself and returns null.
+  var body = await readJsonBody(req, res, { maxBytes: 64 * 1024 });
+  if (body === null) return;
 
   // ── Provider selection (2026-08-13, OpenAI integration) ─────────────────
   // Explicit LLM_PROVIDER env wins; otherwise key presence decides (OpenAI

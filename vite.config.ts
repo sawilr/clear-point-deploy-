@@ -66,6 +66,22 @@ export default defineConfig(({ command }) => ({
             secure: true,
             headers: { Origin: 'https://clearpointsenioradvisors.com' },
           },
+      // AUDIT 2026-08-15 (Turnstile QA) — OPT-IN ONLY: when LEAD_API_PROXY is
+      // set, forward /api/submit-lead to a LOCAL harness
+      // (scripts/dev-lead-server.mjs) so the full form → challenge → server
+      // verification loop can be exercised without touching production or the
+      // real CRM. Unset (the default), /api/submit-lead stays NOT proxied —
+      // exactly the behavior this config always had.
+      ...(process.env.LEAD_API_PROXY
+        ? {
+            '/api/submit-lead': {
+              target: process.env.LEAD_API_PROXY,
+              changeOrigin: true,
+              secure: false,
+              headers: { Origin: 'http://localhost:5173' },
+            },
+          }
+        : {}),
     },
   },
   resolve: {

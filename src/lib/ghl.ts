@@ -57,6 +57,108 @@ export interface GHLLeadPayload {
 
 const API_ROUTE = '/api/submit-lead';
 
+// ── Cloudflare Turnstile (anti-bot challenge — AUDIT 2026-08-15, target 1) ───
+// Feature-gated: everything below is inert unless VITE_TURNSTILE_SITEKEY was
+// set at build time. Token acquisition lives HERE because every lead surface
+// (LeadForm, SmartMedicareReview, Zara ChatBot, Clara CustomerServiceBot)
+// funnels through submitLeadToGHL, so one integration covers them all.
+//
+// The token is verified SERVER-side in api/submit-lead.js (fail closed when
+// TURNSTILE_SECRET is configured) — the client never decides pass/fail, it
+// only attaches the token. If acquisition fails here (script blocked, network,
+// Cloudflare outage) we still submit WITHOUT a token: in enforce mode the
+// server rejects with a clear message that includes the phone fallback; with
+// enforcement off the lead flows exactly as today. That keeps this client
+// forward- and backward-compatible with every server mode.
+//
+// UX/a11y: the widget renders in "execute" mode inside a fixed, centered,
+// on-top container that stays EMPTY (renders nothing) unless Cloudflare needs
+// user interaction — in which case the iframe paints inside it, reachable by
+// mouse, touch, keyboard, and screen reader. Seniors on the normal path see
+// nothing and click nothing.
+const TURNSTILE_SITEKEY: string = (import.meta.env.VITE_TURNSTILE_SITEKEY as string | undefined) ?? '';
+const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+const TURNSTILE_TOKEN_TIMEOUT_MS = 12000;
+
+interface TurnstileApi {
+  render: (el: HTMLElement, opts: Record<string, unknown>) => string | undefined;
+  execute: (widgetId: string) => void;
+  remove?: (widgetId: string) => void;
+}
+type TurnstileWindow = Window & { turnstile?: TurnstileApi };
+
+let turnstileLoader: Promise<boolean> | null = null;
+function loadTurnstileScript(): Promise<boolean> {
+  if (turnstileLoader) return turnstileLoader;
+  turnstileLoader = new Promise<boolean>((resolve) => {
+    if ((window as TurnstileWindow).turnstile) { resolve(true); return; }
+    const s = document.createElement('script');
+    const timer = setTimeout(() => { turnstileLoader = null; resolve(false); }, 10000);
+    s.src = TURNSTILE_SCRIPT_URL;
+    s.async = true;
+    s.onload = () => { clearTimeout(timer); resolve(!!(window as TurnstileWindow).turnstile); };
+    s.onerror = () => {
+      clearTimeout(timer);
+      // Allow a later submission to retry the script load (transient network).
+      turnstileLoader = null;
+      resolve(false);
+    };
+    document.head.appendChild(s);
+  });
+  return turnstileLoader;
+}
+
+/** Acquire a fresh single-use Turnstile token, or '' on any failure. A fresh
+ *  widget is rendered per call (tokens are single-use; a retried submission
+ *  must never reuse a spent token — Cloudflare rejects those). */
+async function getTurnstileToken(): Promise<string> {
+  if (!TURNSTILE_SITEKEY || typeof document === 'undefined') return '';
+  const loaded = await loadTurnstileScript();
+  const ts = loaded ? (window as TurnstileWindow).turnstile : undefined;
+  if (!ts) return '';
+  let container: HTMLDivElement | null = null;
+  let widgetId: string | undefined;
+  try {
+    container = document.createElement('div');
+    container.style.position = 'fixed';
+    container.style.bottom = '110px';
+    container.style.left = '50%';
+    container.style.transform = 'translateX(-50%)';
+    container.style.zIndex = '70';
+    document.body.appendChild(container);
+    return await new Promise<string>((resolve) => {
+      let settled = false;
+      const settle = (v: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const timer = setTimeout(() => settle(''), TURNSTILE_TOKEN_TIMEOUT_MS);
+      try {
+        widgetId = ts.render(container as HTMLElement, {
+          sitekey: TURNSTILE_SITEKEY,
+          execution: 'execute',
+          'refresh-expired': 'never',
+          callback: (t: string) => settle(typeof t === 'string' ? t : ''),
+          'error-callback': () => settle(''),
+          'timeout-callback': () => settle(''),
+          'unsupported-callback': () => settle(''),
+        });
+        if (widgetId != null) ts.execute(widgetId);
+        else settle('');
+      } catch {
+        settle('');
+      }
+    });
+  } catch {
+    return '';
+  } finally {
+    try { if (widgetId != null && ts.remove) ts.remove(widgetId); } catch { /* widget already gone */ }
+    try { container?.remove(); } catch { /* already detached */ }
+  }
+}
+
 // Sawil 2026-07-09 — HTTP status of the most recent submit. Lets LeadForm show a
 // specific "too many attempts" message on 429 WITHOUT changing this function's
 // boolean contract (ChatBot / SmartReview / CustomerServiceBot stay untouched).
@@ -135,6 +237,14 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     if (payload.signer_user_agent) { body.signer_user_agent = payload.signer_user_agent; }
     if (payload.signer_ip) { body.signer_ip = payload.signer_ip; }
     if (payload.elapsed_ms != null) { body.elapsed_ms = payload.elapsed_ms; }
+
+    // Anti-bot challenge (AUDIT 2026-08-15) — attach a Turnstile token when the
+    // feature is configured at build time. Acquisition failure still submits:
+    // the SERVER decides pass/fail (see the Turnstile section above).
+    if (TURNSTILE_SITEKEY) {
+      const challengeToken = await getTurnstileToken();
+      if (challengeToken) body.turnstile_token = challengeToken;
+    }
 
     lastSubmitStatus = 0;
     const response = await fetch(API_ROUTE, {

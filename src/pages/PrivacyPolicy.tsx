@@ -12,7 +12,7 @@ export default function PrivacyPolicy() {
         <h1 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-2">
           {t('Privacy Policy', 'Política de Privacidad')}
         </h1>
-        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: June 2026', 'Última Actualización: Junio de 2026')}</p>
+        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: August 2026', 'Última Actualización: Agosto de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>
@@ -112,7 +112,55 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('9. Changes to This Policy', '9. Cambios a Esta Política')}</h2>
+            <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('9. Cookies & Analytics', '9. Cookies y Analítica')}</h2>
+            <p>
+              {t(
+                'We use a small amount of local browser storage for essential site functions: your language preference, your cookie choice, and the chat assistants (Clara and Zara). These are necessary for the site to work and do not track you across other websites.',
+                'Usamos una pequeña cantidad de almacenamiento local del navegador para funciones esenciales del sitio: su preferencia de idioma, su elección de cookies y los asistentes de chat (Clara y Zara). Son necesarias para que el sitio funcione y no lo rastrean en otros sitios web.'
+              )}
+            </p>
+            <p className="mt-3">
+              {t(
+                'Google Analytics runs ONLY if you choose "Accept all" in our cookie banner. If you choose "Essentials only" — or make no choice — no analytics script loads and no analytics cookies are set. We do not use advertising pixels (no Meta/Facebook Pixel) and we never send personal or health information to analytics.',
+                'Google Analytics se ejecuta SOLO si usted elige "Aceptar todo" en nuestro aviso de cookies. Si elige "Solo esenciales" — o no elige nada — no se carga ningún script de analítica y no se crean cookies de analítica. No usamos píxeles publicitarios (sin píxel de Meta/Facebook) y nunca enviamos información personal o de salud a la analítica.'
+              )}
+            </p>
+            <p className="mt-3 mb-3">
+              {t(
+                'You can change your mind at any time. Use the button below to erase your cookie choice and any analytics cookies; the banner will appear again so you can choose fresh.',
+                'Puede cambiar de opinión en cualquier momento. Use el botón de abajo para borrar su elección de cookies y cualquier cookie de analítica; el aviso aparecerá de nuevo para que elija otra vez.'
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                // STATE E (consent revocation — AUDIT 2026-08-15): clear the
+                // stored choice + best-effort expire GA cookies, then reload so
+                // the gtag script is gone and the banner re-prompts.
+                try { localStorage.removeItem('cp_cookie_consent'); } catch { /* private mode */ }
+                try {
+                  const names = document.cookie
+                    .split(';')
+                    .map((c) => c.split('=')[0].trim())
+                    .filter((n) => n === '_ga' || n.startsWith('_ga_'));
+                  const host = window.location.hostname;
+                  const domains = ['', host, '.' + host.replace(/^www\./, '')];
+                  for (const name of names) {
+                    for (const d of domains) {
+                      document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/' + (d ? '; domain=' + d : '');
+                    }
+                  }
+                } catch { /* best effort */ }
+                window.location.reload();
+              }}
+              className="min-h-[44px] px-5 py-2.5 rounded-lg border border-earth-900/25 text-earth-900 text-sm font-semibold hover:bg-earth-900/5 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-gold-400"
+            >
+              {t('Reset cookie preferences', 'Restablecer preferencias de cookies')}
+            </button>
+          </section>
+
+          <section>
+            <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('10. Changes to This Policy', '10. Cambios a Esta Política')}</h2>
             <p>
               {t(
                 'We may update this Privacy Policy from time to time. The updated version will be posted on this page with the revised date. We encourage you to review this page periodically.',
@@ -122,7 +170,7 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('10. Contact Us', '10. Contáctenos')}</h2>
+            <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('11. Contact Us', '11. Contáctenos')}</h2>
             <p>
               {t('If you have questions about this Privacy Policy, please contact us:', 'Si tiene preguntas sobre esta Política de Privacidad, contáctenos:')}<br />
               <strong>Clear Point Senior Advisors</strong><br />

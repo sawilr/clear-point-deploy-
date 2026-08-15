@@ -21,6 +21,8 @@ import PDFDocument from 'pdfkit';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { getSoaToken, setSoaToken } from './_lib/soa-store.js';
+// AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
+import { readJsonBody } from './_lib/read-body.js';
 
 const AGENT_NAME = 'Sawil Reyes';
 const AGENT_NPN = '17261494';
@@ -65,27 +67,10 @@ export default async function handler(req, res) {
   if (!rl.ok) return res.status(429).json({ error: 'Too many sign attempts' });
 
   // ── Read body — PHASE 6: cap at 64 KB ──────────────────────────────────
-  var body = {};
-  try { body = req.body || {}; } catch (e1) {
-    try {
-      body = await new Promise(function (resolve, reject) {
-        var chunks = []; var total = 0; var MAX = 64 * 1024;
-        req.on('data', function (c) {
-          total += c.length;
-          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
-          chunks.push(c);
-        });
-        req.on('end', function () {
-          var raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
-        });
-        req.on('error', reject);
-      });
-    } catch (e2) {
-      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
-      return res.status(400).json({ error: 'Cannot read body' });
-    }
-  }
+  // AUDIT 2026-08-15 — shared reader (_lib/read-body.js) fixes the
+  // malformed-JSON hang; it answers 400/413 itself and returns null.
+  var body = await readJsonBody(req, res, { maxBytes: 64 * 1024 });
+  if (body === null) return;
 
   // ── Verify token ───────────────────────────────────────────────────────
   var token = typeof body.token === 'string' ? body.token : '';

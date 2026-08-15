@@ -29,6 +29,10 @@
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { enforceKill } from './_lib/kill-switch.js';
+// AUDIT 2026-08-15 (red-team F4) — shared JSON body reader: applies the same
+// bounded size cap every other endpoint uses (this one read req.body directly,
+// relying on the platform default ~4.5MB) and answers malformed JSON with 400.
+import { readJsonBody } from './_lib/read-body.js';
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 const GHL_VERSION = '2021-07-28';
@@ -64,11 +68,11 @@ export default async function handler(req, res) {
     return res.status(429).json({ error: 'Too many requests' });
   }
 
-  let body = req.body;
-  if (typeof body === 'string') {
-    try { body = JSON.parse(body); } catch { return res.status(400).json({ error: 'Invalid JSON' }); }
-  }
-  if (!body || typeof body !== 'object') return res.status(400).json({ error: 'Invalid body' });
+  // AUDIT 2026-08-15 — shared reader (8 KB cap): handles the malformed-JSON
+  // throw (→ 400) and oversize bodies (→ 413) uniformly; returns null after
+  // sending its own response.
+  const body = await readJsonBody(req, res, { maxBytes: 8 * 1024 });
+  if (body === null) return;
 
   const phone10 = tenDigits(body.phone);
   const email = typeof body.email === 'string' && body.email.includes('@')

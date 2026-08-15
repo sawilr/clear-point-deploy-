@@ -17,6 +17,8 @@
 
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
+// AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
+import { readJsonBody } from './_lib/read-body.js';
 
 // Sawil 2026-06-29 SECURITY HOTFIX (audit finding 01 — unauthenticated CRM
 // enumeration). The public name+last4 lookup let anyone confirm whether a person
@@ -98,30 +100,10 @@ export default async function handler(req, res) {
   if (!LOOKUP_ENABLED) return genericLookup(req, res);
 
   // ── Read body (cap 8 KB) ────────────────────────────────────────────────
-  let body = {};
-  try {
-    body = req.body || {};
-  } catch {
-    try {
-      body = await new Promise((resolve, reject) => {
-        const chunks = [];
-        let total = 0;
-        const MAX = 8 * 1024;
-        req.on('data', (c) => {
-          total += c.length;
-          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
-          chunks.push(c);
-        });
-        req.on('end', () => {
-          const raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
-        });
-        req.on('error', reject);
-      });
-    } catch {
-      return badResponse(res, 400, 'cannot_read_body');
-    }
-  }
+  // AUDIT 2026-08-15 — shared reader (_lib/read-body.js) fixes the
+  // malformed-JSON hang; it answers 400/413 itself and returns null.
+  const body = await readJsonBody(req, res, { maxBytes: 8 * 1024 });
+  if (body === null) return;
 
   // ── Validate input ──────────────────────────────────────────────────────
   const fullName = typeof body.fullName === 'string' ? body.fullName.trim().slice(0, 80) : '';

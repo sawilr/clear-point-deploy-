@@ -17,6 +17,24 @@ import { enforceKill } from './_lib/kill-switch.js';
 // The client-side firewall (sensitiveGuard) covers the common chat path but is
 // narrower, misses non-chat surfaces, and is bypassable with a direct POST.
 import { scrubPHI } from './_lib/phi-scrub.js';
+// AUDIT 2026-08-15 (security remediation) — shared body reader (fixes the
+// malformed-JSON hang; see read-body.js) + Turnstile server-side verification
+// (remediation target 1; inert until TURNSTILE_SECRET is configured).
+import { readJsonBody } from './_lib/read-body.js';
+import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
+
+// AUDIT 2026-08-15 (remediation target 4 — abuse monitoring) — one
+// machine-parseable, PII-free outcome line per request so abuse patterns
+// (origin floods, consent probing, challenge failures, rate-limit pressure)
+// are measurable from runtime logs alone. NEVER pass PII here: only enumerated
+// outcome labels, the HTTP status, coarse dimensions (language, source label)
+// and non-identifying reason codes. The existing per-gate console.warn lines
+// stay — this adds the uniform summary they lacked.
+function leadAudit(outcome, status, extra) {
+  try {
+    console.log('[LEAD-AUDIT] ' + JSON.stringify(Object.assign({ evt: 'lead_audit', outcome: outcome, status: status }, extra || {})));
+  } catch (_e) { /* observability must never break the lead path */ }
+}
 
 // Sawil 2026-06-30 AUDIT FIX C1 (no lost leads) — a CONSENTED lead must never be
 // lost to a transient GHL failure. Retry the GHL call on network errors and on
@@ -55,6 +73,9 @@ export default async function handler(req, res) {
   // ── A15.1 CORS — allowlist ──────────────────────────────────────────────
   var allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) {
+    // Rejected origin is an operational abuse signal (target 4). The header
+    // value is attacker-supplied but non-PII; cap it so logs stay bounded.
+    leadAudit('origin_rejected', 403, { origin: String((req.headers && req.headers.origin) || '').slice(0, 100) });
     return res.status(403).json({ error: 'Origin not allowed' });
   }
   applyCors(req, res, allowedOrigin);
@@ -67,6 +88,7 @@ export default async function handler(req, res) {
     res.setHeader('X-RateLimit-Limit', '5');
     res.setHeader('X-RateLimit-Window', '3600');
     res.setHeader('X-RateLimit-Policy', '5;w=3600, 10;w=86400');
+    leadAudit('method_rejected', 405, { method: String(req.method || '').slice(0, 10) });
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -110,11 +132,13 @@ export default async function handler(req, res) {
   res.setHeader('X-RateLimit-Policy', '5;w=3600, 10;w=86400');
   if (!rlFlood.ok) {
     res.setHeader('Retry-After', String(rlFlood.retryAfter));
+    leadAudit('rate_limited', 429, { tier: 'flood_hour' });
     return res.status(429).json({ error: 'Too many submissions, try again later' });
   }
   var rlFloodDay = await rateLimit(ip, { max: 120, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-flood-d' });
   if (!rlFloodDay.ok) {
     res.setHeader('Retry-After', String(rlFloodDay.retryAfter));
+    leadAudit('rate_limited', 429, { tier: 'flood_day' });
     return res.status(429).json({ error: 'Daily submission limit reached' });
   }
 
@@ -122,26 +146,14 @@ export default async function handler(req, res) {
   // before any env/auth setup. This way bot traffic is discarded with the
   // minimum amount of server work and never touches GHL token logic.
   // PHASE 6 — cap raw stream at 64 KB to prevent memory DoS.
-  var body = {};
-  try { body = req.body || {}; } catch (e1) {
-    try {
-      body = await new Promise(function (resolve, reject) {
-        var chunks = []; var total = 0; var MAX = 64 * 1024;
-        req.on('data', function (c) {
-          total += c.length;
-          if (total > MAX) { req.destroy(); reject(new Error('body_too_large')); return; }
-          chunks.push(c);
-        });
-        req.on('end', function () {
-          var raw = Buffer.concat(chunks).toString('utf8');
-          resolve(raw && raw.trim() ? JSON.parse(raw) : {});
-        });
-        req.on('error', reject);
-      });
-    } catch (e2) {
-      if (e2 && e2.message === 'body_too_large') return res.status(413).json({ error: 'Payload too large' });
-      return res.status(400).json({ error: 'Cannot read request body' });
-    }
+  // AUDIT 2026-08-15 — moved to the shared reader in _lib/read-body.js: the old
+  // inline fallback re-read an already-consumed stream on malformed JSON and
+  // HUNG the invocation (live evidence: HTTP 000 after 15s). The reader answers
+  // 400/413 itself and returns null so we only have to bail out.
+  var body = await readJsonBody(req, res, { maxBytes: 64 * 1024 });
+  if (body === null) {
+    leadAudit('body_rejected', res.statusCode || 400, {});
+    return;
   }
 
   // ── Honeypot anti-bot gate (FIRST GATE — runs before env/auth) ─────────
@@ -156,17 +168,24 @@ export default async function handler(req, res) {
     console.warn('[ANTI-BOT] Honeypot triggered — submission discarded');
     // Return a benign success response (no contact_id) so the bot doesn't
     // probe further and so legitimate edge cases don't surface an error.
+    leadAudit('honeypot_discarded', 200, {});
     return res.status(200).json({ success: true, message: 'Received' });
   }
 
   // AUDIT 2026-08-13 (§12) — lead-capture kill switch. Placed AFTER the honeypot
   // so bots still receive the benign fake success and learn nothing, and BEFORE
   // the env/consent work so a tripped switch does no CRM or LLM work at all.
-  if (enforceKill(res, 'leads', body && body.preferred_language === 'Spanish' ? 'es' : 'en')) return;
+  if (enforceKill(res, 'leads', body && body.preferred_language === 'Spanish' ? 'es' : 'en')) {
+    leadAudit('kill_switch', res.statusCode || 503, {});
+    return;
+  }
 
   var token = process.env.HIGHLEVEL_TOKEN;
   var locationId = process.env.HIGHLEVEL_LOCATION_ID;
-  if (!token || !locationId) return res.status(500).json({ error: 'Server configuration error' });
+  if (!token || !locationId) {
+    leadAudit('server_misconfigured', 500, {});
+    return res.status(500).json({ error: 'Server configuration error' });
+  }
 
   // ── CONSENT GATE (Sawil 2026-06-29 SECURITY HOTFIX, finding 02) ───────────
   // No GHL operation of ANY kind (contact, opportunity, note, workflow) and no
@@ -178,6 +197,7 @@ export default async function handler(req, res) {
   // displayed TCPA authorization, with a versioned consent receipt.
   if (body.consent_to_contact !== true) {
     console.warn('[CONSENT] Lead rejected — explicit consent_to_contact=true required (type=' + (typeof body.consent_to_contact) + ')');
+    leadAudit('consent_rejected', 400, { consent_type: typeof body.consent_to_contact });
     return res.status(400).json({
       error: 'CONSENT_REQUIRED',
       message: 'Consent to be contacted is required before we can submit your request.',
@@ -210,6 +230,7 @@ export default async function handler(req, res) {
     var _badNameRe = /[<>{}[\]\\`$;=|\u0000-\u001f]|https?:|script|javascript:/i;
     if ((first_name && _badNameRe.test(first_name)) || (last_name && _badNameRe.test(last_name))) {
       console.warn('[VALIDATION] Name rejected: disallowed characters/markup');
+      leadAudit('validation_rejected', 400, { field: 'name' });
       return res.status(400).json({ error: 'Invalid name' });
     }
 
@@ -278,8 +299,38 @@ export default async function handler(req, res) {
     var _interestTag = _tagify('Interest', interest_type);
 
     var lead_type = typeof body.lead_type === 'string' ? body.lead_type.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '') : '';
-    var ghl_contact_id = typeof body.ghl_contact_id === 'string' ? body.ghl_contact_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
-    var ghl_assigned_user_id = typeof body.ghl_assigned_user_id === 'string' ? body.ghl_assigned_user_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
+    // ── AUDIT 2026-08-15 (authorization gap — independent red-team F1) ─────────
+    // FINDING: the handler trusted a client-supplied ghl_contact_id to PUT-
+    // OVERWRITE that CRM contact (name/phone/email/DOB) AND flip its
+    // consent_marketing/sms/calls/email flags to 'true' — i.e. an unauthenticated
+    // POST could FALSIFY TCPA consent on a THIRD PARTY and reassign ownership via
+    // the equally-unchecked ghl_assigned_user_id. There is NO check that the id
+    // belongs to the submitter.
+    //
+    // WHY IT IS SAFE TO NEUTRALIZE NOW: the ONLY legitimate producer of these
+    // fields is Clara's verified-existing-client path, whose id comes from
+    // /api/lookup-client — and that endpoint is HARD-DISABLED in production
+    // (LOOKUP_ENABLED=false → genericLookup, returns no contactId). So no
+    // legitimate traffic supplies ghl_contact_id today; the trusted source is
+    // dead while the privileged sink still trusted raw client input. GHL already
+    // dedupes by phone, so ignoring these and taking the normal create/upsert
+    // path loses NOTHING functionally.
+    //
+    // FAIL CLOSED: ignore both client-echoed ids. If one is present it is an
+    // abuse signal (or a stale cached bundle) — log it, drop it, continue as a
+    // normal create. RE-ENABLING the verified path must NOT flip a flag here:
+    // it must pass a SERVER-ISSUED, short-lived signed token that binds the
+    // contact id to a verified phone match — never a raw client id.
+    var _rawContactId = typeof body.ghl_contact_id === 'string' ? body.ghl_contact_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
+    var _rawAssignedUserId = typeof body.ghl_assigned_user_id === 'string' ? body.ghl_assigned_user_id.slice(0, 64).replace(/[^a-zA-Z0-9-]/g, '') : '';
+    if (_rawContactId || _rawAssignedUserId) {
+      console.warn('[SECURITY] client-supplied ghl_contact_id/ghl_assigned_user_id ignored (unverified — no signed binding). Treating as a normal create.');
+      // status:null — advisory mid-request event, not a terminal outcome; the
+      // request continues and its final outcome is logged separately.
+      leadAudit('client_contact_id_ignored', null, { had_contact_id: !!_rawContactId, had_assigned_user: !!_rawAssignedUserId });
+    }
+    var ghl_contact_id = '';
+    var ghl_assigned_user_id = '';
     var consent_text = _cap(body.consent_text, 4000);
     var consent_receipt_hash = typeof body.consent_receipt_hash === 'string' ? body.consent_receipt_hash.slice(0, 128).replace(/[^a-f0-9]/g, '') : '';
     var disclaimer_version = typeof body.disclaimer_version === 'string' ? body.disclaimer_version.slice(0, 32).replace(/[^a-zA-Z0-9._-]/g, '') : '';
@@ -353,7 +404,10 @@ export default async function handler(req, res) {
     // PUT. The old check 400'd it → every highest-intent verified-client inquiry
     // was silently dropped while the UI showed success. Require name+phone ONLY
     // when there is NO verified contact id to update.
-    if (!ghl_contact_id && (!first_name || !phone)) return res.status(400).json({ error: 'Missing required fields' });
+    if (!ghl_contact_id && (!first_name || !phone)) {
+      leadAudit('validation_rejected', 400, { field: 'required' });
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
 
     // ── Server-side U.S. phone validation (mirrors src/lib/validation.ts) ────────
     // Inline JS version — cannot import TypeScript modules in Vercel serverless functions
@@ -426,6 +480,7 @@ export default async function handler(req, res) {
       if (!phoneValidation.valid) {
         // Privacy: log validation reason only — never the raw phone number.
         console.warn('[VALIDATION] Phone rejected: ' + phoneValidation.reason);
+        leadAudit('validation_rejected', 400, { field: 'phone', reason: String(phoneValidation.reason || '').slice(0, 60) });
         return res.status(400).json({ error: 'Invalid U.S. phone number', reason: phoneValidation.reason });
       }
       phone10 = phoneValidation.national;
@@ -442,7 +497,37 @@ export default async function handler(req, res) {
     var _elapsed = Number(body.elapsed_ms);
     if (Number.isFinite(_elapsed) && _elapsed >= 0 && _elapsed < 3000) {
       console.warn('[ANTI-BOT] Min-fill-time gate triggered (' + Math.round(_elapsed) + 'ms) — submission discarded');
+      leadAudit('minfill_discarded', 200, {});
       return res.status(200).json({ success: true, message: 'Received' });
+    }
+    // ── AUDIT 2026-08-15 (remediation target 1) — Cloudflare Turnstile ────────
+    // Server-side challenge verification; the client attaches turnstile_token in
+    // src/lib/ghl.ts. Inert until TURNSTILE_SECRET is set ('off'); 'shadow'
+    // verifies and logs but never blocks (rollout observation); 'enforce'
+    // REQUIRES a valid token and FAILS CLOSED — including when siteverify is
+    // unreachable. Placed AFTER the free local gates (honeypot, min-fill,
+    // validation) so bots pay before we spend an outbound call, and BEFORE the
+    // strict rate-limit tiers, the lead-intel LLM call and every CRM write, so
+    // an unverified submission never consumes the human quota, never costs
+    // tokens, and never reaches GHL.
+    var _tsMode = turnstileMode();
+    if (_tsMode !== 'off') {
+      var _tsToken = typeof body.turnstile_token === 'string' ? body.turnstile_token : '';
+      var _tsResult = await verifyTurnstile(_tsToken, ip);
+      if (!_tsResult.ok) {
+        // codes are Cloudflare's own identifiers (e.g. timeout-or-duplicate,
+        // invalid-input-response) — operational signal, never PII.
+        console.warn('[ANTI-BOT] Turnstile verification failed (' + _tsMode + '): ' + _tsResult.codes.join(','));
+        if (_tsMode === 'enforce') {
+          leadAudit('challenge_rejected', 403, { codes: _tsResult.codes, transient: _tsResult.transient === true });
+          return res.status(403).json({
+            error: 'CHALLENGE_FAILED',
+            message: 'We could not verify your submission. Please try again, or call us at 1-855-720-8555.',
+          });
+        }
+      } else if (_tsMode === 'shadow') {
+        console.log('[ANTI-BOT] Turnstile shadow verification passed');
+      }
     }
     // ── CP-06 (2026-08-13) — TIER 2: the strict business limit ────────────────
     // This is the 5/hour the published policy advertises, and it is charged HERE:
@@ -456,11 +541,13 @@ export default async function handler(req, res) {
     if (!rlStrict.ok) {
       res.setHeader('Retry-After', String(rlStrict.retryAfter));
       console.warn('[RATE-LIMIT] strict per-IP submission window exceeded');
+      leadAudit('rate_limited', 429, { tier: 'strict_hour' });
       return res.status(429).json({ error: 'Too many submissions, try again later' });
     }
     var rlStrictDay = await rateLimit(ip, { max: 10, windowMs: 24 * 60 * 60 * 1000, prefix: 'lead-ok-d' });
     if (!rlStrictDay.ok) {
       res.setHeader('Retry-After', String(rlStrictDay.retryAfter));
+      leadAudit('rate_limited', 429, { tier: 'strict_day' });
       return res.status(429).json({ error: 'Daily submission limit reached' });
     }
 
@@ -475,6 +562,7 @@ export default async function handler(req, res) {
         // callers (and the UI) know it is temporary.
         res.setHeader('Retry-After', String((rlPhone.retryAfter || rlPhoneZip.retryAfter || 3600)));
         console.warn('[RATE-LIMIT] per-phone window exceeded (key hashed, not logged)');
+        leadAudit('rate_limited', 429, { tier: 'phone' });
         return res.status(429).json({ error: 'Too many submissions, try again later' });
       }
     }
@@ -620,6 +708,7 @@ export default async function handler(req, res) {
           console.error('[GHL] duplicate resolution failed: ' + String(e).slice(0, 120));
         }
         if (!_dupId) {
+          leadAudit('duplicate_unresolved', 409, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40) });
           return res.status(409).json({
             error: 'DUPLICATE_LEAD',
             message: 'We already have your request on file. A licensed advisor will follow up.',
@@ -642,6 +731,7 @@ export default async function handler(req, res) {
         _repeatRequest = true;
         ghlRes = { ok: true, status: 200, json: async function () { return { contact: { id: _dupId } }; } };
       } else {
+        leadAudit('crm_unavailable', 502, { upstream_status: ghlRes.status });
         return res.status(502).json({
           error: 'CRM_UNAVAILABLE',
           message: 'We could not submit your request right now. Please call us at 1-855-720-8555.',
@@ -755,6 +845,7 @@ export default async function handler(req, res) {
         } catch (_se) { /* search failed → fall through and create as before */ }
         if (_dupOpp) {
           console.log('[GHL] Opportunity idempotent skip — open opp already exists', { contactId: contactId, pipeline: pipelineId });
+          leadAudit('created', 200, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40), repeat: _repeatRequest === true, opportunity: 'existing' });
           return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined, opportunity: 'existing' });
         }
         var oppRes = await fetch('https://services.leadconnectorhq.com/opportunities/',{
@@ -773,8 +864,12 @@ export default async function handler(req, res) {
         console.error('[GHL] Opportunity creation exception: ' + (e && e.message ? e.message : String(e)));
       }
     }
+    leadAudit('created', 200, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40), repeat: _repeatRequest === true });
     return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined });
   } catch (err) {
+    // Never leak internals to the client. Log the class of failure only.
+    console.error('[submit-lead] unhandled exception: ' + (err && err.message ? String(err.message).slice(0, 200) : 'unknown'));
+    leadAudit('internal_error', 500, {});
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

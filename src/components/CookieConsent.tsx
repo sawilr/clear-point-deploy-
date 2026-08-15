@@ -15,14 +15,17 @@
 //     Privacy Policy link goes through useLocalizedPath so it stays inside
 //     /es/* while browsing Spanish.
 //
-// ANALYTICS GATING NOTE (audit 2026-07-27): Google Analytics is NOT loaded in
-// this codebase — src/lib/analytics.ts only pushes to a local window.dataLayer
-// (no network, no cookies) until a GTM container is added, and vercel.json's
-// CSP does not allow googletagmanager.com. There is therefore nothing to gate
-// today. WHEN GTM is activated (see the HOW TO ACTIVATE block in analytics.ts),
-// the loader MUST call getCookieConsent() and only inject the GTM script when
-// it returns 'all'. The homegrown chat (Zara/Clara) is functional/essential and
-// is not affected by the choice.
+// ANALYTICS GATING NOTE (updated 2026-08-15 — the 2026-07-27 note predated the
+// GA4 direct loader and had gone stale): GA4 IS wired, consent-gated, in
+// src/lib/analytics.ts (initGA4IfConsented). gtag.js loads ONLY when the
+// stored choice is 'all' — on 'essential' or no choice, no analytics script,
+// no network call, no analytics cookie exists. main.tsx re-checks on every
+// boot so a returning visitor's stored choice keeps applying. vercel.json's
+// CSP allows exactly the googletagmanager.com / google-analytics.com origins
+// this needs. The homegrown chat (Zara/Clara) is functional/essential and is
+// not affected by the choice. A visitor can reset their choice from the
+// Privacy Policy page (Cookies section) — clearing storage re-shows this
+// banner on the next load.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
