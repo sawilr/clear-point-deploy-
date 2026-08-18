@@ -1884,6 +1884,17 @@ const EMERGENCY_RES: RegExp[] = [
   /\b(short(ness)? of breath|gasping for air|choking|suffocating)\b/,
   // EN — cardiac / stroke / bleeding / consciousness
   /\b(chest\s+(pain|pains|pressure|tightness)|heart\s+attack|cardiac\s+arrest)\b/,
+  // AUDIT 2026-08-18 (independent red-team, life-safety FALSE NEGATIVE) — a
+  // classic cardiac presentation phrased with words BETWEEN "chest" and the
+  // sensation ("my chest feels really tight", "pressure in my chest") slipped
+  // the adjacent-word pattern above and got NORMAL service. Add a small-gap
+  // forward + reverse net. Additive only (err-safe: a false 911 is the accepted
+  // direction, a missed cardiac event is not). Reverse uses the unambiguous
+  // sensation nouns (not bare "tight") so "tight budget for a chest x-ray" does
+  // NOT trip it.
+  /\bchest\b[^.!?\n]{0,14}\b(tight|tightness|pressure|heavy|heaviness|crushing|crush)\b/,
+  /\b(tightness|pressure|heaviness|crushing)\b[^.!?\n]{0,10}\bchest\b/,
+  /\b(left|right)\s+arm\b[^.!?\n]{0,12}\b(numb|numbness|tingl\w*)\b/,
   /\b(stroke|having a stroke)\b/,
   /\b(bleeding|blood\s+everywhere|hemorrhag\w*)\b/,
   /\b(passed\s+out|pass(ing)?\s+out|unconscious|unresponsive|blacked\s+out|fainted)\b/,
@@ -1897,6 +1908,11 @@ const EMERGENCY_RES: RegExp[] = [
   /\b(dificultad|problemas?)\s+para\s+respirar\b/,
   // ES — cardiac / stroke / bleeding / consciousness
   /\b(dolor\s+(de|en\s+el)\s+pecho|me\s+duele\s+el\s+pecho|opresion\s+en\s+el\s+pecho)\b/,
+  // AUDIT 2026-08-18 (independent red-team, life-safety) — ES chest-tightness
+  // with intervening words ("siento el pecho muy apretado", "presion en el
+  // pecho"), mirror of the EN small-gap net. Additive / err-safe.
+  /\bpecho\b[^.!?\n]{0,14}\b(apret\w*|opres\w*|presion|pesad\w*|aprieta)\b/,
+  /\b(opres\w*|presion|pesadez|apret\w*)\b[^.!?\n]{0,10}\bpecho\b/,
   /\b(infarto|ataque\s+al\s+corazon|paro\s+cardiaco)\b/,
   /\b(derrame(\s+cerebral)?|embolia)\b/,
   /\b(estoy\s+sangrando|sangrando\s+mucho|hemorragia)\b/,
