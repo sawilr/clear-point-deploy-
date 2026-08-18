@@ -124,7 +124,11 @@ const TOPIC_LABELS: Record<string, { en: string; es: string }> = {
   letter: { en: 'a letter you received', es: 'una carta que recibió' },
   medicaid_mention: { en: 'Medicaid', es: 'Medicaid' },
   medicaid_support: { en: 'Medicaid help', es: 'ayuda con Medicaid' },
-  medical_emergency_911: { en: 'a medical emergency', es: 'una emergencia médica' },
+  // AUDIT 2026-08-15 (PIT-T-02) — medical_emergency_911 / crisis_988 are
+  // deliberately ABSENT from this catalog: a returning greeting must never
+  // open with "last time we talked about a medical emergency". Their slugs
+  // contain '_', so the fallback renders the generic "your previous question"
+  // for any value persisted before the write-site started skipping them.
   medicare_advantage: { en: 'Medicare Advantage', es: 'Medicare Advantage' },
   medicare_basics: { en: 'Medicare basics', es: 'conceptos básicos de Medicare' },
   medigap: { en: 'supplemental plans', es: 'planes suplementarios' },

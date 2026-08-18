@@ -516,11 +516,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // PHASE 9E — persist continuity fields to localStorage for next visit.
   // AUDIT 2026-07-22 (KI-SEC-01) — PII (name/zip/state) is no longer written:
   // only language + last topic, which is all the returning greeting needs.
+  // AUDIT 2026-08-15 (PIT-T-02) — emergency/crisis slugs are NEVER persisted
+  // as the topic: "Welcome back. Last time we talked about a medical
+  // emergency" re-surfaces distress and helps nobody. OMIT the key (never pass
+  // undefined — writeVisitorMemory spreads the partial, so an explicit
+  // undefined would ERASE the previous legitimate topic).
   useEffect(() => {
     if (state.language || state.serviceCategory) {
+      const topic = state.serviceCategory;
+      const isSafetyTopic = topic === 'medical_emergency_911' || topic === 'crisis_988';
       writeVisitorMemory({
         language: state.language as 'en' | 'es' | undefined,
-        lastTopic: state.serviceCategory,
+        ...(topic && !isSafetyTopic ? { lastTopic: topic } : {}),
       });
     }
   }, [state.language, state.serviceCategory]);

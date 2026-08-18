@@ -386,11 +386,20 @@ export interface ConversationState {
   conversationSummary?: string[];
   // ─── AUDIT 2026-07-28 CPF-001: life-safety emergency guardrail ───
   /** TRUE once the 911 notice fired. While TRUE the lead flow is HARD-STOPPED
-   *  (no name/phone/ZIP, no handoff collector, no scheduling) for the rest of
-   *  the session, until the caller explicitly says it is not an emergency. */
+   *  (no name/phone/ZIP, no handoff collector, no scheduling) until the caller
+   *  explicitly cancels OR the bounded release below frees the flow. */
   emergencyMode?: boolean;
   /** How many 911 notices were emitted this session (1 = full text, 2+ = short). */
   emergencyNoticeCount?: number;
+  /** AUDIT 2026-08-15 (PIT-T-02, independent red team) — consecutive notices
+   *  emitted on turns that carried NO fresh emergency/crisis signal. Resets to
+   *  0 whenever a fresh signal fires. At EMERGENCY_MAX_STALE_NOTICES the mode
+   *  RELEASES: unbounded stickiness let one fake emergency line brick the
+   *  whole session (21 later turns — including "¿Qué es Medicare Parte B?" —
+   *  all got the 911 wall). Bounded stickiness keeps the CPF-001 contract on
+   *  the immediate follow-ups, then returns Clara to service; any new
+   *  emergency signal re-arms instantly. */
+  emergencyStaleNotices?: number;
   // ─── AUDIT 2026-07-28 CPF-002: out-of-area geo filter (mirrors voice agent) ───
   /** Two-letter code of a NON-served state the caller stated (FL, CA, TX…). */
   outOfAreaState?: string;
@@ -1928,18 +1937,33 @@ export const EMERGENCY_911_TEXT = {
   es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
 };
 const EMERGENCY_911_SHORT = {
-  en: "Please call 911 right now, or go to your nearest emergency room. I can't help with a medical emergency — your safety comes first.",
-  es: 'Por favor llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con una emergencia médica — su seguridad es lo primero.',
+  // AUDIT 2026-08-15 (PIT-T-02) — the short notice now names the exit. Callers
+  // trapped in the wall had no way to know "no es emergencia" reopens the flow;
+  // the red-team session showed a user asking normal questions into the wall.
+  en: 'Please call 911 right now, or go to your nearest emergency room. I can\'t help with a medical emergency — your safety comes first. If this is not an emergency, just tell me — for example "it\'s not an emergency" — and we can continue.',
+  es: 'Por favor llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con una emergencia médica — su seguridad es lo primero. Si no se trata de una emergencia, dígamelo — por ejemplo "no es emergencia" — y seguimos con su consulta.',
 };
+// AUDIT 2026-08-15 (PIT-T-02) — how many notices may fire on turns WITHOUT a
+// fresh emergency/crisis signal before the mode releases. 2 preserves the
+// CPF-001 audit contract verbatim (the immediate follow-up AND an escalation
+// attempt both still get the 911 wall, and neither resumes data collection);
+// the third signal-free turn returns to normal service. Any fresh signal
+// resets the budget, so a real ongoing emergency is never released.
+const EMERGENCY_MAX_STALE_NOTICES = 2;
 
 /**
  * CPF-001 guardrail. Runs BEFORE every other path (human-escalation routing,
  * handoff collector, LLM, any name/phone/ZIP question). Returns the 911 turn,
  * or `null` when this turn is not an emergency turn.
  *
- * Once emergencyMode is set it STAYS set for the session: every later turn
- * repeats a short 911 notice and never resumes data collection, unless the
- * caller explicitly cancels ("it's not an emergency" / "ya estoy bien").
+ * Once emergencyMode is set it persists — but BOUNDED (AUDIT 2026-08-15,
+ * PIT-T-02): turns that carry a fresh emergency/crisis signal always get the
+ * notice and reset the budget; turns WITHOUT any signal get the short notice
+ * at most EMERGENCY_MAX_STALE_NOTICES times, after which the mode releases
+ * and Clara answers normally. Unbounded stickiness let one fake emergency
+ * line brick the entire session (every later turn — "¿Qué es Medicare Parte
+ * B?" included — got the 911 wall until reload). The explicit cancel
+ * ("it's not an emergency" / "ya estoy bien") still exits immediately.
  */
 export function _handleEmergency(
   userMessage: string,
@@ -1975,6 +1999,8 @@ export function _handleEmergency(
       // when the first version of this branch dropped it.
       emergencyMode: true,
       emergencyNoticeCount: (state.emergencyNoticeCount || 0) + 1,
+      // Fresh crisis signal — the stale-release budget starts over.
+      emergencyStaleNotices: 0,
       step: state.language ? 'conversation' : state.step,
       serviceCategory: 'crisis_988',
       activeCaseTopic: 'crisis_988',
@@ -1993,6 +2019,15 @@ export function _handleEmergency(
   const inMode = !!state.emergencyMode;
   const fresh = detectEmergency(userMessage);
   if (!fresh && !inMode) return null;
+  // ── AUDIT 2026-08-15 (PIT-T-02) — BOUNDED RELEASE ─────────────────────────
+  // No fresh signal on this turn and the signal-free budget is spent: hand the
+  // turn back to normal processing. The caller's _clearEmergencyIfCancelled
+  // (which runs immediately after this returns null) clears the mode so the
+  // release is durable. A later fresh signal re-arms the guardrail instantly.
+  if (!fresh && inMode && (state.emergencyStaleNotices || 0) >= EMERGENCY_MAX_STALE_NOTICES) {
+    return null;
+  }
+  const _staleNext = fresh ? 0 : (state.emergencyStaleNotices || 0) + 1;
 
   const isEs = _turnLanguage(userMessage, state) === 'es';
   const count = (state.emergencyNoticeCount || 0) + 1;
@@ -2008,6 +2043,7 @@ export function _handleEmergency(
         ...state,
         turnCount: (state.turnCount || 0) + 1,
         emergencyNoticeCount: count,
+        emergencyStaleNotices: _staleNext,
         needsHuman: true,
         quickReplies: [],
         messages: [
@@ -2026,6 +2062,7 @@ export function _handleEmergency(
     turnCount: (state.turnCount || 0) + 1,
     emergencyMode: true,
     emergencyNoticeCount: count,
+    emergencyStaleNotices: _staleNext,
     // HARD STOP the lead flow — no collector, no scheduling, no menu.
     advisorHandoffStarted: false,
     schedulingCallback: false,
@@ -2048,10 +2085,20 @@ export function _handleEmergency(
   return { response: out, newState, needsHuman: false };
 }
 
-/** Clears emergencyMode when the caller explicitly cancels the emergency. */
+/** Clears emergencyMode when the caller explicitly cancels the emergency, OR
+ *  when the bounded release fired (AUDIT 2026-08-15 PIT-T-02): _handleEmergency
+ *  returned null on a signal-free turn with the stale budget spent, so the mode
+ *  must end here — otherwise every later turn would re-enter the release path
+ *  with stale state instead of being genuinely normal. */
 function _clearEmergencyIfCancelled(userMessage: string, state: ConversationState): ConversationState {
-  if (!state.emergencyMode || !detectNotAnEmergency(userMessage)) return state;
-  return { ...state, emergencyMode: false, emergencyNoticeCount: 0 };
+  if (!state.emergencyMode) return state;
+  const cancelled = detectNotAnEmergency(userMessage);
+  const released =
+    !detectEmergency(userMessage) &&
+    !detectCrisisLanguage(userMessage) &&
+    (state.emergencyStaleNotices || 0) >= EMERGENCY_MAX_STALE_NOTICES;
+  if (!cancelled && !released) return state;
+  return { ...state, emergencyMode: false, emergencyNoticeCount: 0, emergencyStaleNotices: 0 };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
