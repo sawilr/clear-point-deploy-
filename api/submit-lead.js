@@ -714,20 +714,32 @@ export default async function handler(req, res) {
             message: 'We already have your request on file. A licensed advisor will follow up.',
           });
         }
-        console.warn('[GHL] duplicate contact — refreshing the existing record instead of dropping the request');
-        // Refresh the mutable fields (best-time, consent flags, language,
-        // interest) on the existing contact using the payload already built.
-        try {
-          await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/' + encodeURIComponent(_dupId), {
-            method: 'PUT',
-            headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify(contact),
-          });
-        } catch (e) {
-          console.error('[GHL] duplicate refresh PUT failed: ' + String(e).slice(0, 120));
-        }
+        console.warn('[GHL] duplicate contact — recording a repeat request WITHOUT overwriting the existing record');
+        // ── AUDIT 2026-08-18 (LEAD-02 / TCPA consent integrity, P0) ───────────
+        // The old code PUT the full client-built `contact` body onto the existing
+        // contact matched by PHONE — an unauthenticated caller who knows a
+        // victim's phone (already in the CRM) could overwrite that third party's
+        // name/email/DOB/address AND flip consent_marketing/sms/calls/email to
+        // 'true', i.e. FALSIFY TCPA CONSENT on someone else. Identity match is
+        // NOT authorization, and a generic lead submit must never silently set a
+        // third party's legal consent.
+        //
+        // FIX: on the existing-contact path we do NOT write identity or consent
+        // fields at all. The person is still recorded as a repeat request via the
+        // note + opportunity below (advisor follow-up preserved — the O-05
+        // intent), and their NEW best-time / interest is captured in that note.
+        // A returning REAL customer's consent was already captured when they
+        // first gave it; it never needs to be re-escalated by an unauthenticated
+        // web submit, and a prior opt-out (DND) must never be silently reversed.
+        // Re-enabling any verified update of an existing contact requires a
+        // server-issued token binding the record to a verified identity.
+        leadAudit('existing_contact_no_escalation', 200, {
+          lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40),
+          matched_by: phone10 ? 'phone' : 'email',
+        });
         // Hand the downstream note/opportunity logic a 2xx-shaped result so a
-        // repeat request produces a visible, advisor-facing record.
+        // repeat request produces a visible, advisor-facing record — WITHOUT the
+        // identity/consent PUT that created the vector.
         _repeatRequest = true;
         ghlRes = { ok: true, status: 200, json: async function () { return { contact: { id: _dupId } }; } };
       } else {

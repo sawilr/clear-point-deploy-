@@ -13,11 +13,12 @@
 //   It can NEVER create a contact, grant consent, or re-enable contact. That
 //   asymmetry is deliberate: a forged request can only ever reduce our
 //   permission to contact someone, so it is safe to accept without auth.
-// • Non-existent contact => 200 with applied:false. Silence is correct: we must
-//   not turn this into a phone-number oracle that reveals who is in the CRM.
-// • Fail-loud to the caller only in the sense that the CLIENT already recorded
-//   the session opt-out; a CRM failure here must NOT make the bot claim success.
-//   The response reports crmApplied so the caller can surface the true state.
+// • Every outcome returns ONE uniform 200 body { ok:true, received:true } so the
+//   endpoint can never be a phone/email membership oracle (OPTOUT-01, 2026-08-18).
+//   The true outcome (matched/applied/failed) lives only in PII-free server logs.
+// • The CLIENT already recorded the session opt-out locally and does not read
+//   this response body (optOutGuard.propagateOptOutToCrm fires and forgets), so
+//   the uniform body breaks no UX; suppression is best-effort by design.
 // • The platform's own inbound-SMS STOP keyword remains a separate, independent
 //   suppression path. This covers web-chat revocations, which that never saw.
 //
@@ -42,6 +43,30 @@ function tenDigits(raw) {
   const d = String(raw || '').replace(/\D/g, '');
   if (d.length === 11 && d[0] === '1') return d.slice(1);
   return d.length === 10 ? d : '';
+}
+
+// ── AUDIT 2026-08-18 (OPTOUT-01, P1) — MEMBERSHIP-ENUMERATION ORACLE ──────────
+// The prior code returned crmApplied:true / reason:'suppressed' when a contact
+// MATCHED and crmApplied:false / reason:'no_match' when it did NOT — a trivial
+// oracle: an unauthenticated POST could learn whether any phone/email is a
+// ClearPoint contact by reading the body. (The old line-122 comment claimed
+// "No oracle: identical shape" but only the no-match branch was uniform; the
+// match branch leaked success.) The legitimate client — optOutGuard.ts
+// propagateOptOutToCrm — fires `void fetch(...).catch(()=>{})` and NEVER reads
+// the body, so collapsing every outcome to ONE indistinguishable response
+// breaks nothing while removing the oracle. All suppression work and PII-free
+// ops logging still happen server-side; only the client-visible signal is
+// equalized. Structural rejections (403 origin / 405 method / 400-413 body /
+// 429 rate) are membership-independent and stay as-is.
+//
+// RESIDUAL (LOW, documented): a timing side-channel remains — the match path
+// does one extra PUT + note POST. Over the internet this needs many samples per
+// target and is bounded by the endpoint's rate limit; it becomes fully
+// impractical once the rate limiter is KV-backed (see RL-08). Not a practical
+// oracle on its own.
+function ack(res) {
+  // ONE uniform acknowledgement for every membership-dependent outcome.
+  return res.status(200).json({ ok: true, received: true });
 }
 
 export default async function handler(req, res) {
@@ -85,14 +110,15 @@ export default async function handler(req, res) {
 
   if (!phone10 && !email) {
     // Nothing to match on. The session-level opt-out still stands client-side.
-    return res.status(200).json({ ok: true, crmApplied: false, reason: 'no_identifier' });
+    console.warn('[OPTOUT] no identifier supplied');
+    return ack(res);
   }
 
   const token = process.env.HIGHLEVEL_TOKEN;
   const locationId = process.env.HIGHLEVEL_LOCATION_ID;
   if (!token || !locationId) {
     console.error('[OPTOUT] CRM not configured — suppression NOT applied');
-    return res.status(200).json({ ok: true, crmApplied: false, reason: 'crm_unconfigured' });
+    return ack(res);
   }
   const H = {
     Authorization: 'Bearer ' + token,
@@ -109,7 +135,7 @@ export default async function handler(req, res) {
     const sres = await fetch(searchUrl, { headers: H });
     if (!sres.ok) {
       console.error('[OPTOUT] contact search failed status=' + sres.status);
-      return res.status(200).json({ ok: true, crmApplied: false, reason: 'search_failed' });
+      return ack(res);
     }
     const sjson = await sres.json();
     const candidates = Array.isArray(sjson.contacts) ? sjson.contacts : [];
@@ -119,8 +145,9 @@ export default async function handler(req, res) {
       return false;
     });
     if (!match || !match.id) {
-      // No oracle: identical shape whether or not the person is in the CRM.
-      return res.status(200).json({ ok: true, crmApplied: false, reason: 'no_match' });
+      // Uniform ack (OPTOUT-01): identical to the match path below.
+      console.warn('[OPTOUT] no CRM match for supplied identifier');
+      return ack(res);
     }
 
     // ── 2. Apply suppression. DND plus per-channel DND, plus consent flags. ──
@@ -159,19 +186,15 @@ export default async function handler(req, res) {
       console.error('[OPTOUT] note failed: ' + String(e).slice(0, 120));
     }
 
-    // PII-free telemetry.
+    // PII-free telemetry — the outcome lives in the logs, NOT in the client
+    // response (OPTOUT-01). Consent-field clearing is intentionally NOT
+    // attempted blindly here: the custom-field ids live in submit-lead's
+    // mapping and a partial write is worse than none. DND is the authoritative
+    // platform-level suppression.
     console.warn('[OPTOUT] applied dnd=' + dndApplied + ' note=' + noteApplied + ' evidence=' + evidence);
-    return res.status(200).json({
-      ok: true,
-      crmApplied: dndApplied,
-      noteApplied,
-      // Consent-field clearing is intentionally NOT attempted blindly here: the
-      // custom-field ids live in submit-lead's mapping and a partial write is
-      // worse than none. DND is the authoritative platform-level suppression.
-      reason: dndApplied ? 'suppressed' : 'dnd_update_failed',
-    });
+    return ack(res);
   } catch (e) {
     console.error('[OPTOUT] unexpected: ' + String(e).slice(0, 200));
-    return res.status(200).json({ ok: true, crmApplied: false, reason: 'error' });
+    return ack(res);
   }
 }
