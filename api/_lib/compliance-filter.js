@@ -183,6 +183,18 @@ export function matchesSelfHarm(text) {
   for (var i = 0; i < SELF_HARM_RES.length; i++) {
     if (SELF_HARM_RES[i].test(t)) return true;
   }
+  // 2026-08-27 parity port — strong crisis phrasings always fire.
+  for (var s = 0; s < SELF_HARM_STRONG_RES.length; s++) {
+    if (SELF_HARM_STRONG_RES[s].test(t)) return true;
+  }
+  // Ambiguous ideation ("dont see the point anymore", "seria mejor ya no estar
+  // aqui") fires ONLY outside a plan/payment/paperwork context, so a frustrated
+  // "no point paying for this plan" is never sent to the 988 script.
+  if (!SELF_HARM_BENIGN_GUARD.test(t)) {
+    for (var a = 0; a < SELF_HARM_AMBIG_RES.length; a++) {
+      if (SELF_HARM_AMBIG_RES[a].test(t)) return true;
+    }
+  }
   return false;
 }
 
@@ -220,6 +232,68 @@ const EMERGENCY_911_REPLY = {
   en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
   es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
 };
+
+// ── AUDIT 2026-08-27 — SERVER/CLIENT PARITY PORT (life-safety) ───────────
+// An independent live red-team (scripts/test-live-safety-parity-2026-08-27.mjs)
+// found that the widened proximity net added to the CLIENT bundle
+// (src/lib/safetyRouter.ts) for the 823-scenario mega-corpus was NOT mirrored
+// here. Clara's LLM turns are classified by THIS module, so phrasings a real
+// senior types — "pain in my chest" (word order ≠ "chest pain"), "chest is
+// tight", "cant hardly breathe", "face drooping", "wont wake up", "took too
+// many pills", "se le tuerce la boca", "un brazo no lo mueve" — did NOT fire
+// the deterministic guardrail. In production they still reached 911/988, but
+// only because the LLM complied: a non-deterministic net that a model swap or a
+// jailbreak can silently remove. These are ported VERBATIM from safetyRouter.ts
+// (EMERGENCY_RE / CRISIS_STRONG_RE / CRISIS_AMBIG_RE) so both paths match. Every
+// pattern keeps its acute-onset qualifier (chronic dementia "cant talk" is NOT a
+// 911 stroke) and the benign guard (a plan/payment/paperwork context never
+// routes to 988). Applied to normLoose(text) — lowercase, accent-stripped —
+// exactly as the client applies them to its accent-stripped copy.
+const EMERGENCY_PROX_RES = [
+  /chest[^.]{0,20}(pain|hurt|hurtin|hurting|tight|pressure|crush)/i,
+  /(pain|hurt|tight|pressure|crushing)[^.]{0,16}(in (my|the) )?chest/i,
+  /(left|right)?\s*arm[^.]{0,18}(numb|going numb|tingl|weak|dead)/i,
+  /(face|mouth)[^.]{0,18}(droop|numb|one side|to one side)/i,
+  /(can'?t|cant)[^.]{0,10}(talk|speak)[^.]{0,14}(right|straight|clearly|suddenly|all of a sudden)/i,
+  /(suddenly|all of a sudden)[^.]{0,14}(can'?t|cant)[^.]{0,10}(talk|speak)/i,
+  /(can'?t|cant|hardly|trouble|struggl\w*|hard time|difficulty)[^.]{0,12}breath/i,
+  /(wo'?nt|won'?t|not|wont|cant|can'?t)[^.]{0,10}wake\s*up/i,
+  /\bunresponsive\b|\bnot breathing\b/i,
+  /(can'?t|cant)[^.]{0,8}get (up|off the floor)/i,
+  /took[^.]{0,10}(too |to )?many[^.]{0,12}(pill|of my)/i,
+  /(duele|dolor|aprieta|opresion|apreta)[^.]{0,16}pecho/i,
+  /pecho[^.]{0,16}(duele|dolor|aprieta|apretado|opresion)/i,
+  /brazo[^.]{0,20}(durmiendo|dormido|adormec|entumec|no lo mueve|no (lo )?puedo mover)/i,
+  /(boca|cara)[^.]{0,18}(torcida|tuerce|chueca|un lado|medio lado|dormida)/i,
+  /(de repente|de un momento|de pronto|de golpe)[^.]{0,18}(no puede|no puedo)[^.]{0,6}(hablar|ablar)/i,
+  /(no puedo|me estoy|siento que me|no me deja)[^.]{0,8}(respir|asfixi|ahog)/i,
+  /(me falta|no me llega)[^.]{0,6}(el )?aire/i,
+  /no[^.]{0,8}(despierta|reacciona)/i,
+  /no me puedo (parar|levantar|mover)/i,
+  /tome[^.]{0,6}(mas|demasiad)/i,
+];
+// Self-harm proximity nets (ported from safetyRouter CRISIS_STRONG_RE / CRISIS_AMBIG_RE).
+// STRONG always fires; AMBIG fires only OUTSIDE a benign plan/payment/paperwork context.
+const SELF_HARM_STRONG_RES = [
+  /end(ing|in)?\s+it\s+(all|tonight|today)/i,
+  /think(ing|in)?\s+(about|of)\s+.{0,12}end(ing|in)?\s+it/i,
+  /better off (dead|gone|without me)/i,
+  /no reason to (live|go on|keep going)/i,
+  /(want|going) to (die|end (it|my life))/i,
+  /(don'?t|dont)\s+want\s+to\s+liv/i,
+  /(pills|frasco de pastillas)[^.]{0,30}(take (them|all)|right here|todas|tomarme|tomarmelas)/i,
+  /(tomarmelas|tomarme las|tomar todas las pastillas)/i,
+  /no quiero (seguir )?vivir/i,
+  /quitarme la vida|me voy a matar|acabar con mi vida/i,
+];
+const SELF_HARM_AMBIG_RES = [
+  /(don'?t|dont|no)\s+(see\s+)?the point[^.]{0,25}(anymore|any of this|living|life|going on|here|carry on)/i,
+  /(what'?s|whats)\s+(even\s+)?the point\s+anymore/i,
+  /no le veo sentido[^.]{0,15}(vida|vivir|seguir)/i,
+  /para (que|que)\s+(sigo|seguir|vivir|vivo)/i,
+  /(seria|mejor)\s+.{0,16}(muriera|me muero|muerto|muerta|no estuviera|no estar aqui|ya no estar|no despertar)/i,
+];
+const SELF_HARM_BENIGN_GUARD = /(plan\b|premium|prima|paying|\bpay\b|pagar|paperwork|papeleo|\bbill\b|factura|deducible|deductible|copay|copago|proceso|process\b|formulario|\bform\b|coverage|cobertura)/i;
 
 // ── AUDIT 2026-07-28 CPF-002 — GEO net (rule 9) ──────────────────────────
 const OUT_OF_AREA_REPLY = {
@@ -310,6 +384,14 @@ export function matchesEmergency(text) {
   for (var i = 0; i < EMERGENCY_USER_RES.length; i++) {
     if (EMERGENCY_USER_RES[i].test(t)) return true;
   }
+  // 2026-08-27 parity port — proximity net (cardiac/stroke/breathing/overdose,
+  // EN+ES) that the client had but the server lacked.
+  for (var p = 0; p < EMERGENCY_PROX_RES.length; p++) {
+    if (EMERGENCY_PROX_RES[p].test(t)) return true;
+  }
+  // Self-harm is a strict subset of "emergency" so the model is skipped for it
+  // too; chat.js then picks the 988 crisis script over the 911 medical one.
+  if (matchesSelfHarm(text)) return true;
   return false;
 }
 
