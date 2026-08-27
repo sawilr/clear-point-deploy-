@@ -50,12 +50,32 @@ const CRISIS_EN = [
   'want to die', 'wish i was dead', 'wish i were dead', 'no reason to live',
   'self harm', 'self-harm', 'hurt myself', 'harm myself', 'harming myself', 'cut myself', 'cutting myself', 'overdose on purpose',
   'give up on life', 'no longer want to live', "can't go on", 'cant go on',
+  // AUDIT 2026-08-27 (mega-corpus) — passive ideation & plan/means the audit found
+  // slipping through. Tied to living/dying/being-here so ordinary Medicare
+  // frustration ("no point paying for this plan") is not swept in. A false 988 is
+  // recoverable (bounded release + "it's not an emergency" exit); a miss is not.
+  'want to end it', 'thinking about ending it', 'thinking of ending it', 'ready to end it',
+  'end it tonight', "don't want to live", 'dont want to live', "don't want to be here",
+  'dont want to be here', "don't see the point anymore", 'dont see the point anymore',
+  'no point in living', 'no point of living', 'see the point in living', 'point in going on',
+  'no reason to go on', 'no reason to keep going', 'tired of living', 'better off dead',
+  'better off without me', 'be better off without me', 'everyone be better off',
+  'why am i still here', 'thought about ending', 'take all my pills', 'take them all tonight',
 ];
 const CRISIS_ES = [
   'suicid', 'matarme', 'me quiero matar', 'me quiero morir', 'quiero morir',
   'no quiero vivir', 'no quiero vivir mas', 'no quiero vivir más',
   'mejor muerto', 'mejor muerta', 'acabar con mi vida', 'terminar con mi vida',
   'hacerme daño', 'hacerme dano', 'lastimarme',
+  // AUDIT 2026-08-27 (mega-corpus) — passive ideation & plan/means (ES). Excludes
+  // the benign idiom "terminar/acabar con todo este papeleo" by requiring
+  // life/death context, not a bare "acabar con todo".
+  'no quiero seguir viviendo', 'ya no quiero seguir viviendo', 'quitarme la vida',
+  'me voy a quitar la vida', 'quitarme la vida esta noche', 'acabar con mi vida esta noche',
+  'no le veo sentido a la vida', 'no vale la pena vivir', 'no vale la pena seguir viviendo',
+  'para que sigo viviendo', 'para qué sigo viviendo', 'seria mejor si me muriera',
+  'sería mejor si me muriera', 'mejor si me muero', 'ya no molesto', 'me las voy a tomar todas',
+  'tomarmelas todas', 'tomármelas todas', 'pensando en tomarmelas', 'frasco de pastillas',
 ];
 
 // ── 911 medical emergency phrases ───────────────────────────────────────────
@@ -67,6 +87,21 @@ const EMERGENCY_EN = [
   "can't breathe", 'cant breathe', 'difficulty breathing',
   'bleeding heavily', 'unconscious', 'passed out', 'collapsed',
   'ambulance now', 'emergency right now', 'dying',
+  // AUDIT 2026-08-27 (mega-corpus) — plain-language cardiac / breathing / STROKE
+  // (FAST) / overdose descriptions a real senior types. These are acute-threat
+  // phrasings, not the mild-symptom words the CP-03 clinical tier deliberately
+  // keeps out of 911.
+  'chest pain', 'pain in my chest', 'pain in the chest', 'chest hurts', 'my chest hurts', 'chest hurt',
+  'chest is tight', 'chest feels tight', 'tightness in my chest', 'pressure in my chest',
+  'crushing pain', "can't hardly breathe", 'cant hardly breathe', 'hard to breathe',
+  'hard time breathing', "can't catch my breath", 'cant catch my breath', 'struggling to breathe',
+  'gasping', 'choking',
+  // STROKE / FAST
+  'face is drooping', 'face drooping', 'mouth is drooping', 'mouth drooping', 'drooping on one side',
+  'one side of my face', "can't talk right", 'cant talk right', 'slurred speech', 'slurring my words',
+  "can't speak", 'face went numb', 'arm went numb', 'arm is going numb', 'left arm is numb',
+  // Overdose (accidental or intentional) — include the common "too"->"to" typo
+  'took too many', 'too many pills', 'took too many pills', 'took to many', 'to many of my',
 ];
 const EMERGENCY_ES = [
   'llame al 911', 'llamar al 911', 'necesito 911', 'necesito una ambulancia',
@@ -74,6 +109,19 @@ const EMERGENCY_ES = [
   'derrame cerebral', 'dolor de pecho fuerte', 'me duele el pecho fuerte',
   'no puedo respirar', 'no respira', 'sangrando mucho', 'inconsciente',
   'se desmayó', 'se desmayo', 'me estoy muriendo',
+  // AUDIT 2026-08-27 (mega-corpus) — descripciones comunes (ES): cardíaco,
+  // respiración, ICTUS (boca torcida / no puede hablar / medio cuerpo), sobredosis.
+  'me duele el pecho', 'dolor de pecho', 'dolor en el pecho', 'opresion en el pecho',
+  'opresión en el pecho', 'pecho apretado', 'me aprieta el pecho',
+  'no puedo respirar bien', 'me estoy asfixiando', 'asfixiando', 'me ahogo', 'me estoy ahogando',
+  'me falta el aire', 'no me llega el aire',
+  // ICTUS / FAST
+  'se le tuerce la boca', 'se tuerce la boca', 'boca torcida', 'no puede hablar', 'no puede ablar',
+  'no puedo hablar bien', 'un brazo no lo mueve', 'no mueve el brazo', 'un lado de la cara',
+  'medio cuerpo', 'se le durmio la cara', 'se le durmió la cara', 'brazo se me esta durmiendo',
+  'brazo se me está durmiendo',
+  // Sobredosis
+  'tome de mas', 'tomé de más', 'demasiadas pastillas', 'me tome muchas pastillas', 'muchas pastillas de',
 ];
 
 // ── CP-03 clinical-concern vocabulary ───────────────────────────────────────
@@ -149,14 +197,85 @@ function anyMatch(text: string, list: string[]): boolean {
   return false;
 }
 
+// AUDIT 2026-08-27 (mega-corpus) — PROXIMITY REGEX NETS. The substring lists miss
+// real phrasings where adverbs / morphology sit between the words: "me duele
+// MUCHO el pecho", "chest HAS BEEN hurtin", "ENDING it all", stroke described as
+// "boca se le tuerce ... no puede hablar". Regex runs on an accent-STRIPPED copy
+// so ES matches regardless of diacritic normalization.
+function stripAccents(t: string): string { return t.replace(/[̀-ͯ]/g, ''); }
+function anyRe(text: string, list: RegExp[]): boolean { for (const re of list) if (re.test(text)) return true; return false; }
+
+const EMERGENCY_RE: RegExp[] = [
+  // Cardiac (EN)
+  /chest[^.]{0,20}(pain|hurt|hurtin|hurting|tight|pressure|crush)/i,
+  /(pain|hurt|tight|pressure|crushing)[^.]{0,16}(in (my|the) )?chest/i,
+  /(left|right)?\s*arm[^.]{0,18}(numb|going numb|tingl|weak|dead)/i,
+  // Stroke / FAST (EN)
+  /(face|mouth)[^.]{0,18}(droop|numb|one side|to one side)/i,
+  // Stroke speech — REQUIRE an acute qualifier so chronic "he has dementia and
+  // cant talk" (a caregiver managing Medicare) is NOT flagged as a 911 stroke.
+  /(can'?t|cant)[^.]{0,10}(talk|speak)[^.]{0,14}(right|straight|clearly|suddenly|all of a sudden)/i,
+  /(suddenly|all of a sudden)[^.]{0,14}(can'?t|cant)[^.]{0,10}(talk|speak)/i,
+  // Breathing (EN)
+  /(can'?t|cant|hardly|trouble|struggl\w*|hard time|difficulty)[^.]{0,12}breath/i,
+  // Unresponsive / not waking (EN)
+  /(wo'?nt|won'?t|not|wont|cant|can'?t)[^.]{0,10}wake\s*up/i,
+  /\bunresponsive\b|\bnot breathing\b/i,
+  // Fall + can't get up (EN)
+  /(can'?t|cant)[^.]{0,8}get (up|off the floor)/i,
+  /took[^.]{0,10}(too |to )?many[^.]{0,12}(pill|of my)/i,
+  // Cardiac (ES, accent-stripped)
+  /(duele|dolor|aprieta|opresion|apreta)[^.]{0,16}pecho/i,
+  /pecho[^.]{0,16}(duele|dolor|aprieta|apretado|opresion)/i,
+  /brazo[^.]{0,20}(durmiendo|dormido|adormec|entumec|no lo mueve|no (lo )?puedo mover)/i,
+  // Stroke / FAST (ES)
+  /(boca|cara)[^.]{0,18}(torcida|tuerce|chueca|un lado|medio lado|dormida)/i,
+  // Stroke speech (ES) — require sudden onset so chronic "no puede hablar"
+  // (demencia) is not a 911 flag; real ES strokes also hit the boca/brazo nets.
+  /(de repente|de un momento|de pronto|de golpe)[^.]{0,18}(no puede|no puedo)[^.]{0,6}(hablar|ablar)/i,
+  // Breathing (ES)
+  /(no puedo|me estoy|siento que me|no me deja)[^.]{0,8}(respir|asfixi|ahog)/i,
+  /(me falta|no me llega)[^.]{0,6}(el )?aire/i,
+  // Unresponsive / fall (ES)
+  /no[^.]{0,8}(despierta|reacciona)/i,
+  /no me puedo (parar|levantar|mover)/i,
+  /(tome|tome de|tomé|tome)[^.]{0,6}(mas|demasiad)/i,
+];
+// Crisis patterns that ALWAYS trigger (unambiguous self-harm).
+const CRISIS_STRONG_RE: RegExp[] = [
+  /end(ing|in)?\s+it\s+(all|tonight|today)/i,
+  /think(ing|in)?\s+(about|of)\s+.{0,12}end(ing|in)?\s+it/i,
+  /better off (dead|gone|without me)/i,
+  /no reason to (live|go on|keep going)/i,
+  /(want|going) to (die|end (it|my life))/i,
+  /(don'?t|dont)\s+want\s+to\s+liv/i, // "live"/"liv"/"living" — common senior typo
+  /(pills|frasco de pastillas)[^.]{0,30}(take (them|all)|right here|todas|tomarme|tomarmelas)/i,
+  /(tomarmelas|tomarme las|tomar todas las pastillas)/i,
+  /no quiero (seguir )?vivir/i,
+  /quitarme la vida|me voy a matar|acabar con mi vida/i,
+];
+// Crisis patterns that are ambiguous — trigger ONLY without a benign
+// (plan/payment/paperwork) context, so "no point paying for this plan" is safe.
+const CRISIS_AMBIG_RE: RegExp[] = [
+  /(don'?t|dont|no)\s+(see\s+)?the point[^.]{0,25}(anymore|any of this|living|life|going on|here|carry on)/i,
+  /(what'?s|whats)\s+(even\s+)?the point\s+anymore/i,
+  /no le veo sentido[^.]{0,15}(vida|vivir|seguir)/i,
+  /para (que|que)\s+(sigo|seguir|vivir|vivo)/i,
+  /(seria|mejor)\s+.{0,16}(muriera|me muero|muerto|muerta|no estuviera|no estar aqui|ya no estar|no despertar)/i,
+];
+const CRISIS_BENIGN_GUARD = /(plan\b|premium|prima|paying|\bpay\b|pagar|paperwork|papeleo|\bbill\b|factura|deducible|deductible|copay|copago|proceso|process\b|formulario|\bform\b|coverage|cobertura|paperwork)/i;
+
 /** Detects mental-health crisis OR acute medical emergency in any language. */
 export function detectSafetyTrigger(userMessage: string): SafetyResult {
   if (!userMessage || typeof userMessage !== 'string') return NO_HIT;
   const t = lowercased(userMessage);
   if (t.length < 2) return NO_HIT;
+  const ta = stripAccents(t); // accent-free copy for the proximity regex nets
 
-  // Crisis (988) — highest priority
-  if (anyMatch(t, CRISIS_EN) || anyMatch(t, CRISIS_ES)) {
+  // Crisis (988) — highest priority. Substring lists OR strong regex always fire;
+  // ambiguous ideation fires only outside a benign plan/payment context.
+  if (anyMatch(t, CRISIS_EN) || anyMatch(t, CRISIS_ES) || anyRe(ta, CRISIS_STRONG_RE)
+    || (anyRe(ta, CRISIS_AMBIG_RE) && !CRISIS_BENIGN_GUARD.test(ta))) {
     return {
       action: 'crisis_988',
       responseEn:
@@ -172,8 +291,8 @@ export function detectSafetyTrigger(userMessage: string): SafetyResult {
     };
   }
 
-  // 911 medical emergency
-  if (anyMatch(t, EMERGENCY_EN) || anyMatch(t, EMERGENCY_ES)) {
+  // 911 medical emergency (substring lists OR proximity regex on accent-free copy)
+  if (anyMatch(t, EMERGENCY_EN) || anyMatch(t, EMERGENCY_ES) || anyRe(ta, EMERGENCY_RE)) {
     return {
       action: 'emergency_911',
       responseEn:
