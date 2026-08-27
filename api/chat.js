@@ -38,6 +38,8 @@ import { readJsonBody } from './_lib/read-body.js';
 import { selectLLMProvider, callOpenAI, sanitizeDetail } from './_lib/llm-provider.js';
 // 2026-08-15 — PARTD-001: deterministic Medicare entity scoping. See module header.
 import { resolveScope, scopeGate, buildScopeNote } from './_lib/entity-scope.js';
+// AUDIT 2026-08-18 (CLARA-MED-03) — deterministic Medicare figure backstop.
+import { verifyMedicareFigures } from './_lib/medicare-figures.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -977,6 +979,22 @@ export default async function handler(req, res) {
         + ' sentence(s) attributing cost to unrequested ' + _scopeGated.strippedEntities.join(',')
         + ' (scope=' + _scope.entities.join(',') + '/' + _scope.source + ') ip=' + ip);
       cleanText = _scopeGated.text;
+    }
+
+    // ── AUDIT 2026-08-18 (CLARA-MED-03, P2) — NUMERIC INTEGRITY BACKSTOP ─────
+    // Deterministic guardrail: the 2026 Medicare figures live in the prompt, so
+    // a model deviation (stale 2025 value, invented number) had no catch. This
+    // corrects a WRONG definitive statement of an unambiguous single-value
+    // figure (Part B premium/deductible, Part A hospital deductible, Part D
+    // out-of-pocket cap) back to the verified value in medicare-figures.js and
+    // logs it. Conservative + fail-safe: variable/IRMAA/historical/range figures
+    // are left untouched, and the reply is never emptied.
+    var _figCheck = verifyMedicareFigures(cleanText);
+    if (_figCheck.corrections.length > 0) {
+      cleanText = _figCheck.text;
+      console.warn('[CHAT] MEDICARE_FIGURE_CORRECTED: '
+        + _figCheck.corrections.map(function (c) { return c.concept + ' ' + c.said + '->' + c.correct; }).join('; ')
+        + ' ip=' + ip);
     }
 
     // ── AUDIT 2026-08-13 (O-04, P1) — AI ANSWER AUDIT RECORD ────────────────
