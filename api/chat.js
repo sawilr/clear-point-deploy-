@@ -664,19 +664,33 @@ export default async function handler(req, res) {
     var combined = prevUserTurn + ' ' + userMessage;
     var multiCheck = checkPromptInjection(combined, conversationContext.language);
     if (!multiCheck.ok) {
-      // Did the prior turn already trip on its own? If so, it was the offending
-      // turn (already blocked when sent); this is a legit follow-up — let it
-      // through to a real answer. Only block when the pair trips but the prior
-      // turn alone is clean (the attack spans into the CURRENT message).
-      // SECURITY: block whenever the combined window trips. Do NOT exempt the
-      // case where the prior turn trips on its own — conversationHistory is
-      // CLIENT-SUPPLIED and never re-screened, so an attacker could plant a
-      // prior injection turn + a clean current turn to finish the jailbreak.
-      console.warn('[CHAT] multi-turn injection blocked:', multiCheck.reason, 'ip=' + ip);
-      return res.status(200).json({
-        response: multiCheck.safeReply,
-        meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'multi_turn_injection' },
-      });
+      // AUDIT 2026-08-27 (finding #2) — this used to block the request WHENEVER
+      // the combined window tripped, which stonewalled the next LEGITIMATE
+      // question after any earlier injection attempt (reproduced live: a clean
+      // "does my plan cover my doctor" turn was refused as multi_turn_injection
+      // because a prior turn in the client-supplied history was an attack).
+      //
+      // The security rationale for that hard block — "an attacker could plant a
+      // prior injection turn + a clean current turn" — is ALREADY covered
+      // downstream: the history-replay loop below re-screens EVERY turn with
+      // checkPromptInjection and DROPS any that trips (see ~line 738), so a
+      // prior turn that trips on its own never reaches the model. Blocking here
+      // too therefore adds no security; it only punishes the legitimate user.
+      //
+      // So block ONLY a genuine SPLIT jailbreak: the prior turn is clean on its
+      // own (so it is RETAINED in the model context) yet the pair trips —
+      // meaning the attack genuinely spans into the CURRENT message. When the
+      // prior turn trips alone it is dropped downstream, and this clean
+      // follow-up (already cleared by the single-turn guard above) is answered.
+      var priorAlone = checkPromptInjection(prevUserTurn, conversationContext.language);
+      if (priorAlone.ok) {
+        console.warn('[CHAT] multi-turn split-injection blocked:', multiCheck.reason, 'ip=' + ip);
+        return res.status(200).json({
+          response: multiCheck.safeReply,
+          meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'multi_turn_injection' },
+        });
+      }
+      console.warn('[CHAT] multi-turn: prior turn trips alone (dropped downstream); answering clean follow-up ip=' + ip);
     }
   }
 
@@ -1039,13 +1053,25 @@ export default async function handler(req, res) {
       }));
     } catch (e) { /* auditing must never break a reply */ }
 
+    // AUDIT 2026-08-27 (finding #14) — model telemetry (input/cached/reasoning
+    // tokens) used to ride in the client-visible meta. That is operational data
+    // the browser never needs and a fingerprinting surface; it now lives ONLY in
+    // the server log for cost/SLO monitoring. The client type marks usage
+    // optional, so its absence is a no-op there.
+    if (_usage) {
+      try {
+        console.log('[CHAT] usage ' + JSON.stringify({
+          in: _usage.input_tokens, cached: (_usage.input_tokens_details || {}).cached_tokens,
+          out: _usage.output_tokens, model: _provModel,
+        }));
+      } catch (_e) { /* logging must never break a reply */ }
+    }
     return res.status(200).json({
       response: cleanText,
       meta: {
         wantHandoff: wantHandoff,
         wantClose: wantClose,
         wantSchedule: wantSchedule,
-        usage: _usage,
       },
     });
   } catch (e) {

@@ -109,9 +109,16 @@ export default async function handler(req, res) {
   const blockEmail = channels.email !== 'ALLOWED'; // default: block everything
 
   if (!phone10 && !email) {
-    // Nothing to match on. The session-level opt-out still stands client-side.
-    console.warn('[OPTOUT] no identifier supplied');
-    return ack(res);
+    // AUDIT 2026-08-27 (finding #1) — a request with NO valid phone/email cannot
+    // suppress anyone, yet this used to answer the uniform success ack, giving
+    // false certainty of revocation. Reject with 400. This is a pure INPUT
+    // validation rejection — it depends only on the request shape, never on CRM
+    // membership — so it does NOT reintroduce the OPTOUT-01 enumeration oracle:
+    // a valid-format phone/email that simply is not in the CRM still gets the
+    // uniform 200 ack below. The legitimate client fires-and-forgets and never
+    // reads this body, so no real UX regresses.
+    console.warn('[OPTOUT] rejected: no valid phone or email supplied');
+    return res.status(400).json({ error: 'A valid phone or email is required to process an opt-out.' });
   }
 
   const token = process.env.HIGHLEVEL_TOKEN;
