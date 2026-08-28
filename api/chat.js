@@ -29,6 +29,9 @@ import { extractBirthDate, buildAgeGroundingNote, redactBirthDate } from './_lib
 import { detectMessageLang } from './_lib/lang-detect.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
+// Master spec 2026-08-28 — deterministic pre-LLM triage of out-of-scope
+// traffic (wrong business / vendors / greetings / loops). See scope-router.js.
+import { routeScope } from './_lib/scope-router.js';
 // 2026-08-13 — OpenAI production integration. Provider mechanics (SDK client,
 // Responses API, model routing, timeout, bounded retry, error taxonomy) live in
 // the provider module; EVERYTHING Clara — guards, PHI scrub, injection screens,
@@ -695,6 +698,35 @@ export default async function handler(req, res) {
   }
 
   // Build the message list for Claude
+  // ── SCOPE ROUTER (master spec 2026-08-28, §§11/12/28/102/104) ──────────
+  // Deterministic triage of clearly-out-of-scope traffic. Placement is the
+  // contract: AFTER every life-safety gate (911/988/clinical own the turn)
+  // and AFTER both injection guards (security beats cost), BEFORE the model
+  // call — so wrong-business, vendor, bare-greeting and no-progress turns
+  // stop spending the ~16.5K-token prompt. Whitelist-first inside the
+  // router: any Medicare/health vocabulary bypasses it entirely, so a
+  // confused-but-relevant caller always reaches the full engine (spec §89).
+  var scopeDecision = routeScope(userMessage, conversationHistory, _turnLang || conversationContext.language || 'es');
+  if (scopeDecision) {
+    // PII-free triage audit — category/level only, never the message text.
+    console.warn('[SCOPE-AUDIT] ' + JSON.stringify({
+      category: scopeDecision.category,
+      level: scopeDecision.level,
+      lang: _turnLang || conversationContext.language || 'es',
+      closure_reason: scopeDecision.wantClose ? 'OUT_OF_SCOPE' : null,
+      llm_skipped: true,
+    }) + ' ip=' + ip);
+    return res.status(200).json({
+      response: scopeDecision.reply,
+      meta: {
+        wantHandoff: false,
+        wantClose: scopeDecision.wantClose === true,
+        wantSchedule: false,
+        scope: scopeDecision.category,
+      },
+    });
+  }
+
   var contextSummary = buildContextSummary(conversationContext, _turnLang, _now);
   // ── ENTITY SCOPE LOCK (2026-08-15, PARTD-001) ───────────────────────────
   // Resolve which Medicare entities the caller actually implicated — current
