@@ -124,11 +124,16 @@ const TOPIC_LABELS: Record<string, { en: string; es: string }> = {
   letter: { en: 'a letter you received', es: 'una carta que recibió' },
   medicaid_mention: { en: 'Medicaid', es: 'Medicaid' },
   medicaid_support: { en: 'Medicaid help', es: 'ayuda con Medicaid' },
-  // AUDIT 2026-08-15 (PIT-T-02) — medical_emergency_911 / crisis_988 are
-  // deliberately ABSENT from this catalog: a returning greeting must never
-  // open with "last time we talked about a medical emergency". Their slugs
-  // contain '_', so the fallback renders the generic "your previous question"
-  // for any value persisted before the write-site started skipping them.
+  // AUDIT 2026-08-27 — merged resolution of two conflicting guards:
+  // F2 (2026-07-27) required every slug to humanize (no raw token, no generic
+  // fallback for known slugs); PIT-T-02 (2026-08-15) required that a
+  // returning greeting never re-open with "last time we talked about a
+  // medical emergency". Both intents hold via a specific NEUTRAL phrase —
+  // the same pattern crisis_988 already uses ('your wellbeing') — covering
+  // legacy values persisted before the write-site stopped storing these
+  // slugs as lastTopic. Guarded in BOTH directions: E9a (no emergency
+  // wording) and F2 (no slug leak, no generic fallback).
+  medical_emergency_911: { en: 'your health', es: 'su salud' },
   medicare_advantage: { en: 'Medicare Advantage', es: 'Medicare Advantage' },
   medicare_basics: { en: 'Medicare basics', es: 'conceptos básicos de Medicare' },
   medigap: { en: 'supplemental plans', es: 'planes suplementarios' },

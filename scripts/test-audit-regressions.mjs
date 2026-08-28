@@ -243,8 +243,16 @@ function midState(lang) {
 
 // ── F2 — TOPIC HUMANIZER (internal slugs never surface) ─────────────────────
 {
-  check('F2 medical_emergency_911 ES', humanizeTopic('medical_emergency_911', 'es') === 'una emergencia médica', humanizeTopic('medical_emergency_911', 'es'));
-  check('F2 medical_emergency_911 EN', humanizeTopic('medical_emergency_911', 'en') === 'a medical emergency', humanizeTopic('medical_emergency_911', 'en'));
+  // AUDIT 2026-08-27 — these two checks used to demand the LITERAL phrase
+  // 'a medical emergency', which PIT-T-02 (2026-08-15) later prohibited in
+  // greetings (never re-open a conversation reminding the caller of their
+  // emergency; see E9a in test-emergency-dos). Merged policy: a specific
+  // NEUTRAL phrase — humanized (F2's intent) with no emergency wording
+  // (PIT-T-02's intent).
+  check('F2 medical_emergency_911 ES', humanizeTopic('medical_emergency_911', 'es') === 'su salud', humanizeTopic('medical_emergency_911', 'es'));
+  check('F2 medical_emergency_911 EN', humanizeTopic('medical_emergency_911', 'en') === 'your health', humanizeTopic('medical_emergency_911', 'en'));
+  check('F2 emergency phrase carries no emergency wording',
+    !/emergenc/i.test(humanizeTopic('medical_emergency_911', 'en')) && !/emergenc/i.test(humanizeTopic('medical_emergency_911', 'es')));
   check('F2 unknown slug ES fallback', humanizeTopic('weird_new_slug', 'es') === 'su consulta anterior');
   check('F2 unknown slug EN fallback', humanizeTopic('weird_new_slug', 'en') === 'your previous question');
   check('F2 empty/null fallback', humanizeTopic('', 'en') === 'your previous question' && humanizeTopic(null, 'es') === 'su consulta anterior');
@@ -264,9 +272,9 @@ function midState(lang) {
 
   // The greeting itself can never contain a snake_case token.
   const g = returningVisitorGreeting({ lastTopic: 'medical_emergency_911', lastSeen: Date.now() }, 'es');
-  check('F2 ES greeting humanized', g !== null && g.includes('una emergencia médica') && !g.includes('_'), g);
+  check('F2 ES greeting humanized', g !== null && g.includes('su salud') && !g.includes('_') && !/emergencia/i.test(g), g);
   const gEn = returningVisitorGreeting({ lastTopic: 'medical_emergency_911', lastSeen: Date.now() }, 'en');
-  check('F2 EN greeting humanized', gEn !== null && gEn.includes('a medical emergency') && !gEn.includes('_'), gEn);
+  check('F2 EN greeting humanized', gEn !== null && gEn.includes('your health') && !gEn.includes('_') && !/emergency/i.test(gEn), gEn);
   const gUnknown = returningVisitorGreeting({ lastTopic: 'brand_new_internal_thing', lastSeen: Date.now() }, 'en');
   check('F2 unknown slug greeting safe', gUnknown !== null && !gUnknown.includes('_'), gUnknown);
 }
