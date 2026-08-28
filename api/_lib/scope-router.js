@@ -55,7 +55,8 @@ const IN_SCOPE_RE = new RegExp([
   'seguro(?! de (carro|auto|coche|casa|vida|viaje|mascota))', 'aseguradora',
   'carrier', 'cobertura', 'coverage', '\\bcubr',
   'doctor', 'medico', 'hospital\\b', 'clinica', 'especialista', 'specialist',
-  'receta', 'prescri', 'medicin', 'medicament', 'farmacia', 'pharmacy', 'drug',
+  'receta', 'prescri', 'medicin', 'medicat', 'medicament', 'pastilla',
+  'farmacia', 'pharmacy', 'drug', '\\bafford', 'no me alcanza',
   'cita', 'appointment', 'consulta', 'agendar', 'schedule', 'enroll', 'inscri',
   'beneficio', 'benefit', 'tarjeta', '\\bcard\\b', 'deducible', 'deductible',
   'prima\\b', 'premium', 'copago', 'copay', 'coinsur', 'advantage', 'suplement',
@@ -79,7 +80,7 @@ const BRAND_RE = /\b(amazon|ups|fedex|usps|netflix|hulu|disney plus|xfinity|comc
 const SERVICE_PAIRS = [
   // [service-noun, service-context] — BOTH must be present.
   [/\b(internet|cable|wifi|router|modem|streaming)\b/i, /\b(disconnect|cancel|pay|bill|slow|not working|no funciona|se cayo|cortaron|reconect|reconnect|instal)/i],
-  [/\b(computadora|computer|laptop|impresora|printer|celular|iphone|telefono roto|email|correo electronico|password|contrasena)\b/i, /\b(fix|arregl|repair|repar|broken|rot[oa]\b|(no|tampoco) prende|not working|no funciona|frozen|virus|help me set|configur|reset|unlock)/i],
+  [/\b(computadora|computer|laptop|impresora|printer|celular|iphone|telefono roto|email|correo electronico|password|contrasena)\b/i, /\b(fix|arregl|repair|repar|broken|rot[oa]\b|(no|tampoco) prende|no enciende|(won'?t|will not|not) turn(ing)? on|not working|no funciona|frozen|virus|help me set|configur|reset|unlock)/i],
   [/\b(paquete|package|delivery|entrega|pedido|order|envio|shipment)\b/i, /\b(where|donde|track|rastrear|missing|lost|perdido|no llego|not arrive|late|refund|reembolso)\b/i],
   [/\b(electricidad|electric bill|luz\b|gas bill|utility|utilities|agua\b|water bill)\b/i, /\b(pagar|pay|cortaron|disconnect|shut off|factura|bill|overdue)\b/i],
   [/\b(car insurance|auto insurance|seguro de (carro|auto|coche)|home insurance|seguro de casa|renters insurance|life insurance|seguro de vida|homeowners)\b/i, /./],
@@ -239,6 +240,12 @@ export function routeScope(userMessage, history, language) {
   // Nothing matched — an unclear message is NOT out of scope (spec §6): the
   // full engine (and its clarification behavior) owns it.
   return null;
+}
+
+/** Exact-repeat count of this message among prior user turns — shared with
+ *  the anomaly signals in api/chat.js (spec §27). */
+export function repeatsOf(userMessage, history) {
+  return countExactRepeats(normalize(userMessage), history);
 }
 
 export const __testables = { normalize, countStrikes, countExactRepeats, IN_SCOPE_RE, R };

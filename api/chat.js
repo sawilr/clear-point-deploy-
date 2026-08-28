@@ -31,7 +31,11 @@ import { detectMessageLang } from './_lib/lang-detect.js';
 import { readJsonBody } from './_lib/read-body.js';
 // Master spec 2026-08-28 — deterministic pre-LLM triage of out-of-scope
 // traffic (wrong business / vendors / greetings / loops). See scope-router.js.
-import { routeScope } from './_lib/scope-router.js';
+import { routeScope, repeatsOf } from './_lib/scope-router.js';
+// Master spec §63 — post-generation URL allowlist (official links only).
+import { guardUrls } from './_lib/url-guard.js';
+// Master spec §4/§5 — SHADOW intent classification (logged, acts on nothing).
+import { classifyIntent } from './_lib/intent-classifier.js';
 // 2026-08-13 — OpenAI production integration. Provider mechanics (SDK client,
 // Responses API, model routing, timeout, bounded retry, error taxonomy) live in
 // the provider module; EVERYTHING Clara — guards, PHI scrub, injection screens,
@@ -471,6 +475,9 @@ export default async function handler(req, res) {
   }
 
   var conversationHistory = Array.isArray(body.history) ? body.history : [];
+  // Master spec §30 — raw turn count BEFORE any cap, for the audit record and
+  // the anomaly/cost signals (the cap below hides the real conversation size).
+  var _rawHistoryLen = conversationHistory.length;
   // PHASE 6 — reject pathological history lengths early (token-cost DoS).
   if (conversationHistory.length > 100) {
     return res.status(400).json({ error: 'history too long' });
@@ -726,6 +733,12 @@ export default async function handler(req, res) {
       },
     });
   }
+
+  // ── SHADOW INTENT CLASSIFICATION (master spec §4/§5/§114) ──────────────
+  // Deterministic, confidence-scored, LOGGED ONLY — it routes nothing and
+  // closes nothing (spec §114: shadow-observe before any new classifier may
+  // act). The scope router above remains the only deterministic actor.
+  var _intentInfo = classifyIntent(userMessage, _turnLang || conversationContext.language || 'es');
 
   var contextSummary = buildContextSummary(conversationContext, _turnLang, _now);
   // ── ENTITY SCOPE LOCK (2026-08-15, PARTD-001) ───────────────────────────
@@ -1052,6 +1065,48 @@ export default async function handler(req, res) {
         + ' ip=' + ip);
     }
 
+    // ── URL GUARD (master spec §63) ─────────────────────────────────────────
+    // The model may only hand out approved official links; anything else is
+    // VISIBLY replaced (never silently cut — a deleted link reads as a typo
+    // and invites the invented URL to be retyped). Runs after every content
+    // filter so no later pass can reintroduce a stripped link.
+    var _urlGuard = guardUrls(cleanText, lang);
+    if (_urlGuard.strippedCount > 0) {
+      cleanText = _urlGuard.text;
+      console.warn('[CHAT] URL_STRIPPED: ' + _urlGuard.stripped.join(',') + ' ip=' + ip);
+    }
+
+    // ── ACTIVE PII WARNING (master spec §126) ───────────────────────────────
+    // The number itself was already redacted BEFORE the model (scrubPHI, top
+    // of handler); the caller also deserves to be TOLD, once, not to send it.
+    // Appended after all filters so no pass can rewrite the safety note.
+    var _phiWarned = false;
+    if (phiResult.detected.length > 0) {
+      _phiWarned = true;
+      cleanText += lang === 'en'
+        ? "\n\nFor your security, please don't share your full Social Security, Medicare, or bank numbers in this chat — we never need them here."
+        : '\n\nPor su seguridad, no comparta su número completo de Seguro Social, Medicare ni cuentas bancarias en este chat — aquí nunca los necesitamos.';
+    }
+
+    // ── ANOMALY & COST SIGNALS (master spec §27/§30/§31) — shadow ───────────
+    // Logged, never acted on. Thresholds are env-tunable with documented
+    // defaults (COST_ALERT_TURNS=20, COST_ALERT_ANOMALY=50).
+    var _repeats = 0;
+    try { _repeats = repeatsOf(userMessage, conversationHistory); } catch (_e) { /* never break a reply */ }
+    var _anomalyFlags = [];
+    if (_rawHistoryLen >= 16) _anomalyFlags.push('long_conversation');
+    if (_rawHistoryLen >= 30) _anomalyFlags.push('very_long_conversation');
+    if (userMessage.length >= 1500) _anomalyFlags.push('oversized_message');
+    if (_repeats >= 2) _anomalyFlags.push('repetition');
+    var _anomalyScore = Math.min(100,
+      (_rawHistoryLen >= 16 ? 30 : 0) + (_rawHistoryLen >= 30 ? 30 : 0)
+      + (userMessage.length >= 1500 ? 20 : 0) + (_repeats >= 2 ? 20 : 0));
+    var _alertTurns = parseInt(process.env.COST_ALERT_TURNS || '20', 10);
+    var _alertScore = parseInt(process.env.COST_ALERT_ANOMALY || '50', 10);
+    if (_rawHistoryLen >= _alertTurns || _anomalyScore >= _alertScore) {
+      console.warn('[COST-ALERT] ' + JSON.stringify({ turns: _rawHistoryLen, anomaly_score: _anomalyScore, flags: _anomalyFlags }) + ' ip=' + ip);
+    }
+
     // ── AUDIT 2026-08-13 (O-04, P1) — AI ANSWER AUDIT RECORD ────────────────
     // Nothing was logged about WHY an answer was given, so "why did the AI say
     // this?" was unanswerable — a gap for §16 evidence packages. One structured
@@ -1091,6 +1146,15 @@ export default async function handler(req, res) {
         reply_len: cleanText.length,
         reply_fingerprint: (_hash >>> 0).toString(16),
         opted_out: conversationContext.contactOptedOut === true,
+        // Master spec §4/§5/§27/§30/§63/§126 — session-state & shadow fields.
+        intent: _intentInfo.intent,
+        intent_confidence: _intentInfo.confidence,
+        turn_count_raw: _rawHistoryLen,
+        msg_chars: userMessage.length,
+        anomaly_score: _anomalyScore,
+        anomaly_flags: _anomalyFlags,
+        url_stripped: _urlGuard.strippedCount,
+        phi_warned: _phiWarned,
       }));
     } catch (e) { /* auditing must never break a reply */ }
 

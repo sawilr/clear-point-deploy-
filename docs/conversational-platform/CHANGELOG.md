@@ -1,5 +1,12 @@
 # Changelog — Conversational Platform
 
+## 2026-08-28 — Master-spec execution wave 2
+- **URL guard (§63)** `api/_lib/url-guard.js`: post-generation allowlist — only approved official hosts (medicare.gov, ssa.gov, cms.gov, SHIP, state portals, clearpointsenioradvisors.com) survive in model output; anything else visibly replaced, lookalike domains (fakemedicare.gov) not fooled, never empties a reply.
+- **Active PII warning (§126)**: when a caller sends an SSN/account number, it is redacted before the model (existing) AND the caller is now told, once, not to share it — appended after all filters.
+- **Shadow intent classifier (§4/§5/§114)** `api/_lib/intent-classifier.js`: deterministic, bilingual, confidence-banded (high/medium/low) classification into the spec taxonomy — logged in [AI-AUDIT], acts on nothing (spec's own shadow rule).
+- **Anomaly & cost signals (§27/§30/§31)**: raw turn count, message size, repetition, anomaly score in [AI-AUDIT]; [COST-ALERT] warn at env-tunable thresholds (COST_ALERT_TURNS=20, COST_ALERT_ANOMALY=50).
+- **Corpus suite (§81/§82/§85/§89)** `test-master-spec-corpus-2026-08-28.mjs`: 221 checks — 109 generated wrong-number variations, 56 vendor variations, expanded protected set (caught and fixed a real §89 false positive: EN "medications" was unprotected), long-conversation tests (30/50/100 turns capped, 101 rejected), URL-guard and PII-warning wiring through the real handler.
+
 ## 2026-08-28 — Master-spec execution wave 1
 - **Scope router** (`api/_lib/scope-router.js` + wiring): deterministic pre-LLM triage — wrong-business/vendor/greeting/loop turns answered without the model (measured: 2.0–2.8s+full prompt → 6–66ms, 0 model calls; live-verified in production). Graduated ladder, whitelist-first, consumer guard, [SCOPE-AUDIT] logging. Suite: 67 checks incl. §89 false-positive guards. Commit `ed78f7f`.
 - **Voice call-scope & closure spec** for Emely/Sofia with paste-ready EN/ES prompt blocks + staged rollout runbook (`docs/voice/`). NOT yet applied to live lines (owner window).

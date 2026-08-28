@@ -8,6 +8,7 @@
 |---|---|---|
 | `test:clara` (npm) | 95 | Clara routing corpus |
 | test-scope-router-2026-08-28 | 67 | scope triage, ladder, loops, §89 false-positive guards, wiring (safety/security upstream) |
+| test-master-spec-corpus-2026-08-28 | 221 | 109 wrong-number + 56 vendor generated variations, §89 protected set, long conversations (30/50/100 turns), URL guard, active PII warning, shadow intent classifier |
 | test-chat-wiring-2026-08-13 | 60 | production path: real handler → provider transport, telemetry stripped |
 | test-mega-corpus-2026-08-27 | 514 (+309 live-gated) | Clara+Zara guard stack, EN+ES |
 | test-audit-regressions | 345 | copy claims, topic humanizer, filters |
