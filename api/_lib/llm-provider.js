@@ -186,6 +186,18 @@ export async function callOpenAI(payload) {
     const t = parseFloat(tempRaw);
     if (isFinite(t)) req.temperature = t;
   }
+  // Reasoning effort — AUDIT 2026-08-27 finding #3 (2.2–4.2s turns). The
+  // target models are reasoning-class and spend their default effort on
+  // questions the deterministic guard stack (compliance filter, entity-scope
+  // gate, figures backstop) already constrains, so 'low' trims the latency
+  // tail without moving correctness authority. OPENAI_REASONING_EFFORT
+  // overrides ('minimal'..'high'); 'off' omits the parameter entirely — the
+  // kill switch for a future model that rejects it (the failure mode
+  // temperature had: an unsupported param 400s EVERY call).
+  const effortRaw = (process.env.OPENAI_REASONING_EFFORT || 'low').trim().toLowerCase();
+  if (effortRaw !== 'off' && ['minimal', 'low', 'medium', 'high'].indexOf(effortRaw) !== -1) {
+    req.reasoning = { effort: effortRaw };
+  }
   // Web search — OFF by default. The Anthropic path domain-locks search to
   // official government/state sites; until the equivalent filter contract is
   // verified against the live OpenAI API (live gate), enabling search here

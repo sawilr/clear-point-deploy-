@@ -103,7 +103,11 @@ try {
     check('1.4 Clara identity prompt travels as instructions', outbound && /ClearPoint Senior Advisors/.test(outbound.body.instructions));
     check('1.5 per-turn context block rides with the instructions', outbound && /Caller ZIP: 11375/.test(outbound.body.instructions), 'ZIP context missing — state-aware answers would break');
     check('1.6 handler returns the model text to the client', res.statusCode === 200 && res.jsonBody && /con gusto le ayudo/i.test(res.jsonBody.response), `status=${res.statusCode}`);
-    check('1.7 usage metadata surfaced in meta', res.jsonBody.meta && res.jsonBody.meta.usage && res.jsonBody.meta.usage.total_tokens === 15);
+    // AUDIT 2026-08-27 (finding #14) — model telemetry (usage/model/latency)
+    // is now server-log-only ([AI-AUDIT]); the client response must NOT carry
+    // it. This assertion used to pin the OLD behavior (usage in meta) and
+    // went stale when 8a3ce8f stripped it. It now pins the strip itself.
+    check('1.7 usage metadata is NOT surfaced in meta (server-log-only)', res.jsonBody.meta && res.jsonBody.meta.usage === undefined && res.jsonBody.meta.model === undefined);
   }
 
   // ══ 2. History replay + PHI scrub on the OpenAI path ════════════════════════

@@ -48,8 +48,8 @@ export function TrustBar({ stats }: TrustBarProps) {
             to the "$0 Cost to You" claim. CMS best practice: clarify the
             commission model without sounding like a government benefit. */}
         <p className="text-center text-[13px] text-cream-50/60 mt-2 max-w-2xl mx-auto">{t(
-          'Our service is no cost to you. If you enroll in a plan through us, ClearPoint may be compensated by the insurance carrier. Your plan cost is not increased because you use our help.',
-          'Nuestro servicio no tiene costo para usted. Si se inscribe en un plan a través de nosotros, ClearPoint puede recibir compensación de la aseguradora. El costo de su plan no aumenta por usar nuestra ayuda.'
+          'Our service is no cost to you. If you enroll in a plan through us, Clear Point may be compensated by the insurance carrier. Your plan cost is not increased because you use our help.',
+          'Nuestro servicio no tiene costo para usted. Si se inscribe en un plan a través de nosotros, Clear Point puede recibir compensación de la aseguradora. El costo de su plan no aumenta por usar nuestra ayuda.'
         )}</p>
       </div>
     </div>

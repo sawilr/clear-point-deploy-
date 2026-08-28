@@ -146,8 +146,8 @@ export default function OtcBenefits() {
                 </p>
                 <p>
                   {t(
-                    'OTC benefits do not replace medical coverage or prescription drug coverage. Benefits can change each year. Before choosing or changing a plan, it is important to review the plan’s Summary of Benefits, Evidence of Coverage, and carrier materials. ClearPoint can help explain and organize the information for a licensed advisor review.',
-                    'Los beneficios OTC no reemplazan la cobertura médica ni la cobertura de medicamentos recetados. Los beneficios pueden cambiar cada año. Antes de escoger o cambiar un plan, es importante revisar el Summary of Benefits, la Evidence of Coverage y los materiales de la aseguradora. ClearPoint puede ayudar a explicar y organizar la información para una revisión con un asesor licenciado.'
+                    'OTC benefits do not replace medical coverage or prescription drug coverage. Benefits can change each year. Before choosing or changing a plan, it is important to review the plan’s Summary of Benefits, Evidence of Coverage, and carrier materials. Clear Point can help explain and organize the information for a licensed advisor review.',
+                    'Los beneficios OTC no reemplazan la cobertura médica ni la cobertura de medicamentos recetados. Los beneficios pueden cambiar cada año. Antes de escoger o cambiar un plan, es importante revisar el Summary of Benefits, la Evidence of Coverage y los materiales de la aseguradora. Clear Point puede ayudar a explicar y organizar la información para una revisión con un asesor licenciado.'
                   )}
                 </p>
               </div>
@@ -158,8 +158,8 @@ export default function OtcBenefits() {
                 <h3 className="font-serif text-xl text-cream-50 mb-3">{t('How We Help', 'Cómo Le Ayudamos')}</h3>
                 <p className="text-cream-100/80 text-sm leading-relaxed mb-4">
                   {t(
-                    'ClearPoint can help explain and organize plan information, but the licensed advisor must verify plan details and the client decides. Final eligibility, plan availability, and OTC rules are determined by the carrier and the plan’s service area.',
-                    'ClearPoint puede ayudar a explicar y organizar la información del plan, pero el asesor licenciado debe verificar los detalles del plan y el cliente decide. La elegibilidad final, la disponibilidad del plan y las reglas de OTC las determina la aseguradora y el área de servicio del plan.'
+                    'Clear Point can help explain and organize plan information, but the licensed advisor must verify plan details and the client decides. Final eligibility, plan availability, and OTC rules are determined by the carrier and the plan’s service area.',
+                    'Clear Point puede ayudar a explicar y organizar la información del plan, pero el asesor licenciado debe verificar los detalles del plan y el cliente decide. La elegibilidad final, la disponibilidad del plan y las reglas de OTC las determina la aseguradora y el área de servicio del plan.'
                   )}
                 </p>
                 <a href="tel:18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">

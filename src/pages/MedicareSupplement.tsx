@@ -196,8 +196,8 @@ export default function MedicareSupplement() {
             </p>
             <p className="text-earth-500 text-sm mb-5">
               {t(
-                'ClearPoint Senior Advisors can help you understand plan letters, premiums, and availability in your area.',
-                'ClearPoint Senior Advisors puede ayudarle a entender las letras de los planes, las primas y la disponibilidad en su área.'
+                'Clear Point Senior Advisors can help you understand plan letters, premiums, and availability in your area.',
+                'Clear Point Senior Advisors puede ayudarle a entender las letras de los planes, las primas y la disponibilidad en su área.'
               )}
             </p>
             <button

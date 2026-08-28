@@ -94,7 +94,10 @@ export default function About() {
               // complete (Medicare/AHIP), with no implication of CMS endorsement.
               { icon: <CheckIcon className="w-7 h-7" />, title: 'Annually Certified', titleEs: 'Certificación Anual', desc: 'Completes annual Medicare/AHIP certification', descEs: 'Completa la certificación anual Medicare/AHIP' },
               { icon: <UsersIcon className="w-7 h-7" />, title: 'Bilingual Service', titleEs: 'Servicio Bilingüe', desc: 'English & Spanish fluently', descEs: 'Inglés y español con fluidez' },
-              { icon: <StarIcon className="w-7 h-7" />, title: 'Independent Agent', titleEs: 'Agente Independiente', desc: 'Works for you, not carriers', descEs: 'Trabaja para usted, no aseguradoras' },
+              // AUDIT 2026-08-27 (finding #4) — "Works for you, not carriers"
+              // overstated independence next to the carrier-compensation
+              // disclosure. Precise version of the same badge:
+              { icon: <StarIcon className="w-7 h-7" />, title: 'Independent Agency', titleEs: 'Agencia Independiente', desc: 'Contracted with multiple carriers — owned by none', descEs: 'Contratada con varias aseguradoras — propiedad de ninguna' },
             ].map((c, i) => (
               <div key={i} className="bg-cream-50 rounded-xl p-7 text-center shadow-xs">
                 <div className="w-14 h-14 rounded-lg bg-gold-100 text-gold-500 flex items-center justify-center mx-auto mb-4">{c.icon}</div>

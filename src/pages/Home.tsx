@@ -21,7 +21,7 @@ const services = [
     link: '/medicare-advantage',
   },
   // HIDDEN per Sawil 2026-06: Medicare Supplement / Medigap moved to Education
-  // until ClearPoint is authorized to broker it. Page kept accessible at
+  // until Clear Point is authorized to broker it. Page kept accessible at
   // /medicare-supplement for educational reference. Restore by uncommenting.
   // {
   //   image: '/service-supplement.jpg',
@@ -39,7 +39,7 @@ const services = [
     descriptionEs: 'Cobertura de medicamentos para personas en Medicare Original. Comparamos planes según sus medicamentos específicos.',
     link: '/part-d',
   },
-  // HIDDEN per Sawil 2026-06: Extra Help / LIS is NOT a ClearPoint service —
+  // HIDDEN per Sawil 2026-06: Extra Help / LIS is NOT a Clear Point service —
   // we educate on how to apply if a beneficiary may qualify. Page /extra-help
   // kept accessible as education. Restore by uncommenting.
   // {
@@ -167,8 +167,8 @@ export default function Home() {
         eyebrowEs="Independiente · Licenciado · Sin Costo"
         headline="Navigate Medicare <span class='text-gold-400'>with Confidence</span>"
         headlineEs="Navega Medicare <span class='text-gold-400'>con Confianza</span>"
-        subheadline="We help seniors understand their Medicare options — clearly, honestly, and without pressure. Our advisors work for you, not for an insurance company."
-        subheadlineEs="Ayudamos a los adultos mayores a entender sus opciones de Medicare — de forma clara, honesta y sin presión. Nuestros asesores trabajan para usted, no para una aseguradora."
+        subheadline="We help seniors understand their Medicare options — clearly, honestly, and without pressure. We're an independent agency: not owned by any insurance carrier, and our guidance costs you nothing."
+        subheadlineEs="Ayudamos a los adultos mayores a entender sus opciones de Medicare — de forma clara, honesta y sin presión. Somos una agencia independiente: no pertenecemos a ninguna aseguradora, y nuestra orientación no le cuesta nada."
         showForm={true}
       />
 
@@ -228,8 +228,8 @@ export default function Home() {
           </ul>
           <p className="text-earth-600 text-xs sm:text-sm leading-relaxed mt-5 pl-9">
             {t(
-              'ClearPoint does not recommend plan changes without verification. Final review is performed by a licensed Medicare advisor.',
-              'ClearPoint no recomienda cambios de plan sin verificación. La revisión final la realiza un asesor licenciado de Medicare.'
+              'Clear Point does not recommend plan changes without verification. Final review is performed by a licensed Medicare advisor.',
+              'Clear Point no recomienda cambios de plan sin verificación. La revisión final la realiza un asesor licenciado de Medicare.'
             )}
           </p>
         </div>
@@ -241,7 +241,7 @@ export default function Home() {
       </div>
 
       {/* Services */}
-      <section ref={servicesReveal.ref} id="services" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={servicesReveal.ref} id="services" className={`py-14 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${servicesReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('What We Cover', 'Lo Que Cubrimos')}</span>
@@ -271,7 +271,7 @@ export default function Home() {
       </section>
 
       {/* Enrollment Periods — anchor for Annual Review nav link */}
-      <section id="annual-review" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
+      <section id="annual-review" className="py-14 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="cp-section px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <div>
@@ -345,7 +345,7 @@ export default function Home() {
       </section>
 
       {/* How It Works */}
-      <section ref={howReveal.ref} id="how" className={`py-20 lg:py-28 bg-cream-50 scroll-mt-28 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={howReveal.ref} id="how" className={`py-14 lg:py-28 bg-cream-50 scroll-mt-28 transition-all duration-700 ${howReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="cp-section px-5">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-20 items-start">
             <div>
@@ -390,19 +390,25 @@ export default function Home() {
       </section>
 
       {/* Why Independent */}
-      <section ref={whyReveal.ref} id="why" className={`py-20 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={whyReveal.ref} id="why" className={`py-14 lg:py-28 bg-white scroll-mt-28 transition-all duration-700 ${whyReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="cp-section px-5">
           <div className="max-w-3xl">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Why Independent Matters', 'Por Qué Importa Ser Independiente')}</span>
             <h2 className="font-serif text-[1.6rem] sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
-              {t('We Work for You,', 'Trabajamos para Usted,')}<br />{t('Not the Insurance Company', 'No para la Aseguradora')}
+              {/* AUDIT 2026-08-27 (finding #4) — "We work for you, not the
+                  insurance company" was an absolute independence claim that
+                  sat next to the TPMO carrier-compensation disclosure. The
+                  precise, defensible framing: independent = owned by no
+                  carrier, contracted with several, paid by the chosen
+                  carrier, not every plan offered. */}
+              {t('Independent Guidance,', 'Orientación Independiente,')}<br />{t('Not Owned by Any Carrier', 'Sin Pertenecer a Ninguna Aseguradora')}
             </h2>
             <p className="text-earth-600 text-base leading-relaxed mb-8">
-              {t("Unlike captive agents who can only offer one company's plans, we're independent — meaning we can review options across the market with no carrier obligation, and a licensed advisor walks you through the differences.", 'A diferencia de los agentes cautivos que solo ofrecen planes de una empresa, somos independientes — podemos revisar opciones en el mercado sin obligación con ninguna aseguradora, y un asesor licenciado le explica las diferencias.')}
+              {t("Unlike captive agents who can only offer one company's plans, we're an independent agency contracted with multiple carriers. We don't offer every plan available in your area, and we're paid a commission by the carrier you choose — never by you. A licensed advisor walks you through the trade-offs so the decision stays yours.", 'A diferencia de los agentes cautivos que solo ofrecen planes de una empresa, somos una agencia independiente contratada con varias aseguradoras. No ofrecemos todos los planes disponibles en su área, y la aseguradora que usted elija nos paga una comisión — usted nunca nos paga. Un asesor licenciado le explica los pros y contras para que la decisión sea suya.')}
             </p>
             <div className="space-y-4">
               {[
-                { icon: <ShieldIcon className="w-5 h-5 text-gold-500" />, title: 'Unbiased Advice', titleEs: 'Asesoría Imparcial', desc: 'No quotas, no company targets. Our only goal is to help you review the options that fit you.', descEs: 'Sin cuotas, sin metas corporativas. Nuestro único objetivo es ayudarle a revisar las opciones que se ajusten a usted.' },
+                { icon: <ShieldIcon className="w-5 h-5 text-gold-500" />, title: 'Straight Answers', titleEs: 'Respuestas Claras', desc: 'We explain each option in plain language — including its limits — and tell you when something is not a fit. The goal is a plan you understand, chosen by you.', descEs: 'Le explicamos cada opción en lenguaje sencillo — incluyendo sus límites — y le decimos cuando algo no le conviene. La meta es un plan que usted entienda, elegido por usted.' },
                 { icon: <LockIcon className="w-5 h-5 text-gold-500" />, title: 'Your Data Is Protected', titleEs: 'Sus Datos Están Protegidos', desc: 'Your information is kept confidential and used only to connect you with a licensed advisor.', descEs: 'Su información se mantiene confidencial y se usa solo para conectarle con un asesor licenciado.' },
                 { icon: <UsersIcon className="w-5 h-5 text-gold-500" />, title: 'We Stay With You After Enrollment', titleEs: 'Permanecemos Con Usted Después de la Inscripción', desc: "Questions, claims, or billing issues — we're your point of contact, not a call center.", descEs: 'Preguntas, reclamaciones o problemas de facturación — somos su contacto, no un centro de llamadas.' },
               ].map((r, i) => (
@@ -465,7 +471,7 @@ export default function Home() {
       </section>
 
       {/* Client Experience Standards */}
-      <section ref={testimonialsReveal.ref} className={`py-20 lg:py-28 bg-cream-100 transition-all duration-700 ${testimonialsReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
+      <section ref={testimonialsReveal.ref} className={`py-14 lg:py-28 bg-cream-100 transition-all duration-700 ${testimonialsReveal.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'}`}>
         <div className="cp-section px-5">
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Our Commitment', 'Nuestro Compromiso')}</span>
@@ -520,7 +526,7 @@ export default function Home() {
       </section>
 
       {/* FAQ */}
-      <section ref={ctaReveal.ref} id="faq" className="py-20 lg:py-28 bg-cream-50 scroll-mt-28">
+      <section ref={ctaReveal.ref} id="faq" className="py-14 lg:py-28 bg-cream-50 scroll-mt-28">
         <div className="cp-section px-5">
           <FAQ items={faqItems} title="Common Questions" titleEs="Preguntas Frecuentes" />
         </div>
@@ -530,8 +536,8 @@ export default function Home() {
       <CTASection
         headline="Ready to Review Your Options?"
         headlineEs="¿Listo para Revisar Sus Opciones?"
-        subheadline="No obligation. No pressure. Just clear, honest guidance from a licensed Medicare advisor who works for you."
-        subheadlineEs="Sin compromiso. Sin presión. Solo orientación clara y honesta de un asesor de Medicare licenciado que trabaja para usted."
+        subheadline="No obligation. No pressure. Just clear, honest guidance from a licensed Medicare advisor — at no cost to you."
+        subheadlineEs="Sin compromiso. Sin presión. Solo orientación clara y honesta de un asesor de Medicare licenciado — sin costo para usted."
       />
     </div>
   );

@@ -755,7 +755,16 @@ export default async function handler(req, res) {
           continue;
         }
       }
-      messages.push({ role: turn.role, content: _turnScrub.text });
+      // AUDIT 2026-08-27 (finding #3) — cap each replayed history turn. The
+      // 12-turn cap bounds COUNT but a single pasted wall of text could still
+      // ride along every subsequent turn forever. 1,500 chars keeps any real
+      // conversational turn intact (P95 of live turns is far below this) and
+      // only truncates pathological pastes, which the injection/PHI screens
+      // above have already seen in full.
+      var _turnText = _turnScrub.text.length > 1500
+        ? _turnScrub.text.slice(0, 1500) + ' […]'
+        : _turnScrub.text;
+      messages.push({ role: turn.role, content: _turnText });
     }
   }
   // Context (ZIP / state / state-specific programs / already-captured details)

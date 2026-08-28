@@ -102,8 +102,8 @@ export default function ExtraHelp() {
                 <h3 className="font-serif text-lg font-semibold text-earth-900 mb-3">{t('Official Application — Social Security', 'Solicitud Oficial — Seguro Social')}</h3>
                 <p className="text-earth-700 text-sm leading-relaxed mb-4">
                   {t(
-                    'Extra Help / LIS is handled through Social Security. ClearPoint can help explain the program and help you prepare questions, but the official application is completed through Social Security. Eligibility depends on income, resources, and program rules.',
-                    'Extra Help / LIS se maneja a través del Seguro Social. ClearPoint puede ayudarle a entender el programa y preparar sus preguntas, pero la solicitud oficial se completa a través del Seguro Social. La elegibilidad depende de ingresos, recursos y reglas del programa.'
+                    'Extra Help / LIS is handled through Social Security. Clear Point can help explain the program and help you prepare questions, but the official application is completed through Social Security. Eligibility depends on income, resources, and program rules.',
+                    'Extra Help / LIS se maneja a través del Seguro Social. Clear Point puede ayudarle a entender el programa y preparar sus preguntas, pero la solicitud oficial se completa a través del Seguro Social. La elegibilidad depende de ingresos, recursos y reglas del programa.'
                   )}
                 </p>
                 <a

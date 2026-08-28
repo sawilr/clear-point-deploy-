@@ -405,7 +405,14 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
 
           {/* TCPA Consent — UNCHECKED BY DEFAULT (COMPLIANCE REQUIRED) */}
-          <div className="bg-cream-100 rounded-lg p-3.5 border border-cream-300">
+          <div className="bg-cream-100 rounded-lg p-4 border border-cream-300">
+            {/* AUDIT 2026-08-27 (finding #10) — a neutral section label, a
+                larger checkbox and roomier spacing make the consent block
+                scannable at the point of decision. The canonical TCPA text
+                below is rendered VERBATIM and stays byte-identical (it is
+                SHA-256'd into the consent receipt — see buildConsentReceipt);
+                only the presentation around it changed. */}
+            <p className="text-[11px] font-bold tracking-[0.15em] uppercase text-earth-700 mb-2">{t('Your Consent', 'Su Consentimiento')}</p>
             {/* Sawil 2026-06-21 (combined audit Phase 1 #1B): the whole label is
                 the tap target (input + text); min-h-[44px] guarantees WCAG 2.5.5
                 target size even if the consent text is short in some locale. */}
@@ -421,7 +428,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 aria-describedby={errors.consent ? fid('consent_err') : undefined}
                 checked={formData.tcpa_consent}
                 onChange={handleChange}
-                className="mt-0.5 w-4 h-4 accent-earth-800 flex-shrink-0"
+                className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0"
               />
               {/* Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the
                   EXACT canonical TCPA text that gets recorded + SHA-256 hashed, so the
@@ -441,8 +448,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             </p>
             <p>
               {t(
-                'ClearPoint Senior Advisors respects your privacy. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical information through this form. Information submitted may be transmitted to our secure CRM so a licensed advisor can follow up with you.',
-                'ClearPoint Senior Advisors respeta su privacidad. Por favor no envíe números de Seguro Social, números de Medicare, información bancaria, ni información médica detallada a través de este formulario. La información enviada puede transmitirse a nuestro CRM seguro para que un asesor licenciado pueda contactarle.'
+                'Clear Point Senior Advisors respects your privacy. Please do not submit Social Security numbers, Medicare ID numbers, banking information, or detailed medical information through this form. Information submitted may be transmitted to our secure CRM so a licensed advisor can follow up with you.',
+                'Clear Point Senior Advisors respeta su privacidad. Por favor no envíe números de Seguro Social, números de Medicare, información bancaria, ni información médica detallada a través de este formulario. La información enviada puede transmitirse a nuestro CRM seguro para que un asesor licenciado pueda contactarle.'
               )}
             </p>
           </div>

@@ -58,7 +58,14 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     return 'en';
   });
 
-  const lang: Lang = urlIsSpanish ? 'es' : storedLang;
+  // AUDIT 2026-08-27 (finding #8, part 2) — the URL space decides the content
+  // language in BOTH directions: /es/* is Spanish (as before) and an explicit
+  // English URL renders English even when the stored preference is Spanish —
+  // URL, content and hreflang can never disagree. The stored preference still
+  // personalizes the root landing (redirect effect below) and still decides
+  // the language on routes with no /es twin (/soa/*, /thank-you), where
+  // switching is client-side by design.
+  const lang: Lang = urlIsSpanish ? 'es' : (NO_ES_TWIN.test(pathname) ? storedLang : 'en');
 
   // Sawil 2026-07-27 AUDIT CP-001 — a Spanish-preference visitor landing on an
   // ENGLISH URL that has an /es twin is redirected once (replace, first load
@@ -70,7 +77,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (redirectChecked) return;
     setRedirectChecked(true);
-    if (storedLang === 'es' && !urlIsSpanish && !NO_ES_TWIN.test(pathname)) {
+    // AUDIT 2026-08-27 (finding #8) — the preference redirect fires ONLY from
+    // the root landing. A deep English URL (paid-campaign landing, shared
+    // link, direct visit) is an explicit content request; hijacking it to
+    // /es/* on a stored preference contradicted the "URL wins" rule this
+    // provider already applies to /es URLs. Root '/' carries no explicit
+    // language intent, so personalization still applies there.
+    if (storedLang === 'es' && pathname === '/' && !urlIsSpanish) {
       navigate(toSpanishPath(pathname) + window.location.search + window.location.hash, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,11 +97,19 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     if (isSpanishPath(pathname)) setLangState('es');
   }, [pathname]);
 
+  // AUDIT 2026-08-27 (finding #8, part 3) — persist only the PREFERENCE
+  // (explicit toggles and /es visits mutate storedLang), never the
+  // URL-derived display language: a Spanish-preference visitor who follows
+  // one English link must not have their stored preference silently flipped
+  // to 'en' by the visit itself.
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, lang); } catch { /* private mode */ }
-    // Sawil 2026-06 — keep <html lang> in sync with the chosen language so
-    // screen readers pronounce the page correctly (index.html hardcodes "en";
-    // without this, Spanish content is read with an English accent).
+    try { localStorage.setItem(STORAGE_KEY, storedLang); } catch { /* private mode */ }
+  }, [storedLang]);
+
+  // Sawil 2026-06 — keep <html lang> in sync with the DISPLAYED language so
+  // screen readers pronounce the page correctly (index.html hardcodes "en";
+  // without this, Spanish content is read with an English accent).
+  useEffect(() => {
     if (typeof document !== 'undefined') {
       document.documentElement.lang = lang;
     }

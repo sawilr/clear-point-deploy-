@@ -95,8 +95,22 @@ export default function App() {
       </header>
       <main id="main-content" className={isSupportPage ? 'support-main' : undefined}>
         {/* Suspense holds the layout height while a lazily-loaded route chunk
-            arrives (same-origin, typically &lt;100 ms), preventing a jump. */}
-        <Suspense fallback={<div className="min-h-[60vh]" aria-busy="true" aria-live="polite" />}>
+            arrives (same-origin, typically &lt;100 ms), preventing a jump.
+            AUDIT 2026-08-27 (finding #11) — on a slow connection the old empty
+            spacer read as a broken page; pulsing neutral blocks now mirror the
+            hero+content silhouette until the chunk lands. */}
+        <Suspense fallback={
+          <div className="min-h-[60vh] px-5 py-10 max-w-6xl mx-auto" aria-busy="true" aria-live="polite">
+            <div className="animate-pulse space-y-6">
+              <div className="h-56 bg-cream-200 rounded-2xl" />
+              <div className="h-8 bg-cream-200 rounded-lg w-2/3" />
+              <div className="h-4 bg-cream-200 rounded w-full" />
+              <div className="h-4 bg-cream-200 rounded w-5/6" />
+              <div className="h-4 bg-cream-200 rounded w-3/4" />
+            </div>
+          </div>
+        }>
+
           <Routes>
             {CONTENT_ROUTES.map(({ path, element }) => (
               <Route key={path} path={path} element={element} />

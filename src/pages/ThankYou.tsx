@@ -24,7 +24,7 @@ export default function ThankYou() {
         </h1>
         <p className="text-earth-700 text-base leading-relaxed mb-8">
           {t(
-            'A licensed ClearPoint Senior Advisors advisor will contact you soon. If you would like to speak with someone right away, you can call us.',
+            'A licensed Clear Point Senior Advisors advisor will contact you soon. If you would like to speak with someone right away, you can call us.',
             'Un asesor licenciado de Clear Point Senior Advisors se comunicará con usted pronto. Si prefiere hablar con alguien de inmediato, puede llamarnos.'
           )}
         </p>

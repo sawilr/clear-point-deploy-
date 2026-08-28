@@ -104,7 +104,7 @@ export function Footer() {
             </p>
           </div>
 
-          {/* Services — coverage / plan categories ClearPoint is authorized to
+          {/* Services — coverage / plan categories Clear Point is authorized to
               broker. Medicare Supplement MOVED to Education per Sawil 2026-06
               (pending broker authorization). */}
           <div>

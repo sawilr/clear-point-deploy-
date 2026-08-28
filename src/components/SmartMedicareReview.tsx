@@ -359,7 +359,7 @@ export function SmartMedicareReview() {
       '',
       'Recommended Agent Follow-Up:',
       specialCat
-        ? 'Special-situation education request. Provide general Medicare guidance only. Do NOT work as a normal sales lead. ClearPoint does not enroll into or solve Medicaid, SSI, SSDI, VA, TRICARE, nursing home, home care, or state assistance programs.'
+        ? 'Special-situation education request. Provide general Medicare guidance only. Do NOT work as a normal sales lead. Clear Point does not enroll into or solve Medicaid, SSI, SSDI, VA, TRICARE, nursing home, home care, or state assistance programs.'
         : 'Verify Medicare status, current coverage, doctors, medications, and the requested plan review. Confirm any program status with the proper agency before discussing options.',
     ].join('\n');
   };
@@ -608,7 +608,7 @@ export function SmartMedicareReview() {
                 {isEs ? SPECIAL_SCOPE_ES : SPECIAL_SCOPE_EN}
               </p>
               <p className="text-earth-800 text-base font-semibold mb-3">
-                {t('Would you like a ClearPoint advisor to call you with general Medicare guidance?', '¿Le gustaría que un asesor de ClearPoint le llame con orientación general sobre Medicare?')}
+                {t('Would you like a Clear Point advisor to call you with general Medicare guidance?', '¿Le gustaría que un asesor de Clear Point le llame con orientación general sobre Medicare?')}
               </p>
               <div className="space-y-2.5">
                 <button
@@ -652,7 +652,7 @@ export function SmartMedicareReview() {
                 </ul>
               </div>
               <p className="text-sm text-earth-700 mb-4">
-                {t('You can also call ClearPoint for general Medicare guidance:', 'También puede llamar a ClearPoint para orientación general de Medicare:')}{' '}
+                {t('You can also call Clear Point for general Medicare guidance:', 'También puede llamar a Clear Point para orientación general de Medicare:')}{' '}
                 <a href="tel:18557208555" className="font-semibold text-gold-600 hover:underline">1-855-720-8555</a>{' '}
                 <span className="text-earth-600">({t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')})</span>
               </p>
