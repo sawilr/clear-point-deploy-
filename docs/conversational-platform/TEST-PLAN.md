@@ -22,6 +22,10 @@
 | test-submit-lead-security-2026-08-15 | 44 | lead endpoint security (uses anti-CRM interlock harness) |
 | test-redteam-openai-r2-2026-08-14 | 24 | provider-integration red-team pins |
 | test-clara-completion-2026-08-13 | 167 | conversation completion behaviors |
+| test-fmo-r2-2026-09-03 | 43 | FMO round-2 fixes (C1 Part D cap, C2 FL out-of-area, C3 ES bill parity, C4 safety vocab, C5/C6 scope-router, C7 url-guard, C11 emergency veto, C12 plan-rec, C13 entity-scope, C16 consent scrub) |
+| test-c9-consent-logic-2026-09-03 | 24 | Zara TCPA consent matcher (refusals decline, ambiguity reprompts) |
+| test-c10-split-injection-2026-09-03 | 3 | 3-turn distributed injection blocked; legit follow-ups pass |
+| test-c11-emergency-redteam-2026-09-03 | 39 | emergency-veto life-safety red-team (no benign over-trigger, no acute miss) |
 
 ## LIVE gates (production, read-only, no PII)
 - `test-live-security-sample-2026-08-27.mjs` — 17 checks vs production (16/17; the 1 fail is RL-08, KV-gated).

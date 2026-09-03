@@ -23,11 +23,14 @@ const ALLOWED_HOSTS = [
 
 // http(s)://…, www.…, and bare domains with a common TLD. Trailing
 // punctuation is left outside the match so sentences keep their period.
-const URL_RE = /\b(?:https?:\/\/[^\s<>"')\]]+|www\.[a-z0-9-]+(?:\.[a-z0-9-]+)+[^\s<>"')\]]*|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|org|net|gov|info|biz|us)(?:\/[^\s<>"')\]]*)?)/gi;
+const URL_RE = /\b(?:https?:\/\/[^\s<>"')\]]+|www\.[a-z0-9-]+(?:\.[a-z0-9-]+)+[^\s<>"')\]]*|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|org|net|gov|info|biz|us|io|ly|co|me|xyz|app|link|site|online|top|shop|club|live|life|world|today|store|tech|health|care)(?:\/[^\s<>"')\]]*)?)/gi;
 
 function hostOf(raw) {
   let s = String(raw).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '');
   s = s.split(/[/?#]/)[0];
+  // Drop userinfo: "medicare.gov@evil.com" must normalize to the REAL host
+  // (evil.com), never be delivered because '@' fails the shape test (fail-open).
+  s = s.split('@').pop();
   return s.replace(/[.,;:!?]+$/, '');
 }
 
@@ -44,9 +47,14 @@ export function guardUrls(text, language) {
   const stripped = [];
   const out = String(text || '').replace(URL_RE, (m) => {
     const host = hostOf(m);
-    // Not URL-shaped after normalization (e.g. "e.g" caught by the bare-domain
-    // branch)? Require at least one dot and a letters-only TLD.
-    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) return m;
+    // Not URL-shaped after normalization? For SCHEME-BEARING matches this is
+    // fail-CLOSED (IPv6 literals, residual userinfo, exotic authorities must
+    // not ship); the fail-open escape survives only for the bare-domain branch
+    // ("e.g" class false positives).
+    if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host)) {
+      if (/^https?:\/\//i.test(m)) { stripped.push('unparseable-authority'); return note; }
+      return m;
+    }
     if (isAllowed(host)) return m;
     stripped.push(host);
     return note;

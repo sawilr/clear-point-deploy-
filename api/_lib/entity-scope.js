@@ -113,13 +113,19 @@ export function resolveScope(userMessage, priorUserTexts) {
   // lost its scope and the verified end-to-end repro delivered the original
   // PARTD-001 leak ($283 + $1,736) unfiltered. Filler is skipped (bounded at
   // 10 total turns so a hostile history cannot make this a scan).
-  let seen = 0;
-  for (let i = prior.length - 1, walked = 0; i >= 0 && seen < 3 && walked < 10; i--, walked++) {
-    const turn = String(prior[i] || '');
-    const inherited = detectEntities(turn);
+  // AUDIT 2026-09-03 (R2-C13a, P1) — the substantive-turn decay (`seen < 3`)
+  // disarmed the gate on ordinary live threads: a Part D conversation with
+  // three entity-free follow-ups ("how do I sign up?", "what documents?",
+  // "can my daughter help?") lost scope entirely, and with empty scope BOTH
+  // halves of the PARTD-001 control (scope note + output gate) went dark —
+  // executed repro delivered $283/$1,736 into a Part D thread unfiltered.
+  // Now the full bounded window is walked: the most recent entity-bearing
+  // user turn within the last 10 wins. The current message still wins over
+  // history (a topic change that names any entity re-scopes immediately),
+  // and the gate's fail-safe still prevents over-stripping from stale scope.
+  for (let i = prior.length - 1, walked = 0; i >= 0 && walked < 10; i--, walked++) {
+    const inherited = detectEntities(String(prior[i] || ''));
     if (inherited.length) return { entities: inherited, source: 'inherited' };
-    const isFiller = turn.trim().length < 15;
-    if (!isFiller) seen++;
   }
   return { entities: [], source: 'none' };
 }
@@ -170,7 +176,16 @@ export function scopeGate(text, scopeEntities) {
   const _hitTags = (n) => foreign.filter((tag) => gateRes[tag].some((re) => re.test(n)));
   const _inScope = (n) => scope.some((tag) => (gateRes[tag] || ENTITY_RES[tag] || []).some((re) => re.test(n)));
   const _anyEntity = (n) => Object.keys(gateRes).some((tag) => gateRes[tag].some((re) => re.test(n)));
+  // AUDIT 2026-09-03 (R2-C13b) — assistance tags for the chain rule below.
+  const _namesAssistance = (n) => ['LIS', 'MSP', 'MEDICAID'].some((tag) => gateRes[tag].some((re) => re.test(n)));
+  const _namesStrippable = (n) => STRIPPABLE.some((tag) => gateRes[tag].some((re) => re.test(n)));
   const DOLLAR_RE = /\$\s?\d|\d+(?:[.,]\d{3})*(?:\.\d{2})?\s?(?:d[oó]lares|dollars)\b/i;
+  // AUDIT 2026-09-03 (R2-C13c) — spelled-out amounts ("doscientos dos dólares",
+  // "two hundred dollars") carried no digit, so DOLLAR_RE-gated rules (the
+  // PROTECTED ride-along override and the mixed-figure exemption) never saw
+  // them. Number-word + currency-word adjacency is a hard figure too.
+  const VERBAL_AMOUNT_RE = /\b(?:un[ao]?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien(?:to)?s?|mil|doscient[oa]s|trescient[oa]s|cuatrocient[oa]s|quinient[oa]s|seiscient[oa]s|setecient[oa]s|ochocient[oa]s|novecient[oa]s|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)\b[^.!?]{0,40}\b(?:d[oó]lares|dollars)\b/i;
+  const _hasFigure = (raw) => DOLLAR_RE.test(raw) || VERBAL_AMOUNT_RE.test(raw);
 
   const kept = [];
   const strippedEntities = [];
@@ -191,14 +206,25 @@ export function scopeGate(text, scopeEntities) {
     if (!n.trim()) { kept.push(s); chainFromStrip = false; continue; }
     const hits = _hitTags(n);
     const inScopeToo = _inScope(n);
-    const hasDollar = DOLLAR_RE.test(s.raw);
+    const hasDollar = _hasFigure(s.raw);
     // RED TEAM 2026-08-15 (triaged claim, reproduced) — PROTECTED_RE must NOT
     // immunize a sentence that itself carries a foreign-Part DOLLAR figure
     // ("Un asesor puede explicarle; el deducible de la Parte B es $283."):
     // protection is for the advisor/safety pathway, not a ride-along channel
     // for the exact leak this gate exists to stop.
     if (PROTECTED_RE.test(s.raw) && !(hits.length && hasDollar)) { kept.push(s); chainFromStrip = false; continue; }
-    if (chainFromStrip && !_anyEntity(n) && COST_SIGNAL_RE.test(s.raw)) {
+    // AUDIT 2026-09-03 (R2-C13b, P1) — the chain used to stop at ANY entity,
+    // including non-strippable assistance tags, so "Con Extra Help, esos $283
+    // pueden bajar…" rode the chain out of a stripped Part B sentence and the
+    // anaphor re-attributed the foreign figure to the asked-about Part
+    // (executed repro, EN+ES; the log even said SCOPE_LEAK_PREVENTED while the
+    // figure shipped). A chain continuation naming ONLY an out-of-scope
+    // assistance program while carrying a hard figure is still the orphaned
+    // foreign amount — stripped. Figure-FREE assistance routing copy is
+    // untouched (the KB never puts figures in those sentences by design).
+    if (chainFromStrip && COST_SIGNAL_RE.test(s.raw)
+        && (!_anyEntity(n)
+            || (_namesAssistance(n) && !_namesStrippable(n) && !_inScope(n) && _hasFigure(s.raw)))) {
       strippedCount++; // orphaned continuation of a stripped attribution
       continue;
     }

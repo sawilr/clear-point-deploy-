@@ -703,6 +703,32 @@ export default async function handler(req, res) {
       console.warn('[CHAT] multi-turn: prior turn trips alone (dropped downstream); answering clean follow-up ip=' + ip);
     }
   }
+  // ── AUDIT 2026-09-03 (R2-C10) — distributed split-injection across 3+ turns ──
+  // The pairwise guard only joins the current message with the ONE preceding
+  // user turn, so an override fragmented over 3+ turns ("ignore" / "all your
+  // saved" / "instructions") where no single turn and no adjacent PAIR trips
+  // reached the model verbatim. Screen the join of the INDIVIDUALLY-CLEAN prior
+  // user turns (bounded window) + the current message: turns that trip alone are
+  // dropped downstream and excluded here, so this matches what the model sees
+  // and keeps the 2026-08-27 finding-#2 carve-out (a clean follow-up after an
+  // already-handled attempt is still answered).
+  if (priorUserTurns.length >= 2) {
+    var _cleanPrior = priorUserTurns
+      .slice(-6)
+      .map(function (t) { return String(t.content || '').slice(0, 600); })
+      .filter(function (txt) { return checkPromptInjection(txt, conversationContext.language).ok; });
+    if (_cleanPrior.length >= 2) {
+      var _fullJoin = _cleanPrior.join(' ') + ' ' + userMessage;
+      var _fullCheck = checkPromptInjection(_fullJoin, conversationContext.language);
+      if (!_fullCheck.ok) {
+        console.warn('[CHAT] multi-turn distributed-injection blocked:', _fullCheck.reason, 'ip=' + ip);
+        return res.status(200).json({
+          response: _fullCheck.safeReply,
+          meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'multi_turn_injection' },
+        });
+      }
+    }
+  }
 
   // Build the message list for Claude
   // ── SCOPE ROUTER (master spec 2026-08-28, §§11/12/28/102/104) ──────────
@@ -1284,8 +1310,12 @@ function compliancePostFilter(text, language) {
       // Sawil 2026-06 — do NOT mangle BENIGN recommendations (visit a website,
       // call a number, contact SHIP/SSA/Medicare.gov). This guard previously
       // ate "le recomiendo visitar Medicare.gov" and left a broken ".gov".
-      // Only neutralize when it points at an actual PLAN/carrier.
-      if (/\b(medicare\.gov|medicare\.org|ssa\.gov|1-?800|shiptacenter|ship\b|visit|visitar|ir a|llam|call|consult|contact|sitio|p[aá]gina|website|recursos?|resources?)\b/i.test(match)) {
+      // AUDIT 2026-09-03 (R2-C12, P1): the old test only required a resource
+      // word ANYWHERE in the span, so "I recommend the X plan, visit their
+      // website" was excused wholesale. Exempt ONLY when the recommendation's
+      // OBJECT is the resource/action (verb- or domain-adjacent), never a
+      // plan pitch with an appended CTA.
+      if (/\b(recommend\w*|recomiendo|recomendar[ií]a)\s+(?:that\s+you\s+|que\s+)?(?:usted\s+)?(?:visit\w*|visitar|check\w*|revisar|consult\w*|consultar|call\w*|llamar|llame|contact\w*|contactar|speak\w*|hablar|use\s|usar|ir\s+a\s|medicare\.gov|medicare\.org|ssa\.gov|medicaid\.gov|shiptacenter\w*|ship\b|988|1-?800)/i.test(match)) {
         return match;
       }
       return es
@@ -1328,7 +1358,10 @@ function ustedPostFilter(text) {
     [/\bpuedes\b/g, 'puede'],
     [/\bquieres\b/g, 'quiere'],
     [/\bnecesitas\b/g, 'necesita'],
-    [/\bestas\b/g, 'está'],
+    // "estás" (tú verb) → "está"; bare unaccented "estas" is almost always the
+    // demonstrative ("estas opciones") — only convert with a predicative cue.
+    [/\best[aá]s\b(?=\s+(?:de acuerdo|bien|mal|segur[oa]|aqu[ií]|inscrit[oa]|cubiert[oa]|cansad[oa]|equivocad[oa]|list[oa]|pagando|buscando|recibiendo|tomando|esperando))/g, 'está'],
+    [/\bestás\b/g, 'está'],
     [/\bsabes\b/g, 'sabe'],
     [/\bcalificas\b/g, 'califica'],
     [/\bdebes\b/g, 'debe'],
@@ -1337,7 +1370,9 @@ function ustedPostFilter(text) {
     [/\beres\b/g, 'es'],
     [/\bvives\b/g, 'vive'],
     [/\brecibes\b/g, 'recibe'],
-    [/\btomas\b/g, 'toma'],
+    // "tomas" is also a noun (doses); convert only the verb reading (followed by
+    // a possessive/article + med-ish object), never "las tomas de la mañana".
+    [/\btomas\b(?=\s+(?:tus?|sus?|alg[uú]n[ao]?|medicin\w*|medicament\w*|pastill\w*|dosis|insulina))/g, 'toma'],
     [/\bsigues\b/g, 'sigue'],
     [/\bpiensas\b/g, 'piensa'],
     [/\bcomprendes\b/g, 'comprende'],

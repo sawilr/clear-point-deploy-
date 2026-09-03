@@ -57,7 +57,9 @@ check('NY ZIP → bot asks problem', /tell me what|going on/i.test(r3ny.response
 // FL ZIP
 s = processMessage('John', processMessage('english', createInitialState()).newState).newState;
 const r3fl = processMessage('33101', s);
-check('FL ZIP 33101 → state=FL', r3fl.newState.state === 'FL');
+// R2-C2 (P1): FL is geographically recognized but NOT served — must be
+// out-of-area (isValidState=false), never greeted/lead-captured as in-area.
+check('FL ZIP 33101 → out-of-area (isValidState=false)', r3fl.newState.isValidState === false);
 
 // CT ZIP
 s = processMessage('Pat', processMessage('english', createInitialState()).newState).newState;

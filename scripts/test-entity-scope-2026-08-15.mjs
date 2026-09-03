@@ -172,9 +172,20 @@ const check = (id, cond, why) => { if (cond) pass++; else fail.push(id + (why ? 
   const r1 = resolveScope('¿y cuánto es el deducible?', ['¿Qué es la Parte D?', 'si', 'ok', 'gracias']);
   check('8.5 scope survives three filler acknowledgments',
     r1.source === 'inherited' && r1.entities.indexOf('D') !== -1, JSON.stringify(r1));
+  // POLICY CHANGE — AUDIT 2026-09-03 (R2-C13a, P1): the substantive-turn decay
+  // disarmed the gate on ordinary live threads (enrollment steps / documents /
+  // family help are all "substantive" and entity-free), recreating the exact
+  // PARTD-001 leak with the scope note ALSO dark. Inheritance now walks the
+  // full bounded 10-turn window: the ambiguous deductible follow-up stays
+  // D-scoped. Staleness is bounded by the window; over-strip is bounded by the
+  // fail-safe. Old pin (source==='none' after 3 substantive turns) retired.
   const r2 = resolveScope('¿y cuánto es el deducible?', ['¿Qué es la Parte D?', 'mi doctor está en Queens y quiero saber de mi plan', 'quiero entender mis opciones con calma', 'necesito pensarlo con mi hija esta semana']);
-  check('8.6 three SUBSTANTIVE unrelated turns do end inheritance (no stale scope)',
-    r2.source === 'none', JSON.stringify(r2));
+  check('8.6 substantive entity-free follow-ups DO NOT end inheritance (R2-C13a)',
+    r2.source === 'inherited' && r2.entities.indexOf('D') !== -1, JSON.stringify(r2));
+  const r2b = resolveScope('¿y cuánto es el deducible?',
+    ['¿Qué es la Parte D?', 't1', 't2', 't3', 't4', 't5', 't6', 't7', 't8', 't9', 't10']);
+  check('8.6b …but the 10-turn window still bounds it (11 turns back → none)',
+    r2b.source === 'none', JSON.stringify(r2b));
 
   // MIXED-FIGURE SENTENCE — in-scope mention no longer shields a foreign $.
   // (Embedded in a longer reply, as in production; a single-sentence-only reply

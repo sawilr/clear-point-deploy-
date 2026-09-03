@@ -155,21 +155,25 @@ const R = {
 
 // Strike markers: distinctive substrings of the ladder replies above. An
 // assistant history turn containing any of these counts as one prior strike.
-const STRIKE_SIGNATURES = [
+// Per-category sets: a wrong-business refusal must not escalate the vendor
+// ladder (and vice versa) — each category earns its own refusal before close.
+const WRONG_BUSINESS_SIGS = [
   'trying to reach a different company',
   'intentando comunicarse con otra organizaci', // accent-safe prefix
   'outside the services we offer',
   'fuera de los servicios que ofrecemos',
+];
+const VENDOR_SIGS = [
   'does not handle business solicitations',
   'no gestiona solicitudes comerciales',
 ];
 
-function countStrikes(history) {
+function countStrikes(history, signatures) {
   let strikes = 0;
   for (const turn of Array.isArray(history) ? history : []) {
     if (!turn || turn.role !== 'assistant' || typeof turn.content !== 'string') continue;
     const c = turn.content.normalize('NFD').replace(/[̀-ͯ]/g, '');
-    if (STRIKE_SIGNATURES.some((s) => c.includes(s))) strikes++;
+    if (signatures.some((s) => c.includes(s))) strikes++;
   }
   return strikes;
 }
@@ -189,7 +193,9 @@ function countExactRepeats(normMsg, history) {
  *   proceed to the full engine/LLM.
  */
 export function routeScope(userMessage, history, language) {
-  const lang = language === 'en' ? 'en' : 'es';
+  // Tolerant language match: 'EN', 'en-US', 'english' are English; the
+  // deliberate default for unknown/absent stays Spanish (widget sends en|es).
+  const lang = /^en/i.test(String(language || '')) ? 'en' : 'es';
   const norm = normalize(userMessage);
   if (!norm) return null;
 
@@ -213,7 +219,7 @@ export function routeScope(userMessage, history, language) {
   // whitelist (see the rationale above the vendor patterns). One polite
   // refusal, then close on the second pitch.
   if (isVendorSolicitation(norm)) {
-    const strikes = countStrikes(history);
+    const strikes = countStrikes(history, VENDOR_SIGS);
     if (strikes >= 1) return { category: 'vendor', level: 3, reply: R.out_of_scope_l3[lang], wantClose: true };
     return { category: 'vendor', level: 1, reply: R.vendor[lang], wantClose: false };
   }
@@ -231,7 +237,7 @@ export function routeScope(userMessage, history, language) {
     || WRONG_PERSON_RE.test(norm)
     || SERVICE_PAIRS.some(([noun, ctx]) => noun.test(norm) && ctx.test(norm));
   if (isWrongBusiness) {
-    const strikes = countStrikes(history);
+    const strikes = countStrikes(history, WRONG_BUSINESS_SIGS);
     if (strikes >= 2) return { category: 'wrong_business', level: 3, reply: R.out_of_scope_l3[lang], wantClose: true };
     if (strikes === 1) return { category: 'wrong_business', level: 2, reply: R.out_of_scope_l2[lang], wantClose: false };
     return { category: 'wrong_business', level: 1, reply: R.wrong_business_l1[lang], wantClose: false };

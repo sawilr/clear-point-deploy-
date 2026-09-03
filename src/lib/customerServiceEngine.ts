@@ -1847,10 +1847,11 @@ export function detectCrisisLanguage(text: string): boolean {
   // Spanish crisis phrases. Corpus fix: include verb-conjugation variants
   // (suicidarme/suicidarse), bare "quitar la vida" (no "me" attached),
   // "matarme", and additional self-harm signals.
-  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|me voy a matar|me quiero matar|matarme|quiero matarme|pensar en suicid|suicid\w*|me voy a (quitar|quitarme) la vida|quitar(me|se)? la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo|no quiero vivir m[aá]s|estoy pensando en hacerme da[nñ]o|hacer(me|te|se)? da[nñ]o|quiero hacer(me)? da[nñ]o)\b/i.test(t)) return true;
+  if (/\b(quiero morirme|me quiero morir|ya no quiero vivir|no quiero seguir|prefiero morir|prefiero estar muert[oa]|desaparecer para siempre|ojala no despert\w*|me voy a matar|me quiero matar|matarme|quiero matarme|pensar en suicid|suicid\w*|me voy a (quitar|quitarme) la vida|quitar(me|se)? la vida|terminar con todo|no aguanto m[aá]s la vida|quiero acabar con todo|no quiero vivir m[aá]s|estoy pensando en hacerme da[nñ]o|hacer(me|te|se)? da[nñ]o|quiero hacer(me)? da[nñ]o)\b/i.test(t)) return true;
   // English crisis phrases (Wave 40 — added "i cannot take this anymore",
-  // "can't take this", "can't do this anymore", "no point").
-  if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t go on|can'?t take it anymore|i cannot take this anymore|can'?t take this anymore|can'?t do this anymore|no point in living|nothing to live for|better off dead|thinking about (suicide|ending it))\b/i.test(t)) return true;
+  // "can't take this", "can't do this anymore", "no point"). R2-C4: added
+  // "no reason left to live" (server-only vocab back-ported for parity).
+  if (/\b(i want to die|i'?ll kill myself|kill myself|end my life|end it all|suicide|suicidal|don'?t want to live|wanna die|going to end it|cannot go on|can'?t go on|can'?t take it anymore|i cannot take this anymore|can'?t take this anymore|can'?t do this anymore|no point in living|nothing to live for|no reason left to live|better off dead|thinking about (suicide|ending it))\b/i.test(t)) return true;
   return false;
 }
 
@@ -6157,7 +6158,7 @@ function _handleDualEligible(
     const srcLabelEs = src === 'hospital' ? 'del hospital' : src === 'doctor' ? 'del doctor' : src === 'lab' ? 'del laboratorio' : src === 'ambulance' ? 'de la ambulancia' : src === 'plan' ? 'del plan' : 'que recibió';
     const srcLabelEn = src === 'hospital' ? 'from the hospital' : src === 'doctor' ? 'from the doctor' : src === 'lab' ? 'from the lab' : src === 'ambulance' ? 'from the ambulance' : src === 'plan' ? 'from the plan' : 'you received';
     const out = isEs
-      ? `Gracias. Una factura ${srcLabelEs} cuando usted tiene Medicare y Medicaid es justo lo que un asesor licenciado debe revisar — con frecuencia no le deberían cobrar esos montos por servicios cubiertos por Medicare. No la pague todavía. ¿Quiere que un asesor de Clear Point revise su caso, sin costo?`
+      ? `Gracias. Una factura ${srcLabelEs} cuando usted tiene Medicare y Medicaid es justo lo que un asesor licenciado debe revisar — con frecuencia no le deberían cobrar esos montos por servicios cubiertos por Medicare. Antes de pagarla, conviene que la revisen primero (sin ignorar ninguna fecha de vencimiento). ¿Quiere que un asesor de Clear Point revise su caso, sin costo?`
       : `Thanks. A bill ${srcLabelEn} when you have both Medicare and Medicaid is exactly what a licensed advisor should review — often you should not be charged those amounts for Medicare-covered services. Before paying it, have it reviewed first (and don't ignore any due date). Would you like a Clear Point advisor to review your case, at no cost?`;
     return emit(out, { dualFlowStage: 'offered_advisor', serviceCategory: 'bill_provider', possibleQMB: true, lastBotOfferedAdvisor: true, lastBotIntent: 'dual_bill_followup' });
   }
@@ -6173,7 +6174,7 @@ function _handleDualEligible(
   // ── QMB explicitly stated + a bill. ──
   if (qmbExplicit && billish) {
     const out = isEs
-      ? 'Gracias por decírmelo. Si usted está en QMB, normalmente los proveedores no deberían cobrarle deducibles, coseguro ni copagos por servicios cubiertos por Medicare. Aun así podría haber un copago de Medicaid o un servicio no cubierto, por eso conviene revisar la factura antes de pagar. No la pague todavía. ¿La factura es de un doctor, hospital, farmacia, laboratorio o ambulancia?'
+      ? 'Gracias por decírmelo. Si usted está en QMB, normalmente los proveedores no deberían cobrarle deducibles, coseguro ni copagos por servicios cubiertos por Medicare. Aun así podría haber un copago de Medicaid o un servicio no cubierto, por eso conviene revisar la factura antes de pagar — sin ignorar ninguna fecha de vencimiento. ¿La factura es de un doctor, hospital, farmacia, laboratorio o ambulancia?'
       : "Thank you for telling me. If you are in QMB, providers generally should not bill you for deductibles, coinsurance, or copays on Medicare-covered services. There could still be a Medicaid copay or a non-covered service, so it's worth reviewing the bill before paying — just don't ignore any due date on it. Is the bill from a doctor, hospital, pharmacy, lab, or ambulance?";
     return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_qmb_bill' });
   }
@@ -6182,7 +6183,7 @@ function _handleDualEligible(
   if (billNow || (billish && (dualNow || medicaidWithMedicare || bothNow))) {
     const out = isEs
       ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Extra automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, antes de pagarla conviene revisarla primero — sin ignorar la fecha de vencimiento. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
-      : 'I understand, and thank you for telling me. Since you have both Medicare and Medicaid, that usually means you already have Extra Help automatically for your medications, and you may also have important protections (like QMB) that reduce or remove certain copays or bills for Medicare-covered services.\n\nBecause of that, please don\'t pay that bill yet until it is reviewed. First, let\'s see where it is from: did the bill come from a doctor, hospital, pharmacy, lab, ambulance, or your plan?';
+      : 'I understand, and thank you for telling me. Since you have both Medicare and Medicaid, that usually means you already have Extra Help automatically for your medications, and you may also have important protections (like QMB) that reduce or remove certain copays or bills for Medicare-covered services.\n\nBecause of that, before paying it, have it reviewed first — and don\'t ignore any due date on it. First, let\'s see where it is from: did the bill come from a doctor, hospital, pharmacy, lab, ambulance, or your plan?';
     return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_bill_triage' });
   }
 
@@ -6445,6 +6446,28 @@ export function _runStructuralFirst(
   // handoff (name → phone → best-time → topic) is unchanged; the ack line +
   // first question replace only the pre-handoff triage. Reply mirrors the
   // language of THIS message (BUG 4b), not the session lock.
+  // AUDIT 2026-09-03 (R2-C2, P1) — a caller CONFIRMED out-of-area (a detected
+  // non-served state from their ZIP, or a state they declared) must never be
+  // lead-captured, even when they ask for an advisor (CPF-002 "never lead-
+  // captured"). Refer to 1-800-MEDICARE / SHIP instead of collecting name/
+  // phone. Fires only on POSITIVE out-of-area evidence — an unrecognized/typo
+  // ZIP (isValidState false but no known state) still reaches the normal
+  // handoff so a NY caller who mistypes is not turned away.
+  const _outOfAreaConfirmed =
+    (!!state.state && !SERVED_STATES.has(state.state)) ||
+    (!!state.stateDeclaredByUser && !SERVED_STATES.has(state.stateDeclaredByUser));
+  if (!state.advisorHandoffStarted && detectHumanEscalation(userMessage) && _outOfAreaConfirmed) {
+    const escEs = _turnLanguage(userMessage, state) === 'es';
+    const out = escEs
+      ? 'Entiendo que quiera hablar con alguien. Como ClearPoint tiene licencia solo en NY, NJ y CT, no puedo conectarle con un asesor para su estado — pero usted tiene buenas opciones sin costo: llame al 1-800-MEDICARE (1-800-633-4227), disponible 24/7, o a su programa SHIP local para asesoría gratuita e imparcial de Medicare en su área. ¿Puedo ayudarle con alguna pregunta general de Medicare mientras tanto?'
+      : "I understand you'd like to speak with someone. Because ClearPoint is licensed only in NY, NJ, and CT, I can't connect you with an advisor for your state — but you have good no-cost options: call 1-800-MEDICARE (1-800-633-4227), available 24/7, or your local SHIP program for free, unbiased Medicare counseling in your area. Can I help with any general Medicare questions in the meantime?";
+    const newState: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      messages: [...state.messages, { role: 'bot', content: out, timestamp: Date.now() }],
+    };
+    return { response: out, newState, needsHuman: false };
+  }
   if (!state.advisorHandoffStarted && detectHumanEscalation(userMessage)) {
     const escEs = _turnLanguage(userMessage, state) === 'es';
     const mentionsSawil = /\bsawil\b/i.test(userMessage);
@@ -7677,12 +7700,19 @@ function processMessageInner(
 
     if (zipDigits) {
       const detectedState = getStateFromZip(zipDigits);
+      // AUDIT 2026-09-03 (R2-C2, P1) — a ZIP whose state is GEOGRAPHICALLY known
+      // but NOT served (e.g. FL 33101) must be treated as out-of-area, exactly
+      // like a caller who SAYS "I live in Florida" (CPF-002: an out-of-area
+      // caller is never greeted as in-area or lead-captured). detectedState is
+      // still kept for the honest state label + the zip_state_mismatch check.
+      const servedState = detectedState && SERVED_STATES.has(detectedState) ? detectedState : null;
       newState.zipCode = zipDigits;
-      newState.zipCodeIsValid = !!detectedState;
-      if (detectedState) {
-        newState.state = detectedState;
+      newState.zipCodeIsValid = !!servedState;
+      if (servedState) {
+        newState.state = servedState;
         newState.isValidState = true;
       } else {
+        if (detectedState) newState.state = detectedState; // geography only
         newState.isValidState = false;
         flagInconsistency(newState, `zip_not_in_service_area: ${zipDigits}`, 25);
       }
@@ -7702,14 +7732,18 @@ function processMessageInner(
       // BOTH current ClearPoint clients AND visitors with Medicare questions.
       // This is required for CMS TPMO transparency and discourages false-
       // positive leads from people who think the bot only helps clients.
-      if (detectedState && isSpanish) {
+      // R2-C2: only a SERVED state gets the in-area welcome; a detected
+      // out-of-area state (e.g. FL) is named honestly and steered to the
+      // right resources, never into ClearPoint's lead flow.
+      const outOfAreaLabel = detectedState ? (isSpanish ? ` (${stateLabel})` : ` (${stateLabel})`) : '';
+      if (servedState && isSpanish) {
         out = `Gracias. Anotado, su ZIP ${zipDigits} es de **${stateLabel}**. ClearPoint es un broker independiente de Medicare — atendemos tanto a clientes actuales como a personas que tienen preguntas sobre Medicare, sin costo. ¿En qué le puedo ayudar hoy?`;
-      } else if (detectedState) {
+      } else if (servedState) {
         out = `Thanks. Got it, your ZIP ${zipDigits} is in **${stateLabel}**. ClearPoint is an independent Medicare broker — we help both current clients and visitors with Medicare questions, at no cost. How can I help you today?`;
       } else if (isSpanish) {
-        out = `Gracias. Anotado, su ZIP ${zipDigits} — fuera de las áreas principales de ClearPoint (NY/NJ/CT). ClearPoint es un broker independiente de Medicare — atendemos a clientes y visitantes con preguntas, sin costo. ¿En qué le puedo ayudar?`;
+        out = `Gracias. Anotado, su ZIP ${zipDigits}${outOfAreaLabel} está fuera del área de servicio donde ClearPoint tiene licencia (New York, New Jersey y Connecticut). Con gusto le doy información general de Medicare, pero para ayuda específica de su estado, llame al 1-800-MEDICARE (1-800-633-4227) o a su programa SHIP local. ¿Tiene alguna pregunta general de Medicare?`;
       } else {
-        out = `Thanks. Got it, your ZIP ${zipDigits} — outside ClearPoint's main service areas (NY/NJ/CT). ClearPoint is an independent Medicare broker — we help clients and visitors with questions at no cost. How can I help?`;
+        out = `Thanks. Got it, your ZIP ${zipDigits}${outOfAreaLabel} is outside ClearPoint's service area — we're licensed in New York, New Jersey, and Connecticut. I'm glad to share general Medicare information, but for help specific to your state, call 1-800-MEDICARE (1-800-633-4227) or your local SHIP program. Do you have a general Medicare question?`;
       }
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
@@ -7970,7 +8004,9 @@ function processMessageInner(
     if (newState.stateDeclaredByUser && detectedState && newState.stateDeclaredByUser !== detectedState) {
       flagInconsistency(newState, `zip_state_mismatch: zip ${zip} → ${detectedState}, user said ${newState.stateDeclaredByUser}`, 50);
     }
-    if (!detectedState) {
+    // R2-C2 (P1): a geographically-known but NON-served state (e.g. FL) takes
+    // the out-of-area path, same as an unrecognized ZIP — never in-area/lead.
+    if (!detectedState || !SERVED_STATES.has(detectedState)) {
       newState.zipCode = zip;
       newState.zipCodeIsValid = false;
       newState.isValidState = false;
@@ -8047,15 +8083,20 @@ function processMessageInner(
     const bareZip = userMessage.trim().replace(/\D/g, '');
     if (!newState.zipCode && bareZip.length === 5 && userMessage.trim().replace(/\s/g, '').length <= 7) {
       const detectedState = getStateFromZip(bareZip);
+      // R2-C2 (P1): served states set in-area; a non-served detected state (FL)
+      // keeps geography for the mismatch check but stays out-of-area.
+      const servedState = detectedState && SERVED_STATES.has(detectedState) ? detectedState : null;
       newState.zipCode = bareZip;
-      newState.zipCodeIsValid = !!detectedState;
-      if (detectedState) {
-        newState.state = detectedState;
+      newState.zipCodeIsValid = !!servedState;
+      if (servedState) {
+        newState.state = servedState;
         newState.isValidState = true;
-        if (newState.stateDeclaredByUser && newState.stateDeclaredByUser !== detectedState) {
-          flagInconsistency(newState, `zip_state_mismatch: zip ${bareZip} → ${detectedState}, user said ${newState.stateDeclaredByUser}`, 50);
+        if (newState.stateDeclaredByUser && newState.stateDeclaredByUser !== servedState) {
+          flagInconsistency(newState, `zip_state_mismatch: zip ${bareZip} → ${servedState}, user said ${newState.stateDeclaredByUser}`, 50);
         }
       } else {
+        if (detectedState) newState.state = detectedState; // geography only
+        newState.isValidState = false;
         flagInconsistency(newState, `zip_not_in_service_area: ${bareZip}`, 25);
       }
     }
@@ -9491,8 +9532,8 @@ function processMessageInner(
       newState.routingLevel = 'A';
       newState.serviceCategory = 'donut_hole';
       const out = isSpanish
-        ? 'El "donut hole" o brecha de cobertura fue una fase de Parte D donde usted pagaba más por medicamentos. **Importante: en 2025 esa fase fue eliminada** y existe un nuevo límite de $2,000 al año para gastos de bolsillo en medicamentos. Las reglas siguen variando por plan y nivel de medicamento. Un asesor licenciado puede explicarle cómo aplica a su plan.'
-        : "The \"donut hole\" or coverage gap used to be a Part D phase where you paid more for drugs. **Important: in 2025 that phase was eliminated** and there's now a new $2,000 annual out-of-pocket cap on drugs. Rules still vary by plan and drug tier. A licensed advisor can explain how it applies to your plan.";
+        ? 'El "donut hole" o brecha de cobertura fue una fase de Parte D donde usted pagaba más por medicamentos. **Importante: esa fase fue eliminada en 2025** y en 2026 existe un límite de $2,100 al año para gastos de bolsillo en medicamentos. Las reglas siguen variando por plan y nivel de medicamento. Un asesor licenciado puede explicarle cómo aplica a su plan.'
+        : "The \"donut hole\" or coverage gap used to be a Part D phase where you paid more for drugs. **Important: that phase was eliminated in 2025** and in 2026 there's a $2,100 annual out-of-pocket cap on drugs. Rules still vary by plan and drug tier. A licensed advisor can explain how it applies to your plan.";
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: false };
     }

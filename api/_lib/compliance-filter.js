@@ -142,10 +142,23 @@ const FORBIDDEN_PHRASES = [
   // Affiliation claims
   /\b(we|i)\s+(are|am)\s+(medicare|cms|ssa|the\s+government|medicaid)/gi,
   /\bsomos\s+(medicare|cms|del\s+gobierno|medicaid)/gi,
-  // Specific plan recommendations (in addition to carrier name blocks)
+];
+
+// ── Plan-recommendation sentences (AUDIT 2026-09-03 R2-C12, P1) ─────────
+// These used to live in FORBIDDEN_PHRASES with inline replacement, which left
+// the plan name + CTA tail intact ("… Elderplan Extra, visite su sitio web"),
+// and the EN pattern only matched SINGLE-word plan names ("the Humana plan"),
+// so multi-word products ("the Elderplan Plus Advantage plan") shipped
+// verbatim. Now: multi-word names match, and the ENTIRE sentence is removed
+// with the safe copy appended (parity with the carrier-name rule).
+// Negative lookaheads keep benign referrals intact ("recommend the plan
+// directory", "le recomiendo el sitio del plan").
+const PLAN_REC_SENTENCE_RES = [
   /\b(the\s+best\s+plan|el\s+mejor\s+plan)\s+(for\s+you|para\s+usted|es|is)\b/gi,
-  /\bi\s+(highly\s+)?recommend\s+(the|that)\s+\w+\s+plan\b/gi,
-  /\ble\s+recomiend[oa]\s+(el|este|ese)\s+plan\b/gi,
+  /\bi\s+(?:highly\s+)?recommend\s+(?:the|that)\s+(?!you\b)(?!(?:website|site|page|directory|document|summary|number)\b)(?:[\w'’-]+\s+){0,6}plan\b(?!\s+(?:directory|finder|comparison|directorio|comparador))/gi,
+  /\brecommend\s+that\s+you\s+(?:enroll\s+in|sign\s+up\s+for|choose|pick|switch\s+to|get)\s+(?:the\s+|that\s+)?(?:[\w'’-]+\s+){0,6}plan\b/gi,
+  /\ble\s+recomiend[oa]\s+(?:mucho\s+)?(?:el|este|ese|un)\s+(?!(?:sitio|p[aá]gina|directorio|documento|resumen|portal|n[uú]mero)\b)(?:[\w'’-]+\s+){0,5}plan\b(?!\s+(?:directorio|comparador))/gi,
+  /\b(?:you\s+should|usted\s+deber[ií]a)\s+(?:enroll\s+in|sign\s+up\s+for|inscribirse\s+en|choose|pick|escoger|elegir|tomar)\s+(?:the\s+|el\s+|este\s+|ese\s+|un\s+)?(?:[\w'’-]+\s+){0,5}plan\b/gi,
 ];
 
 // ── SELF-HARM — SINGLE SOURCE OF TRUTH (2026-08-13, red team P1) ─────────
@@ -261,16 +274,21 @@ const EMERGENCY_PROX_RES = [
   /\bunresponsive\b|\bnot breathing\b/i,
   /(can'?t|cant)[^.]{0,8}get (up|off the floor)/i,
   /took[^.]{0,10}(too |to )?many[^.]{0,12}(pill|of my)/i,
-  /(duele|dolor|aprieta|opresion|apreta)[^.]{0,16}pecho/i,
-  /pecho[^.]{0,16}(duele|dolor|aprieta|apretado|opresion)/i,
+  /(duele|dolor|aprieta|opresion|apreta|aplast)[^.]{0,16}pecho/i,
+  /pecho[^.]{0,16}(duele|dolor|aprieta|apretado|opresion|aplast)/i,
   /brazo[^.]{0,20}(durmiendo|dormido|adormec|entumec|no lo mueve|no (lo )?puedo mover)/i,
   /(boca|cara)[^.]{0,18}(torcida|tuerce|chueca|un lado|medio lado|dormida)/i,
   /(de repente|de un momento|de pronto|de golpe)[^.]{0,18}(no puede|no puedo)[^.]{0,6}(hablar|ablar)/i,
-  /(no puedo|me estoy|siento que me|no me deja)[^.]{0,8}(respir|asfixi|ahog)/i,
+  /(no puedo|me estoy|se esta|siento que me|no me deja)[^.]{0,8}(respir|asfixi|ahog)/i,
   /(me falta|no me llega)[^.]{0,6}(el )?aire/i,
   /no[^.]{0,8}(despierta|reacciona)/i,
   /no me puedo (parar|levantar|mover)/i,
   /tome[^.]{0,6}(mas|demasiad)/i,
+  // AUDIT 2026-09-03 (R2-C11 red-team) — server/client parity for verified
+  // life-safety phrasings the server net missed (client caught them): third-
+  // person choking ("se esta ahogando"), "se esta muriendo", and EN "collapsed".
+  /se\s+esta\s+muriendo/i,
+  /\bcollaps(ed|ing)?\b/i,
 ];
 // Self-harm proximity nets (ported from safetyRouter CRISIS_STRONG_RE / CRISIS_AMBIG_RE).
 // STRONG always fires; AMBIG fires only OUTSIDE a benign plan/payment/paperwork context.
@@ -377,12 +395,47 @@ export function clinicalConcernReply(lang) {
   return CLINICAL_CONCERN_REPLY[lang === 'en' ? 'en' : 'es'];
 }
 
+// AUDIT 2026-09-03 (R2-C11, P2) — matchesEmergency fired the 911 script on
+// benign coverage/history questions ("does Medicare cover emergency room
+// visits?", "my stroke was in 2019", "bleeding gums", "my plan denied my
+// emergency room bill") — 80% false-positive on a benign-question set. The net
+// stays LIFE-SAFETY-FIRST: the veto below suppresses a match ONLY for frames
+// that PROVE the text is not a live emergency (a coverage/billing question
+// about the ER, a past-dated history mention, or dental bleeding) AND ONLY
+// when NO first-person acute signal is present. Anything acute wins outright.
+var EMERGENCY_ACUTE_RE = new RegExp([
+  '(can\'?t|cant|cannot|no\\s+puedo)\\s+breath', 'no\\s+puedo\\s+respir',
+  'chest\\s+(pain|pressure|tight)', 'me\\s+duele\\s+el\\s+pecho', 'dolor\\s+de\\s+pecho',
+  '(having|have|is\\s+having|having\\s+a)\\s+(a\\s+)?(stroke|heart\\s+attack)',
+  '(teniendo|tiene)\\s+un\\s+(infarto|ataque|derrame)',
+  '(call|need|llamen?|llamar\\s+al?)\\s+911', '911\\s+(now|right\\s+now|ahora)',
+  '(passed\\s+out|unconscious|unresponsive|won\'?t\\s+wake|wont\\s+wake|no\\s+despierta|no\\s+reacciona)',
+  '(overdos|od\'?ed|took\\s+too\\s+many|took\\s+to\\s+many|tome\\s+demasiad|tomo\\s+demasiad)',
+  'bleeding\\s+(heavily|badly|a\\s+lot|everywhere|wont\\s+stop|won\'?t\\s+stop)',
+  'sangrando\\s+(mucho|muchisimo|sin\\s+parar)',
+  '(right\\s+now|ahora\\s+mismo|se\\s+esta\\s+muriendo|is\\s+dying|can\'?t\\s+move|arm\\s+(is\\s+)?numb|brazo.{0,10}(entumec|adormec|no\\s+lo\\s+mueve))',
+  '(collaps|colaps|not\\s+breathing|no\\s+respira\\b|not\\s+responding|no\\s+responde|se\\s+desmayo|se\\s+cayo|choking|atragant)',
+].join('|'), 'i');
+var EMERGENCY_BENIGN_FRAME_RE = new RegExp([
+  // Coverage/billing QUESTION about the ER/ambulance (asking is not an emergency)
+  '(cover|covers|covered|coverage|cubre|cubierto|cobertura|copay|copago|deducible|deductible|bill|billed|factura|cobro|claim|reclamo|denied|nego|reimburs\\w*|reembols\\w*|benefit|beneficio|\\bcost|costo|price|precio|part\\s+[abcd])\\b[^.?!]{0,40}\\b(emergency\\s+room|emergency\\s+visit|emergency\\s+care|\\ber\\b|ambulance|ambulancia|urgent\\s+care|sala\\s+de\\s+emergencia)',
+  '(emergency\\s+room|emergency\\s+visit|\\ber\\b|ambulance|ambulancia|urgent\\s+care|sala\\s+de\\s+emergencia)\\b[^.?!]{0,40}\\b(cover|covers|covered|coverage|cubre|cubierto|cobertura|copay|copago|deducible|deductible|bill|billed|factura|claim|reclamo|denied|nego|reimburs\\w*|reembols\\w*|benefit|beneficio|\\bcost|costo)',
+  // Past-dated history mention (not a live event)
+  '(stroke|heart\\s+attack|derrame|infarto|embolia|seizure|fainted|desmay\\w*)\\b[^.?!]{0,30}\\b(in\\s+(19|20)\\d{2}|back\\s+in|years?\\s+ago|anos?\\s+atras|hace\\s+anos|del\\s+ano\\s+pasado|el\\s+ano\\s+pasado|en\\s+(19|20)\\d{2})',
+  '(in\\s+(19|20)\\d{2}|years?\\s+ago|hace\\s+anos)\\b[^.?!]{0,30}\\b(stroke|heart\\s+attack|derrame|infarto|embolia)',
+  // Dental bleeding
+  'bleeding\\s+gums|gums?\\s+(are\\s+)?bleeding|sangr\\w*\\s+(de\\s+)?(las\\s+)?encias',
+].join('|'), 'i');
+
 /** TRUE when the text matches any emergency phrase (EN/ES, typo-tolerant). */
 export function matchesEmergency(text) {
   var t = normLoose(text);
   if (!t) return false;
+  // R2-C11 veto: a provably-benign coverage/history/dental frame with NO acute
+  // signal is not an emergency. Acute signals below always win.
+  var benignFrame = EMERGENCY_BENIGN_FRAME_RE.test(t) && !EMERGENCY_ACUTE_RE.test(t);
   for (var i = 0; i < EMERGENCY_USER_RES.length; i++) {
-    if (EMERGENCY_USER_RES[i].test(t)) return true;
+    if (EMERGENCY_USER_RES[i].test(t)) return benignFrame ? false : true;
   }
   // 2026-08-27 parity port — proximity net (cardiac/stroke/breathing/overdose,
   // EN+ES) that the client had but the server lacked.
@@ -469,6 +522,33 @@ export function complianceFilter(text, lang, opts) {
     if (!out) out = safe;
     else if (!/[.!?]\s*$/.test(out)) out += '. ' + safe;
     else out += ' ' + safe;
+  }
+
+  // 1b) AUDIT 2026-09-03 (R2-C12, P1) — plan-recommendation sentences are
+  //     removed WHOLE (never inline-replaced: the tail "…, visite su sitio
+  //     web" used to survive and keep steering). Same mechanics as carriers.
+  var anyPlanRec = false;
+  for (var pi = 0; pi < PLAN_REC_SENTENCE_RES.length; pi++) {
+    PLAN_REC_SENTENCE_RES[pi].lastIndex = 0;
+    if (PLAN_REC_SENTENCE_RES[pi].test(out)) {
+      anyPlanRec = true;
+      violations.push('plan_recommendation:' + PLAN_REC_SENTENCE_RES[pi].source.slice(0, 40));
+    }
+  }
+  if (anyPlanRec) {
+    var recSentences = out.split(/(?<=[.!?])\s+/);
+    var recClean = recSentences.filter(function (s) {
+      for (var ri = 0; ri < PLAN_REC_SENTENCE_RES.length; ri++) {
+        PLAN_REC_SENTENCE_RES[ri].lastIndex = 0;
+        if (PLAN_REC_SENTENCE_RES[ri].test(s)) return false;
+      }
+      return true;
+    });
+    out = recClean.join(' ').trim();
+    var safeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
+    if (!out) out = safe;
+    else if (!safeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
+    else if (!safeAlready) out += ' ' + safe;
   }
 
   // 2) Forbidden phrases — replace inline with safe text.

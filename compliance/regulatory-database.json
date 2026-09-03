@@ -108,7 +108,7 @@
     {
       "rule_id": "NJ-2026-MSP",
       "jurisdiction": "NEW_JERSEY",
-      "rule": "MSP 2026 monthly: QMB $1,330/$1,803; SLMB $1,596/$2,164; QI $1,796/$2,435; assets $9,950/$14,910",
+      "rule": "MSP 2026 monthly: QMB $1,330/$1,803; SLMB $1,596/$2,164; QI $1,795/$2,434 (official NJ annual $21,546/$29,214; monthly floored so the ceiling is never overstated); assets $9,950/$14,910",
       "source_url": "NJ DHS/federal 2026 standards (verified in prior 2026 audits)",
       "publication_date": "2026",
       "effective_date": "2026-01-01",

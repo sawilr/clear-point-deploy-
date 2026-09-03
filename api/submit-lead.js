@@ -331,10 +331,17 @@ export default async function handler(req, res) {
     }
     var ghl_contact_id = '';
     var ghl_assigned_user_id = '';
-    var consent_text = _cap(body.consent_text, 4000);
+    // AUDIT 2026-09-03 (R2-C16, P1) — consent_text is client-supplied and was
+    // appended to the CRM note AFTER the scrubPHI point on the assumption it is
+    // the fixed canonical TCPA string. An unauthenticated direct POST could put
+    // arbitrary text — an SSN/MBI, other PHI, or advisor-directed injection —
+    // verbatim into the GHL note, bypassing the PHI net. Scrub it too: a no-op
+    // for the genuine canonical string (it carries no PHI), a redaction for a
+    // hostile payload. Same treatment for signer_user_agent.
+    var consent_text = scrubPHI(_cap(body.consent_text, 4000)).text;
     var consent_receipt_hash = typeof body.consent_receipt_hash === 'string' ? body.consent_receipt_hash.slice(0, 128).replace(/[^a-f0-9]/g, '') : '';
     var disclaimer_version = typeof body.disclaimer_version === 'string' ? body.disclaimer_version.slice(0, 32).replace(/[^a-zA-Z0-9._-]/g, '') : '';
-    var signer_user_agent = _cap(body.signer_user_agent, 240);
+    var signer_user_agent = scrubPHI(_cap(body.signer_user_agent, 240)).text;
     // Append the audit-trail receipt to lead_notes so it survives even if
     // GHL custom-field mapping changes. PII-free (only hash + version + UA).
     if (consent_receipt_hash || disclaimer_version) {

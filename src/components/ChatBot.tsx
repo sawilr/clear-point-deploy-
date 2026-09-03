@@ -275,15 +275,20 @@ const STATE_CONFIRMATION: Record<ChatLanguage, Record<string, QueuedBotMessage[]
     NY: [{ text: "Thank you. I'll keep New York in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
     NJ: [{ text: "Thank you. I'll keep New Jersey in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
     CT: [{ text: "Thank you. I'll keep Connecticut in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    FL: [{ text: "Thank you. I'll keep Florida in mind so I can give more accurate general information when you ask about Medicare, Medicaid, or Medicare cost-help programs.", pace: 'short' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
-    other: [{ text: "I can give you general Medicare guidance, but for Medicaid, MSP, or prescription assistance specific to your state, I would need to verify that state's current rules.", pace: 'slow' }, { text: 'What would you like to learn about today?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    // R2-C2/C8 (P1/P2): Florida is NOT a Clear Point service state — treat it
+    // as out-of-area, same as any other unsupported state (referral, no
+    // state-specific program figures).
+    FL: [{ text: "Clear Point is licensed in New York, New Jersey, and Connecticut, so I can share general Medicare education but not guidance specific to Florida. For help in your state, call 1-800-MEDICARE (1-800-633-4227, TTY 1-877-486-2048), available 24/7, or your local State Health Insurance Assistance Program (SHIP).", pace: 'slow' }, { text: 'Would you like to go over any general Medicare topics?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
+    other: [{ text: "Clear Point is licensed in New York, New Jersey, and Connecticut, so I can share general Medicare education but not Medicaid, MSP, or prescription-assistance guidance specific to your state. For help where you live, call 1-800-MEDICARE (1-800-633-4227, TTY 1-877-486-2048), available 24/7, or your local State Health Insurance Assistance Program (SHIP).", pace: 'slow' }, { text: 'Would you like to go over any general Medicare topics?', options: TOPIC_GROUPS_EN[0], pace: 'short' }],
   },
   es: {
     NY: [{ text: 'Gracias. Tendré New York en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
     NJ: [{ text: 'Gracias. Tendré New Jersey en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
     CT: [{ text: 'Gracias. Tendré Connecticut en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    FL: [{ text: 'Gracias. Tendré Florida en cuenta para darle información general más precisa cuando pregunte sobre Medicare, Medicaid o programas de ayuda con costos de Medicare.', pace: 'short' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
-    other: [{ text: 'Puedo darle orientación general de Medicare, pero para Medicaid, MSP o ayuda de medicamentos específica de su estado, tendría que verificar las reglas actuales de ese estado.', pace: 'slow' }, { text: '¿Qué tema le gustaría aprender hoy?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    // R2-C2/C8 (P1/P2): Florida no es estado de servicio de Clear Point —
+    // se trata como fuera de área (referral, sin cifras de programas estatales).
+    FL: [{ text: 'Clear Point tiene licencia en New York, New Jersey y Connecticut, así que puedo darle educación general de Medicare pero no orientación específica de Florida. Para ayuda en su estado, llame al 1-800-MEDICARE (1-800-633-4227, TTY 1-877-486-2048), disponible 24/7, o a su programa SHIP local (asesoría gratuita de Medicare).', pace: 'slow' }, { text: '¿Quiere que repasemos algún tema general de Medicare?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
+    other: [{ text: 'Clear Point tiene licencia en New York, New Jersey y Connecticut, así que puedo darle educación general de Medicare pero no orientación de Medicaid, MSP o ayuda de medicamentos específica de su estado. Para ayuda donde vive, llame al 1-800-MEDICARE (1-800-633-4227, TTY 1-877-486-2048), disponible 24/7, o a su programa SHIP local.', pace: 'slow' }, { text: '¿Quiere que repasemos algún tema general de Medicare?', options: TOPIC_GROUPS_ES[0], pace: 'short' }],
   },
 };
 
@@ -5064,6 +5069,46 @@ export function ChatBot() {
       const yes = new RegExp('^(?:yes|y|yeah|yep|sure|absolutely|of course|please|por favor|ok|okay|s[ií]|claro|por supuesto|adelante|acepto|estoy de acuerdo|i agree|i consent)' + TAIL).test(norm + ' ')
                || /(?:^|\s)(i (?:agree|consent|accept)|yes please|yes i (?:do|will|agree|consent))(?:\s|$|[.,;!?])/.test(norm + ' ')
                || /(?:^|\s)(s[ií] acepto|s[ií] estoy de acuerdo|claro que s[ií])(?:\s|$|[.,;!?])/.test(norm + ' ');
+      // AUDIT 2026-09-03 (R2-C9, P1, TCPA) — the yes-test is start-anchored, so
+      // it fired on the FIRST token and ignored a trailing refusal or question:
+      // "claro que no" ("of course NOT"), "ok, but do not call me", "sure,
+      // whatever", "ok but what does this mean?" all manufactured a SHA-256
+      // consent receipt for someone who declined or was confused. Screen the
+      // WHOLE message: any explicit negation → decline; any qualifier / trailing
+      // question / dismissive / bare weak affirmation → AMBIGUOUS reprompt (never
+      // consent). Only an unqualified affirmation is consent. Err to reprompt: a
+      // re-ask is cheap; a fabricated consent is a compliance violation.
+      const negNorm = norm
+        .replace(/\bno (?:problem|worries|biggie|big deal)\b/g, '')
+        .replace(/\bno te preocupes?\b/g, '')
+        .replace(/\bsin (?:problema|falta)\b/g, '');
+      const hasNegation = /(?:^|\s)(?:no|nope|nah|not|never|nunca|dont|don'?t|do not|cancel|stop)(?:\s|$|[.,;!?])/.test(negNorm + ' ')
+        || /\b(?:que no|pero no|no me llamen?|no me llame|no quiero|no acepto|no gracias|no thanks?|sin compromiso)\b/.test(negNorm);
+      const endsQuestion = /\?\s*$/.test(text.trim());
+      const hasQualifier = /\b(?:but|however|pero|sin embargo|aunque|whatever)\b/.test(norm);
+      const ambiguous = endsQuestion || (yes && hasQualifier);
+      // An explicit refusal always declines, even when a yes-word or qualifier
+      // is also present ("claro, pero no me llamen", "ok but do not call me").
+      if (hasNegation) {
+        updateMemory({ consentGiven: false });
+        setStepSync('choice');
+        const es = memory.language === 'es';
+        enqueueBot([
+          { text: es ? 'Entendido, no hay problema. No recopilaré su número por chat, y puede seguir haciéndome preguntas de Medicare sin compromiso.' : "Understood, no problem. I won't collect your number through chat, and you can keep asking me Medicare questions with no obligation.", pace: 'short' },
+          { text: es ? `También puede llamar a ${CHATBOT_CONTEXT.phone} si prefiere.` : `You can also call ${CHATBOT_CONTEXT.phone} if you prefer.`, options: [{ label: es ? 'Hacer pregunta' : 'Ask a question', value: 'ask_question' }, { label: es ? 'Llamar ahora' : 'Call now', value: 'call_now', icon: <Phone className="w-4 h-4" /> }], pace: 'short' },
+        ]);
+        return true;
+      }
+      if (ambiguous || (!yes && !hasNegation && norm.length > 0 && !/^(?:no|not now|ahora no)$/.test(norm))) {
+        // Do NOT record consent. Re-ask explicitly with the two chips so the
+        // user makes an unambiguous choice.
+        const es = memory.language === 'es';
+        enqueueBot([{ text: es
+          ? 'Solo para confirmar: ¿autoriza que un asesor licenciado le contacte? Puede responder "Sí, acepto" o "Ahora no".'
+          : 'Just to confirm: do you authorize a licensed advisor to contact you? You can respond "Yes, I agree" or "Not now".',
+          options: [{ label: es ? 'Sí, acepto' : 'Yes, I agree', value: 'consent_yes' }, { label: es ? 'Ahora no' : 'Not now', value: 'consent_no' }], pace: 'short' }]);
+        return true;
+      }
       if (yes) {
         updateMemory({ consentGiven: true });
         askNextQuestion({ ...memory, consentGiven: true });

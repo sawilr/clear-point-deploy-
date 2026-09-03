@@ -58,7 +58,11 @@ export const MEDICARE_2026 = {
     NJ: {
       QMB: { singleIncome: 1330, coupleIncome: 1803, singleAsset: 9950, coupleAsset: 14910, note: '$15,960/yr single, $21,640/yr couple' },
       SLMB: { singleIncome: 1596, coupleIncome: 2164, singleAsset: 9950, coupleAsset: 14910, note: '$19,152/yr single, $25,968/yr couple' },
-      QI: { singleIncome: 1796, coupleIncome: 2435, singleAsset: 9950, coupleAsset: 14910, note: '$21,546/yr single, $29,214/yr couple' },
+      // R2 freshness 2026-09-03: NJ publishes ANNUAL limits ($21,546 / $29,214);
+      // the exact monthly twelfths are $1,795.50 / $2,434.50. Store the FLOOR so
+      // a threshold never OVERSTATES the ceiling ($1,796 rounded up appears on no
+      // official NJ source and could imply someone slightly over the limit qualifies).
+      QI: { singleIncome: 1795, coupleIncome: 2434, singleAsset: 9950, coupleAsset: 14910, note: '$21,546/yr single, $29,214/yr couple (official NJ figures are annual)' },
     },
     // CT: QMB/SLMB/ALMB (not QI); income limits effective March 1, 2026
     CT: {

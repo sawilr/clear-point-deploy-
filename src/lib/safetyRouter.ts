@@ -47,7 +47,7 @@ const NO_HIT: SafetyResult = {
 // ── 988 crisis phrases ──────────────────────────────────────────────────────
 const CRISIS_EN = [
   'kill myself', 'killing myself', 'suicide', 'suicidal', 'end my life', 'end it all',
-  'want to die', 'wish i was dead', 'wish i were dead', 'no reason to live',
+  'want to die', 'wanna die', 'wish i was dead', 'wish i were dead', 'no reason to live', 'no reason left to live',
   'self harm', 'self-harm', 'hurt myself', 'harm myself', 'harming myself', 'cut myself', 'cutting myself', 'overdose on purpose',
   'give up on life', 'no longer want to live', "can't go on", 'cant go on',
   // AUDIT 2026-08-27 (mega-corpus) — passive ideation & plan/means the audit found
@@ -65,7 +65,8 @@ const CRISIS_EN = [
 const CRISIS_ES = [
   'suicid', 'matarme', 'me quiero matar', 'me quiero morir', 'quiero morir',
   'no quiero vivir', 'no quiero vivir mas', 'no quiero vivir más',
-  'mejor muerto', 'mejor muerta', 'acabar con mi vida', 'terminar con mi vida',
+  'mejor muerto', 'mejor muerta', 'prefiero estar muerto', 'prefiero estar muerta',
+  'desaparecer para siempre', 'acabar con mi vida', 'terminar con mi vida',
   'hacerme daño', 'hacerme dano', 'lastimarme',
   // AUDIT 2026-08-27 (mega-corpus) — passive ideation & plan/means (ES). Excludes
   // the benign idiom "terminar/acabar con todo este papeleo" by requiring
@@ -227,6 +228,10 @@ const EMERGENCY_RE: RegExp[] = [
   // Cardiac (ES, accent-stripped)
   /(duele|dolor|aprieta|opresion|apreta)[^.]{0,16}pecho/i,
   /pecho[^.]{0,16}(duele|dolor|aprieta|apretado|opresion)/i,
+  // AUDIT 2026-09-03 (R2-C4, P2) — "ataque al corazón/al corazon" was missed by
+  // the client net entirely (accent-internal 'corazón' defeated the substring
+  // lists; no regex covered "ataque"). Runs on accent-stripped `ta`.
+  /ataque[^.]{0,8}(al )?corazon/i, /infarto\b/i,
   /brazo[^.]{0,20}(durmiendo|dormido|adormec|entumec|no lo mueve|no (lo )?puedo mover)/i,
   // Stroke / FAST (ES)
   /(boca|cara)[^.]{0,18}(torcida|tuerce|chueca|un lado|medio lado|dormida)/i,
@@ -253,6 +258,11 @@ const CRISIS_STRONG_RE: RegExp[] = [
   /(tomarmelas|tomarme las|tomar todas las pastillas)/i,
   /no quiero (seguir )?vivir/i,
   /quitarme la vida|me voy a matar|acabar con mi vida/i,
+  // AUDIT 2026-09-03 (R2-C4, P1) — server-only crisis phrasings back-ported to
+  // the client net so Clara's deterministic contact-collector (which runs the
+  // engine, NOT /api/chat) can never consume them as a name/phone answer. Run
+  // on the accent-stripped copy `ta`, so no accents needed in the pattern.
+  /ojala\s+no\s+despert\w*/i,
 ];
 // Crisis patterns that are ambiguous — trigger ONLY without a benign
 // (plan/payment/paperwork) context, so "no point paying for this plan" is safe.
