@@ -48,15 +48,6 @@ const INJECTION_PATTERNS = [
   // Markdown / token injection
   /<\|im_start\|>|<\|im_end\|>|<\|system\|>|<\|assistant\|>|<\|user\|>/i,
   /```\s*(system|prompt|instructions?)\b/i,
-  // CMS-violation prompts (force the bot into compliance-illegal answers)
-  // AUDIT 2026-08-13 (§19 AK) — "specific|particular" was mandatory, so the plain
-  // "recommend a plan" walked through. The qualifier adds nothing: asking an
-  // unlicensed assistant to recommend ANY plan is the prohibited act.
-  /\brecommend\s+(a|the|me\s+a|which)\s+(specific\s+|particular\s+|best\s+)?(plan|carrier|policy|coverage)\b/i,
-  /\b(which|what)\s+plan\s+(should\s+i|do\s+you\s+recommend|is\s+best\s+for\s+me)\b/i,
-  /\btell\s+me\s+(i|you)\s+(qualify|am\s+eligible|are\s+eligible)\b/i,
-  /\bconfirm\s+(my|that)\s+(doctor|drug|medication)\s+is\s+(covered|in[- ]network)\b/i,
-
   // ── AUDIT 2026-08-13 (§19 AK) — fake internal authority ───────────────────
   // The §19 AK scenario: a caller claiming to be the owner, an employee, IT, or a
   // supervisor in order to unlock behavior. Two of four such attacks reached the
@@ -82,6 +73,33 @@ const INJECTION_PATTERNS = [
   /\b(disable|deactivate|turn\s+off|switch\s+off|shut\s+off|remove|drop|relax|loosen|lift|suspend|skip)\s+(your|the|all|these|those)?\s*(compliance|safety|security|guard|guardrail|filter|restriction|rule|limit|policy|censor)/i,
   /\b(desactiva|desactivar|apaga|apagar|quita|quitar|elimina|eliminar|relaja|relajar|suspende|omite|omitir)\s+(tu|tus|el|la|los|las|todas?|todos?)?\s*(cumplimiento|filtro|filtros|reglas?|restricci|l[ií]mites?|seguridad|censura|pol[ií]tica)/i,
 ];
+
+// ── CMS-boundary requests (NOT injection) — AUDIT 2026-09-03 ────────────────
+// Asking an unlicensed assistant to pick a plan, confirm eligibility, or confirm
+// a network is a regulated act we must refuse — but it is a legitimate consumer
+// question, not an attack. It earns the §14 firewall reply (explain + route to a
+// licensed advisor + neutral education), never the terse injection redirect that
+// a jailbreak gets. Kept separate so telemetry and copy stay honest.
+const PLAN_GUIDANCE_PATTERNS = [
+  // EN
+  /\brecommend\s+(a|the|me\s+a|which)\s+(specific\s+|particular\s+|best\s+)?(plan|carrier|policy|coverage)\b/i,
+  /\b(which|what)\s+plan\s+(should\s+i|do\s+you\s+recommend|is\s+best\s+for\s+me)\b/i,
+  /\btell\s+me\s+(i|you)\s+(qualify|am\s+eligible|are\s+eligible)\b/i,
+  /\bconfirm\s+(my|that)\s+(doctor|drug|medication)\s+is\s+(covered|in[- ]network)\b/i,
+  // ES (matched against accent-stripped normalized text)
+  /\brecomi[eé]nd[ae](me|le)\s+(un|el|una|la|algun|alguna)?\s*(plan|seguro|cobertura|aseguradora|carrier)\b/i,
+  /\bqu[eé]\s+plan\s+(es\s+(el\s+)?mejor(\s+para\s+mi)?|me\s+conviene|deber[ií]a\s+(elegir|escoger|tomar)|escojo|elijo)\b/i,
+  /\b(cual|cu[aá]l)\s+(es\s+)?(el\s+)?mejor\s+(plan|seguro|aseguradora|carrier)\s+para\s+mi\b/i,
+  /\b(d[ií]game|conf[ií]rme(me)?)\s+que\s+(califico|soy\s+elegible)\b/i,
+  /\bconfirme\s+que\s+mi\s+(doctor|medico|medicamento|medicina)\s+(esta\s+)?(cubierto|en\s+la\s+red)\b/i,
+];
+
+function planGuidanceReply(language) {
+  if (language === 'es') {
+    return 'No puedo recomendarle un plan específico ni confirmar su elegibilidad o cobertura desde aquí — la mejor opción depende de sus medicamentos, sus médicos y su presupuesto, y eso requiere una revisión con licencia. Un asesor licenciado de Clear Point puede repasar sus opciones con usted, sin costo, o usted puede comparar planes en Medicare.gov. ¿Hay algo sobre cómo funciona Medicare que le pueda explicar?';
+  }
+  return "I can't recommend a specific plan or confirm your eligibility or coverage from here — the right choice depends on your medications, doctors, and budget, and that needs a licensed review. A licensed Clear Point advisor can go over your options with you at no cost, or you can compare plans yourself at Medicare.gov. Is there anything about how Medicare works that I can explain?";
+}
 
 // Excessive non-ASCII can be a smuggling technique — flag if >40%.
 function nonAsciiRatio(s) {
@@ -154,6 +172,20 @@ export function checkPromptInjection(rawMessage, language) {
         reason: 'injection_pattern',
         pattern: INJECTION_PATTERNS[i].source.slice(0, 60),
         safeReply: safeReply(language),
+      };
+    }
+  }
+  // CMS-boundary requests (plan rec / eligibility / network): blocked from the
+  // model like injections, but answered with the §14 firewall reply, not the
+  // terse injection redirect. Still ok:false so every caller keeps skipping the
+  // model (blocked stays true in every existing test).
+  for (var g = 0; g < PLAN_GUIDANCE_PATTERNS.length; g++) {
+    if (PLAN_GUIDANCE_PATTERNS[g].test(normalized) || PLAN_GUIDANCE_PATTERNS[g].test(deleeted)) {
+      return {
+        ok: false,
+        reason: 'plan_guidance',
+        pattern: PLAN_GUIDANCE_PATTERNS[g].source.slice(0, 60),
+        safeReply: planGuidanceReply(language),
       };
     }
   }

@@ -646,10 +646,14 @@ export default async function handler(req, res) {
   // ── A15.4 Prompt-injection guard ──────────────────────────────────────
   var injCheck = checkPromptInjection(userMessage, conversationContext.language);
   if (!injCheck.ok) {
-    console.warn('[CHAT] prompt-injection blocked:', injCheck.reason, 'ip=' + ip);
+    // R2 2026-09-03 — a CMS-boundary request (plan rec / eligibility / network)
+    // is refused with the §14 firewall reply and labeled honestly, not as an
+    // injection attack.
+    var _blockLabel = injCheck.reason === 'plan_guidance' ? 'plan_recommendation' : 'prompt_injection';
+    console.warn('[CHAT] ' + _blockLabel + ' blocked:', injCheck.reason, 'ip=' + ip);
     return res.status(200).json({
       response: injCheck.safeReply,
-      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: 'prompt_injection' },
+      meta: { wantHandoff: false, wantClose: false, wantSchedule: false, blocked: _blockLabel },
     });
   }
   // ── PHASE 9A.3 Multi-turn injection — split-jailbreak guard (NARROWED) ──
