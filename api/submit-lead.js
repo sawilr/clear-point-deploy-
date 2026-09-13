@@ -351,6 +351,14 @@ export default async function handler(req, res) {
       if (consent_receipt_hash) receiptBits.push('sha256=' + consent_receipt_hash);
       if (disclaimer_version) receiptBits.push('disclaimer=' + disclaimer_version);
       if (signer_user_agent) receiptBits.push('ua=' + signer_user_agent.slice(0, 60));
+      // AUDIT 2026-09-12 (TCPA-02, P2) — a consent record without WHEN, FROM WHERE
+      // and ON WHICH PAGE is hard to defend. Server clock (authoritative), the
+      // rate-limit client id (trusted proxy chain, never the raw header), and the
+      // client-reported path (sanitized to a plain path, no query string).
+      receiptBits.push('at=' + new Date().toISOString());
+      if (ip) receiptBits.push('ip=' + String(ip).slice(0, 45));
+      var page_url = typeof body.page_url === 'string' ? body.page_url.slice(0, 200).replace(/[^A-Za-z0-9/_\-.]/g, '') : '';
+      if (page_url) receiptBits.push('page=' + page_url);
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
       // AUDIT 2026-07-03 (compliance) — persist the VERBATIM consent language per
       // lead so the 10-year TCPA record is self-contained in the CRM (previously

@@ -46,7 +46,7 @@ import { selectLLMProvider, callOpenAI, sanitizeDetail } from './_lib/llm-provid
 // 2026-08-15 — PARTD-001: deterministic Medicare entity scoping. See module header.
 import { resolveScope, scopeGate, buildScopeNote } from './_lib/entity-scope.js';
 // AUDIT 2026-08-18 (CLARA-MED-03) — deterministic Medicare figure backstop.
-import { verifyMedicareFigures } from './_lib/medicare-figures.js';
+import { verifyMedicareFigures, MEDICARE_FIGURES_YEAR } from './_lib/medicare-figures.js';
 
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
@@ -92,6 +92,13 @@ const MAX_PAUSE_CONTINUATIONS = 3;
 // design — a forgotten update degrades to "I need to verify that figure"
 // instead of confidently asserting a stale premium.
 const FIGURES_YEAR = 2026;
+// AUDIT 2026-09-12 (MED-02/AI-01, P1) — the deterministic backstop carries its own
+// year. If a maintainer bumps one without the other, the backstop would "correct"
+// the new year's figures back to the old ones. Loud at load; the backstop call
+// below also runs ONLY while the calendar year matches the figures' year.
+if (MEDICARE_FIGURES_YEAR !== FIGURES_YEAR) {
+  console.error('[CHAT] FIGURES_YEAR MISMATCH: api/chat.js=' + FIGURES_YEAR + ' api/_lib/medicare-figures.js=' + MEDICARE_FIGURES_YEAR + ' — update both together');
+}
 
 // ── System prompt — ClearPoint identity, CMS TPMO compliance, behavior ──
 // Cached on Anthropic's side so it only costs the full price on the FIRST
@@ -306,7 +313,8 @@ When the conversation is about plans, coverage, costs, or you are setting up an 
 # Current Medicare figures — 2026 (USE THESE; never cite older years)
 # AUDIT 2026-07-03 (compliance) — REVIEW BEFORE 2027 AEP (Oct 2026): CMS publishes
 # next-year figures each fall. Update these four values + the Extra Help/state
-# guidelines below, and keep src/data/medicare-figures-2026.ts in sync. Until then,
+# guidelines below, and keep src/data/medicare-figures-2026.ts AND
+# api/_lib/medicare-figures.js (MEDICARE_FIGURES_YEAR + values) in sync. Until then,
 # these are the correct 2026 standard figures. The "as of 2026" qualifier below lets
 # the bot degrade gracefully (state the year) rather than assert a stale number as
 # timeless fact if this review is missed.
@@ -1087,7 +1095,13 @@ export default async function handler(req, res) {
     // out-of-pocket cap) back to the verified value in medicare-figures.js and
     // logs it. Conservative + fail-safe: variable/IRMAA/historical/range figures
     // are left untouched, and the reply is never emptied.
-    var _figCheck = verifyMedicareFigures(cleanText);
+    // AUDIT 2026-09-12 (MED-02/AI-01) — after the figures' year has passed, the
+    // backstop must not rewrite anything (the prompt already carries the
+    // staleness instruction); inside the year, the verifier itself skips windows
+    // that name another year (next-year figures published in the fall).
+    var _figCheck = (new Date().getFullYear() === MEDICARE_FIGURES_YEAR)
+      ? verifyMedicareFigures(cleanText)
+      : { text: cleanText, corrections: [] };
     if (_figCheck.corrections.length > 0) {
       cleanText = _figCheck.text;
       console.warn('[CHAT] MEDICARE_FIGURE_CORRECTED: '

@@ -112,7 +112,7 @@ check('O2 known & unknown return BYTE-IDENTICAL body (no oracle)', JSON.stringif
 check('O3 body carries no membership signal (no crmApplied/reason/no_match)', !/crmApplied|reason|no_match|suppressed/.test(JSON.stringify(known.res.body)), JSON.stringify(known.res.body));
 check('O4 suppression STILL applied for known contact (DND PUT sent)', known.log.some((c) => c.method === 'PUT' && c.body && c.body.dnd === true), 'no DND PUT for known contact');
 check('O5 no PUT/mutation attempted for unknown contact', !unknown.log.some((c) => c.method === 'PUT'), 'unexpected mutation for unknown');
-check('O6 opt-out only SUPPRESSES (never sets consent / reverses DND)', !known.log.some((c) => c.method === 'PUT' && JSON.stringify(c.body).includes('consent') || (c.body && c.body.dnd === false)), 'opt-out wrote consent or dnd:false');
+check('O6 opt-out only SUPPRESSES (never sets consent TRUE / reverses DND)', !known.log.some((c) => c.method === 'PUT' && /consent_[a-z]+"[^}]*"value":"true"/.test(JSON.stringify(c.body)) || (c.body && c.body.dnd === false)), 'opt-out wrote consent or dnd:false');
 
 // ══ LEAD-02 ══════════════════════════════════════════════════════════════════
 console.log('\n[LEAD-02] phone-upsert third-party overwrite');
@@ -133,7 +133,7 @@ const putOnExisting = ghlLog.filter((c) => c.method === 'PUT' && /\/contacts\/[^
 const noteOnExisting = ghlLog.filter((c) => /\/notes$/.test(c.url) && c.method === 'POST');
 const oppOnExisting = ghlLog.filter((c) => /\/opportunities\/$/.test(c.url) && c.method === 'POST');
 check('L1 existing-contact submit → NO identity/consent PUT (LEAD-02 closed)', putOnExisting.length === 0, `saw ${putOnExisting.length} PUT(s): ${JSON.stringify(putOnExisting.map((p) => p.url))}`);
-check('L2 no PUT body ever carried victim consent flags', !ghlLog.some((c) => c.method === 'PUT' && JSON.stringify(c.body || {}).includes('consent_marketing')), 'a PUT carried consent fields');
+check('L2 no PUT body ever carried victim consent flags set TRUE', !ghlLog.some((c) => c.method === 'PUT' && /consent_marketing"[^}]*"value":"true"/.test(JSON.stringify(c.body || {}))), 'a PUT carried consent=true fields');
 check('L3 repeat inquiry STILL captured (note created on existing contact)', noteOnExisting.length >= 1, 'no note recorded — lead would be lost');
 check('L4 repeat inquiry creates opportunity (advisor follow-up preserved)', oppOnExisting.length >= 1, 'no opportunity created');
 check('L5 caller gets success (lead not dropped)', res.statusCode === 200 && res.body && res.body.success === true, `status=${res.statusCode} body=${JSON.stringify(res.body)}`);

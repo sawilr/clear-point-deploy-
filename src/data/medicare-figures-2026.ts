@@ -12,6 +12,9 @@
 /*  only and is NEVER surfaced as a served area.                        */
 /* ------------------------------------------------------------------ */
 
+/** The plan/contract year these figures are valid for (AUDIT 2026-09-12, MED-04). */
+export const MEDICARE_FIGURES_YEAR = 2026;
+
 export const MEDICARE_2026 = {
   partA: {
     deductible: 1736,

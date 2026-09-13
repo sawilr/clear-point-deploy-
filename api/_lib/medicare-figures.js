@@ -31,6 +31,11 @@
 
 // ── SINGLE SOURCE OF TRUTH — 2026, mirrors api/chat.js:306-315 ────────────────
 // Keep this in sync with the prompt. { value, display, year, source }.
+// AUDIT 2026-09-12 (MED-02/AI-01, P1) — the year these figures are valid for.
+// api/chat.js asserts it equals its own FIGURES_YEAR at load and only runs the
+// backstop while the calendar year matches; the verifier below also refuses to
+// touch any window that names a DIFFERENT year ("For 2027 … will be $2,400").
+export const MEDICARE_FIGURES_YEAR = 2026;
 export const MEDICARE_FIGURES_2026 = {
   part_b_standard_premium:     { value: 202.90, display: '202.90', year: 2026, source: 'CMS 2026 Part B premium' },
   part_b_deductible:           { value: 283,    display: '283',    year: 2026, source: 'CMS 2026 Part B deductible' },
@@ -44,7 +49,19 @@ export const MEDICARE_FIGURES_2026 = {
 const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'part_a_hospital_deductible', 'part_d_oop_cap']);
 
 // Window markers that DISQUALIFY a correction (legitimate variability / history).
-const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|\bincome\b|ingreso|depend|depende|up to|as low as|at least|hasta|máximo|maximo|\bmax\b|maximum|varies|var[ií]a|around|about|approx|aproximad|roughly|could be|might be|puede ser|last year|previous|previo|used to|el año pasado|antes|\bwas\b|\bera\b|\b2024\b|\b2025\b|\b2023\b|starts at|desde)/i;
+const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|\bincome\b|ingreso|depend|depende|up to|as low as|at least|hasta|máximo|maximo|\bmax\b|maximum|varies|var[ií]a|around|about|approx|aproximad|roughly|could be|might be|puede ser|last year|previous|previo|used to|el año pasado|antes|\bwas\b|\bera\b|\b2024\b|\b2025\b|\b2023\b|starts at|desde|next year|(?:pr[oó]ximo|proximo)\s+a[ñn]o|a partir de enero|starting (?:in )?january|beginning (?:in )?january)/i;
+// AUDIT 2026-09-12 (MED-02/AI-01) — a window that names any year other than the
+// figures' own year is describing a different contract year (next-year values
+// published in the fall, or history the DISQUALIFY list missed). Never "correct" it.
+const YEAR_TOKEN = /\b(20\d{2})\b/g;
+function namesOtherYear(win, year) {
+  YEAR_TOKEN.lastIndex = 0;
+  let m;
+  while ((m = YEAR_TOKEN.exec(win)) !== null) {
+    if (Number(m[1]) !== year) return true;
+  }
+  return false;
+}
 
 // Nearest match of `pattern` to `center`, LEFT-BIASED: a figure almost always
 // FOLLOWS its concept ("Part B deductible is $257"), so a keyword BEFORE the
@@ -110,6 +127,7 @@ export function verifyMedicareFigures(text) {
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
       const fig = MEDICARE_FIGURES_2026[concept];
       if (!fig) return match;
+      if (namesOtherYear(win, fig.year)) return match; // another contract year — not ours to rewrite
       // Correct only a genuinely different definitive value.
       if (Math.abs(val - fig.value) > 0.009) {
         corrections.push({ concept: concept, said: val, correct: fig.value });

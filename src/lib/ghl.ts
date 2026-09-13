@@ -239,6 +239,9 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     if (payload.disclaimer_version) { body.disclaimer_version = payload.disclaimer_version; }
     if (payload.signer_user_agent) { body.signer_user_agent = payload.signer_user_agent; }
     if (payload.signer_ip) { body.signer_ip = payload.signer_ip; }
+    // AUDIT 2026-09-12 (TCPA-02) — the consent record must say WHERE consent was
+    // given. Path only (no query string), sanitized again server-side.
+    if (typeof window !== 'undefined' && window.location) { body.page_url = String(window.location.pathname || '/').slice(0, 200); }
     if (payload.elapsed_ms != null) { body.elapsed_ms = payload.elapsed_ms; }
 
     // Anti-bot challenge (AUDIT 2026-08-15) — attach a Turnstile token when the

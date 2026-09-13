@@ -32,6 +32,7 @@ import { Phone, RotateCcw, Send, User, Mic, MicOff } from 'lucide-react';
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
 import { normalizeSpokenNumbers } from '../lib/spokenNumbers';
 import { getOfficeStatus } from '../lib/afterHours';
+import { tpmoDisclaimerText } from '../lib/tpmoConfig';
 import { readVisitorMemory, writeVisitorMemory, clearVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
 import { claraEvent, isIdentityDenial } from '../lib/claraObservability';
 import { buildConsentReceipt } from '../lib/disclaimerVersion';
@@ -2154,6 +2155,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           </button>
         </div>
       </form>
+      {/* AUDIT 2026-09-12 (CMS-02, P1) — /support is the only route without the
+          site footer, so the 42 CFR 422.2267(e)(41) TPMO statement and the
+          non-affiliation statement never appeared on Clara's page. They now
+          render persistently under the composer (EN/ES, same controlled config
+          as the footer). */}
+      <p className="cp-legal px-4 pb-2 pt-1 text-[13px] leading-snug text-earth-700 bg-cream-50 border-t border-cream-200">
+        {tpmoDisclaimerText(isSpanish ? 'es' : 'en')}{' '}
+        {isSpanish
+          ? 'Clear Point Senior Advisors no está conectada ni respaldada por el gobierno de EE. UU. ni por el programa federal de Medicare.'
+          : 'Clear Point Senior Advisors is not connected with or endorsed by the U.S. government or the federal Medicare program.'}
+      </p>
     </>
   );
 

@@ -112,7 +112,12 @@ function alreadyCovered(text, probes) {
 // splits on the same boundaries rule 13 uses and asks whether the SPECIFIC clause
 // carrying the SEP token is verification-framed.
 function sepClauseIsVerificationFramed(sentence) {
-  const clauses = sentence.split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií]\s+que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya\s+que\b)/i);
+  // AUDIT 2026-09-12 (SEC-02) — `\bas[ií]\s+que\b` re-scans every whitespace run
+  // at every position: a reply padded with 3,000 spaces took ~8 s, 4,000 ~19 s
+  // (super-linear). Collapse whitespace runs first (the clause test is
+  // insensitive to spacing) and bound the input so the split stays linear.
+  const normalized = String(sentence).replace(/\s{2,}/g, ' ').slice(0, 4000);
+  const clauses = normalized.split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
   for (let i = 0; i < clauses.length; i++) {
     if (!SEP_TOKEN_RE.test(clauses[i])) continue;
     // Include the preceding clause: "Whether you have a SEP available" splits at no
@@ -122,6 +127,29 @@ function sepClauseIsVerificationFramed(sentence) {
     if (!SEP_VERIFY_RE.test(span)) return false;
   }
   return true;
+}
+
+// AUDIT 2026-09-12 (AI-02) — clause-scoped verification framing for the
+// eligibility rule: "A licensed advisor can check whether you qualify for Extra
+// Help" is compliant and must survive; "You qualify for Extra Help" must not.
+// Same clause boundaries as sepClauseIsVerificationFramed; the clause carrying
+// the match (plus the preceding clause) must be verification-framed.
+function clauseIsVerificationFramed(normalizedSentence, idx) {
+  const re = /(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/gi;
+  const bounds = [0];
+  let m;
+  while ((m = re.exec(normalizedSentence)) !== null) {
+    bounds.push(m.index);
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  bounds.push(normalizedSentence.length);
+  for (let i = 0; i + 1 < bounds.length; i++) {
+    if (idx >= bounds[i] && idx < bounds[i + 1]) {
+      const span = normalizedSentence.slice(bounds[Math.max(0, i - 1)], bounds[i + 1]);
+      return SEP_VERIFY_RE.test(span);
+    }
+  }
+  return false;
 }
 
 // ── Forbidden compliance phrases ────────────────────────────────────────
@@ -551,15 +579,36 @@ export function complianceFilter(text, lang, opts) {
     else if (!safeAlready) out += ' ' + safe;
   }
 
-  // 2) Forbidden phrases — replace inline with safe text.
-  FORBIDDEN_PHRASES.forEach(function (re) {
-    if (re.test(out)) {
-      violations.push('forbidden_phrase:' + re.source.slice(0, 40));
-      out = out.replace(re, function () {
-        return safe.slice(0, 80) + '…';
-      });
+  // 2) Forbidden phrases.
+  // AUDIT 2026-09-12 (AI-02, P2) — the old inline splice ("…" + 80 chars of the
+  // safe copy dropped mid-sentence) produced unreadable replies for seniors and
+  // fired on verification-framed sentences. Now: (a) a match whose CLAUSE is
+  // verification-framed survives untouched (eligibility rule only); (b) any other
+  // match removes the WHOLE offending sentence and appends the safe copy once —
+  // the same shape the carrier-name and plan-recommendation rules already use.
+  var fpSentences = out.split(/(?<=[.!?])\s+/);
+  var fpChanged = false;
+  var fpClean = fpSentences.filter(function (s) {
+    var normalized = String(s).replace(/\s{2,}/g, ' ').slice(0, 4000);
+    for (var k = 0; k < FORBIDDEN_PHRASES.length; k++) {
+      var src = FORBIDDEN_PHRASES[k];
+      var re = new RegExp(src.source, src.flags.replace('g', ''));
+      var m = re.exec(normalized);
+      if (!m) continue;
+      if (k === 0 && clauseIsVerificationFramed(normalized, m.index)) continue;
+      violations.push('forbidden_phrase:' + src.source.slice(0, 40));
+      fpChanged = true;
+      return false;
     }
+    return true;
   });
+  if (fpChanged) {
+    out = fpClean.join(' ').trim();
+    var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
+    if (!out) out = safe;
+    else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
+    else if (!fpSafeAlready) out += ' ' + safe;
+  }
 
   // 3) A15.9 — Plan-letter naming ("Plan G", "Plan N") is regulated for
   //    Medigap recommendation. Replace with generic phrasing.

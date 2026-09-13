@@ -22,12 +22,17 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
   }
 
   if (variant === 'inline') {
+    // AUDIT 2026-09-12 (CMS-07) — the in-page "TPMO disclosure" bands carried only
+    // the non-affiliation sentence; the 42 CFR 422.2267(e)(41) statement itself
+    // lived 15,000 px down in the footer. It now renders here too, above the fold
+    // on every service page (EN/ES), from the same controlled config.
     return (
       <p className="cp-legal text-sm text-earth-700 leading-relaxed">
         {t(
           'ClearPoint Senior Advisors is an independent insurance agency. Not connected with or endorsed by Medicare, CMS, or the U.S. government. Plan availability varies by location.',
           'ClearPoint Senior Advisors es una agencia de seguros independiente. No está conectada ni respaldada por Medicare, CMS ni el gobierno de EE. UU. La disponibilidad de planes varía por ubicación.'
-        )}
+        )}{' '}
+        {t(tpmoDisclaimerText('en'), tpmoDisclaimerText('es'))}
       </p>
     );
   }

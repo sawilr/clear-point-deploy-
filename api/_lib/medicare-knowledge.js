@@ -27,7 +27,7 @@ Maintain an evolving internal Medicare Case Profile from EVERYTHING the caller h
 - MA-OEP: Jan 1 – Mar 31, ONE switch for people already on MA (MA→MA or MA→Original+PDP).
 - GEP (Part B): Jan 1 – Mar 31, coverage starts month after enrolling.
 - Medigap Open Enrollment: 6 months from Part B effective date at 65+ — no underwriting.
-- SEPs: Moving out of service area (2 months after move/notice) · Employer coverage ends (8 months for Part B; 2 months for MA/PDP) · Loss of Medicaid/LIS · Dual/LIS SEP (once per quarter, Q1–Q3) · 5-Star plan SEP (Dec 8 – Nov 30, once) · FEMA Disaster SEP · Plan exits area/contract violation.
+- SEPs: Moving out of service area (2 months after move/notice) · Employer coverage ends (8 months for Part B; 2 months for MA/PDP) · Loss of Medicaid/LIS · Extra Help/LIS SEP: anyone with Extra Help may switch to a different stand-alone Part D plan ONCE PER MONTH (42 CFR 423.38(c)(4), since 2025 — the old once-per-quarter rule no longer applies) · Full-benefit dual eligibles / LIS: monthly SEP to join an integrated D-SNP or move to Original Medicare + PDP (423.38(c)(35)) — the licensed advisor verifies which applies · 5-Star plan SEP (Dec 8 – Nov 30, once) · FEMA Disaster SEP · Plan exits area/contract violation.
 - STATE RULES (our states): NY and CT — Medigap is continuous guaranteed-issue and community-rated year-round (underwriting never applies). NJ — standard federal windows apply. Never promise a specific SEP applies — identify the likely window and have the licensed advisor verify dates/notices.
 
 ## ASSISTANCE PROGRAMS

@@ -46,9 +46,19 @@ export interface TpmoDisclaimerConfig {
   status: TpmoConfigStatus;
 }
 
+// AUDIT 2026-09-12 (CMS-03) — the CY2027 wording (91 FR 17384: SHIP reference
+// removed from (e)(41)) applies to CY2027 marketing, which may begin
+// 2026-10-01. Resolve the variant from the calendar at render time so the switch
+// cannot be forgotten; the cut-over instant is midnight Eastern (UTC-4 in Oct).
+export const CY2027_MARKETING_START_UTC = Date.UTC(2026, 9, 1, 4, 0, 0); // 2026-10-01T00:00 ET
+
+export function activeContractYearVariant(now: Date = new Date()): 'CY2026' | 'CY2027' {
+  return now.getTime() >= CY2027_MARKETING_START_UTC ? 'CY2027' : 'CY2026';
+}
+
 export const TPMO_DISCLAIMER_CONFIG: TpmoDisclaimerConfig = {
   serviceArea: ['NY', 'NJ', 'CT'],
-  contractYearVariant: 'CY2026',
+  contractYearVariant: activeContractYearVariant(),
   organizationCount: null,
   productCount: null,
   verificationSource: null,
@@ -86,7 +96,13 @@ export function tpmoDisclaimerText(lang: 'en' | 'es', cfg: TpmoDisclaimerConfig 
       : `No ofrecemos todos los planes disponibles en su área. Actualmente representamos ${x} organizaciones que ofrecen ${y} productos en su área. Comuníquese con Medicare.gov, llame al 1-800-MEDICARE o contacte su Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información sobre todas sus opciones.`;
   }
   // Fallback — counts not yet verified (status BLOCKED_COUNTS_REQUIRED).
+  // AUDIT 2026-09-12 (CMS-01, P1, OWNER-GATED): (e)(41) is STANDARDIZED content —
+  // the only compliant multi-carrier text carries the organization/product counts.
+  // Until the owner/FMO supplies them, render the standardized sentences verbatim
+  // MINUS the counts sentence (the previous fallback added an invented sentence,
+  // "Any information we provide is limited to…", that appears in no version of
+  // the rule). This remains a documented gap, not a cure.
   return lang === 'en'
-    ? 'We do not offer every plan available in your area. Any information we provide is limited to the plans we offer in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your plan options.'
-    : 'No ofrecemos todos los planes disponibles en su área. Cualquier información que proporcionamos se limita a los planes que ofrecemos en su área. Comuníquese con Medicare.gov o 1-800-MEDICARE para obtener información sobre todas sus opciones de planes.';
+    ? 'We do not offer every plan available in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options.'
+    : 'No ofrecemos todos los planes disponibles en su área. Comuníquese con Medicare.gov o llame al 1-800-MEDICARE para obtener información sobre todas sus opciones.';
 }

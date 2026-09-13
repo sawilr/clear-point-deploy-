@@ -5,6 +5,16 @@ import { CTASection } from '../components/CTASection';
 import { DisclaimerBlock } from '../components/DisclaimerBlock';
 import { useScrollReveal } from '../components/ScrollReveal';
 import { CheckIcon } from '../components/icons';
+import { MEDICARE_2026, MEDICARE_FIGURES_YEAR } from '../data/medicare-figures-2026';
+
+// AUDIT 2026-09-12 (MED-01, P1) — the page taught a 4-phase benefit with a
+// "coverage gap (donut hole)"; the gap was eliminated 2025-01-01 (42 CFR
+// 423.104(d)(2)(v), IRA §11201). Medicare.gov describes three stages. Figures
+// come from the single-source file so the year rollover is one edit.
+const PARTD_DEDUCTIBLE = `$${MEDICARE_2026.partD.maxDeductible.toLocaleString('en-US')}`;
+const PARTD_CAP = `$${MEDICARE_2026.partD.oopCap.toLocaleString('en-US')}`;
+const PARTD_STAGES_EN = `Since 2025 there is no "coverage gap" (donut hole). Part D has three stages: a deductible (if your plan has one — no more than ${PARTD_DEDUCTIBLE} in ${MEDICARE_FIGURES_YEAR}), initial coverage where you pay your share of each prescription, and catastrophic coverage: once your out-of-pocket costs for covered drugs reach ${PARTD_CAP} in ${MEDICARE_FIGURES_YEAR}, you pay $0 for covered Part D drugs for the rest of the calendar year.`;
+const PARTD_STAGES_ES = `Desde 2025 ya no existe la "brecha de cobertura" (donut hole). La Parte D tiene tres etapas: un deducible (si su plan lo tiene — no más de ${PARTD_DEDUCTIBLE} en ${MEDICARE_FIGURES_YEAR}), la cobertura inicial en la que usted paga su parte de cada receta, y la cobertura catastrófica: cuando sus gastos de bolsillo en medicamentos cubiertos llegan a ${PARTD_CAP} en ${MEDICARE_FIGURES_YEAR}, usted paga $0 por los medicamentos cubiertos de la Parte D el resto del año calendario.`;
 
 export default function PartD() {
   const { t } = useLanguage();
@@ -56,7 +66,7 @@ export default function PartD() {
                     { en: 'Each plan has a formulary — a list of covered drugs organized into tiers.', es: 'Cada plan tiene un formulario — una lista de medicamentos cubiertos organizados en niveles.' },
                     { en: 'Lower-tier drugs typically cost less. Higher-tier or specialty drugs cost more.', es: 'Los medicamentos de nivel inferior típicamente cuestan menos. Los medicamentos de nivel superior o especializados cuestan más.' },
                     { en: 'Using in-network pharmacies saves you money.', es: 'Usar farmacias dentro de la red le ahorra dinero.' },
-                    { en: 'Each plan has four coverage phases: Deductible, Initial Coverage, Coverage Gap (donut hole), and Catastrophic.', es: 'Cada plan tiene cuatro fases de cobertura: Deducible, Cobertura Inicial, Brecha de Cobertura (donut hole) y Catastrófica.' },
+                    { en: PARTD_STAGES_EN, es: PARTD_STAGES_ES },
                   ].map((item, i) => (
                     <div key={i} className="flex gap-3 items-start">
                       <CheckIcon className="w-4 h-4 text-gold-500 flex-shrink-0 mt-1" />

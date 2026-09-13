@@ -166,6 +166,15 @@ export default async function handler(req, res) {
         ...(blockEmail ? { Email: { status: 'active', message: 'Web chat opt-out' } } : {}),
       },
       tags: Array.from(new Set([...(match.tags || []), 'cp-dnc', 'dnc-web-chat'])),
+      // AUDIT 2026-09-12 (TCPA-04, P2) — a revocation must also clear the recorded
+      // consent flags; DND alone left contact.consent_* = 'true' next to a DNC tag,
+      // an internally contradictory record. Same field ids submit-lead.js writes.
+      customFields: [
+        { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: 'false' },
+        { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: 'false' },
+        { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: 'false' },
+        ...(blockEmail ? [{ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: 'false' }] : []),
+      ],
     };
     const ures = await fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, {
       method: 'PUT', headers: H, body: JSON.stringify(update),

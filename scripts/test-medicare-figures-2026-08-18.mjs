@@ -48,6 +48,13 @@ const SURVIVE = [
   ['Income figure', 'With an income around $1,700 a month, it may be worth reviewing help programs.'],
   ['Part D max deductible stated as max', 'A Part D plan can charge up to a $615 deductible, or less.'],
   ['No dollar figure at all', 'The Part B deductible resets every January — a licensed advisor can confirm the exact amount.'],
+  // AUDIT 2026-09-12 (MED-02/AI-01, P1) — next-year figures published in the fall
+  // must NEVER be rewritten back to the current-year values.
+  ['2027 Part D cap (next year)', 'For 2027, the Part D out-of-pocket cap will be $2,400.'],
+  ['2027 Part B premium (next year)', 'Starting January 2027 the standard Part B premium is $215.00 for most people.'],
+  ['2027 Part B deductible (next year)', 'In 2027 the Part B deductible will be $300.'],
+  ['2027 Part D cap ES (next year)', 'Para 2027, el tope de gastos de bolsillo de la Parte D será $2,400.'],
+  ['Next year phrasing without a digit year', 'Next year the Part B deductible goes up to $300, according to CMS.'],
 ];
 for (const [id, input] of SURVIVE) {
   const r = verifyMedicareFigures(input);

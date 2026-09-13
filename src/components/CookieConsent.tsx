@@ -109,8 +109,8 @@ export function CookieConsent() {
       <div className="max-w-5xl mx-auto flex flex-col sm:flex-row sm:items-center gap-3 max-[430px]:gap-2 sm:gap-6 pr-28 max-[430px]:pr-0 md:pr-32 min-[1440px]:pr-0">
         <p className="flex-1 text-base max-[430px]:text-sm leading-relaxed max-[430px]:pr-16">
           {t(
-            'We use cookies for our chat service. See our ',
-            'Usamos cookies para el servicio de chat. Vea nuestra '
+            'We only set optional analytics cookies (Google Analytics) if you choose "Accept all". The chat works without cookies. See our ',
+            'Solo usamos cookies opcionales de analítica (Google Analytics) si elige "Aceptar todo". El chat funciona sin cookies. Vea nuestra '
           )}
           <Link
             to={lp('/privacy-policy')}

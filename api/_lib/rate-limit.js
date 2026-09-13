@@ -196,11 +196,21 @@ export function clientId(req) {
  */
 const PROD_HOST = 'clearpointsenioradvisors.com';
 const VERCEL_PROJECT_SLUG_PREFIX = 'clearpoint-deploy';
+// AUDIT 2026-09-12 (SEC-01, P2) — the previous pattern `clearpoint-deploy[a-z0-9-]*.vercel.app`
+// matched ANY Vercel project whose name starts with the slug (verified live: an
+// Origin of https://clearpoint-deploy-evil.vercel.app was reflected in
+// Access-Control-Allow-Origin). Only hosts that carry OUR team slug can be ours:
+//   clearpoint-deploy.vercel.app                                (project alias)
+//   clearpoint-deploy-<hash>-sawil-reyess-projects.vercel.app   (preview)
+//   clearpoint-deploy-git-<branch>-sawil-reyess-projects.vercel.app
+//   clearpoint-deploy-sawil-reyess-projects.vercel.app
+const VERCEL_TEAM_SLUG = 'sawil-reyess-projects';
 const ALLOWED_ORIGIN_RE = new RegExp(
   // BUG 4 — accept both the apex host and the www. subdomain of PROD_HOST
   // (a www visitor was previously blocked → 403 → Zara fell back to offline).
   '^https://((www\\.)?' + PROD_HOST.replace(/\./g, '\\.') + '|' +
-  VERCEL_PROJECT_SLUG_PREFIX + '[a-z0-9-]*\\.vercel\\.app)$',
+  VERCEL_PROJECT_SLUG_PREFIX + '\\.vercel\\.app|' +
+  VERCEL_PROJECT_SLUG_PREFIX + '(-[a-z0-9-]+)?-' + VERCEL_TEAM_SLUG + '\\.vercel\\.app)$',
   'i'
 );
 
