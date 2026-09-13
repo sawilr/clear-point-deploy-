@@ -34,23 +34,33 @@ function formInProgress(): boolean {
   return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea'))
     .some((el) => el.value.trim().length > 0)
 }
+// Red-team round 2 (RT2-CLIENT-05): a manual F5 must not count as our rescue
+// reload. The marker is written into history.state (survives a reload without
+// Web Storage) right before we reload; a session flag is a second, best-effort copy.
+const RELOAD_MARK = 'cpChunkReload'
 function alreadyReloaded(): boolean {
-  const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
-  return nav?.type === 'reload' || storageGet('session', 'cp_chunk_reload') === '1'
+  const st = (typeof history !== 'undefined' && history.state) as Record<string, unknown> | null
+  return !!(st && st[RELOAD_MARK]) || storageGet('session', 'cp_chunk_reload') === '1'
 }
-async function retryImport<T>(loader: () => Promise<T>, firstError: unknown): Promise<T> {
+function markReload(): void {
+  try { history.replaceState({ ...(history.state || {}), [RELOAD_MARK]: 1 }, '') } catch { /* ignore */ }
+  storageSet('session', 'cp_chunk_reload', '1')
+}
+// Red-team RT2-CLIENT-01: the cache-busted retry returns the raw module
+// namespace, so the loader's export mapping must be applied to it as well.
+async function retryImport<M, T>(loader: () => Promise<M>, map: (m: M) => T, firstError: unknown): Promise<T> {
   const url = chunkUrlFrom(firstError)
   await new Promise((r) => setTimeout(r, 600))
-  if (url) return (await import(/* @vite-ignore */ `${url}?retry=${Date.now()}`)) as T
-  return await loader()
+  if (url) return map((await import(/* @vite-ignore */ `${url}?retry=${Date.now()}`)) as M)
+  return map(await loader())
 }
-function lazyRetry<T>(loader: () => Promise<T>): () => Promise<T> {
-  return () => loader().catch(async (firstError: unknown) => {
+function lazyRetry<M, T = M>(loader: () => Promise<M>, map: (m: M) => T = (m) => m as unknown as T): () => Promise<T> {
+  return () => loader().then(map).catch(async (firstError: unknown) => {
     try {
-      return await retryImport(loader, firstError)
+      return await retryImport(loader, map, firstError)
     } catch (secondError) {
       if (!alreadyReloaded() && !formInProgress()) {
-        storageSet('session', 'cp_chunk_reload', '1')
+        markReload()
         window.location.reload()
         return new Promise<T>(() => {}) // navigation in flight — never resolve
       }
@@ -60,15 +70,46 @@ function lazyRetry<T>(loader: () => Promise<T>): () => Promise<T> {
 }
 // Non-essential chunks (Zara): retry once, then surface the failure to a local
 // boundary — never reload the page.
-function lazyNoReload<T>(loader: () => Promise<T>): () => Promise<T> {
-  return () => loader().catch((firstError: unknown) => retryImport(loader, firstError))
+function lazyNoReload<M, T = M>(loader: () => Promise<M>, map: (m: M) => T = (m) => m as unknown as T): () => Promise<T> {
+  return () => loader().then(map).catch((firstError: unknown) => retryImport(loader, map, firstError))
 }
-// Tiny boundary for the optional Zara widget: a chunk failure hides the widget
-// (the phone CTA and BotLauncher remain) instead of taking the whole app down.
-class ChatBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+// Boundary for the optional Zara widget (RT2-CLIENT-08): a chunk failure shows
+// a small phone fallback pill instead of a silent dead launcher.
+class ChatBoundary extends Component<{ children: ReactNode; es: boolean }, { failed: boolean }> {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
-  render() { return this.state.failed ? null : this.props.children }
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div role="status" className="fixed bottom-[calc(env(safe-area-inset-bottom)+150px)] right-4 z-[46] max-w-[260px] rounded-xl bg-earth-900 text-cream-50 text-sm px-4 py-3 shadow-lifted">
+        {this.props.es ? 'El chat no está disponible ahora. Llámenos al ' : 'Chat is unavailable right now. Call us at '}
+        <a className="font-semibold underline" href="tel:+18557208555">1-855-720-8555</a>
+      </div>
+    )
+  }
+}
+// Route-level boundary (RT2-CLIENT-04): a page chunk that still fails after the
+// retry/reload rescue is reported INSIDE the layout — header, footer and the
+// visitor's half-filled form stay mounted — with a plain "try again" control.
+class RouteBoundary extends Component<{ children: ReactNode; es: boolean; pathname: string }, { failed: boolean; at: string }> {
+  state = { failed: false, at: '' }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidUpdate(prev: { pathname: string }) {
+    if (prev.pathname !== this.props.pathname && this.state.failed) this.setState({ failed: false })
+  }
+  render() {
+    if (!this.state.failed) return this.props.children
+    const es = this.props.es
+    return (
+      <section className="max-w-2xl mx-auto px-5 py-16 text-center" aria-live="polite">
+        <h1 className="font-serif text-2xl text-earth-900 mb-3">{es ? 'No pudimos cargar esta página' : "We couldn't load this page"}</h1>
+        <p className="text-earth-700 mb-6">{es ? 'Revise su conexión e inténtelo de nuevo. También puede llamarnos al ' : 'Please check your connection and try again. You can also call us at '}<a className="font-semibold underline" href="tel:+18557208555">1-855-720-8555</a> (TTY 711).</p>
+        <button type="button" onClick={() => this.setState({ failed: false, at: String(Date.now()) })} className="cp-btn inline-flex items-center justify-center min-h-[48px] px-6 rounded-lg bg-earth-800 text-cream-50 font-semibold">
+          {es ? 'Intentar de nuevo' : 'Try again'}
+        </button>
+      </section>
+    )
+  }
 }
 
 const About = lazy(lazyRetry(() => import('./pages/About')))
@@ -91,7 +132,7 @@ const NotFound = lazy(lazyRetry(() => import('./pages/NotFound')))
 // is NOT in the initial payload on every page. The floating launcher stays eager
 // (it must appear instantly); Zara's chunk loads in the background right after
 // first paint, well before the user opens it via the launcher.
-const ChatBot = lazy(lazyNoReload(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot }))))
+const ChatBot = lazy(lazyNoReload(() => import('./components/ChatBot'), (m) => ({ default: m.ChatBot })))
 
 // Sawil 2026-07-27 ES ROUTES (SEO) — single source of truth for content routes.
 // Each entry renders at its English path AND at an indexable /es twin
@@ -124,6 +165,7 @@ export default function App() {
   // Sawil 2026-07-27 ES ROUTES — /es/support is the same Clara shell; the
   // suppression rules (sticky bar, footer, Zara) apply to both URLs.
   const isSupportPage = location.pathname === '/support' || location.pathname === '/es/support';
+  const isEs = location.pathname === '/es' || location.pathname.startsWith('/es/');
   // Generic, PII-free page_view on every route change (no-ops until GTM is set).
   useEffect(() => {
     track(Events.PAGE_VIEW, { event_category: 'navigation', page_path: location.pathname });
@@ -170,6 +212,7 @@ export default function App() {
           </div>
         }>
 
+          <RouteBoundary es={isEs} pathname={location.pathname}>
           <Routes>
             {CONTENT_ROUTES.map(({ path, element }) => (
               <Route key={path} path={path} element={element} />
@@ -184,6 +227,7 @@ export default function App() {
             {/* PHASE 7 — Branded 404 fallback. */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </RouteBoundary>
         </Suspense>
       </main>
       {!isSupportPage && <Footer />}
@@ -197,7 +241,7 @@ export default function App() {
           input row. First visit only; choice persists in localStorage. */}
       {!isSupportPage && <CookieConsent />}
       {!isSupportPage && <BotLauncher />}
-      {!isSupportPage && <ChatBoundary><Suspense fallback={null}><ChatBot /></Suspense></ChatBoundary>}
+      {!isSupportPage && <ChatBoundary es={isEs}><Suspense fallback={null}><ChatBot /></Suspense></ChatBoundary>}
     </div>
     </LanguageProvider>
     </ErrorBoundary>

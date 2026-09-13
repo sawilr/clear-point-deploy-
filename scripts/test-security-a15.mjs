@@ -45,7 +45,10 @@ check('benign EN unchanged',     c6.violations.length === 0 && c6.text === 'Hi t
 console.log('\n── ORIGIN ALLOWLIST ──');
 check('prod origin allowed',
   checkOrigin({ headers: { origin: 'https://clearpointsenioradvisors.com' } }) === 'https://clearpointsenioradvisors.com');
-// AUDIT 2026-09-12 (SEC-01) — only team-suffixed previews (and the project alias) are ours.
+// AUDIT 2026-09-12/13 (SEC-01) — exact allowlist: configured domains + the deployment's own
+// URLs that Vercel injects at runtime. Simulate the runtime env for the checks below.
+process.env.VERCEL_URL = 'clearpoint-deploy-7395hr822-sawil-reyess-projects.vercel.app';
+process.env.VERCEL_BRANCH_URL = 'clearpoint-deploy-git-fix-master-a-bc0a94-sawil-reyess-projects.vercel.app';
 check('team-suffixed preview allowed',
   checkOrigin({ headers: { origin: 'https://clearpoint-deploy-7395hr822-sawil-reyess-projects.vercel.app' } }) === 'https://clearpoint-deploy-7395hr822-sawil-reyess-projects.vercel.app');
 check('truncated branch alias allowed',
@@ -58,6 +61,8 @@ check('HOSTILE slug-prefixed project REJECTED (SEC-01)',
   checkOrigin({ headers: { origin: 'https://clearpoint-deploy-evil.vercel.app' } }) === null);
 check('HOSTILE prefix-only preview shape REJECTED (SEC-01)',
   checkOrigin({ headers: { origin: 'https://clearpoint-deploy-abc123.vercel.app' } }) === null);
+check('HOSTILE team-suffixed but not OUR deployment REJECTED (SEC-01 round 2)',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-evil-sawil-reyess-projects.vercel.app' } }) === null);
 check('HOSTILE mixed-case origin REJECTED',
   checkOrigin({ headers: { origin: 'https://CLEARPOINTSENIORADVISORS.com' } }) === null);
 check('http (not https) rejected',

@@ -205,15 +205,26 @@ const VERCEL_PROJECT_SLUG_PREFIX = 'clearpoint-deploy';
 //   clearpoint-deploy-git-<branch>-sawil-reyess-projects.vercel.app
 //   clearpoint-deploy-sawil-reyess-projects.vercel.app
 const VERCEL_TEAM_SLUG = 'sawil-reyess-projects';
-const ALLOWED_ORIGIN_RE = new RegExp(
-  // BUG 4 — accept both the apex host and the www. subdomain of PROD_HOST
-  // (a www visitor was previously blocked → 403 → Zara fell back to offline).
-  '^https://((www\\.)?' + PROD_HOST.replace(/\./g, '\\.') + '|' +
-  VERCEL_PROJECT_SLUG_PREFIX + '\\.vercel\\.app|' +
-  VERCEL_PROJECT_SLUG_PREFIX + '(-[a-z0-9-]+)?-' + VERCEL_TEAM_SLUG + '\\.vercel\\.app)$'
-  // Red-team SEC-01-RT-2: no 'i' flag — browsers always send a lower-case origin,
-  // so a mixed-case value is not ours and must not be reflected.
-);
+// Red-team round 2 (SEC-01-RT2-01): no pattern over the vercel.app namespace at
+// all. The allowlist is an EXACT set: the project's configured domains plus the
+// current deployment's own URLs, which Vercel injects at runtime
+// (VERCEL_URL = this deployment, VERCEL_BRANCH_URL = the branch alias,
+// VERCEL_PROJECT_PRODUCTION_URL = the production alias). Case-sensitive on purpose.
+function allowedOriginSet() {
+  var set = new Set([
+    'https://' + PROD_HOST,
+    'https://www.' + PROD_HOST,
+    'https://' + VERCEL_PROJECT_SLUG_PREFIX + '.vercel.app',
+    'https://' + VERCEL_PROJECT_SLUG_PREFIX + '-' + VERCEL_TEAM_SLUG + '.vercel.app',
+  ]);
+  var keys = ['VERCEL_URL', 'VERCEL_BRANCH_URL', 'VERCEL_PROJECT_PRODUCTION_URL'];
+  for (var i = 0; i < keys.length; i++) {
+    var v = process.env[keys[i]];
+    if (typeof v === 'string' && /^[a-z0-9.-]+$/.test(v)) set.add('https://' + v);
+  }
+  return set;
+}
+var ALLOWED_ORIGIN_RE = { test: function (origin) { return allowedOriginSet().has(String(origin)); } };
 
 /** Returns the origin header if it's allowed, otherwise null.
  *  A15.4 — HIGH fix: previously a missing Origin header was treated as

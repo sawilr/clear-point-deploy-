@@ -334,7 +334,9 @@ export default function Home() {
               <img
                 src="/enrollment-advisor.jpg"
                 alt={t('Senior couple reviewing Medicare enrollment options with a trusted advisor.', 'Pareja mayor revisando opciones de inscripción de Medicare con un asesor de confianza.')}
-                className="rounded-2xl shadow-lifted w-full object-cover bg-cream-100"
+                width={1280}
+                height={853}
+                className="rounded-2xl shadow-lifted w-full h-auto object-cover bg-cream-100"
                 style={{ maxHeight: '600px' }}
                 loading="lazy"
                 decoding="async"

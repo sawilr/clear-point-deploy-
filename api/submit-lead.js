@@ -26,42 +26,48 @@ import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 // AUDIT 2026-09-12 (FORMS-04) — remove the lead's own identifiers from free text
 // before it is sent to the enrichment LLM. Exact-value replacement (case-insensitive)
 // plus a generic phone/email sweep; the CRM note keeps the original text.
-function scrubIdentityForIntel(text, values) {
+function scrubIdentityForIntel(text, values, dob) {
   var out = String(text || '');
   // Red-team FORMS-04-B1: the story only — never the TCPA receipt / verbatim consent blocks.
   var cut = out.search(/\u2014 (?:TCPA Receipt|Consent Text)/);
   if (cut >= 0) out = out.slice(0, cut);
-  // Generic sweeps FIRST (phone / email / dates), keeping official reference numbers.
+  // Red-team FORMS-04-N3: numbers spelled out in words (EN/ES) become digits first.
+  var WORD_DIGITS = { zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', cero: '0', uno: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9' };
+  out = out.replace(/\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)[\s,-]+){6,}(?:zero|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b/gi, function (m) { return m.toLowerCase().split(/[\s,-]+/).map(function (w) { return WORD_DIGITS[w] || ''; }).join(''); });
+  // Generic sweeps FIRST (phone / email), keeping official reference numbers.
   out = out.replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, function (m) {
     var d = m.replace(/\D/g, '');
     return /^(1?8006334227|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/.test(d) ? m : '[phone]';
   });
   out = out.replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu, '[email]');
-  var hasDob = values.some(function (v) { return typeof v === 'string' && /\d{4}/.test(v); });
-  if (hasDob) {
-    out = out.replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-](?:19|20)\d{2}\b/g, '[date]')
-             .replace(/\b(?:19|20)\d{2}[\/.-]\d{1,2}[\/.-]\d{1,2}\b/g, '[date]')
-             .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{2}\b/gi, '[date]')
-             .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(?:19|20)\d{2}\b/gi, '[date]');
+  // Red-team FORMS-04-FP2: dates are redacted only when a DOB was supplied AND the
+  // year is a plausible birth year (enrollment dates like 12/31/2026 stay visible).
+  if (typeof dob === 'string' && /\d{4}/.test(dob)) {
+    var maxBirth = new Date().getFullYear() - 50;
+    var yearOk = function (y) { y = Number(y); return y >= 1900 && y <= maxBirth; };
+    out = out.replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
+             .replace(/\b((?:19|20)\d{2})[\/.-]\d{1,2}[\/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
+             .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
+             .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
   }
-  // Exact values: longest first; names are matched per token (>= 3 letters, or the
-  // whole value when it is that short) with Unicode-aware word boundaries so short
-  // common words inside other words are never mangled (red-team FORMS-04-FP1).
+  // Exact values: longest first. Names are matched per token, CASE-SENSITIVE and
+  // skipping common-word tokens (red-team FORMS-04-FP1/FP3: "Le", "Al", "Bill",
+  // "May" mid-sentence are prose, not the lead). Emails / phones / DOB: whole value.
+  var STOP = /^(le|al|la|el|de|del|los|las|un|una|y|o|si|no|mi|su|se|me|te|lo|will|bill|may|mark|rich|rose|art|guy|pat|sue|june|april|grace|hope|joy|ray|sol|luz|mar|paz|cruz|rosa|ana|eva|pia|amor|don|dr|sr|sra|mrs|mr|ms)$/i;
   var tokens = [];
   for (var i = 0; i < values.length; i++) {
     var v = values[i];
     if (typeof v !== 'string') continue;
     var t = v.trim();
     if (t.length < 2) continue;
-    if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push(t); continue; } // email / phone / dob: whole value
-    var parts = t.split(/[\s()"'\u201c\u201d,]+/).filter(function (x) { return x.length >= 3; });
-    if (!parts.length && t.length >= 2) parts = [t];
-    tokens = tokens.concat(parts);
+    if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push({ v: t, ci: true }); continue; }
+    var parts = t.split(/[\s()"'\u201c\u201d,]+/).filter(function (x) { return x.length >= 3 && !STOP.test(x); });
+    for (var q = 0; q < parts.length; q++) tokens.push({ v: parts[q], ci: false });
   }
-  tokens.sort(function (a, b) { return b.length - a.length; });
+  tokens.sort(function (a, b) { return b.v.length - a.v.length; });
   for (var j = 0; j < tokens.length; j++) {
-    var esc = tokens[j].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + esc + '(?![\\p{L}\\p{N}])', 'giu'), '[redacted]'); } catch (_e) { /* keep going */ }
+    var esc = tokens[j].v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + esc + '(?![\\p{L}\\p{N}])', tokens[j].ci ? 'giu' : 'gu'), '[redacted]'); } catch (_e) { /* keep going */ }
   }
   return out;
 }
@@ -292,7 +298,7 @@ export default async function handler(req, res) {
     lead_quality_flags = _scrubFlags.text;
     // Red-team FORMS-01-B3: the field also carries the server's AI verdict later; client
     // text is labelled and cannot carry verdict-shaped tokens.
-    lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/\b(AI:|SOA[- ]?\w*|DNC|DND|Temp-\w+|Urg-\w+|Intent-\w+)/gi, '[x]') : '';
+    lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/(?<![A-Za-z0-9_])(AI:|SOA[- ]?\w*|DNC|DND|Temp[-\u2010\u2011\u2013]\w+|Urg[-\u2010\u2011\u2013]\w+|Intent[-\u2010\u2011\u2013]\w+)/gi, '[x]') : '';
     var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected);
     if (_phiCats.length > 0) {
       console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
@@ -404,7 +410,7 @@ export default async function handler(req, res) {
       receiptBits.push('at=' + new Date().toISOString());
       receiptBits.push('ip=' + (/^[0-9a-f:.]{3,45}$/i.test(String(ip || '')) ? String(ip) : 'unavailable'));
       var page_url = '';
-      try { if (typeof body.page_url === 'string') { var _pu = new URL(body.page_url.slice(0, 400), 'https://clearpointsenioradvisors.com'); if (_pu.origin === 'https://clearpointsenioradvisors.com') page_url = _pu.pathname.replace(/\/{2,}/g, '/').replace(/[^A-Za-z0-9/_\-.]/g, '').slice(0, 120); } } catch (_e) { page_url = ''; }
+      try { if (typeof body.page_url === 'string' && body.page_url.trim()) { var _pu = new URL(body.page_url.slice(0, 400), 'https://clearpointsenioradvisors.com'); if (_pu.origin === 'https://clearpointsenioradvisors.com') { var _path = _pu.pathname; try { _path = decodeURIComponent(_path); } catch (_d) { /* keep raw */ } page_url = _path.replace(/\/{2,}/g, '/').replace(/[^A-Za-z0-9/_\-.]/g, '').slice(0, 120); } } } catch (_e) { page_url = ''; }
       if (page_url && !/^\/[^/]/.test(page_url) && page_url !== '/') page_url = '';
       if (page_url) receiptBits.push('page=' + page_url);
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
@@ -431,7 +437,10 @@ export default async function handler(req, res) {
         if (typeof tag === 'string') {
           tag = tag.trim();
           var _norm = tag.toLowerCase().replace(/[\s_-]+/g, '-');
-          var _denied = /^(status-|soa|dnc|dnd|consent|temp-|urg|ai-|cp-|outcome-|compliance|high-priority|warm-lead|intent-|utm-|lang-|source-|leadtype-|language-)/.test(_norm);
+          // Red-team FORMS-01-FP1: exact server-owned / compliance families only, so the
+          // support bot's descriptive vocabulary (status_existing_client_claimed,
+          // urgency_elevated, confidence_high, category_billing, …) keeps flowing.
+          var _denied = /^(status-(?:newlead|contacted|dnc|noshow|appointmentbooked|soa-[a-z-]+)|cp-[a-z0-9-]+|soa(?:-[a-z-]+)?|dnc(?:-[a-z-]+)?|dnd|consent-(?:captured|revoked|yes|pending)|consent|temp-(?:hot|warm|cold)|urg-[a-z-]+|ai-flagged|intent-\d+|utm-[a-z0-9-]+|lang-(?:en|es)|language-(?:en|es)|source-(?:web|chatbot|form|smartreview|google|facebook|referral|customer-service-bot)|leadtype-[a-z-]+|high-priority|warm-lead|outcome-[a-z-]+|compliance-[a-z-]+)$/.test(_norm);
           if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag) && !_denied) frontendTags.push(tag);
           else if (_denied) _rejectedTags++;
         }
@@ -625,7 +634,7 @@ export default async function handler(req, res) {
       intel = await analyzeLeadIntelligence({
         // AUDIT 2026-09-12 (FORMS-04, P2) — the enrichment model needs the STORY,
         // not the identity: strip name / phone / email / DOB before the call.
-        leadNotes: scrubIdentityForIntel((lead_notes || conversation_summary || '').toString(), [first_name, last_name, phone, email, date_of_birth]),
+        leadNotes: scrubIdentityForIntel((lead_notes || conversation_summary || '').toString(), [first_name, last_name, phone, email], date_of_birth),
         language: preferred_language || 'en',
         source: lead_source || 'unknown',
         metadata: {

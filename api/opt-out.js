@@ -165,7 +165,9 @@ export default async function handler(req, res) {
         SMS: { status: 'active', message: 'Web chat opt-out' },
         ...(blockEmail ? { Email: { status: 'active', message: 'Web chat opt-out' } } : {}),
       },
-      tags: Array.from(new Set([...(match.tags || []), 'cp-dnc', 'dnc-web-chat'])),
+      // Red-team TCPA-04-N1: the server-derived 'Consent Captured' tag must not
+      // survive a revocation; record the revocation as a tag too.
+      tags: Array.from(new Set([...(match.tags || []).filter((t) => !/^consent[\s_-]?captured$/i.test(String(t))), 'cp-dnc', 'dnc-web-chat', 'Consent Revoked'])),
       // AUDIT 2026-09-12 (TCPA-04, P2) — a revocation must also clear the recorded
       // consent flags; DND alone left contact.consent_* = 'true' next to a DNC tag,
       // an internally contradictory record. Same field ids submit-lead.js writes.
@@ -203,10 +205,10 @@ export default async function handler(req, res) {
     }
 
     // PII-free telemetry — the outcome lives in the logs, NOT in the client
-    // response (OPTOUT-01). Consent-field clearing is intentionally NOT
-    // attempted blindly here: the custom-field ids live in submit-lead's
-    // mapping and a partial write is worse than none. DND is the authoritative
-    // platform-level suppression.
+    // response (OPTOUT-01). Since 2026-09-12 the PUT above also clears the
+    // consent_* custom fields (same ids as submit-lead.js) and drops the
+    // 'Consent Captured' tag; DND remains the authoritative platform-level
+    // suppression.
     console.warn('[OPTOUT] applied dnd=' + dndApplied + ' note=' + noteApplied + ' evidence=' + evidence);
     return ack(res);
   } catch (e) {

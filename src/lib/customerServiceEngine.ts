@@ -5518,9 +5518,9 @@ function _handleCostFlow(
     // "quiero entender por qué me cobraron eso" was recorded as having confirmed a Part
     // B deduction they never confirmed — the same ungrounded-inference pattern (§5) as
     // the reported defect, one stage further along. Require a real affirmative.
-    // NOTE the boundary style. `` is ASCII-based, so a trailing  after an
-    // accented character never matches: /s[ií]/ fails on "sí" because the
-    // boundary between "í" and "," does not exist as far as  is concerned. Using
+    // NOTE the boundary style. `\b` is ASCII-based, so a trailing \b after an
+    // accented character never matches: /\bs[ií]\b/ fails on "sí" because the
+    // boundary between "í" and "," does not exist as far as \b is concerned. Using
     // explicit non-letter delimiters makes this work whether or not `m` arrived
     // accent-stripped. The adjacent `no` check above has the same latent issue.
     // RED TEAM 2026-08-13 (RT-01, P0) — SPANISH "si" IS ALSO THE CONJUNCTION "WHETHER".

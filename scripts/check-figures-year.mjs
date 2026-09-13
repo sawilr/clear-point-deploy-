@@ -29,6 +29,26 @@ if (apiYear !== chatYear || apiYear !== tsYear) {
   process.exit(1);
 }
 
+// Red-team MED02-RT2-07 — the VALUES must agree too, not only the year constants:
+// every auto-corrected figure in api/_lib/medicare-figures.js must appear verbatim
+// in the chat prompt (api/chat.js) and in src/data/medicare-figures-2026.ts.
+{
+  const { pathToFileURL } = await import('node:url');
+  const mod = await import(pathToFileURL(join(root, 'api/_lib/medicare-figures.js')).href);
+  const figs = mod.MEDICARE_FIGURES_2026 || {};
+  const chat = read('api/chat.js');
+  const ts = read('src/data/medicare-figures-2026.ts');
+  const problems = [];
+  for (const [key, f] of Object.entries(figs)) {
+    if (!chat.includes('$' + f.display)) problems.push(`api/chat.js does not contain $${f.display} (${key})`);
+    // TS literals may be spelled 202.90 or 202.9 — accept either, never a digit-glued match.
+    const plain = String(f.value).replace('.', '\\.');
+    const shown = String(f.display).replace(/,/g, '').replace('.', '\\.');
+    if (!new RegExp('(?<![\\d.])(?:' + plain + '|' + shown + ')(?![\\d])').test(ts)) problems.push(`src/data/medicare-figures-2026.ts does not contain ${f.display} (${key})`);
+  }
+  if (problems.length) { console.error('[figures-year] VALUE MISMATCH:\n  - ' + problems.join('\n  - ')); process.exit(1); }
+}
+
 const now = new Date();
 const year = now.getFullYear();
 if (year > apiYear) {

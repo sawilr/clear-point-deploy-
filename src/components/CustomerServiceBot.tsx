@@ -201,7 +201,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     (typeof window !== 'undefined' ? window.innerWidth : 1280));
   const [hasNewBotMessage, setHasNewBotMessage] = useState<boolean>(false);
   const [showResetConfirm, setShowResetConfirm] = useState<boolean>(false);
-  const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(false);
+  // Red-team RT2-CLIENT-06: on short phone viewports (<600 px) the expanded notice
+  // plus the persistent TPMO line left ~175 px for the conversation; start
+  // collapsed there (the one-line summary keeps the disclosure visible and a tap
+  // expands it).
+  const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(() => typeof window !== 'undefined' && window.innerHeight < 600);
   // Debounce scroll-pin detection so transient typing-indicator
   // appear/disappear doesn't flip the pin state.
   const scrollPinDebounceRef = useRef<number | null>(null);

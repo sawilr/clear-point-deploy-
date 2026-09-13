@@ -33,8 +33,8 @@ const PAGE_META: Record<string, Meta> = {
   '/part-d': {
     title: 'Medicare Part D Drug Plans Explained | Clear Point Senior Advisors',
     titleEs: 'Planes de Medicamentos Parte D Explicados | Clear Point Senior Advisors',
-    description: 'How Medicare Part D drug coverage works: formularies, pharmacies and the coverage gap. Free bilingual help reviewing your drug plan in NY, NJ and CT.',
-    descriptionEs: 'Cómo funciona la cobertura de medicamentos Parte D: formularios, farmacias y la brecha de cobertura. Ayuda bilingüe gratis para revisar su plan en NY, NJ y CT.',
+    description: 'How Medicare Part D drug coverage works: formularies, pharmacies and the three coverage stages (no more donut hole). Free bilingual help reviewing your drug plan in NY, NJ and CT.',
+    descriptionEs: 'Cómo funciona la cobertura de medicamentos Parte D: formularios, farmacias y las tres etapas de cobertura (ya no hay donut hole). Ayuda bilingüe gratis para revisar su plan en NY, NJ y CT.',
   },
   '/extra-help': {
     title: 'Extra Help / LIS for Medicare Drug Costs | Clear Point Senior Advisors',

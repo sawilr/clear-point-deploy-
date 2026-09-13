@@ -1,5 +1,5 @@
 import { useLanguage } from '../hooks/useLanguage';
-import { tpmoDisclaimerText } from '../lib/tpmoConfig';
+import { tpmoDisclaimerText, activeContractYearVariant } from '../lib/tpmoConfig';
 
 interface DisclaimerBlockProps {
   variant?: 'full' | 'compact' | 'inline' | 'privacy';
@@ -63,12 +63,21 @@ export function DisclaimerBlock({ variant = 'full' }: DisclaimerBlockProps) {
     );
   }
 
+  // Red-team RT2-CLIENT-02 — the informational SHIP mention follows the
+  // contract-year variant of the standardized (e)(41) sentence.
+  const cy27 = activeContractYearVariant() === 'CY2027';
+  const officialEn = cy27
+    ? 'You can also contact Medicare.gov or 1-800-MEDICARE for official information and to get information on all of your options.'
+    : 'You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.';
+  const officialEs = cy27
+    ? 'También puede contactar Medicare.gov o 1-800-MEDICARE para obtener información oficial y sobre todas sus opciones.'
+    : 'También puede contactar Medicare.gov, 1-800-MEDICARE o su Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información oficial y sobre todas sus opciones.';
   return (
     <div className="cp-legal text-sm text-cream-50/80 leading-relaxed space-y-2.5">
       <p>
         {t(
-          'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. You can also contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Assistance Program (SHIP) for official information and to get information on all of your options.',
-          'ClearPoint Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos, formularios, redes de farmacias y costos pueden variar según el plan, área de servicio y elegibilidad. Un agente de seguros licenciado puede contactarle para hablar sobre opciones relacionadas con Medicare. También puede contactar Medicare.gov, 1-800-MEDICARE o su Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información oficial y sobre todas sus opciones.'
+          'ClearPoint Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program. Plan availability, benefits, premiums, provider networks, drug coverage, formularies, pharmacy networks, and costs may vary by plan, service area, and eligibility. A licensed insurance agent may contact you to discuss Medicare-related options. ' + officialEn,
+          'ClearPoint Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de los Estados Unidos ni por el programa federal de Medicare. La disponibilidad de planes, beneficios, primas, redes de proveedores, cobertura de medicamentos, formularios, redes de farmacias y costos pueden variar según el plan, área de servicio y elegibilidad. Un agente de seguros licenciado puede contactarle para hablar sobre opciones relacionadas con Medicare. ' + officialEs
         )}
       </p>
       {/* AUDIT 2026-08-12 — the (e)(41) TPMO sentence now comes from the

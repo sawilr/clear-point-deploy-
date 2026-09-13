@@ -137,25 +137,32 @@ function sepClauseIsVerificationFramed(sentence) {
 // so/but/pero/because/since/porque/ya que/entonces/así que start a new clause),
 // it is governed by whether/if/si placed BEFORE it, or the clause states
 // inability / non-assumption.
-const DEFERRAL_GOVERNOR_RE = /\b(whether|if)\b|\bsi\s+(?:\w+\s+){0,4}(?:usted|ustedes|califica|califican|cumple|es\s+elegible|son\s+elegibles)/i;
-const DEFERRAL_INABILITY_RE = /\b(can(?:no|')t|cannot|unable to|not able to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decirle|decir|saber)|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a)|no (?:le )?puedo (?:decir|confirmar))\b/i;
+// Red-team round 2 (D2/D3/D4/D5): the governor must sit IMMEDIATELY before the
+// claim's subject (≤4 words, one optional comma-delimited aside right after
+// whether/if/si) — an unrelated "if you ask me, you qualify" is not a deferral;
+// the inability phrase must PRECEDE the claim inside its clause; Spanish
+// enclitic forms ("confirmarle", "asegurarle") and curly apostrophes are handled.
+const DEFERRAL_GOVERNOR_EN = /\b(whether|if)\b(?:,\s*[^,]{0,80},)?\s*(?:[\wáéíóúñü'’]+\s+){0,4}$/i;
+const DEFERRAL_GOVERNOR_ES = /\bsi\b(?:,\s*[^,]{0,60},)?\s+(?:[\wáéíóúñü'’]+\s+){0,4}$/i;
+const DEFERRAL_INABILITY_RE = /\b(can(?:no|')t|cannot|unable to|not able to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:le |les |se lo )?(?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decir|saber)(?:le|les|lo)?|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a))\b/i;
 const CLAUSE_BREAK_RE = /(?:;|—|--|\bso\b|\bbut\b|\bpero\b|\bbecause\b|\bsince\b|\bporque\b|\bya que\b|\bentonces\b|\bas[ií] que\b)/gi;
-function eligibilityClaimIsDeferred(normalizedSentence, idx) {
-  let start = 0, end = normalizedSentence.length, m;
+function eligibilityClaimIsDeferred(normalizedSentence, claimIdx) {
+  let start = 0, m;
   CLAUSE_BREAK_RE.lastIndex = 0;
   while ((m = CLAUSE_BREAK_RE.exec(normalizedSentence)) !== null) {
-    if (m.index < idx) start = m.index + m[0].length; else { end = m.index; break; }
+    if (m.index < claimIdx) start = m.index + m[0].length; else break;
     if (CLAUSE_BREAK_RE.lastIndex === m.index) CLAUSE_BREAK_RE.lastIndex++;
   }
-  const clause = normalizedSentence.slice(start, end);
-  // Governor window: up to 90 chars before the claim plus the claim itself (the
-  // Spanish governor "si … usted califica" needs the words AFTER "si"), and the
-  // governor must START before the claim.
-  const wStart = Math.max(start, idx - 90);
-  const window = normalizedSentence.slice(wStart, Math.min(end, idx + 60));
-  const g = DEFERRAL_GOVERNOR_RE.exec(window);
-  const governed = !!g && (wStart + g.index) < idx;
-  return governed || DEFERRAL_INABILITY_RE.test(clause);
+  const prefix = normalizedSentence.slice(start, claimIdx);
+  return DEFERRAL_GOVERNOR_EN.test(prefix) || DEFERRAL_GOVERNOR_ES.test(prefix) || DEFERRAL_INABILITY_RE.test(prefix);
+}
+// Position of the claim's SUBJECT inside an ELIGIBILITY_CLAIM_RE match — the
+// regex may anchor on an earlier "you" ("tell you whether you qualify").
+function claimSubjectOffset(matchText) {
+  const re = /\b(you|usted|ustedes)\b/gi;
+  let last = 0, m;
+  while ((m = re.exec(matchText)) !== null) { last = m.index; if (re.lastIndex === m.index) re.lastIndex++; }
+  return last;
 }
 
 // ── Forbidden compliance phrases ────────────────────────────────────────
@@ -166,7 +173,9 @@ function eligibilityClaimIsDeferred(normalizedSentence, idx) {
 // califica". Allow 0-3 filler words, mirroring the SEP rule at :238.
 // The negative lookahead hands SEP claims to rule 4, which produces a clean
 // purpose-built rewrite.
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted)\s+(?:\w+\s+){0,3}(qualify|are\s+eligible|califica|cumple\s+los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+// Red-team D6: broadened — "usted sí califica" (accented filler), "usted es
+// elegible", "you're eligible", "you qualified", "cumple con los requisitos".
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|’re|’d|’ll|\s+(?:are|is|do|don'?t|will|would))?\s+(?:[\wáéíóúñü]+\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|califica[ns]?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 const FORBIDDEN_PHRASES = [
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
   // Network / formulary confirmations
@@ -599,12 +608,14 @@ export function complianceFilter(text, lang, opts) {
   var fpTags = {}; var fpKeep = []; var fpChanged = false;
   for (var pi = 0; pi < fpParts.length; pi += 2) {
     var fpSentence = fpParts[pi] || ''; var fpSep = fpParts[pi + 1] || '';
-    var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ');
+    // Detection copy only (the kept sentence stays byte-identical): collapse
+    // whitespace and normalise curly apostrophes (red-team D4).
+    var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
     var remove = false;
     var eligRe = new RegExp(ELIGIBILITY_CLAIM_RE.source, 'gi'); var em;
     while ((em = eligRe.exec(normalized)) !== null) {
       if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
-      if (!eligibilityClaimIsDeferred(normalized, em.index)) {
+      if (!eligibilityClaimIsDeferred(normalized, em.index + claimSubjectOffset(em[0]))) {
         remove = true; fpTags['forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40)] = true; break;
       }
     }
@@ -621,6 +632,8 @@ export function complianceFilter(text, lang, opts) {
   if (fpChanged) {
     Object.keys(fpTags).forEach(function (t) { violations.push(t); });
     out = fpKeep.join('').trim();
+    // Red-team D7: a removed sentence can leave its label behind ("Note:") — drop it.
+    out = out.replace(/(?:^|\s)[^.!?\n]{0,40}:\s*$/, '').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
     if (!out) out = safe;
     else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
@@ -902,9 +915,14 @@ export function complianceFilter(text, lang, opts) {
   // number at the pharmacy." was kept intact — the warning governed the MBI
   // while the SSN advice rode along. Segment on clause boundaries so each
   // clause is judged on its own.
-  var CLAUSE_SPLIT_RE = /(?<=[.!?])\s+|\n+|\s*(?:,\s*(?:but|pero|however|although|though|aunque)\s+|;\s*|\s+—\s+|\s+-\s+|\s+—\s+)/;
+  // Red-team 2026-09-13 (D1-SEC-02, P1) — the previous alternation began with `\s*`
+  // and could start a match INSIDE a whitespace run at every position, which was
+  // cubic on padded replies (8 s / 18 s / 145 s at 3k / 4k / 8k spaces). Every
+  // alternative now begins on a non-space anchor; whitespace runs are collapsed
+  // first (measured 0.1 ms at 8,000 spaces, 0.4 ms at 50 KB; identical clauses).
+  var CLAUSE_SPLIT_RE = /(?<=[.!?])\s+|\n+|,\s*(?:but|pero|however|although|though|aunque)\s+|;\s*|(?<!\s)\s+[—-]\s+/;
   function splitClauses(text) {
-    return String(text).split(CLAUSE_SPLIT_RE).filter(function (x) { return x && x.trim(); });
+    return String(text).replace(/[ \t]{2,}/g, ' ').split(CLAUSE_SPLIT_RE).filter(function (x) { return x && x.trim(); });
   }
   var anySsnClause = splitClauses(out).some(isSsnAdviceSentence);
   if (anySsnClause) {
@@ -985,7 +1003,7 @@ export function complianceFilter(text, lang, opts) {
   var sep13Clean = sep13Sentences.filter(function (s) {
     if (!SEP_TOKEN_RE.test(s)) return true;
     // Split into clauses so a verification clause cannot launder an assertive one.
-    var clauses = s.split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií]\s+que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya\s+que\b)/i);
+    var clauses = String(s).replace(/\s{2,}/g, ' ').split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
     // The SEP token and the assertion may sit in ADJACENT clauses ("…out of the
     // service area, so your SEP runs for two months"), so evaluate each clause
     // that carries the token together with its immediate neighbours.
@@ -1171,5 +1189,11 @@ export function complianceFilter(text, lang, opts) {
     }
   }
 
+  // Red-team 2026-09-13 (D8): a whole-sentence removal above may have taken the
+  // 911 instruction with it. Re-assert the life-safety invariant last.
+  if (latestUser !== null && matchesEmergency(latestUser) && !/\b911\b/.test(out)) {
+    violations.push('emergency_no_911_post');
+    return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
+  }
   return { text: out, violations: violations };
 }

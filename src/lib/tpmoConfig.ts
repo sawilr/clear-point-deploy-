@@ -105,7 +105,14 @@ export function tpmoDisclaimerText(lang: 'en' | 'es', cfg: TpmoDisclaimerConfig 
   // MINUS the counts sentence (the previous fallback added an invented sentence,
   // "Any information we provide is limited to…", that appears in no version of
   // the rule). This remains a documented gap, not a cure.
+  // Variant-aware (red-team RT2-CLIENT-02): the CY2026 standardized sentence
+  // names the State Health Insurance Program; the CY2027 sentence does not.
+  if (variant === 'CY2027') {
+    return lang === 'en'
+      ? 'We do not offer every plan available in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options.'
+      : 'No ofrecemos todos los planes disponibles en su área. Comuníquese con Medicare.gov o llame al 1-800-MEDICARE para obtener información sobre todas sus opciones.';
+  }
   return lang === 'en'
-    ? 'We do not offer every plan available in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options.'
-    : 'No ofrecemos todos los planes disponibles en su área. Comuníquese con Medicare.gov o llame al 1-800-MEDICARE para obtener información sobre todas sus opciones.';
+    ? 'We do not offer every plan available in your area. Please contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Program to get information on all of your options.'
+    : 'No ofrecemos todos los planes disponibles en su área. Comuníquese con Medicare.gov, llame al 1-800-MEDICARE o contacte su Programa Estatal de Asistencia de Seguro de Salud (SHIP) local para obtener información sobre todas sus opciones.';
 }

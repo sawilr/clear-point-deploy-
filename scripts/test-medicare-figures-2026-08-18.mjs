@@ -62,6 +62,14 @@ const SURVIVE = [
   ['ES el año que viene', 'El año que viene el deducible de la Parte B será $300.'],
   ['ES a partir de enero', 'A partir de enero el tope de la Parte D será $2,400.'],
   ['Mixed years — 2027 sentence, 2026 correct sentence', 'For 2027 the Part D cap will be $2,400. For 2026 it is $2,100.'],
+  // Red-team round 2 (MED02-RT2-01/05) — decimals inside amounts and spelled-out years.
+  ['Decimal + IRMAA marker after the amount', 'The standard Part B premium is $259.00 if your income is higher.'],
+  ['ES decimal + IRMAA', 'La prima estándar de la Parte B es $259.00 si su ingreso es más alto.'],
+  ['Decimal + up to', 'The Part D out-of-pocket cap is $2,000.00, up to which you pay coinsurance.'],
+  ['Two sentences, 2026 then 2027 decimal', 'For 2026 the standard Part B premium is $202.90. The standard Part B premium is $215.00 for most people in 2027.'],
+  ['Spelled-out year EN', 'For twenty twenty-seven, the Part B deductible will be $300.'],
+  ['Spelled-out year ES', 'En dos mil veintisiete el deducible de la Parte B será $300.'],
+  ['come January', 'Come January the Part B deductible goes to $300.'],
 ];
 // Red-team 2026-09-13 (MED02-RT-01/04/05) — the guard must NOT silence genuine corrections.
 const CAPTURE_RT = [
@@ -71,6 +79,14 @@ const CAPTURE_RT = [
   ['E28 TTY number nearby', 'Call TTY 1-877-486-2048. The Part B deductible is $257 this year.', '$283', 'part_b_deductible'],
   ['RT-05 other year in neighbouring sentence', 'The 2027 amounts are not out yet; for 2026 the Part B deductible is $257.', '$283', 'part_b_deductible'],
   ['RT-05 "this year" overrides paragraph', '2027 will change things.\n\nThis year the Part B deductible is $257.', '$283', 'part_b_deductible'],
+  // Red-team round 2 (MED02-RT2-02/03/04/06) — prose paragraphs and ordinary January mentions must still be corrected.
+  ['RT2-02 prose paragraph with a 2027 sentence', 'The Annual Enrollment Period for 2027 plans runs from October 15 to December 7. The Part B deductible is $257.', '$283', 'part_b_deductible'],
+  ['RT2-02 next-year prose after the figure', 'The Part B deductible is $257. Next year it will go up again.', '$283', 'part_b_deductible'],
+  ['RT2-03 this year + far 2027 mention', 'The Part B deductible is $257 this year, and the 2027 amount has not been published yet.', '$283', 'part_b_deductible'],
+  ['RT2-04 resets on January 1', 'The Part B deductible is $257 and it resets on January 1.', '$283', 'part_b_deductible'],
+  ['RT2-04 from January through December', 'The Part B deductible is $257 from January through December.', '$283', 'part_b_deductible'],
+  ['RT2-04 ES se renueva en enero', 'El deducible de la Parte B es $257 y se renueva en enero.', '$283', 'part_b_deductible'],
+  ['RT2-06 long lead-in, next sentence has a marker', 'As we discussed a moment ago when you asked about your doctor-visit costs under Original Medicare, the Part B deductible is $257. Next year it may change.', '$283', 'part_b_deductible'],
 ];
 for (const [id, input, expectContains, concept] of CAPTURE_RT) {
   const r = verifyMedicareFigures(input);

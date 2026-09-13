@@ -74,14 +74,19 @@ export function track(event: string, payload: GenericPayload = {}): void {
 // Reads localStorage directly (not CookieConsent.tsx) to avoid a circular import.
 const GA4_ID = 'G-287ZZL7JB6';
 let gaLoaded = false;
-export function initGA4IfConsented(): void {
+// Red-team RT2-CLIENT-07: the banner passes the visitor's choice directly, so a
+// storage-denied browser still honours an explicit "Accept all" for the session.
+export function initGA4IfConsented(explicitChoice?: 'all' | 'essential'): void {
   if (gaLoaded || typeof document === 'undefined') return;
-  try {
-    const raw = localStorage.getItem('cp_cookie_consent');
-    if (!raw) return;
-    const choice = raw.startsWith('{') ? JSON.parse(raw).choice : raw;
-    if (choice !== 'all') return;
-  } catch { return; }
+  let choice: string | undefined = explicitChoice;
+  if (!choice) {
+    try {
+      const raw = localStorage.getItem('cp_cookie_consent');
+      if (!raw) return;
+      choice = raw.startsWith('{') ? JSON.parse(raw).choice : raw;
+    } catch { return; }
+  }
+  if (choice !== 'all') return;
   gaLoaded = true;
   const s = document.createElement('script');
   s.async = true;

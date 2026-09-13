@@ -89,7 +89,7 @@ export function CookieConsent() {
     storeCookieConsent(choice);
     setVisible(false);
     // GA4 loads only on explicit "all" — the loader re-checks stored consent.
-    if (choice === 'all') initGA4IfConsented();
+    if (choice === 'all') initGA4IfConsented('all');
   };
 
   return (

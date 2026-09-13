@@ -49,7 +49,7 @@ export const MEDICARE_FIGURES_2026 = {
 const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'part_a_hospital_deductible', 'part_d_oop_cap']);
 
 // Window markers that DISQUALIFY a correction (legitimate variability / history).
-const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|\bincome\b|ingreso|depend|depende|up to|as low as|at least|hasta|máximo|maximo|\bmax\b|maximum|varies|var[ií]a|around|about|approx|aproximad|roughly|could be|might be|puede ser|last year|previous|previo|used to|el año pasado|antes|\bwas\b|\bera\b|\b2024\b|\b2025\b|\b2023\b|starts at|desde|next year|(?:pr[oó]ximo|proximo)\s+a[ñn]o|a partir de enero|starting (?:in )?january|beginning (?:in )?january)/i;
+const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|\bincome\b|ingreso|depend|depende|up to|as low as|at least|hasta|máximo|maximo|\bmax\b|maximum|varies|var[ií]a|around|about|approx|aproximad|roughly|could be|might be|puede ser|last year|previous|previo|used to|el año pasado|antes|\bwas\b|\bera\b|\b2024\b|\b2025\b|\b2023\b|starts at|desde|next year|(?:pr[oó]ximo|proximo)\s+a[ñn]o)/i;
 // AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
 // A figure is left alone when the SENTENCE it sits in is about another contract
 // year (a year token that is not ours, a CY/PY/FY-prefixed year, a 'YY form, or a
@@ -57,8 +57,23 @@ const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|a
 // PARAGRAPH is about another year. Money and phone digits are blanked before the
 // year scan so "$2000" or "1-877-486-2048" never masquerade as years, and a
 // sentence that explicitly names OUR year (or "this year" / "currently") wins.
-const NEXT_YEAR_PHRASE = /(next\s+(?:plan\s+|contract\s+|calendar\s+)?year|(?:following|coming|upcoming)\s+(?:plan\s+|contract\s+|calendar\s+)?year|next\s+january|(?:effective|as\s+of|starting|beginning|from|on)\s+(?:on\s+)?january(?:\s+1(?:st)?)?|el\s+a[ñn]o\s+(?:que\s+viene|entrante|siguiente)|pr[oó]xim[oa]s?\s+(?:a[ñn]o|enero)|(?:desde|a\s+partir\s+de|en)\s+enero)/i;
+// Red-team round 2 (MED02-RT2-04/05): ordinary January mentions ("resets on
+// January 1", "se renueva en enero") are NOT next-year context; a January phrase
+// counts only when it is a next/starting/effective construction backed by a
+// future verb in the same sentence. Spelled-out and colloquial next-year forms added.
+// Accented Spanish verbs: JS `\b` treats "á" as a non-word char, so the verb
+// tail is guarded with an explicit letter lookahead instead of `\b`.
+const FUTURE_VERB = '(?<![a-záéíóúñü])(?:will|going\\s+to|rises?|increases?|goes\\s+up|ser[áa]|subir[áa]|aumentar[áa]|pasar[áa]|va\\s+a)(?![a-záéíóúñü])';
+// "starting / beginning / effective / a partir de / desde January" is a
+// next-period construction by itself; "from January" (a range: "from January
+// through December") and bare "January 1" mentions need a future verb.
+const NEXT_YEAR_PHRASE = new RegExp('(next\\s+(?:plan\\s+|contract\\s+|calendar\\s+)?year|(?:following|coming|upcoming)\\s+(?:plan\\s+|contract\\s+|calendar\\s+)?year|next\\s+january|come\\s+january|when\\s+the\\s+new\\s+year\\s+starts|after\\s+december|new\\s+year\'?s?\\s+(?:rates?|figures?|amounts?)|el\\s+a[ñn]o\\s+(?:que\\s+viene|entrante|siguiente)|(?:el\\s+)?siguiente\\s+a[ñn]o|pr[oó]xim[oa]s?\\s+(?:a[ñn]o|enero)|a[ñn]o\\s+pr[oó]ximo|(?:starting|beginning|effective)\\s+(?:in\\s+|on\\s+)?january|(?:a\\s+partir\\s+de|desde)\\s+enero|from\\s+january(?=[^.!?]{0,80}' + FUTURE_VERB + ')|(?:en|in)\\s+(?:enero|january)(?=[^.!?]{0,80}' + FUTURE_VERB + '))', 'i');
 const CURRENT_MARKER = /(this\s+year|currently|right\s+now|for\s+now|as\s+of\s+today|este\s+a[ñn]o|actualmente|ahora\s+mismo|hoy\s+en\s+d[ií]a)/i;
+// Spelled-out years ("twenty twenty-seven", "dos mil veintisiete") → numeric.
+const SPELLED_YEARS = [
+  [/\btwenty\s+twenty[-\s]?five\b/gi, 2025], [/\btwenty\s+twenty[-\s]?six\b/gi, 2026], [/\btwenty\s+twenty[-\s]?seven\b/gi, 2027], [/\btwenty\s+twenty[-\s]?eight\b/gi, 2028], [/\btwenty\s+twenty[-\s]?nine\b/gi, 2029],
+  [/\bdos\s+mil\s+veinticinco\b/gi, 2025], [/\bdos\s+mil\s+veintis[eé]is\b/gi, 2026], [/\bdos\s+mil\s+veintisiete\b/gi, 2027], [/\bdos\s+mil\s+veintiocho\b/gi, 2028], [/\bdos\s+mil\s+veintinueve\b/gi, 2029],
+];
 // A year is four digits not glued to other digits (so "$2,027" / "2027-01" / "1-800-2027" stay out).
 const YEAR_TOKEN = /(?:\b(?:cy|py|fy)\s?)?(?<!\$|\d|\d[,.]|-)(20\d{2})(?!\d|[,.]\d|-\d)|(?<!\$|\d)'(\d{2})\b/gi;
 function blankDigits(s) {
@@ -69,7 +84,8 @@ function blankDigits(s) {
 }
 function yearsIn(s) {
   const out = [];
-  const txt = blankDigits(s);
+  let txt = blankDigits(s);
+  for (const [re, y] of SPELLED_YEARS) txt = txt.replace(re, function (m) { return String(y) + ' '.repeat(Math.max(0, m.length - 4)); });
   const re = new RegExp(YEAR_TOKEN.source, 'gi');
   let m;
   while ((m = re.exec(txt)) !== null) {
@@ -79,12 +95,32 @@ function yearsIn(s) {
   }
   return out;
 }
-// The sentence containing `offset` (split on . ; : ! ? and line breaks), and its paragraph.
+// The sentence containing `offset` (split on ; : ! ? line breaks and a '.' that is
+// NOT a decimal point — red-team MED02-RT2-01: "$259.00 if your income is higher"
+// must stay one sentence), plus whether it is a line-delimited fragment
+// (heading / list item) rather than prose.
+// A ':' is NOT a boundary: "CY2027 Part B deductible: $300" is one label+value unit.
+function isBoundary(text, i) {
+  const ch = text[i];
+  if (ch === '.') return !(/\d/.test(text[i - 1] || '') && /\d/.test(text[i + 1] || ''));
+  return /[;!?\n]/.test(ch);
+}
 function sentenceAround(text, offset) {
   let s = offset, e = offset;
-  while (s > 0 && !/[.;:!?\n]/.test(text[s - 1])) s--;
-  while (e < text.length && !/[.;:!?\n]/.test(text[e])) e++;
-  return { start: s, text: text.slice(s, e) };
+  while (s > 0 && !isBoundary(text, s - 1)) s--;
+  while (e < text.length && !isBoundary(text, e)) e++;
+  const isFragment = (e >= text.length || text[e] === '\n') && (s === 0 || text[s - 1] === '\n');
+  return { start: s, end: e, text: text.slice(s, e), isFragment: isFragment };
+}
+// Clause bounds inside a sentence (split on , ; and / y) around `rel`.
+function clauseAround(sentence, rel) {
+  const re = /,|;|\band\b|\by\b/gi;
+  let start = 0, end = sentence.length, m;
+  while ((m = re.exec(sentence)) !== null) {
+    if (m.index < rel) start = m.index + m[0].length; else { end = m.index; break; }
+    if (re.lastIndex === m.index) re.lastIndex++;
+  }
+  return { start: start, end: end };
 }
 function paragraphAround(text, offset) {
   let s = text.lastIndexOf('\n\n', offset); s = s < 0 ? 0 : s;
@@ -96,18 +132,27 @@ function aboutOtherYear(text, offset, year) {
   const sent = sentenceAround(text, offset);
   const rel = offset - sent.start;
   const ys = yearsIn(sent.text);
-  if (ys.length) {
-    // nearest year token to the figure decides
-    let best = null;
-    for (const y of ys) { const d = Math.abs(y.index - rel); if (!best || d < best.d) best = { d: d, year: y.year }; }
-    return best.year !== year;
+  const ours = ys.some(function (y) { return y.year === year; }) || CURRENT_MARKER.test(sent.text);
+  const others = ys.filter(function (y) { return y.year !== year; });
+  // Red-team MED02-RT2-03: our year / "this year" in the sentence wins; when the
+  // sentence names BOTH, only an other-year token inside the figure's own clause
+  // (and within 40 chars) defers.
+  if (ours) {
+    if (!others.length) return false;
+    const cb = clauseAround(sent.text, rel);
+    return others.some(function (y) { return y.index >= cb.start && y.index < cb.end && Math.abs(y.index - rel) <= 40; });
   }
+  if (others.length) return true;
   if (NEXT_YEAR_PHRASE.test(sent.text)) return true;
-  if (CURRENT_MARKER.test(sent.text)) return false;
-  const para = paragraphAround(text, offset);
-  const pys = yearsIn(para);
-  if (pys.length && pys.every(function (y) { return y.year !== year; })) return true;
-  if (!pys.length && NEXT_YEAR_PHRASE.test(para) && !CURRENT_MARKER.test(para)) return true;
+  // Red-team MED02-RT2-02: the paragraph fallback exists for headings + list
+  // items ("2027 figures:" above "- Part B deductible: $300") — line-delimited
+  // fragments only, never a prose sentence.
+  if (sent.isFragment) {
+    const para = paragraphAround(text, offset);
+    const pys = yearsIn(para);
+    if (pys.length && pys.every(function (y) { return y.year !== year; })) return true;
+    if (!pys.length && NEXT_YEAR_PHRASE.test(para) && !CURRENT_MARKER.test(para)) return true;
+  }
   return false;
 }
 
@@ -175,8 +220,8 @@ export function verifyMedicareFigures(text) {
       // (bounded ±75 chars) so a marker in a neighbouring sentence cannot silence
       // a correction, and a sentence that names our year / "this year" is ours.
       const sentInfo = sentenceAround(text, offset);
-      const winRaw = text.slice(Math.max(0, offset - 75), offset + 75);
-      const win = winRaw.slice(Math.max(0, sentInfo.start - Math.max(0, offset - 75)), Math.max(0, sentInfo.start - Math.max(0, offset - 75)) + Math.min(winRaw.length, sentInfo.text.length + 1));
+      // Red-team MED02-RT2-06: the window is bounded by the sentence on BOTH sides.
+      const win = text.slice(Math.max(sentInfo.start, offset - 75), Math.min(sentInfo.end + 1, offset + 75));
       if (DISQUALIFY.test(win)) return match; // legitimate variability/history — leave it
       const concept = classifyAt(text, offset);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
