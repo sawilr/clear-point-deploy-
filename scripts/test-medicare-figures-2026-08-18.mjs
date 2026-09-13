@@ -55,7 +55,29 @@ const SURVIVE = [
   ['2027 Part B deductible (next year)', 'In 2027 the Part B deductible will be $300.'],
   ['2027 Part D cap ES (next year)', 'Para 2027, el tope de gastos de bolsillo de la Parte D será $2,400.'],
   ['Next year phrasing without a digit year', 'Next year the Part B deductible goes up to $300, according to CMS.'],
+  // Red-team 2026-09-13 (MED02-RT-02/03) — paragraph-scoped and unlisted next-year phrasings.
+  ['2027 header + spaced list', '2027 figures (published today):\n\n- Part B premium: $215.00 standard\n- Part B deductible: $300\n- Part D cap: $2,400'],
+  ['CY prefix', 'CY2027 Part B deductible: $300.'],
+  ['Starting January without year', 'Starting January the standard Part B premium is $215.00 for most people.'],
+  ['ES el año que viene', 'El año que viene el deducible de la Parte B será $300.'],
+  ['ES a partir de enero', 'A partir de enero el tope de la Parte D será $2,400.'],
+  ['Mixed years — 2027 sentence, 2026 correct sentence', 'For 2027 the Part D cap will be $2,400. For 2026 it is $2,100.'],
 ];
+// Red-team 2026-09-13 (MED02-RT-01/04/05) — the guard must NOT silence genuine corrections.
+const CAPTURE_RT = [
+  ['E26 $2000 no comma', 'This year the Part D out-of-pocket cap is $2000.', '$2,100', 'part_d_oop_cap'],
+  ['E27 $2000 with 2026', 'The Part D out-of-pocket cap is $2000 in 2026.', '$2,100', 'part_d_oop_cap'],
+  ['E33 ES $2000', 'Este año el tope de gastos de bolsillo de la Parte D es $2000.', '$2,100', 'part_d_oop_cap'],
+  ['E28 TTY number nearby', 'Call TTY 1-877-486-2048. The Part B deductible is $257 this year.', '$283', 'part_b_deductible'],
+  ['RT-05 other year in neighbouring sentence', 'The 2027 amounts are not out yet; for 2026 the Part B deductible is $257.', '$283', 'part_b_deductible'],
+  ['RT-05 "this year" overrides paragraph', '2027 will change things.\n\nThis year the Part B deductible is $257.', '$283', 'part_b_deductible'],
+];
+for (const [id, input, expectContains, concept] of CAPTURE_RT) {
+  const r = verifyMedicareFigures(input);
+  const corrected = r.text.includes(expectContains) && r.corrections.some((c) => c.concept === concept);
+  check('CAP ' + id, corrected, 'got: "' + r.text + '" corrections=' + JSON.stringify(r.corrections));
+  check('CAP ' + id + ' — no digit spill', !/\$2,1000|\$2830|\$2,1002/.test(r.text), 'spilled digits: "' + r.text + '"');
+}
 for (const [id, input] of SURVIVE) {
   const r = verifyMedicareFigures(input);
   check('SURV ' + id, r.text === input && r.corrections.length === 0, 'MUTATED to: "' + r.text + '" corrections=' + JSON.stringify(r.corrections));

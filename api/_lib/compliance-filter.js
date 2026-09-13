@@ -116,7 +116,7 @@ function sepClauseIsVerificationFramed(sentence) {
   // at every position: a reply padded with 3,000 spaces took ~8 s, 4,000 ~19 s
   // (super-linear). Collapse whitespace runs first (the clause test is
   // insensitive to spacing) and bound the input so the split stays linear.
-  const normalized = String(sentence).replace(/\s{2,}/g, ' ').slice(0, 4000);
+  const normalized = String(sentence).replace(/\s{2,}/g, ' ').slice(0, 20000);
   const clauses = normalized.split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
   for (let i = 0; i < clauses.length; i++) {
     if (!SEP_TOKEN_RE.test(clauses[i])) continue;
@@ -129,40 +129,45 @@ function sepClauseIsVerificationFramed(sentence) {
   return true;
 }
 
-// AUDIT 2026-09-12 (AI-02) — clause-scoped verification framing for the
-// eligibility rule: "A licensed advisor can check whether you qualify for Extra
-// Help" is compliant and must survive; "You qualify for Extra Help" must not.
-// Same clause boundaries as sepClauseIsVerificationFramed; the clause carrying
-// the match (plus the preceding clause) must be verification-framed.
-function clauseIsVerificationFramed(normalizedSentence, idx) {
-  const re = /(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/gi;
-  const bounds = [0];
-  let m;
-  while ((m = re.exec(normalizedSentence)) !== null) {
-    bounds.push(m.index);
-    if (re.lastIndex === m.index) re.lastIndex++;
+// AUDIT 2026-09-12/13 (AI-02 + red-team AI-02-RT-01/02/04) — DEFERRAL test for
+// the eligibility rule. "A licensed advisor can check WHETHER you qualify" and
+// "I can't confirm whether you qualify" are compliant; "We checked and you
+// qualify" is not — assertive verify-words are NOT a deferral. A claim survives
+// only when, inside the same independent clause (commas/parentheticals allowed,
+// so/but/pero/because/since/porque/ya que/entonces/así que start a new clause),
+// it is governed by whether/if/si placed BEFORE it, or the clause states
+// inability / non-assumption.
+const DEFERRAL_GOVERNOR_RE = /\b(whether|if)\b|\bsi\s+(?:\w+\s+){0,4}(?:usted|ustedes|califica|califican|cumple|es\s+elegible|son\s+elegibles)/i;
+const DEFERRAL_INABILITY_RE = /\b(can(?:no|')t|cannot|unable to|not able to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decirle|decir|saber)|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a)|no (?:le )?puedo (?:decir|confirmar))\b/i;
+const CLAUSE_BREAK_RE = /(?:;|—|--|\bso\b|\bbut\b|\bpero\b|\bbecause\b|\bsince\b|\bporque\b|\bya que\b|\bentonces\b|\bas[ií] que\b)/gi;
+function eligibilityClaimIsDeferred(normalizedSentence, idx) {
+  let start = 0, end = normalizedSentence.length, m;
+  CLAUSE_BREAK_RE.lastIndex = 0;
+  while ((m = CLAUSE_BREAK_RE.exec(normalizedSentence)) !== null) {
+    if (m.index < idx) start = m.index + m[0].length; else { end = m.index; break; }
+    if (CLAUSE_BREAK_RE.lastIndex === m.index) CLAUSE_BREAK_RE.lastIndex++;
   }
-  bounds.push(normalizedSentence.length);
-  for (let i = 0; i + 1 < bounds.length; i++) {
-    if (idx >= bounds[i] && idx < bounds[i + 1]) {
-      const span = normalizedSentence.slice(bounds[Math.max(0, i - 1)], bounds[i + 1]);
-      return SEP_VERIFY_RE.test(span);
-    }
-  }
-  return false;
+  const clause = normalizedSentence.slice(start, end);
+  // Governor window: up to 90 chars before the claim plus the claim itself (the
+  // Spanish governor "si … usted califica" needs the words AFTER "si"), and the
+  // governor must START before the claim.
+  const wStart = Math.max(start, idx - 90);
+  const window = normalizedSentence.slice(wStart, Math.min(end, idx + 60));
+  const g = DEFERRAL_GOVERNOR_RE.exec(window);
+  const governed = !!g && (wStart + g.index) < idx;
+  return governed || DEFERRAL_INABILITY_RE.test(clause);
 }
 
 // ── Forbidden compliance phrases ────────────────────────────────────────
+// Eligibility confirmations — NAMED rule (red-team AI-02-RT-06: never keyed by
+// array position) because it is the only rule with the deferral exemption.
+// AUDIT 2026-08-13 (O-07, P1) — strict adjacency let the single most natural
+// phrasing through: "You LIKELY qualify for Extra Help", "usted PROBABLEMENTE
+// califica". Allow 0-3 filler words, mirroring the SEP rule at :238.
+// The negative lookahead hands SEP claims to rule 4, which produces a clean
+// purpose-built rewrite.
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted)\s+(?:\w+\s+){0,3}(qualify|are\s+eligible|califica|cumple\s+los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 const FORBIDDEN_PHRASES = [
-  // Eligibility confirmations
-  // AUDIT 2026-08-13 (O-07, P1) — strict adjacency let the single most natural
-  // phrasing through: "You LIKELY qualify for Extra Help", "usted PROBABLEMENTE
-  // califica". Allow 0-3 filler words, mirroring the SEP rule at :238.
-  // The negative lookahead hands SEP claims to rule 4, which produces a clean
-  // purpose-built rewrite; without it the generic inline replacement truncated
-  // mid-sentence and left "…for a Special Enrollment Period to switch now."
-  // dangling (caught by regression B4 EN).
-  /\b(you|usted)\s+(?:\w+\s+){0,3}(qualify|are\s+eligible|califica|cumple\s+los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi,
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
   // Network / formulary confirmations
   /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
@@ -586,24 +591,36 @@ export function complianceFilter(text, lang, opts) {
   // verification-framed survives untouched (eligibility rule only); (b) any other
   // match removes the WHOLE offending sentence and appends the safe copy once —
   // the same shape the carrier-name and plan-recommendation rules already use.
-  var fpSentences = out.split(/(?<=[.!?])\s+/);
-  var fpChanged = false;
-  var fpClean = fpSentences.filter(function (s) {
-    var normalized = String(s).replace(/\s{2,}/g, ' ').slice(0, 4000);
-    for (var k = 0; k < FORBIDDEN_PHRASES.length; k++) {
-      var src = FORBIDDEN_PHRASES[k];
-      var re = new RegExp(src.source, src.flags.replace('g', ''));
-      var m = re.exec(normalized);
-      if (!m) continue;
-      if (k === 0 && clauseIsVerificationFramed(normalized, m.index)) continue;
-      violations.push('forbidden_phrase:' + src.source.slice(0, 40));
-      fpChanged = true;
-      return false;
+  // Red-team 2026-09-13 (AI-02-RT-02/05/07, SEC-02-RT-03): split with a CAPTURED
+  // separator so line breaks / bullets survive; scan the full sentence (no
+  // truncation); EVERY eligibility match must be deferred or the sentence goes;
+  // each rule tags the violation once.
+  var fpParts = out.split(/((?<=[.!?:])\s+|\n+)/);
+  var fpTags = {}; var fpKeep = []; var fpChanged = false;
+  for (var pi = 0; pi < fpParts.length; pi += 2) {
+    var fpSentence = fpParts[pi] || ''; var fpSep = fpParts[pi + 1] || '';
+    var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ');
+    var remove = false;
+    var eligRe = new RegExp(ELIGIBILITY_CLAIM_RE.source, 'gi'); var em;
+    while ((em = eligRe.exec(normalized)) !== null) {
+      if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
+      if (!eligibilityClaimIsDeferred(normalized, em.index)) {
+        remove = true; fpTags['forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40)] = true; break;
+      }
     }
-    return true;
-  });
+    if (!remove) {
+      for (var k = 0; k < FORBIDDEN_PHRASES.length; k++) {
+        var fpSrc = FORBIDDEN_PHRASES[k];
+        var fpRe = new RegExp(fpSrc.source, fpSrc.flags.replace('g', ''));
+        if (fpRe.test(normalized)) { remove = true; fpTags['forbidden_phrase:' + fpSrc.source.slice(0, 40)] = true; break; }
+      }
+    }
+    if (remove) { fpChanged = true; continue; }
+    fpKeep.push(fpSentence + fpSep);
+  }
   if (fpChanged) {
-    out = fpClean.join(' ').trim();
+    Object.keys(fpTags).forEach(function (t) { violations.push(t); });
+    out = fpKeep.join('').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
     if (!out) out = safe;
     else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;

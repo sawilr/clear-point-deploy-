@@ -258,7 +258,9 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
       signer_user_agent: consentReceipt.userAgent || '',
       lead_notes: `Source: ${source}. Status: ${formData.medicare_status || 'not specified'}.`,
       bot_transcript_summary: '',
-      tags: ['Website Lead', 'Medicare Lead', 'ClearPoint Website', 'Form Lead', 'Consent Captured'],
+      // 'Consent Captured' is now derived SERVER-SIDE from the validated consent flag
+      // (red-team FORMS-01-R1) — the client only describes the lead.
+      tags: ['Website Lead', 'Medicare Lead', 'ClearPoint Website', 'Form Lead'],
       created_at: new Date().toISOString(),
       // Honeypot value (always empty for real users; bots fill it and API discards)
       website_url: formData.website_url,

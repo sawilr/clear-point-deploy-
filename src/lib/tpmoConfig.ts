@@ -83,10 +83,13 @@ export function hasVerifiedTpmoCounts(cfg: TpmoDisclaimerConfig = TPMO_DISCLAIME
  * behavior; the gap is tracked as BLOCKED, not hidden).
  */
 export function tpmoDisclaimerText(lang: 'en' | 'es', cfg: TpmoDisclaimerConfig = TPMO_DISCLAIMER_CONFIG): string {
+  // Red-team RT-CLIENT-05: resolve the variant at RENDER time (a long-lived tab
+  // that crosses 2026-10-01 must switch too), not from the frozen config value.
+  const variant = cfg === TPMO_DISCLAIMER_CONFIG ? activeContractYearVariant() : cfg.contractYearVariant;
   if (hasVerifiedTpmoCounts(cfg)) {
     const x = cfg.organizationCount as number;
     const y = cfg.productCount as number;
-    if (cfg.contractYearVariant === 'CY2027') {
+    if (variant === 'CY2027') {
       return lang === 'en'
         ? `We do not offer every plan available in your area. Currently we represent ${x} organizations which offer ${y} products in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options.`
         : `No ofrecemos todos los planes disponibles en su área. Actualmente representamos ${x} organizaciones que ofrecen ${y} productos en su área. Comuníquese con Medicare.gov o llame al 1-800-MEDICARE para obtener información sobre todas sus opciones.`;

@@ -45,10 +45,21 @@ check('benign EN unchanged',     c6.violations.length === 0 && c6.text === 'Hi t
 console.log('\n── ORIGIN ALLOWLIST ──');
 check('prod origin allowed',
   checkOrigin({ headers: { origin: 'https://clearpointsenioradvisors.com' } }) === 'https://clearpointsenioradvisors.com');
-check('correct preview prefix allowed',
-  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-abc123.vercel.app' } }) === 'https://clearpoint-deploy-abc123.vercel.app');
+// AUDIT 2026-09-12 (SEC-01) — only team-suffixed previews (and the project alias) are ours.
+check('team-suffixed preview allowed',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-7395hr822-sawil-reyess-projects.vercel.app' } }) === 'https://clearpoint-deploy-7395hr822-sawil-reyess-projects.vercel.app');
+check('truncated branch alias allowed',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-git-fix-master-a-bc0a94-sawil-reyess-projects.vercel.app' } }) === 'https://clearpoint-deploy-git-fix-master-a-bc0a94-sawil-reyess-projects.vercel.app');
+check('project alias allowed',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy.vercel.app' } }) === 'https://clearpoint-deploy.vercel.app');
 check('HOSTILE *.vercel.app REJECTED (A15.5)',
   checkOrigin({ headers: { origin: 'https://evil-attacker.vercel.app' } }) === null);
+check('HOSTILE slug-prefixed project REJECTED (SEC-01)',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-evil.vercel.app' } }) === null);
+check('HOSTILE prefix-only preview shape REJECTED (SEC-01)',
+  checkOrigin({ headers: { origin: 'https://clearpoint-deploy-abc123.vercel.app' } }) === null);
+check('HOSTILE mixed-case origin REJECTED',
+  checkOrigin({ headers: { origin: 'https://CLEARPOINTSENIORADVISORS.com' } }) === null);
 check('http (not https) rejected',
   checkOrigin({ headers: { origin: 'http://clearpointsenioradvisors.com' } }) === null);
 check('missing origin AND referer rejected (A15.4)',

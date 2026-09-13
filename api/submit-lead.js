@@ -28,18 +28,43 @@ import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 // plus a generic phone/email sweep; the CRM note keeps the original text.
 function scrubIdentityForIntel(text, values) {
   var out = String(text || '');
-  // Generic sweeps FIRST (phone / email), then the lead's exact values — so a
-  // name that also appears inside the email address cannot break the email match.
-  out = out.replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, '[phone]');
-  out = out.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]');
+  // Red-team FORMS-04-B1: the story only — never the TCPA receipt / verbatim consent blocks.
+  var cut = out.search(/\u2014 (?:TCPA Receipt|Consent Text)/);
+  if (cut >= 0) out = out.slice(0, cut);
+  // Generic sweeps FIRST (phone / email / dates), keeping official reference numbers.
+  out = out.replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, function (m) {
+    var d = m.replace(/\D/g, '');
+    return /^(1?8006334227|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/.test(d) ? m : '[phone]';
+  });
+  out = out.replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu, '[email]');
+  var hasDob = values.some(function (v) { return typeof v === 'string' && /\d{4}/.test(v); });
+  if (hasDob) {
+    out = out.replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-](?:19|20)\d{2}\b/g, '[date]')
+             .replace(/\b(?:19|20)\d{2}[\/.-]\d{1,2}[\/.-]\d{1,2}\b/g, '[date]')
+             .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+(?:19|20)\d{2}\b/gi, '[date]')
+             .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(?:19|20)\d{2}\b/gi, '[date]');
+  }
+  // Exact values: longest first; names are matched per token (>= 3 letters, or the
+  // whole value when it is that short) with Unicode-aware word boundaries so short
+  // common words inside other words are never mangled (red-team FORMS-04-FP1).
+  var tokens = [];
   for (var i = 0; i < values.length; i++) {
     var v = values[i];
-    if (typeof v !== 'string' || v.trim().length < 2) continue;
-    try { out = out.replace(new RegExp(v.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[redacted]'); } catch (_e) { /* keep going */ }
+    if (typeof v !== 'string') continue;
+    var t = v.trim();
+    if (t.length < 2) continue;
+    if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push(t); continue; } // email / phone / dob: whole value
+    var parts = t.split(/[\s()"'\u201c\u201d,]+/).filter(function (x) { return x.length >= 3; });
+    if (!parts.length && t.length >= 2) parts = [t];
+    tokens = tokens.concat(parts);
+  }
+  tokens.sort(function (a, b) { return b.length - a.length; });
+  for (var j = 0; j < tokens.length; j++) {
+    var esc = tokens[j].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + esc + '(?![\\p{L}\\p{N}])', 'giu'), '[redacted]'); } catch (_e) { /* keep going */ }
   }
   return out;
 }
-
 
 // AUDIT 2026-08-15 (remediation target 4 — abuse monitoring) — one
 // machine-parseable, PII-free outcome line per request so abuse patterns
@@ -265,6 +290,9 @@ export default async function handler(req, res) {
     lead_notes = _scrubNotes.text;
     conversation_summary = _scrubSummary.text;
     lead_quality_flags = _scrubFlags.text;
+    // Red-team FORMS-01-B3: the field also carries the server's AI verdict later; client
+    // text is labelled and cannot carry verdict-shaped tokens.
+    lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/\b(AI:|SOA[- ]?\w*|DNC|DND|Temp-\w+|Urg-\w+|Intent-\w+)/gi, '[x]') : '';
     var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected);
     if (_phiCats.length > 0) {
       console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
@@ -374,8 +402,10 @@ export default async function handler(req, res) {
       // rate-limit client id (trusted proxy chain, never the raw header), and the
       // client-reported path (sanitized to a plain path, no query string).
       receiptBits.push('at=' + new Date().toISOString());
-      if (ip) receiptBits.push('ip=' + String(ip).slice(0, 45));
-      var page_url = typeof body.page_url === 'string' ? body.page_url.slice(0, 200).replace(/[^A-Za-z0-9/_\-.]/g, '') : '';
+      receiptBits.push('ip=' + (/^[0-9a-f:.]{3,45}$/i.test(String(ip || '')) ? String(ip) : 'unavailable'));
+      var page_url = '';
+      try { if (typeof body.page_url === 'string') { var _pu = new URL(body.page_url.slice(0, 400), 'https://clearpointsenioradvisors.com'); if (_pu.origin === 'https://clearpointsenioradvisors.com') page_url = _pu.pathname.replace(/\/{2,}/g, '/').replace(/[^A-Za-z0-9/_\-.]/g, '').slice(0, 120); } } catch (_e) { page_url = ''; }
+      if (page_url && !/^\/[^/]/.test(page_url) && page_url !== '/') page_url = '';
       if (page_url) receiptBits.push('page=' + page_url);
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
       // AUDIT 2026-07-03 (compliance) — persist the VERBATIM consent language per
@@ -389,21 +419,25 @@ export default async function handler(req, res) {
     }
 
     var frontendTags = [];
+    var _rejectedTags = 0;
     if (Array.isArray(body.tags)) {
       for (var i = 0; i < body.tags.length && frontendTags.length < 20; i++) {
         var tag = body.tags[i];
-        // AUDIT 2026-09-12 (FORMS-01, P2) — an unauthenticated POST could inject
-        // compliance-significant tags (SOA-Signed, DND/DNC, Status-*, Temp-hot,
-        // AI-Flagged, consent…). Client-supplied tags may only describe interest /
-        // preference / audience; workflow, consent, SOA and status tags are server-owned.
+        // AUDIT 2026-09-12/13 (FORMS-01 + red-team R1/B2/N2) — client-supplied tags may
+        // only DESCRIBE the lead (interest, call time, category, state, audience,
+        // channel labels). Workflow / consent / SOA / status / AI-verdict / UTM / language
+        // / source / lead-type families are SERVER-OWNED and are dropped here after
+        // normalisation (lower-case, [space _ -] runs collapsed to one dash).
         if (typeof tag === 'string') {
           tag = tag.trim();
-          var _denied = /^(status-|soa|dnc|dnd|consent|temp-|urg-|ai-|cp-|outcome-|compliance|high priority|warm lead|medicare-lead)/i.test(tag);
+          var _norm = tag.toLowerCase().replace(/[\s_-]+/g, '-');
+          var _denied = /^(status-|soa|dnc|dnd|consent|temp-|urg|ai-|cp-|outcome-|compliance|high-priority|warm-lead|intent-|utm-|lang-|source-|leadtype-|language-)/.test(_norm);
           if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag) && !_denied) frontendTags.push(tag);
-          else if (_denied) leadAudit('tag_rejected', 200, { tag: tag.slice(0, 24) });
+          else if (_denied) _rejectedTags++;
         }
       }
     }
+    if (_rejectedTags) leadAudit('tags_rejected', null, { n: _rejectedTags });
     var allTags = ['Status-NewLead'];
     for (var j = 0; j < frontendTags.length; j++) { if (allTags.indexOf(frontendTags[j]) === -1) allTags.push(frontendTags[j]); }
 
@@ -668,10 +702,12 @@ export default async function handler(req, res) {
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
-        .concat(utm_source?['UTM-'+utm_source]:[])
+        .concat((function () { var u = String(utm_source || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32); return u ? ['UTM-' + u] : []; })())
+        // Red-team FORMS-01-R1: 'Consent Captured' is derived from the validated consent flag, never from a client tag.
+        .concat(body.consent_to_contact === true ? ['Consent Captured'] : [])
         .concat(allTags.filter(function(t){return t!=='Status-NewLead'&&t.indexOf('Lang-')!==0&&t!=='Source-Web';}))
         // PHASE A16 — SOA status tags so advisor pipelines can filter on them.
-        .concat(body.soa_signed === true ? ['SOA-Signed'] : (body.soa_pending === true ? ['SOA-Pending'] : []))
+        // Red-team FORMS-01-B1: SOA-* tags come only from a server-verified SOA record (SOA is disabled; client booleans are ignored).
         .concat(body.lead_source ? ['Source-' + String(body.lead_source).replace(/[^a-z0-9_]/gi,'')] : [])
         // PHASE A17 — Lead-intel tags. Empty arrays if intel unavailable.
         .concat(intel ? ['Temp-' + intel.lead_temperature, 'Urg-' + intel.urgency, 'Intent-' + intel.intent_strength] : [])

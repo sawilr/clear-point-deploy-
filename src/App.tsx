@@ -1,5 +1,5 @@
 import { Routes, Route, useLocation } from 'react-router'
-import { lazy, Suspense, useEffect } from 'react'
+import { lazy, Suspense, useEffect, Component, type ReactNode } from 'react'
 import Home from './pages/Home'
 import { Header } from './components/Header'
 import { Footer } from './components/Footer'
@@ -21,21 +21,54 @@ import { storageGet, storageSet } from './lib/safeStorage'
 // fall straight into the whole-app ErrorBoundary. Transient network drops and
 // mid-deploy hash changes are the usual causes: retry the import once, then
 // reload the page once per session (fresh HTML → fresh hashes) before giving up.
+// Red-team 2026-09-13 (RT-CLIENT-01/02/03): the in-page retry is only real when
+// the module URL is cache-busted (Chrome caches the failed module record); the
+// reload guard must not depend on Web Storage (storage-denied visitors would
+// loop forever) and must never discard a form the visitor is filling in; the
+// background Zara chunk never reloads the page at all (see lazyNoReload).
+function chunkUrlFrom(err: unknown): string | null {
+  const m = String((err as { message?: string })?.message ?? err).match(/(https?:\/\/[^\s'"]+\.js)/)
+  return m ? m[1] : null
+}
+function formInProgress(): boolean {
+  return Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input:not([type=hidden]):not([type=checkbox]):not([type=radio]), textarea'))
+    .some((el) => el.value.trim().length > 0)
+}
+function alreadyReloaded(): boolean {
+  const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+  return nav?.type === 'reload' || storageGet('session', 'cp_chunk_reload') === '1'
+}
+async function retryImport<T>(loader: () => Promise<T>, firstError: unknown): Promise<T> {
+  const url = chunkUrlFrom(firstError)
+  await new Promise((r) => setTimeout(r, 600))
+  if (url) return (await import(/* @vite-ignore */ `${url}?retry=${Date.now()}`)) as T
+  return await loader()
+}
 function lazyRetry<T>(loader: () => Promise<T>): () => Promise<T> {
   return () => loader().catch(async (firstError: unknown) => {
-    await new Promise((r) => setTimeout(r, 600))
     try {
-      return await loader()
+      return await retryImport(loader, firstError)
     } catch (secondError) {
-      const key = 'cp_chunk_reload'
-      if (storageGet('session', key) !== '1') {
-        storageSet('session', key, '1')
+      if (!alreadyReloaded() && !formInProgress()) {
+        storageSet('session', 'cp_chunk_reload', '1')
         window.location.reload()
         return new Promise<T>(() => {}) // navigation in flight — never resolve
       }
       throw secondError ?? firstError
     }
   })
+}
+// Non-essential chunks (Zara): retry once, then surface the failure to a local
+// boundary — never reload the page.
+function lazyNoReload<T>(loader: () => Promise<T>): () => Promise<T> {
+  return () => loader().catch((firstError: unknown) => retryImport(loader, firstError))
+}
+// Tiny boundary for the optional Zara widget: a chunk failure hides the widget
+// (the phone CTA and BotLauncher remain) instead of taking the whole app down.
+class ChatBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() { return { failed: true } }
+  render() { return this.state.failed ? null : this.props.children }
 }
 
 const About = lazy(lazyRetry(() => import('./pages/About')))
@@ -58,7 +91,7 @@ const NotFound = lazy(lazyRetry(() => import('./pages/NotFound')))
 // is NOT in the initial payload on every page. The floating launcher stays eager
 // (it must appear instantly); Zara's chunk loads in the background right after
 // first paint, well before the user opens it via the launcher.
-const ChatBot = lazy(lazyRetry(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot }))))
+const ChatBot = lazy(lazyNoReload(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot }))))
 
 // Sawil 2026-07-27 ES ROUTES (SEO) — single source of truth for content routes.
 // Each entry renders at its English path AND at an indexable /es twin
@@ -164,7 +197,7 @@ export default function App() {
           input row. First visit only; choice persists in localStorage. */}
       {!isSupportPage && <CookieConsent />}
       {!isSupportPage && <BotLauncher />}
-      {!isSupportPage && <Suspense fallback={null}><ChatBot /></Suspense>}
+      {!isSupportPage && <ChatBoundary><Suspense fallback={null}><ChatBot /></Suspense></ChatBoundary>}
     </div>
     </LanguageProvider>
     </ErrorBoundary>

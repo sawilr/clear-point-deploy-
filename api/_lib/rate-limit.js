@@ -210,8 +210,9 @@ const ALLOWED_ORIGIN_RE = new RegExp(
   // (a www visitor was previously blocked → 403 → Zara fell back to offline).
   '^https://((www\\.)?' + PROD_HOST.replace(/\./g, '\\.') + '|' +
   VERCEL_PROJECT_SLUG_PREFIX + '\\.vercel\\.app|' +
-  VERCEL_PROJECT_SLUG_PREFIX + '(-[a-z0-9-]+)?-' + VERCEL_TEAM_SLUG + '\\.vercel\\.app)$',
-  'i'
+  VERCEL_PROJECT_SLUG_PREFIX + '(-[a-z0-9-]+)?-' + VERCEL_TEAM_SLUG + '\\.vercel\\.app)$'
+  // Red-team SEC-01-RT-2: no 'i' flag — browsers always send a lower-case origin,
+  // so a mixed-case value is not ours and must not be reflected.
 );
 
 /** Returns the origin header if it's allowed, otherwise null.

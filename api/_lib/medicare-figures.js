@@ -50,16 +50,64 @@ const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'p
 
 // Window markers that DISQUALIFY a correction (legitimate variability / history).
 const DISQUALIFY = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|\bincome\b|ingreso|depend|depende|up to|as low as|at least|hasta|máximo|maximo|\bmax\b|maximum|varies|var[ií]a|around|about|approx|aproximad|roughly|could be|might be|puede ser|last year|previous|previo|used to|el año pasado|antes|\bwas\b|\bera\b|\b2024\b|\b2025\b|\b2023\b|starts at|desde|next year|(?:pr[oó]ximo|proximo)\s+a[ñn]o|a partir de enero|starting (?:in )?january|beginning (?:in )?january)/i;
-// AUDIT 2026-09-12 (MED-02/AI-01) — a window that names any year other than the
-// figures' own year is describing a different contract year (next-year values
-// published in the fall, or history the DISQUALIFY list missed). Never "correct" it.
-const YEAR_TOKEN = /\b(20\d{2})\b/g;
-function namesOtherYear(win, year) {
-  YEAR_TOKEN.lastIndex = 0;
+// AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
+// A figure is left alone when the SENTENCE it sits in is about another contract
+// year (a year token that is not ours, a CY/PY/FY-prefixed year, a 'YY form, or a
+// next-year phrase), and — when the sentence names no year — when the enclosing
+// PARAGRAPH is about another year. Money and phone digits are blanked before the
+// year scan so "$2000" or "1-877-486-2048" never masquerade as years, and a
+// sentence that explicitly names OUR year (or "this year" / "currently") wins.
+const NEXT_YEAR_PHRASE = /(next\s+(?:plan\s+|contract\s+|calendar\s+)?year|(?:following|coming|upcoming)\s+(?:plan\s+|contract\s+|calendar\s+)?year|next\s+january|(?:effective|as\s+of|starting|beginning|from|on)\s+(?:on\s+)?january(?:\s+1(?:st)?)?|el\s+a[ñn]o\s+(?:que\s+viene|entrante|siguiente)|pr[oó]xim[oa]s?\s+(?:a[ñn]o|enero)|(?:desde|a\s+partir\s+de|en)\s+enero)/i;
+const CURRENT_MARKER = /(this\s+year|currently|right\s+now|for\s+now|as\s+of\s+today|este\s+a[ñn]o|actualmente|ahora\s+mismo|hoy\s+en\s+d[ií]a)/i;
+// A year is four digits not glued to other digits (so "$2,027" / "2027-01" / "1-800-2027" stay out).
+const YEAR_TOKEN = /(?:\b(?:cy|py|fy)\s?)?(?<!\$|\d|\d[,.]|-)(20\d{2})(?!\d|[,.]\d|-\d)|(?<!\$|\d)'(\d{2})\b/gi;
+function blankDigits(s) {
+  return String(s)
+    .replace(/\$\s?\d[\d,]*(?:\.\d{1,2})?/g, function (m) { return ' '.repeat(m.length); })
+    .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g, function (m) { return ' '.repeat(m.length); })
+    .replace(/\b1-\d{3}-[A-Z0-9-]{4,}\b/gi, function (m) { return ' '.repeat(m.length); });
+}
+function yearsIn(s) {
+  const out = [];
+  const txt = blankDigits(s);
+  const re = new RegExp(YEAR_TOKEN.source, 'gi');
   let m;
-  while ((m = YEAR_TOKEN.exec(win)) !== null) {
-    if (Number(m[1]) !== year) return true;
+  while ((m = re.exec(txt)) !== null) {
+    const y = m[1] ? Number(m[1]) : 2000 + Number(m[2]);
+    out.push({ year: y, index: m.index });
+    if (re.lastIndex === m.index) re.lastIndex++;
   }
+  return out;
+}
+// The sentence containing `offset` (split on . ; : ! ? and line breaks), and its paragraph.
+function sentenceAround(text, offset) {
+  let s = offset, e = offset;
+  while (s > 0 && !/[.;:!?\n]/.test(text[s - 1])) s--;
+  while (e < text.length && !/[.;:!?\n]/.test(text[e])) e++;
+  return { start: s, text: text.slice(s, e) };
+}
+function paragraphAround(text, offset) {
+  let s = text.lastIndexOf('\n\n', offset); s = s < 0 ? 0 : s;
+  let e = text.indexOf('\n\n', offset); e = e < 0 ? text.length : e;
+  return text.slice(Math.max(s, offset - 1200), Math.min(e, offset + 1200));
+}
+// TRUE when the figure at `offset` belongs to another contract year → do not touch.
+function aboutOtherYear(text, offset, year) {
+  const sent = sentenceAround(text, offset);
+  const rel = offset - sent.start;
+  const ys = yearsIn(sent.text);
+  if (ys.length) {
+    // nearest year token to the figure decides
+    let best = null;
+    for (const y of ys) { const d = Math.abs(y.index - rel); if (!best || d < best.d) best = { d: d, year: y.year }; }
+    return best.year !== year;
+  }
+  if (NEXT_YEAR_PHRASE.test(sent.text)) return true;
+  if (CURRENT_MARKER.test(sent.text)) return false;
+  const para = paragraphAround(text, offset);
+  const pys = yearsIn(para);
+  if (pys.length && pys.every(function (y) { return y.year !== year; })) return true;
+  if (!pys.length && NEXT_YEAR_PHRASE.test(para) && !CURRENT_MARKER.test(para)) return true;
   return false;
 }
 
@@ -117,17 +165,24 @@ export function verifyMedicareFigures(text) {
   if (typeof text !== 'string' || !text) return { text: '', corrections: [] };
   try {
     const corrections = [];
-    const DOLLAR = /\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g;
+    // Red-team MED02-RT-01: "$2000" (no comma) used to match as "$200" + "0" and be
+    // rewritten to "$2,1000"; comma-grouped form now requires at least one group.
+    const DOLLAR = /\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g;
     const out = text.replace(DOLLAR, function (match, num, offset) {
       const val = parseFloat(String(num).replace(/,/g, ''));
       if (!isFinite(val)) return match;
-      const win = text.slice(Math.max(0, offset - 75), offset + 75);
+      // Red-team MED02-RT-05: the DISQUALIFY markers are tested on the SENTENCE
+      // (bounded ±75 chars) so a marker in a neighbouring sentence cannot silence
+      // a correction, and a sentence that names our year / "this year" is ours.
+      const sentInfo = sentenceAround(text, offset);
+      const winRaw = text.slice(Math.max(0, offset - 75), offset + 75);
+      const win = winRaw.slice(Math.max(0, sentInfo.start - Math.max(0, offset - 75)), Math.max(0, sentInfo.start - Math.max(0, offset - 75)) + Math.min(winRaw.length, sentInfo.text.length + 1));
       if (DISQUALIFY.test(win)) return match; // legitimate variability/history — leave it
       const concept = classifyAt(text, offset);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
       const fig = MEDICARE_FIGURES_2026[concept];
       if (!fig) return match;
-      if (namesOtherYear(win, fig.year)) return match; // another contract year — not ours to rewrite
+      if (aboutOtherYear(text, offset, fig.year)) return match; // another contract year — not ours to rewrite
       // Correct only a genuinely different definitive value.
       if (Math.abs(val - fig.value) > 0.009) {
         corrections.push({ concept: concept, said: val, correct: fig.value });

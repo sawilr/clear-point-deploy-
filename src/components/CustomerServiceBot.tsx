@@ -1762,24 +1762,36 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             type="button"
             onClick={() => setDisclosureCollapsed(true)}
             className="block w-full text-left bg-gold-100 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-[1.5] text-earth-700 hover:bg-gold-200/40 transition"
-            aria-label={isSpanish ? 'Colapsar aviso' : 'Collapse notice'}
+            aria-expanded={true}
           >
             <p>
               {isSpanish
                 ? 'Soy Clara, asistente virtual de Clear Point. Doy información general y puedo conectarle con un asesor licenciado. Por favor no comparta información sensible como su número de Seguro Social, número de Medicare, datos bancarios ni documentos médicos.'
                 : "I'm Clara, Clear Point's virtual assistant. I provide general information and can connect you with a licensed advisor. Please don't share sensitive information like your Social Security number, Medicare ID, bank details, or medical records."}
             </p>
+            {/* AUDIT 2026-09-13 (CMS-02 / red-team RT-CLIENT-04) — non-affiliation
+                statement lives here; the (e)(41) sentence stays persistent below
+                the composer. */}
+            <p className="mt-1">
+              {isSpanish
+                ? 'Clear Point Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de EE. UU. ni por el programa federal de Medicare.'
+                : 'Clear Point Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program.'}
+            </p>
+            {/* Red-team RT-CLIENT-06 (WCAG 2.5.3): the accessible name is the visible
+                text plus this hidden suffix instead of a non-matching aria-label. */}
+            <span className="sr-only">{isSpanish ? ' (toque para ocultar este aviso)' : ' (tap to hide this notice)'}</span>
           </button>
         ) : (
           <button
             type="button"
             onClick={() => setDisclosureCollapsed(false)}
             className="block w-full text-left bg-gold-50 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-[1.4] text-earth-600 hover:bg-gold-100 transition"
-            aria-label={isSpanish ? 'Expandir aviso de privacidad' : 'Expand privacy notice'}
+            aria-expanded={false}
           >
             {isSpanish
               ? 'Asistente virtual · No envíe información sensible'
               : 'Virtual assistant · Do not send sensitive info'}
+            <span className="sr-only">{isSpanish ? ' (toque para ver el aviso completo)' : ' (tap to show the full notice)'}</span>
           </button>
         )}
 
@@ -2159,11 +2171,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           non-affiliation statement never appeared on Clara's page. They now
           render persistently under the composer (EN/ES, same controlled config
           as the footer). */}
-      <p className="cp-legal px-4 pb-2 pt-1 text-[13px] leading-snug text-earth-700 bg-cream-50 border-t border-cream-200">
-        {tpmoDisclaimerText(isSpanish ? 'es' : 'en')}{' '}
-        {isSpanish
-          ? 'Clear Point Senior Advisors no está conectada ni respaldada por el gobierno de EE. UU. ni por el programa federal de Medicare.'
-          : 'Clear Point Senior Advisors is not connected with or endorsed by the U.S. government or the federal Medicare program.'}
+      {/* Red-team RT-CLIENT-04: keep ONLY the (e)(41) sentence persistent (one to
+          two lines); the non-affiliation sentence lives in the collapsible notice
+          band above, so short phones keep a usable conversation log. */}
+      <p className="cp-legal px-4 pb-1.5 pt-1 text-[12px] sm:text-[13px] leading-snug text-earth-700 bg-cream-50 border-t border-cream-200">
+        {tpmoDisclaimerText(isSpanish ? 'es' : 'en')}
       </p>
     </>
   );

@@ -8,7 +8,7 @@ export default function NotFound() {
   // recovery links must send the visitor back into /es, not into English.
   const lp = useLocalizedPath();
   return (
-    <section className="bg-cream-50 py-20 sm:py-28">
+    <section className="bg-cream-50 py-20 sm:py-28 min-h-screen">
       <div className="max-w-2xl mx-auto px-5 text-center">
         <p className="text-[12px] font-bold tracking-[0.25em] uppercase text-gold-600 mb-3">404</p>
         <h1 className="font-serif text-3xl sm:text-4xl text-earth-900 mb-4 leading-tight">
