@@ -35,6 +35,7 @@ const SUITES = [
   'test-cp03-clinical-2026-08-13.mjs',
   'test-falsepos-rules13-17-2026-08-13.mjs',
   'test-customer-service-language-lock.mjs',
+  'test-compliance-filter-r3-2026-09-13.mjs',
 ];
 
 const only = process.argv.slice(2);

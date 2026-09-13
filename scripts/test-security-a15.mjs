@@ -63,6 +63,22 @@ check('HOSTILE prefix-only preview shape REJECTED (SEC-01)',
   checkOrigin({ headers: { origin: 'https://clearpoint-deploy-abc123.vercel.app' } }) === null);
 check('HOSTILE team-suffixed but not OUR deployment REJECTED (SEC-01 round 2)',
   checkOrigin({ headers: { origin: 'https://clearpoint-deploy-evil-sawil-reyess-projects.vercel.app' } }) === null);
+// Red-team round 3 (RT3-ORIGIN-02/04): non-string header shapes come back canonical; a
+// poisoned env value that is not one of OUR hosts adds nothing.
+check('array-shaped origin returns the canonical string (round 3)',
+  checkOrigin({ headers: { origin: ['https://clearpointsenioradvisors.com'] } }) === 'https://clearpointsenioradvisors.com');
+{
+  const saved = process.env.VERCEL_URL;
+  process.env.VERCEL_URL = 'evil.com';
+  check('HOSTILE env-derived host ignored (round 3)', checkOrigin({ headers: { origin: 'https://evil.com' } }) === null);
+  process.env.VERCEL_URL = 'clearpoint-deploy-evil.vercel.app';
+  check('HOSTILE env-derived project-only host ignored (round 3)', checkOrigin({ headers: { origin: 'https://clearpoint-deploy-evil.vercel.app' } }) === null);
+  process.env.VERCEL_URL = saved;
+}
+check('HOSTILE referer with userinfo REJECTED (round 3)',
+  checkOrigin({ headers: { referer: 'https://evil@clearpointsenioradvisors.com/x' } }) === null);
+check('HOSTILE http referer REJECTED (round 3)',
+  checkOrigin({ headers: { referer: 'http://clearpointsenioradvisors.com/x' } }) === null);
 check('HOSTILE mixed-case origin REJECTED',
   checkOrigin({ headers: { origin: 'https://CLEARPOINTSENIORADVISORS.com' } }) === null);
 check('http (not https) rejected',

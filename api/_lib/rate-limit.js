@@ -217,11 +217,18 @@ function allowedOriginSet() {
     'https://' + VERCEL_PROJECT_SLUG_PREFIX + '.vercel.app',
     'https://' + VERCEL_PROJECT_SLUG_PREFIX + '-' + VERCEL_TEAM_SLUG + '.vercel.app',
   ]);
-  var keys = ['VERCEL_URL', 'VERCEL_BRANCH_URL', 'VERCEL_PROJECT_PRODUCTION_URL'];
+  // Red-team round 3 (RT3-ORIGIN-04): an env-derived entry is trusted only when
+  // it is a host THIS project can own — a poisoned but well-formed value
+  // ("evil.com") adds nothing. Still an exact set: no pattern is ever matched
+  // against the request itself.
+  var ownPreviewHost = new RegExp('^' + VERCEL_PROJECT_SLUG_PREFIX + '(-[a-z0-9-]+)?-' + VERCEL_TEAM_SLUG + '\\.vercel\\.app$');
+  var keys = ['VERCEL_URL', 'VERCEL_BRANCH_URL'];
   for (var i = 0; i < keys.length; i++) {
     var v = process.env[keys[i]];
-    if (typeof v === 'string' && /^[a-z0-9.-]+$/.test(v)) set.add('https://' + v);
+    if (typeof v === 'string' && ownPreviewHost.test(v)) set.add('https://' + v);
   }
+  var prodUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  if (prodUrl === PROD_HOST || prodUrl === 'www.' + PROD_HOST || prodUrl === VERCEL_PROJECT_SLUG_PREFIX + '.vercel.app') set.add('https://' + prodUrl);
   return set;
 }
 var ALLOWED_ORIGIN_RE = { test: function (origin) { return allowedOriginSet().has(String(origin)); } };
@@ -233,7 +240,9 @@ var ALLOWED_ORIGIN_RE = { test: function (origin) { return allowedOriginSet().ha
  *  navigation that may strip Origin), but reject when BOTH are missing.
  */
 export function checkOrigin(req) {
-  var origin = (req.headers && req.headers.origin) || '';
+  // Red-team round 3 (RT3-ORIGIN-02): whatever shape the header arrives in, the
+  // value we test AND reflect is a plain string.
+  var origin = String((req.headers && req.headers.origin) || '');
   // Sawil 2026-06 — allow http://localhost:* ONLY under local dev (`vercel dev`
   // sets VERCEL_ENV='development'; a bare `node` dev sets neither VERCEL nor
   // production NODE_ENV). VERCEL_ENV is 'preview'/'production' once deployed, so
@@ -250,7 +259,10 @@ export function checkOrigin(req) {
   var referer = (req.headers && req.headers.referer) || '';
   if (referer) {
     try {
-      var refUrl = new URL(referer);
+      var refUrl = new URL(String(referer));
+      // Red-team round 3 (RT3-ORIGIN-03): the Referer branch is normalising by
+      // design (WHATWG origin), but it must be https and carry no userinfo.
+      if (refUrl.protocol !== 'https:' || refUrl.username || refUrl.password) return null;
       var refOrigin = refUrl.origin;
       if (ALLOWED_ORIGIN_RE.test(refOrigin)) return refOrigin;
     } catch (e) { /* malformed referer */ }

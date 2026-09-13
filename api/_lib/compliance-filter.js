@@ -142,19 +142,46 @@ function sepClauseIsVerificationFramed(sentence) {
 // whether/if/si) — an unrelated "if you ask me, you qualify" is not a deferral;
 // the inability phrase must PRECEDE the claim inside its clause; Spanish
 // enclitic forms ("confirmarle", "asegurarle") and curly apostrophes are handled.
-const DEFERRAL_GOVERNOR_EN = /\b(whether|if)\b(?:,\s*[^,]{0,80},)?\s*(?:[\wáéíóúñü'’]+\s+){0,4}$/i;
-const DEFERRAL_GOVERNOR_ES = /\bsi\b(?:,\s*[^,]{0,60},)?\s+(?:[\wáéíóúñü'’]+\s+){0,4}$/i;
-const DEFERRAL_INABILITY_RE = /\b(can(?:no|')t|cannot|unable to|not able to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:le |les |se lo )?(?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decir|saber)(?:le|les|lo)?|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a))\b/i;
-const CLAUSE_BREAK_RE = /(?:;|—|--|\bso\b|\bbut\b|\bpero\b|\bbecause\b|\bsince\b|\bporque\b|\bya que\b|\bentonces\b|\bas[ií] que\b)/gi;
-function eligibilityClaimIsDeferred(normalizedSentence, claimIdx) {
-  let start = 0, m;
-  CLAUSE_BREAK_RE.lastIndex = 0;
-  while ((m = CLAUSE_BREAK_RE.exec(normalizedSentence)) !== null) {
-    if (m.index < claimIdx) start = m.index + m[0].length; else break;
-    if (CLAUSE_BREAK_RE.lastIndex === m.index) CLAUSE_BREAK_RE.lastIndex++;
+// Red-team round 3 (RT3-CF-01/04/05/06/09):
+//  • the governor span (whether/if/si → claim subject) may hold up to four
+//    short comma segments and six words, but NOTHING in it may introduce another
+//    subject or a first-person speech/knowledge verb — "if I told you that you
+//    qualify", "if you ask me you qualify", "whether you like it or not, you
+//    qualify" are not deferrals; "whether, based on your income, resources, and
+//    household size, you qualify" is;
+//  • the inability phrase must sit right before the claim (≤3 words, optional
+//    that/whether/if/que/si) — "I can't promise the savings, and you qualify" is
+//    not rescued; more honest phrasings ("no way to confirm", "not in a position
+//    to", "no tengo forma de confirmar") are;
+//  • ", and/y + pronoun", though/although/however/yet/aunque/sin embargo start a
+//    new clause; clause breaks are computed once per sentence and the prefix is
+//    byte-bounded so a claim-dense reply stays linear.
+const DEFERRAL_GOVERNOR_EN = /\b(whether|if)\b(\s*(?:,?[^,]{0,80},){0,4}\s*(?:[\wáéíóúñü'’%]+\s+){0,10})$/i;
+const DEFERRAL_GOVERNOR_ES = /\b(si)\b(\s*(?:,?[^,]{0,60},){0,4}\s*(?:[\wáéíóúñü'’%]+\s+){0,10})$/i;
+const GOVERNOR_VETO_RE = /\b(i|me|we|us|you|usted|ustedes|t[uú]|told|tell|mentioned|said|say|ask(?:ed)?|think|believe|pregunta|pregunt[oó]|dije|digo|decir|mencion[eéo]\w*|creo|pienso)\b/i;
+const INABILITY_CORE = "(?:can(?:no|')t|cannot|unable to|not able to|no way to (?:confirm|tell|say|know)|not possible (?:for (?:me|us) )?to (?:confirm|say|tell|know)|not in a position to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:le |les |se lo )?(?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decir|saber)(?:le|les|lo)?|no (?:tengo|tenemos) (?:forma|manera) de (?:confirmar|saber|decir)(?:le|lo)?|no es posible (?:confirmar|decirle|saber)|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a))";
+const DEFERRAL_INABILITY_RE = new RegExp('\\b' + INABILITY_CORE + '\\b(?:\\s+[\\wáéíóúñü\'’]+){0,3}\\s*(?:\\b(?:that|whether|if|que|si)\\b)?\\s*$', 'i');
+const CLAUSE_BREAK_RE = /(?:;|—|--|\bso\b|\bbut\b|\bpero\b|\bbecause\b|\bsince\b|\bporque\b|\bya que\b|\bentonces\b|\bas[ií] que\b|\bhowever\b|\balthough\b|\bthough\b|\byet\b|\baunque\b|\bsin embargo\b|,\s*(?:and|y|e)\s+(?=(?:you|usted|ustedes|we|i|it|he|she|they|nosotros|[eé]l|ella|ellos|ellas)\b))/gi;
+// Sentence-initial "Sí, …" / "Sí califica" is an affirmation, not the conjunction.
+const AFFIRMATION_SI_RE = /^\s*(?:sí\s*,?|si\s*,)\s*$/i;
+function clauseBreaks(normalizedSentence) {
+  const ends = []; let m;
+  const re = new RegExp(CLAUSE_BREAK_RE.source, 'gi');
+  while ((m = re.exec(normalizedSentence)) !== null) {
+    ends.push(m.index + m[0].length);
+    if (re.lastIndex === m.index) re.lastIndex++;
   }
-  const prefix = normalizedSentence.slice(start, claimIdx);
-  return DEFERRAL_GOVERNOR_EN.test(prefix) || DEFERRAL_GOVERNOR_ES.test(prefix) || DEFERRAL_INABILITY_RE.test(prefix);
+  return ends;
+}
+function eligibilityClaimIsDeferred(normalizedSentence, claimIdx, breaks) {
+  const ends = breaks || clauseBreaks(normalizedSentence);
+  let start = 0;
+  for (let i = 0; i < ends.length && ends[i] <= claimIdx; i++) start = ends[i];
+  const prefix = normalizedSentence.slice(Math.max(start, claimIdx - 400), claimIdx);
+  if (AFFIRMATION_SI_RE.test(prefix)) return false;
+  const gov = DEFERRAL_GOVERNOR_EN.exec(prefix) || DEFERRAL_GOVERNOR_ES.exec(prefix);
+  if (gov && !GOVERNOR_VETO_RE.test(gov[2] || '')) return true;
+  return DEFERRAL_INABILITY_RE.test(prefix);
 }
 // Position of the claim's SUBJECT inside an ELIGIBILITY_CLAIM_RE match — the
 // regex may anchor on an earlier "you" ("tell you whether you qualify").
@@ -175,16 +202,30 @@ function claimSubjectOffset(matchText) {
 // purpose-built rewrite.
 // Red-team D6: broadened — "usted sí califica" (accented filler), "usted es
 // elegible", "you're eligible", "you qualified", "cumple con los requisitos".
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|’re|’d|’ll|\s+(?:are|is|do|don'?t|will|would))?\s+(?:[\wáéíóúñü]+\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|califica[ns]?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+// Red-team round 3 (RT3-CF-02/03): "you've qualified", "you meet the
+// requirements", "you are entitled to", "you are 100% eligible"; subjectless
+// Spanish ("Es elegible…", "Sí, califica…", "Califica para…", "calificaría") and
+// "your income qualifies you" carry their own patterns below.
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+// Group 1 = anchor (sentence/clause start or "sí,"), group 2 = the claim. The
+// claim position for the deferral test is the END of the anchor.
+// The filler may not swallow the conjunction or a subject pronoun — "Si usted
+// califica" must anchor on "Si " so the deferral test sees the governor.
+const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú])\b)[\wáéíóúñü]+\s+){0,2}(?:califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|eres\s+elegible|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_QUALIFIES_YOU_RE = /\b(?:your|the)\s+[\wáéíóúñü]+(?:\s+[\wáéíóúñü]+)?\s+(?:qualifies|entitles)\s+you\b/gi;
 const FORBIDDEN_PHRASES = [
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
   // Network / formulary confirmations
   /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
   /\bsu\s+(doctor|m[eé]dico|hospital|medicamento|medicina)\s+(est[aá]\s+(cubierto|en\s+la\s+red|en\s+red))/gi,
-  // Affiliation claims
-  /\b(we|i)\s+(are|am)\s+(medicare|cms|ssa|the\s+government|medicaid)/gi,
-  /\bsomos\s+(medicare|cms|del\s+gobierno|medicaid)/gi,
+  // Affiliation claims (red-team round 3 RT3-CF-12: "we are Medicare advisors,
+  // not Medicare itself" names a role, not an affiliation).
+  /\b(we|i)\s+(are|am)\s+(medicare|cms|ssa|the\s+government|medicaid)\b(?!\s*(?:-|advisors?|agents?|brokers?|specialists?|experts?|consultants?|licensed|certified|insurance|plans?|advantage|supplement))/gi,
+  /(?<!\bno\s)\bsomos\s+(medicare|cms|del\s+gobierno|medicaid)\b(?!\s*(?:-|asesores|agentes|corredores|especialistas|expertos|consultores|advantage))/gi,
 ];
+// Red-team round 3 (RT3-CF-12): sentence split that does not break on common
+// abbreviations ("Dr. Smith says…"); the separator is captured so it survives.
+const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|Ing|e\.g|i\.e|vs|etc)\.)(?<=[.!?:])\s+|\n+)/i;
 
 // ── Plan-recommendation sentences (AUDIT 2026-09-03 R2-C12, P1) ─────────
 // These used to live in FORBIDDEN_PHRASES with inline replacement, which left
@@ -283,6 +324,8 @@ const EMERGENCY_USER_RES = [
   /\b(me\s+desmay\w*|se\s+desmay\w*|esta\s+inconsciente|estoy\s+inconsciente|perdio\s+el\s+conocimiento)\b/,
   /\bsobredosis\b/,
 ];
+// Red-team round 3 (RT3-CF-11): "9-1-1" / "9 1 1" is the emergency number too.
+const EMERGENCY_NUMBER_RE = /\b9[\s-]?1[\s-]?1\b/;
 const EMERGENCY_911_REPLY = {
   en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
   es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
@@ -362,7 +405,8 @@ const OUT_OF_AREA_REPLY = {
 };
 const NON_SERVED_STATES_RE = /\b(?:vivo en|vivimos en|resido en|estoy en|estamos en|soy de|somos de|me mud[eé] a|aqu[ií] en|en el estado de|i live in|we live in|i am in|i'?m in|im in|we are in|living in|i reside in|i moved to|i am from|i'?m from|im from|based in|located in|in the state of|my state is|mi estado es)\s+(alabama|alaska|arizona|arkansas|california|colorado|delaware|district of columbia|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new mexico|nuevo mexico|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|pensilvania|puerto rico|rhode island|south carolina|south dakota|tennessee|texas|tejas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|carolina del norte|carolina del sur|dakota del norte|dakota del sur|nueva hampshire|virginia occidental)\b/i;
 // The reply asks for contact details (what the geo net must never allow).
-const ASKS_FOR_CONTACT_RE = /(what'?s your name|what is your (name|phone|full name)|your name,? please|c[uá]al es su nombre|su nombre completo|qu[eé] n[uú]mero de tel[eé]fono|what phone number|su tel[eé]fono|n[uú]mero de tel[eé]fono|c[oó]digo postal|what is your zip|your zip code)/i;
+// Red-team round 3 (RT3-CF-10): "¿Cuál es su nombre?" (accented) was never matched.
+const ASKS_FOR_CONTACT_RE = /(what'?s your name|what’s your name|what is your (name|phone|full name)|your name,? please|cu[aá]l es su nombre|su nombre completo|qu[eé] n[uú]mero de tel[eé]fono|what phone number|su tel[eé]fono|n[uú]mero de tel[eé]fono|c[oó]digo postal|what is your zip|your zip code)/i;
 
 /** Accent-stripped lowercase, matching the engine's emergency normalization. */
 function normLoose(s) {
@@ -521,13 +565,23 @@ export function complianceFilter(text, lang, opts) {
   var latestUser = (opts && typeof opts.latestUserText === 'string')
     ? opts.latestUserText
     : ((opts && typeof opts.userText === 'string') ? opts.userText : null);
+  var emergencyCaller = latestUser !== null && matchesEmergency(latestUser);
+  // Red-team round 3 (RT3-CF-08): EVERY return path passes through here, so a
+  // rule-9/12 substitution can never drop the 911 instruction for a caller in
+  // an emergency. Pure: returns a new result, never mutates the input.
+  function finalize(result) {
+    if (emergencyCaller && !EMERGENCY_NUMBER_RE.test(result.text)) {
+      return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: result.violations.concat(['emergency_no_911_post']) };
+    }
+    return result;
+  }
 
   // 8) AUDIT 2026-07-28 (CPF-001, P1 LIFE SAFETY). Live transcript: "This is an
   //    emergency and I cannot breathe." → Clara asked for the caller's name.
   //    Deterministic, un-bypassable net: if the caller's latest message reads
   //    as a medical emergency and the reply does not carry the 911 instruction,
   //    the ENTIRE reply is replaced. Nothing else in this filter runs after it.
-  if (latestUser !== null && matchesEmergency(latestUser) && !/\b911\b/.test(out)) {
+  if (emergencyCaller && !EMERGENCY_NUMBER_RE.test(out)) {
     violations.push('emergency_no_911');
     return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
   }
@@ -537,7 +591,7 @@ export function complianceFilter(text, lang, opts) {
   //    message with the 1-800-MEDICARE referral.
   if (latestUser !== null && NON_SERVED_STATES_RE.test(latestUser) && ASKS_FOR_CONTACT_RE.test(out)) {
     violations.push('out_of_area_lead_capture');
-    return { text: OUT_OF_AREA_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
+    return finalize({ text: OUT_OF_AREA_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations });
   }
 
   // 1) Strip specific carrier names. A15.9 — always reset .lastIndex BEFORE
@@ -604,19 +658,31 @@ export function complianceFilter(text, lang, opts) {
   // separator so line breaks / bullets survive; scan the full sentence (no
   // truncation); EVERY eligibility match must be deferred or the sentence goes;
   // each rule tags the violation once.
-  var fpParts = out.split(/((?<=[.!?:])\s+|\n+)/);
+  var fpParts = out.split(FP_SPLIT_RE);
   var fpTags = {}; var fpKeep = []; var fpChanged = false;
+  var fpDropBullets = false;
+  var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
+  var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
     var fpSentence = fpParts[pi] || ''; var fpSep = fpParts[pi + 1] || '';
+    // Red-team round 3 (RT3-CF-07): bullets that hung off a removed label
+    // ("You qualify for these programs:" + "- QMB") go with it.
+    if (fpDropBullets) {
+      if (/^\s*(?:[-•*·]|\d+[.)])\s/.test(fpSentence)) { fpChanged = true; continue; }
+      fpDropBullets = false;
+    }
     // Detection copy only (the kept sentence stays byte-identical): collapse
     // whitespace and normalise curly apostrophes (red-team D4).
     var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
     var remove = false;
-    var eligRe = new RegExp(ELIGIBILITY_CLAIM_RE.source, 'gi'); var em;
-    while ((em = eligRe.exec(normalized)) !== null) {
-      if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
-      if (!eligibilityClaimIsDeferred(normalized, em.index + claimSubjectOffset(em[0]))) {
-        remove = true; fpTags['forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40)] = true; break;
+    var breaks = null;
+    for (var ci = 0; ci < claimRes.length && !remove; ci++) {
+      var eligRe = new RegExp(claimRes[ci].source, 'gi'); var em;
+      while ((em = eligRe.exec(normalized)) !== null) {
+        if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
+        if (breaks === null) breaks = clauseBreaks(normalized);
+        var claimAt = ci === 1 ? em.index + (em[1] || '').length : em.index + claimSubjectOffset(em[0]);
+        if (!eligibilityClaimIsDeferred(normalized, claimAt, breaks)) { remove = true; fpTags[ELIGIBILITY_TAG] = true; break; }
       }
     }
     if (!remove) {
@@ -626,14 +692,20 @@ export function complianceFilter(text, lang, opts) {
         if (fpRe.test(normalized)) { remove = true; fpTags['forbidden_phrase:' + fpSrc.source.slice(0, 40)] = true; break; }
       }
     }
-    if (remove) { fpChanged = true; continue; }
+    if (remove) {
+      fpChanged = true;
+      // Red-team D7 / round 3 RT3-CF-07: a label kept just before the removed
+      // sentence ("Note:", "Here's the thing:") goes with it, and bullets under
+      // a removed label are dropped in the next iterations.
+      if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) fpKeep.pop();
+      if (/:\s*$/.test(fpSentence)) fpDropBullets = true;
+      continue;
+    }
     fpKeep.push(fpSentence + fpSep);
   }
   if (fpChanged) {
     Object.keys(fpTags).forEach(function (t) { violations.push(t); });
     out = fpKeep.join('').trim();
-    // Red-team D7: a removed sentence can leave its label behind ("Note:") — drop it.
-    out = out.replace(/(?:^|\s)[^.!?\n]{0,40}:\s*$/, '').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
     if (!out) out = safe;
     else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
@@ -862,13 +934,14 @@ export function complianceFilter(text, lang, opts) {
   // (needs a preserved revocation + new consent receipt), not a chat side effect.
   var optedOut = !!(opts && opts.contactOptedOut);
   if (optedOut) {
-    var OUTREACH_RE = /\b(?:do\s+you\s+authorize|autoriza\s+que|authorize\s+a\s+licensed|advisor\s+(?:will|can|may)\s+(?:call|contact|reach)|asesor\s+(?:le\s+)?(?:llamar|contactar|puede\s+llamar)|have\s+(?:an\s+)?advisor\s+call|connect\s+you\s+with\s+a\s+licensed|le\s+conecto\s+con|someone\s+(?:will|can)\s+call\s+you|le\s+llame|what\s+(?:is|'?s)\s+your\s+(?:phone|number|name)|cu[aá]l\s+es\s+su\s+(?:tel[eé]fono|n[uú]mero|nombre))\b/i;
+    // Red-team round 3 (RT3-CF-10): "What's your name?" (contraction) was never matched.
+    var OUTREACH_RE = /\b(?:do\s+you\s+authorize|autoriza\s+que|authorize\s+a\s+licensed|advisor\s+(?:will|can|may)\s+(?:call|contact|reach)|asesor\s+(?:le\s+)?(?:llamar|contactar|puede\s+llamar)|have\s+(?:an\s+)?advisor\s+call|connect\s+you\s+with\s+a\s+licensed|le\s+conecto\s+con|someone\s+(?:will|can)\s+call\s+you|le\s+llame|what(?:\s+is|'s|’s)\s+your\s+(?:phone|number|name)|cu[aá]l\s+es\s+su\s+(?:tel[eé]fono|n[uú]mero|nombre))\b/i;
     if (OUTREACH_RE.test(out)) {
       violations.push('post_revocation_outreach');
       out = lang === 'en'
         ? "You asked us not to contact you, and we respect that — I won't set up a call or ask for your details. If you'd like to speak with a licensed advisor, you're welcome to call us directly at 1-855-720-8555."
         : 'Usted nos pidió no contactarle, y lo respetamos — no programaré una llamada ni le pediré sus datos. Si desea hablar con un asesor licenciado, puede llamarnos directamente al 1-855-720-8555.';
-      return { text: out, violations: violations };
+      return finalize({ text: out, violations: violations });
     }
   }
 
@@ -1190,10 +1263,6 @@ export function complianceFilter(text, lang, opts) {
   }
 
   // Red-team 2026-09-13 (D8): a whole-sentence removal above may have taken the
-  // 911 instruction with it. Re-assert the life-safety invariant last.
-  if (latestUser !== null && matchesEmergency(latestUser) && !/\b911\b/.test(out)) {
-    violations.push('emergency_no_911_post');
-    return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: violations };
-  }
-  return { text: out, violations: violations };
+  // 911 instruction with it. finalize() re-asserts the life-safety invariant last.
+  return finalize({ text: out, violations: violations });
 }
