@@ -37,3 +37,9 @@
 - A new guard is NOT verified by its author's suite — independent red-team both directions (guardrail-verification rule).
 - Local API work: `scripts/dev-api-server.mjs` (real handler on :3011); lead work: `dev-lead-server.mjs` (anti-CRM interlock).
 - Every fix lands with a permanent regression suite; mutation-test guards where feasible.
+
+## 2026-09-13 — `npm test` battery (master audit)
+`npm test` (scripts/run-battery.mjs) runs 26 deterministic suites in ~50 s: the 17 above plus `test-medicare-figures-2026-08-18` (38, now incl. next-year survival), `test-cp03-clinical`, `test-falsepos-rules13-17`, `test-optout-lead02-authz` (15), `test-clara-routing` (95), `test-customer-service-language-lock` (10, repaired — pins the Phase D contract), `test-cardiac-detection`, `test-c9/c10/c11`, `test-plan-guidance`. Pass a substring to run a subset: `npm test -- figures`.
+Also in `npm run build`: `scripts/check-figures-year.mjs` (year-rollover guard) and `scripts/build-sitemap.mjs` (git-derived lastmod).
+Headless regression kit (outside the repo, scratchpad `qa-kit`): crawl (links/console/hreflang/tel), axe-core WCAG 2.2 AA on 59 page-states, cookie-consent network capture, failure-mode interception (API 500/503/429/timeout/offline, storage denied, JS off, chunk blocked), 10-viewport responsive matrix, Lighthouse.
+Known pre-existing, not in battery: `scripts/test-phase-d.mjs` fails 1/N (T22 medication topic after es→en) — engine behaviour unchanged by the audit.

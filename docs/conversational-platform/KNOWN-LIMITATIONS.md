@@ -12,3 +12,7 @@
 8. **Voice observability** limited to GHL's own logs/recordings; per-call closure-reason tagging depends on GHL workflow capabilities (see BLOCKED V2).
 9. **4 engine F2 greeting checks** were failing pre-2026-08-28; fixed (345/345) — noted here because the fix merged two historically conflicting guards (see CHANGELOG).
 10. **Pre-existing engine false positives** documented 2026-08-18 ("$911", "911 Broadway", "cover the emergency room?") — LOW, deliberately untouched (narrowing a life-safety net is the dangerous direction); dedicated pass scheduled.
+11. **TPMO (e)(41) counts still missing** (master audit 2026-09-12, P1, owner-gated): the standardized multi-carrier sentence requires organization/product counts; the site renders the standardized sentences without them until the FMO supplies the figures (`src/lib/tpmoConfig.ts`).
+12. **Voice greetings lack AI/recording disclosure** (owner window required — BLOCKED V3); post-call tagging workflow is a draft (V4).
+13. **Node 20.18 locally vs engines >=20.19**: `npm install` prints EBADENGINE warnings on this workstation (Vercel builds on Node 24). Upgrade the local Node when convenient.
+14. **Storage-denied browsers** now render fully (safeStorage) but keep no language/consent/chat memory across reloads — by design.
