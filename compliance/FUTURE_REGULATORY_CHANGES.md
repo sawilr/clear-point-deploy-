@@ -13,6 +13,8 @@ Published but NOT yet effective, or expected on a known calendar. Every monthly 
 | W7 | **NJ PAAD/Senior Gold 2027 limits** | NJ | expected Q1–Q2 2027 (annual increase) | 2027-01-01 | Q1 2027 audit: nj.gov DoAS pages |
 | W8 | **CT MSP limits (annual, effective March 1)** | CT | expected ~Feb 2027 | 2027-03-01 | Feb/Mar 2027 audit: portal.ct.gov DSS eligibility page |
 | W9 | **Extra Help/LIS 2027 standards** | CMS/SSA | resource limits ~Jan, income (FPL) ~Mar 2027 | 2027 | Jan+Mar 2027 audits |
-| W10 | **TPMO marketing modernization rulemaking** | CMS | RFI in CY2027 rule — future proposed rule possible (watch fall 2026 / spring 2027) | TBD | Monitor Federal Register each audit; TPMO disclaimer unchanged until then |
+| W10 | **TPMO marketing modernization rulemaking** | CMS | RFI in CY2027 rule — future proposed rule possible (watch fall 2026 / spring 2027) | TBD | Monitor Federal Register each audit |
+| W11 | **CY2027 (e)(41) wording (SHIP reference removed; verbal timing "prior to the discussion of any benefits") — 91 FR 17384** | CMS | published 2026-04-02 ✔ (verified vs eCFR 2026-09-08 on 2026-09-12) | 2026-10-01 (CY2027 marketing) | Code switches automatically (`activeContractYearVariant`). OWNER: supply organization/product counts (still mandatory) and update Emely/Sofía scripts to state the disclaimer before any benefit discussion |
+| W12 | **Medicare figures year rollover guard** | internal | `scripts/check-figures-year.mjs` runs in every build | 2027-01-01 | Build FAILS after Jan 1, 2027 until src/data/medicare-figures-2026.ts, api/chat.js and api/_lib/medicare-figures.js are updated together (ALLOW_STALE_FIGURES=1 = documented emergency override) |
 
 **AEP note:** Marketing for PY2027 begins **October 1, 2026**; AEP Oct 15–Dec 7, 2026. September and October audits must confirm all PY2027-facing content (enrollment-period copy is year-generic today — verify it stays accurate).

@@ -511,7 +511,6 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       if (intent === 'handoff_asking_email_retry') claraEvent('email_invalid');
       prevIntentRef.current = intent;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastBotIntent]);
 
   // PHASE 9E — persist continuity fields to localStorage for next visit.

@@ -1,0 +1,19 @@
+# Master audit 2026-09-10 → 2026-09-13 — regulatory findings and sources
+
+Extraordinary run (owner directive "world-class zero-assumption audit"), separate from the monthly cadence. Sources read this cycle (LEVEL 1 unless noted); dates verified 2026-09-10/12.
+
+| # | Item | Source | Status | Finding → action |
+|---|---|---|---|---|
+| 1 | TPMO disclaimer text, 42 CFR 422.2267(e)(41) | eCFR versioner XML snapshots 2026-01-01 and 2026-09-08 (saved in the audit workspace); 91 FR 17384 (doc 2026-06600, effective 2026-06-01, CY2027 policies applicable from 2026-10-01) | FINAL — CURRENT (2026 text) / FINAL — FUTURE (CY2027 text from 2026-10-01) | Standardized content; multi-carrier text REQUIRES organization/product counts. Site fallback had an invented middle sentence → replaced with the standardized sentences minus counts; counts remain OWNER-GATED (P1 open). CY2027 variant (no SHIP reference) staged with an automatic date switch. Statement added to /support and to in-page bands. |
+| 2 | Part D benefit structure | Medicare.gov "Costs for Medicare drug coverage" (fetched 2026-09-12): 3 stages, no coverage gap; 42 CFR 423.104(d)(2)(v) "for 2025 and each subsequent year, there is no coverage gap" | FINAL — CURRENT | /part-d taught a 4-phase benefit with a donut hole → corrected EN/ES, figures interpolated from the single-source file. |
+| 3 | 2026 federal figures (Part B $202.90/$283; Part A $1,736; Part D $615 max deductible / $2,100 OOP; catastrophic $0) | medicare.gov costs page (2026-09-12); prior CMS fact-sheet verification 2026-08-28 | FINAL — CURRENT | Unchanged. Backstop now refuses to rewrite windows naming another year; build fails after 2027-01-01 until updated (`scripts/check-figures-year.mjs`). |
+| 4 | Extra Help / dual SEPs | 42 CFR 423.38(c)(4) (monthly PDP election for LIS) and (c)(35) (integrated-care SEP) as cited by the verifier from eCFR | FINAL — CURRENT (since CY2025) | Chat knowledge said "once per quarter, Q1–Q3" → corrected to monthly. |
+| 5 | Call recording of TPMO marketing/sales/enrollment calls, 42 CFR 422.2274(g)(2)(ii) | eCFR (via mirror; primary re-read recommended) | FINAL — CURRENT; applicability to inbound education-only calls NEEDS COUNSEL | Website now discloses recording (privacy policy §5, contact card). GHL greetings lack AI/recording disclosure → owner action V3. |
+| 6 | TCPA prior express written consent, 47 CFR 64.1200(f)(9); FCC AI-voice ruling (Feb 2024) | eCFR + FCC (verifier) | FINAL — CURRENT | Consent text covers autodialed calls/texts; "artificial/prerecorded voice" wording only needed if outbound AI-voice calls are ever placed → owner decision (NOT_VERIFIED #9). Consent receipt now records at=/ip=/page=. Opt-out clears consent flags. |
+| 7 | NY SHIELD Act (GBL §899-bb / §899-aa) | nysenate.gov | FINAL — CURRENT | APPLIES (safeguards + breach notice). Privacy policy names all processors incl. AI providers and CRM. |
+| 8 | CT Data Privacy Act (CGS §42-515 et seq.) incl. P.A. 25-113 amendments eff. 2026-07-01 | cga.ct.gov | FINAL — CURRENT; applicability NEEDS COUNSEL (licensed-producer exemption) | NOT_VERIFIED #10/#11. |
+| 9 | NJ Data Privacy Act (P.L.2023 c.266) | pub.njleg.gov | FINAL — CURRENT; LIKELY NOT APPLICABLE (thresholds) | NOT_VERIFIED #11. |
+| 10 | WCAG 2.2 AA | W3C (axe-core 4.x rules) | STANDARD | Contrast, link cue, label-in-name, target-size defects fixed; 0 axe violations on the built site (59 page-states). |
+| 11 | Google Search Central — sitemap lastmod | developers.google.com/search | GUIDANCE | lastmod now derived from git per route at build. |
+
+Open regulatory items carried to the owner report: TPMO counts (P1), carrier logo permissions, voice greeting disclosure, AI-voice consent wording, CT/NJ applicability, HPMS/MA-org identification question.

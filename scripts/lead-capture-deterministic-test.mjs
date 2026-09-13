@@ -7,6 +7,7 @@
 //  5) "no" lets the caller correct ONE field, then re-confirms.
 // Tests EN, ES, and Spanglish, driving the real engine (processMessage +
 // _runStructuralFirst). No LLM/network — the whole point is the deterministic path.
+import { SOA_ENABLED } from '../src/lib/soaContent.ts'; // AUDIT 2026-09-12 (FORMS-12): SOA gate is CP-01's single source of truth
 import { processMessage, _runStructuralFirst } from '../src/lib/customerServiceEngine.ts';
 
 let pass = 0, fail = 0;
@@ -130,7 +131,7 @@ function runFlow(lang, data) {
   t = turn(st, data.yes); st = t.st;
   ok(`${lang}: "yes" → contactConfirmed set`, st.contactConfirmed === true);
   ok(`${lang}: "yes" → submit signalled immediately (soaPending + captured), NO "anything else?"`,
-     st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact' && !/algo m[aá]s|anything else/i.test(t.resp),
+     st.soaPending === SOA_ENABLED && st.lastBotIntent === 'handoff_captured_contact' && !/algo m[aá]s|anything else/i.test(t.resp),
      `soaPending=${st.soaPending} intent=${st.lastBotIntent}`);
   ok(`${lang}: needsHuman true at submit`, t.needsHuman === true);
 }
@@ -157,7 +158,7 @@ function runDivert(lang, d) {
   // "yes" → immediate close+submit. There is NO "anything else?" window to divert at.
   t = turn(st, d.yes); st = t.st;
   ok(`${lang}/divert: "yes" → submitted (soaPending + captured), NO "anything else?" window`,
-     st.contactConfirmed === true && st.soaPending === true && st.lastBotIntent === 'handoff_captured_contact'
+     st.contactConfirmed === true && st.soaPending === SOA_ENABLED && st.lastBotIntent === 'handoff_captured_contact'
      && !/algo m[aá]s|anything else/i.test(t.resp),
      `soaPending=${st.soaPending} intent=${st.lastBotIntent}`);
 }

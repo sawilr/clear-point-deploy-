@@ -1,4 +1,15 @@
 .env.ghl-mission
 .env.local
 .env.prod
-scripts/live-*.mjs
+# AUDIT 2026-09-12 (CODE-14) — test corpora, audits and docs are not part of the
+# deployed artefact. The build itself only needs scripts/prerender-meta.mjs,
+# scripts/build-sitemap.mjs and scripts/check-figures-year.mjs.
+scripts/*
+!scripts/prerender-meta.mjs
+!scripts/build-sitemap.mjs
+!scripts/check-figures-year.mjs
+docs/
+compliance/
+info.md
+PROJECT_CONTEXT.md
+OPENCLAW_RULES.md

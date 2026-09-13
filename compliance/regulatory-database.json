@@ -64,8 +64,21 @@
       "regulatory_year": 2026,
       "status": "CURRENT",
       "implemented_in": ["src/components/DisclaimerBlock.tsx", "src/lib/tpmoConfig.ts"],
-      "last_verified": "2026-08-28",
-      "verification_note": "CY2027 final rule (Apr 2026) finalized NO TPMO changes — RFI only; requirement unchanged."
+      "last_verified": "2026-09-12",
+      "verification_note": "CORRECTED 2026-09-12 (master audit, verified against eCFR versioner XML 2026-09-08 + 91 FR 17384): the CY2027 final rule DID revise (e)(41) — introductory text and (e)(41)(ii): the SHIP reference is removed from the standardized sentence and the verbal disclaimer timing becomes 'prior to the discussion of any benefits'; applicable to CY2027 marketing beginning 2026-10-01. The COUNTS requirement is unchanged and the site's count-less fallback remains NON-COMPLIANT until the owner/FMO supplies organization/product counts (tpmoConfig.ts, status BLOCKED_COUNTS_REQUIRED). Variant switch is automatic (activeContractYearVariant)."
+    },
+    {
+      "rule_id": "FED-2027-TPMO-WORDING",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "42 CFR 422.2267(e)(41) as amended by 91 FR 17384 (CY2027 final rule): standardized TPMO sentence without the SHIP reference; verbal disclaimer 'prior to the discussion of any benefits'; counts [organizations]/[products] still mandatory for multi-carrier TPMOs",
+      "source_url": "https://www.ecfr.gov/current/title-42/section-422.2267 (eCFR snapshot 2026-09-08) + Federal Register doc 2026-06600",
+      "publication_date": "2026-04-02",
+      "effective_date": "2026-10-01 (CY2027 marketing) / 2027-01-01",
+      "regulatory_year": 2027,
+      "status": "FUTURE",
+      "implemented_in": ["src/lib/tpmoConfig.ts (activeContractYearVariant, CY2027 text staged)", "src/components/DisclaimerBlock.tsx", "src/components/CustomerServiceBot.tsx"],
+      "last_verified": "2026-09-12",
+      "verification_note": "Wording staged and date-switched in code. Counts still owner-gated (see FED-TPMO-DISCLAIMER). Voice agents (GHL) must convey the statement before any benefit discussion — owner action."
     },
     {
       "rule_id": "NY-2026-MSP",

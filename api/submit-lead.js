@@ -23,6 +23,24 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { readJsonBody } from './_lib/read-body.js';
 import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 
+// AUDIT 2026-09-12 (FORMS-04) — remove the lead's own identifiers from free text
+// before it is sent to the enrichment LLM. Exact-value replacement (case-insensitive)
+// plus a generic phone/email sweep; the CRM note keeps the original text.
+function scrubIdentityForIntel(text, values) {
+  var out = String(text || '');
+  // Generic sweeps FIRST (phone / email), then the lead's exact values — so a
+  // name that also appears inside the email address cannot break the email match.
+  out = out.replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, '[phone]');
+  out = out.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]');
+  for (var i = 0; i < values.length; i++) {
+    var v = values[i];
+    if (typeof v !== 'string' || v.trim().length < 2) continue;
+    try { out = out.replace(new RegExp(v.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[redacted]'); } catch (_e) { /* keep going */ }
+  }
+  return out;
+}
+
+
 // AUDIT 2026-08-15 (remediation target 4 — abuse monitoring) — one
 // machine-parseable, PII-free outcome line per request so abuse patterns
 // (origin floods, consent probing, challenge failures, rate-limit pressure)
@@ -370,44 +388,20 @@ export default async function handler(req, res) {
       }
     }
 
-    // ── PHASE A17 — Lead Intelligence Pass ─────────────────────────────────
-    // One additional Haiku call to enrich the lead BEFORE it lands in GHL.
-    // The advisor opens the contact and sees a structured summary, temperature,
-    // and recommended first questions — no need to read the full transcript.
-    //
-    // Graceful: if the call fails (no key, network, timeout), `intel` is
-    // null and we proceed with the raw notes only.
-    var intel = null;
-    try {
-      intel = await analyzeLeadIntelligence({
-        leadNotes: (lead_notes || conversation_summary || '').toString(),
-        language: preferred_language || 'en',
-        source: lead_source || 'unknown',
-        metadata: {
-          zipCode: zip,
-          state: derived_state,
-          age: age || calculated_age,
-          medicareStatus: medicare_status,
-        },
-      });
-    } catch (e) {
-      console.warn('[submit-lead] intel call exception (continuing without)', e && e.message);
-    }
-    if (intel) {
-      var intelText = formatIntelForGhlNotes(intel);
-      lead_notes = (lead_notes || '').toString().trimEnd() + (intelText ? '\n' + intelText : '');
-      // Append a lead-quality flag so GHL workflows can route by temperature.
-      var tempTag = 'Temp-' + (intel.lead_temperature || 'cold');
-      var urgTag = 'Urg-' + (intel.urgency || 'low');
-      lead_quality_flags = (lead_quality_flags ? lead_quality_flags + '; ' : '') +
-        'AI: ' + tempTag + '/' + urgTag + ' (intent ' + intel.intent_strength + '/10)';
-    }
-
     var frontendTags = [];
     if (Array.isArray(body.tags)) {
       for (var i = 0; i < body.tags.length && frontendTags.length < 20; i++) {
         var tag = body.tags[i];
-        if (typeof tag === 'string') { tag = tag.trim(); if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag)) frontendTags.push(tag); }
+        // AUDIT 2026-09-12 (FORMS-01, P2) — an unauthenticated POST could inject
+        // compliance-significant tags (SOA-Signed, DND/DNC, Status-*, Temp-hot,
+        // AI-Flagged, consent…). Client-supplied tags may only describe interest /
+        // preference / audience; workflow, consent, SOA and status tags are server-owned.
+        if (typeof tag === 'string') {
+          tag = tag.trim();
+          var _denied = /^(status-|soa|dnc|dnd|consent|temp-|urg-|ai-|cp-|outcome-|compliance|high priority|warm lead|medicare-lead)/i.test(tag);
+          if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag) && !_denied) frontendTags.push(tag);
+          else if (_denied) leadAudit('tag_rejected', 200, { tag: tag.slice(0, 24) });
+        }
       }
     }
     var allTags = ['Status-NewLead'];
@@ -581,6 +575,45 @@ export default async function handler(req, res) {
         return res.status(429).json({ error: 'Too many submissions, try again later' });
       }
     }
+    // ── PHASE A17 — Lead Intelligence Pass ─────────────────────────────────
+    // AUDIT 2026-09-12 (FORMS-02, P2) — moved BELOW required-field validation,
+    // the min-fill bot gate, Turnstile and the strict/per-phone rate limits: an
+    // unauthenticated flood used to trigger a paid LLM call per request before
+    // any of those gates ran.
+    // One additional Haiku call to enrich the lead BEFORE it lands in GHL.
+    // The advisor opens the contact and sees a structured summary, temperature,
+    // and recommended first questions — no need to read the full transcript.
+    //
+    // Graceful: if the call fails (no key, network, timeout), `intel` is
+    // null and we proceed with the raw notes only.
+    var intel = null;
+    try {
+      intel = await analyzeLeadIntelligence({
+        // AUDIT 2026-09-12 (FORMS-04, P2) — the enrichment model needs the STORY,
+        // not the identity: strip name / phone / email / DOB before the call.
+        leadNotes: scrubIdentityForIntel((lead_notes || conversation_summary || '').toString(), [first_name, last_name, phone, email, date_of_birth]),
+        language: preferred_language || 'en',
+        source: lead_source || 'unknown',
+        metadata: {
+          zipCode: zip,
+          state: derived_state,
+          age: age || calculated_age,
+          medicareStatus: medicare_status,
+        },
+      });
+    } catch (e) {
+      console.warn('[submit-lead] intel call exception (continuing without)', e && e.message);
+    }
+    if (intel) {
+      var intelText = formatIntelForGhlNotes(intel);
+      lead_notes = (lead_notes || '').toString().trimEnd() + (intelText ? '\n' + intelText : '');
+      // Append a lead-quality flag so GHL workflows can route by temperature.
+      var tempTag = 'Temp-' + (intel.lead_temperature || 'cold');
+      var urgTag = 'Urg-' + (intel.urgency || 'low');
+      lead_quality_flags = (lead_quality_flags ? lead_quality_flags + '; ' : '') +
+        'AI: ' + tempTag + '/' + urgTag + ' (intent ' + intel.intent_strength + '/10)';
+    }
+
     // (3) submission_id — PII-free idempotency/trace key (phone+zip+UTC-hour digest).
     //     Logged and returned so a lead can be traced end-to-end without exposing PII.
     var submission_id = '';

@@ -11,32 +11,54 @@ import { BotLauncher } from './components/BotLauncher'
 import { CookieConsent } from './components/CookieConsent'
 import { LanguageProvider } from './hooks/useLanguage'
 import { track, Events } from './lib/analytics'
+import { storageGet, storageSet } from './lib/safeStorage'
 
 // Sawil 2026-06-30 AUDIT FIX (perf) — code-split every route except the homepage
 // (the LCP / first-paint page). This moves the /support route — which statically
 // pulls in CustomerServiceBot + the ~595 KB customerServiceEngine — and every other
 // page into its own chunk, off the initial payload that every visitor downloads.
-const About = lazy(() => import('./pages/About'))
-const MedicareAdvantage = lazy(() => import('./pages/MedicareAdvantage'))
-const PartD = lazy(() => import('./pages/PartD'))
-const ExtraHelp = lazy(() => import('./pages/ExtraHelp'))
-const HelpPayingCosts = lazy(() => import('./pages/HelpPayingCosts'))
-const OtcBenefits = lazy(() => import('./pages/OtcBenefits'))
-const Support = lazy(() => import('./pages/Support'))
-const Resources = lazy(() => import('./pages/Resources'))
-const Contact = lazy(() => import('./pages/Contact'))
-const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'))
-const Accessibility = lazy(() => import('./pages/Accessibility'))
-const Terms = lazy(() => import('./pages/Terms'))
-const ThankYou = lazy(() => import('./pages/ThankYou'))
-const SignSOA = lazy(() => import('./pages/SignSOA'))
-const NotFound = lazy(() => import('./pages/NotFound'))
+// AUDIT 2026-09-12 (CODE-06, P2) — a failed route/ChatBot chunk import used to
+// fall straight into the whole-app ErrorBoundary. Transient network drops and
+// mid-deploy hash changes are the usual causes: retry the import once, then
+// reload the page once per session (fresh HTML → fresh hashes) before giving up.
+function lazyRetry<T>(loader: () => Promise<T>): () => Promise<T> {
+  return () => loader().catch(async (firstError: unknown) => {
+    await new Promise((r) => setTimeout(r, 600))
+    try {
+      return await loader()
+    } catch (secondError) {
+      const key = 'cp_chunk_reload'
+      if (storageGet('session', key) !== '1') {
+        storageSet('session', key, '1')
+        window.location.reload()
+        return new Promise<T>(() => {}) // navigation in flight — never resolve
+      }
+      throw secondError ?? firstError
+    }
+  })
+}
+
+const About = lazy(lazyRetry(() => import('./pages/About')))
+const MedicareAdvantage = lazy(lazyRetry(() => import('./pages/MedicareAdvantage')))
+const PartD = lazy(lazyRetry(() => import('./pages/PartD')))
+const ExtraHelp = lazy(lazyRetry(() => import('./pages/ExtraHelp')))
+const HelpPayingCosts = lazy(lazyRetry(() => import('./pages/HelpPayingCosts')))
+const OtcBenefits = lazy(lazyRetry(() => import('./pages/OtcBenefits')))
+const Support = lazy(lazyRetry(() => import('./pages/Support')))
+const Resources = lazy(lazyRetry(() => import('./pages/Resources')))
+const Contact = lazy(lazyRetry(() => import('./pages/Contact')))
+const PrivacyPolicy = lazy(lazyRetry(() => import('./pages/PrivacyPolicy')))
+const Accessibility = lazy(lazyRetry(() => import('./pages/Accessibility')))
+const Terms = lazy(lazyRetry(() => import('./pages/Terms')))
+const ThankYou = lazy(lazyRetry(() => import('./pages/ThankYou')))
+const SignSOA = lazy(lazyRetry(() => import('./pages/SignSOA')))
+const NotFound = lazy(lazyRetry(() => import('./pages/NotFound')))
 
 // Zara's chat logic (~308 KB) is split into its own chunk and loaded lazily so it
 // is NOT in the initial payload on every page. The floating launcher stays eager
 // (it must appear instantly); Zara's chunk loads in the background right after
 // first paint, well before the user opens it via the launcher.
-const ChatBot = lazy(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot })))
+const ChatBot = lazy(lazyRetry(() => import('./components/ChatBot').then((m) => ({ default: m.ChatBot }))))
 
 // Sawil 2026-07-27 ES ROUTES (SEO) — single source of truth for content routes.
 // Each entry renders at its English path AND at an indexable /es twin
