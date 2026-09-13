@@ -627,7 +627,7 @@ const SUSPICIOUS_NAMES = new Set([
   'homer', 'homer simpson', 'bart', 'bart simpson',
   'mario', 'luigi', 'mario bros',
   'jose jose', 'juan juan', 'maria maria',
-  'anonymous', 'anonimo', 'an�nimo', 'someone', 'alguien', 'persona',
+  'anonymous', 'anonimo', 'anónimo', 'someone', 'alguien', 'persona',
 ]);
 
 // WAVE 47 — fake email patterns. Same philosophy as phones: flag don't reject.

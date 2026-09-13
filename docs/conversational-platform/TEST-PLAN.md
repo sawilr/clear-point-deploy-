@@ -18,7 +18,7 @@
 | test-safety-parity-server-2026-08-27 | 19 | client/server safety-net parity |
 | test-entity-scope-2026-08-15 (+wiring §9) | 43+60 | part-figure scope lock |
 | test-multiturn-recovery-2026-08-27 | 5 | injection recovery (legit follow-ups answered) |
-| test-optout-validation-2026-08-27 | 7 | opt-out 400/uniform-ack contract |
+| test-optout-validation-2026-08-27 — **LIVE** (`CP_LIVE=1`) | 7 | opt-out 400/uniform-ack contract against the deployed API; excluded from the default `npm test` since 2026-09-13 (it POSTs to production and trips the per-IP rate limit when repeated) |
 | test-submit-lead-security-2026-08-15 | 44 | lead endpoint security (uses anti-CRM interlock harness) |
 | test-redteam-openai-r2-2026-08-14 | 24 | provider-integration red-team pins |
 | test-clara-completion-2026-08-13 | 167 | conversation completion behaviors |
@@ -39,7 +39,7 @@
 - Every fix lands with a permanent regression suite; mutation-test guards where feasible.
 
 ## 2026-09-13 — `npm test` battery (master audit)
-`npm test` (scripts/run-battery.mjs) runs 26 deterministic suites in ~50 s: the 17 above plus `test-medicare-figures-2026-08-18` (38, now incl. next-year survival), `test-cp03-clinical`, `test-falsepos-rules13-17`, `test-optout-lead02-authz` (15), `test-clara-routing` (95), `test-customer-service-language-lock` (10, repaired — pins the Phase D contract), `test-cardiac-detection`, `test-c9/c10/c11`, `test-plan-guidance`. Pass a substring to run a subset: `npm test -- figures`.
-Also in `npm run build`: `scripts/check-figures-year.mjs` (year-rollover guard) and `scripts/build-sitemap.mjs` (git-derived lastmod).
+`npm test` (scripts/run-battery.mjs) runs 25 deterministic, offline suites in ~45 s: the 16 offline suites above plus `test-medicare-figures-2026-08-18` (77 after red-team rounds 1–2: capture, survival, next-year, decimals, spelled-out years, January phrases), `test-cp03-clinical`, `test-falsepos-rules13-17`, `test-optout-lead02-authz` (15), `test-clara-routing` (95), `test-customer-service-language-lock` (10, repaired — pins the Phase D contract), `test-cardiac-detection`, `test-c9/c10/c11`, `test-plan-guidance`. Pass a substring to run a subset: `npm test -- figures`. `CP_LIVE=1 npm test` adds the live suite(s) (post-deploy only).
+Also in `npm run build`: `scripts/check-source-hygiene.mjs` (fails on C0 control characters / U+FFFD in api/, src/, scripts/, public/ — added 2026-09-13 after a regex `\b` had silently become a U+0008 byte and disarmed the 911 post-condition), `scripts/check-figures-year.mjs` (year-rollover + cross-file value guard) and `scripts/build-sitemap.mjs` (git-derived lastmod).
 Headless regression kit (outside the repo, scratchpad `qa-kit`): crawl (links/console/hreflang/tel), axe-core WCAG 2.2 AA on 59 page-states, cookie-consent network capture, failure-mode interception (API 500/503/429/timeout/offline, storage denied, JS off, chunk blocked), 10-viewport responsive matrix, Lighthouse.
 Known pre-existing, not in battery: `scripts/test-phase-d.mjs` fails 1/N (T22 medication topic after es→en) — engine behaviour unchanged by the audit.

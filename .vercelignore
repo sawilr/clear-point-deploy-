@@ -3,11 +3,13 @@
 .env.prod
 # AUDIT 2026-09-12 (CODE-14) — test corpora, audits and docs are not part of the
 # deployed artefact. The build itself only needs scripts/prerender-meta.mjs,
-# scripts/build-sitemap.mjs and scripts/check-figures-year.mjs.
+# scripts/build-sitemap.mjs, scripts/check-figures-year.mjs and
+# scripts/check-source-hygiene.mjs.
 scripts/*
 !scripts/prerender-meta.mjs
 !scripts/build-sitemap.mjs
 !scripts/check-figures-year.mjs
+!scripts/check-source-hygiene.mjs
 docs/
 compliance/
 info.md
