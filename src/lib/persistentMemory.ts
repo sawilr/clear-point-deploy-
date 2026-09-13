@@ -1,3 +1,4 @@
+import { getLocalStorage } from './safeStorage';
 // ─────────────────────────────────────────────────────────────────────────────
 // PHASE 9E — Persistent conversation memory across browser sessions.
 //
@@ -35,7 +36,7 @@ function sanitize(mem: VisitorMemory): VisitorMemory {
 }
 
 export function readVisitorMemory(): VisitorMemory | null {
-  if (typeof localStorage === 'undefined') return null;
+  if (!getLocalStorage()) return null;
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
@@ -60,7 +61,7 @@ export function readVisitorMemory(): VisitorMemory | null {
 }
 
 export function writeVisitorMemory(partial: Partial<VisitorMemory>): void {
-  if (typeof localStorage === 'undefined') return;
+  if (!getLocalStorage()) return;
   try {
     const existing = readVisitorMemory() || ({ lastSeen: Date.now() } as VisitorMemory);
     const next: VisitorMemory = sanitize({
@@ -75,7 +76,7 @@ export function writeVisitorMemory(partial: Partial<VisitorMemory>): void {
 }
 
 export function clearVisitorMemory(): void {
-  if (typeof localStorage === 'undefined') return;
+  if (!getLocalStorage()) return;
   try { localStorage.removeItem(KEY); } catch { /* no-op */ }
 }
 

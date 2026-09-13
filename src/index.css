@@ -549,3 +549,8 @@ footer .cp-legal { max-width: none; }
   footer .cp-legal { column-width: 22rem; column-gap: 3rem; }
   footer .cp-legal > p { break-inside: avoid; margin-top: 0 !important; margin-bottom: 0.9rem; }
 }
+
+/* AUDIT 2026-09-12 (FAIL-L2) — <noscript> fallback block (index.html); CSP forbids inline styles so it is styled here. */
+.cp-noscript { max-width: 640px; margin: 48px auto; padding: 0 24px; line-height: 1.6; color: #2d2a26; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.cp-noscript h1 { font-size: 1.6rem; }
+.cp-noscript a { color: #4a3a2e; font-weight: 600; text-decoration: underline; }

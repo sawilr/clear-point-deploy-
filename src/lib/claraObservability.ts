@@ -1,3 +1,4 @@
+import { getSessionStorage } from './safeStorage';
 // ─────────────────────────────────────────────────────────────────────────────
 // FASE 18 — Clara observability (PII-free).
 //
@@ -48,7 +49,7 @@ export function claraEvent(name: ClaraEventName, detail?: Record<string, boolean
 }
 
 function bumpCounter(name: string): void {
-  if (typeof sessionStorage === 'undefined') return;
+  if (!getSessionStorage()) return;
   try {
     const raw = sessionStorage.getItem(COUNTER_KEY);
     const counts: Record<string, number> = raw ? JSON.parse(raw) : {};
@@ -59,7 +60,7 @@ function bumpCounter(name: string): void {
 
 /** Aggregate counters for this browser session (diagnostics / tests). */
 export function claraMetricCounts(): Record<string, number> {
-  if (typeof sessionStorage === 'undefined') return {};
+  if (!getSessionStorage()) return {};
   try { return JSON.parse(sessionStorage.getItem(COUNTER_KEY) || '{}'); } catch { return {}; }
 }
 

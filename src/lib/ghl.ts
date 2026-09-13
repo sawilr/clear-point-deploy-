@@ -1,3 +1,4 @@
+import { getLocalStorage } from './safeStorage';
 /**
  * GoHighLevel Lead Submission Utility
  * Submits to /api/submit-lead (Vercel serverless function).
@@ -56,6 +57,8 @@ export interface GHLLeadPayload {
 }
 
 const API_ROUTE = '/api/submit-lead';
+// AUDIT 2026-09-12 (FAIL-L3) — hard client-side timeout for the lead POST.
+const SUBMIT_TIMEOUT_MS = 15000;
 
 // ── Cloudflare Turnstile (anti-bot challenge — AUDIT 2026-08-15, target 1) ───
 // Feature-gated: everything below is inert unless VITE_TURNSTILE_SITEKEY was
@@ -247,11 +250,22 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     }
 
     lastSubmitStatus = 0;
-    const response = await fetch(API_ROUTE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    // AUDIT 2026-09-12 (FAIL-L3) — without a client timeout a hung request left
+    // seniors staring at "Sending…" for ~55 s before the failure message. Abort
+    // at 15 s; the catch below shows the same friendly retry/call message.
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), SUBMIT_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(API_ROUTE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     lastSubmitStatus = response.status;
 
     const data = await response.json().catch(() => null);
@@ -288,7 +302,7 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
 
 // One-time cleanup: purge any PII left over in localStorage from earlier
 // versions that persisted failed-lead payloads. Safe to run on every load.
-if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+if (typeof window !== 'undefined' && getLocalStorage() !== null) {
   try { localStorage.removeItem('cp_pending_leads'); } catch { /* ignore */ }
 }
 
@@ -299,7 +313,7 @@ export function getPendingLeads(): GHLLeadPayload[] {
 }
 
 export function clearPendingLeads(): void {
-  if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+  if (typeof window !== 'undefined' && getLocalStorage() !== null) {
     try { localStorage.removeItem('cp_pending_leads'); } catch { /* ignore */ }
   }
 }

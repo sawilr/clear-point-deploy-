@@ -1,0 +1,20 @@
+/* AUDIT 2026-09-12 (CRAWL-L1) — the 404 page's styles were inline and the site
+   CSP (style-src 'self') blocked them, so the page rendered unstyled. External
+   same-origin stylesheet keeps the CSP strict. */
+:root { color-scheme: light; }
+body {
+  margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: #fdf8f0; color: #2d2a26; padding: 24px; line-height: 1.55;
+}
+.card { max-width: 600px; text-align: center; }
+h1 { font-size: 1.75rem; margin: 0 0 .5rem; color: #2d2a26; }
+h2 { font-size: 1.35rem; margin: 1.5rem 0 .4rem; color: #2d2a26; }
+p { font-size: 1.125rem; margin: .4rem 0; }
+.muted { color: #6b5340; }
+a.btn {
+  display: inline-block; margin: 1.25rem .4rem 0; padding: .9rem 1.5rem; border-radius: 10px; min-height: 48px;
+  background: #4a3a2e; color: #fdf8f0; text-decoration: none; font-weight: 600; font-size: 1.05rem;
+}
+a.btn:focus-visible, a.tel:focus-visible { outline: 3px solid #b8956a; outline-offset: 3px; }
+a.tel { color: #4a3a2e; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }

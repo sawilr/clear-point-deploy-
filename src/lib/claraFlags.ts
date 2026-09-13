@@ -1,3 +1,4 @@
+import { getLocalStorage } from './safeStorage';
 // ─────────────────────────────────────────────────────────────────────────────
 // FASE 1 — Feature flag: CLARA_HARDENED_FLOW
 //
@@ -34,7 +35,7 @@ function rawMode(): FlagMode {
 
 /** Stable 0-99 bucket for this browser (random once, then persistent). */
 function visitorBucket(): number {
-  if (typeof localStorage === 'undefined') return 100; // SSR / no storage → never in a partial rollout
+  if (!getLocalStorage()) return 100; // SSR / no storage → never in a partial rollout
   try {
     const existing = localStorage.getItem(BUCKET_KEY);
     if (existing !== null) {
@@ -58,7 +59,7 @@ function visitorBucket(): number {
 }
 
 function isInternalTester(): boolean {
-  if (typeof localStorage === 'undefined') return false;
+  if (!getLocalStorage()) return false;
   try { return localStorage.getItem(INTERNAL_KEY) === '1'; } catch { return false; }
 }
 

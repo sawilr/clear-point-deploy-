@@ -103,6 +103,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- AUDIT 2026-09-12 (FAIL-L2) — JS-disabled visitors and text-only crawlers
+         previously saw an empty page. Plain HTML fallback with the phone line. -->
+    <noscript>
+      <div class="cp-noscript">
+        <h1>Clear Point Senior Advisors</h1>
+        <p>This website needs JavaScript to show its pages. You can still reach a licensed Medicare advisor by phone: <a href="tel:+18557208555">1-855-720-8555</a> (TTY 711), Monday–Friday 9am–6pm ET. Email: <a href="mailto:info@clearpointsenioradvisors.com">info@clearpointsenioradvisors.com</a>.</p>
+        <p lang="es">Este sitio necesita JavaScript para mostrar sus páginas. Puede comunicarse con un asesor licenciado de Medicare por teléfono: <a href="tel:+18557208555">1-855-720-8555</a> (TTY 711), lunes a viernes de 9am a 6pm, hora del Este.</p>
+        <p>We do not offer every plan available in your area. Please contact Medicare.gov or 1-800-MEDICARE to get information on all of your options. Clear Point Senior Advisors is not connected with or endorsed by the U.S. government or the federal Medicare program.</p>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
