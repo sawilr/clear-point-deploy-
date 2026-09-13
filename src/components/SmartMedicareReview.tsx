@@ -653,7 +653,7 @@ export function SmartMedicareReview() {
               </div>
               <p className="text-sm text-earth-700 mb-4">
                 {t('You can also call Clear Point for general Medicare guidance:', 'También puede llamar a Clear Point para orientación general de Medicare:')}{' '}
-                <a href="tel:18557208555" className="font-semibold text-gold-600 hover:underline">1-855-720-8555</a>{' '}
+                <a href="tel:+18557208555" className="font-semibold text-gold-600 hover:underline">1-855-720-8555</a>{' '}
                 <span className="text-earth-600">({t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')})</span>
               </p>
               <button
@@ -966,7 +966,7 @@ export function SmartMedicareReview() {
                     accessible name (aria-labelledby) instead of a generic aria-label
                     that overrode it. A screen reader now reads the exact consent the
                     user is agreeing to (matches the LeadForm pattern). */}
-                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-labelledby="smr-consent-text" className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0" />
+                <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} required aria-required="true" aria-labelledby="smr-consent-text" className="mt-0.5 w-6 h-6 accent-earth-800 flex-shrink-0" />
                 <span id="smr-consent-text" className="text-sm text-earth-700 leading-relaxed">
                   {isEs ? TCPA_CONSENT_TEXT_ES : TCPA_CONSENT_TEXT_EN}{' '}
                   <Link to={lp('/privacy-policy')} className="underline text-earth-800 font-semibold hover:text-gold-500">{t('See our Privacy Policy for more information.', 'Consulte nuestra Política de Privacidad para más información.')}</Link>

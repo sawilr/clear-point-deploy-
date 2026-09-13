@@ -83,12 +83,16 @@ export function Footer() {
           <div className="col-span-1 sm:col-span-2 lg:col-span-1">
             {/* Sawil 2026-07-28 AUDIT CPF-003 — localize the href, not just the
                 onClick: the raw attribute is what crawlers and middle-click use. */}
-            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer" aria-label={t('Go to homepage', 'Ir a la página principal')}>
+            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 mb-4 cursor-pointer">
               <LogoSvg size={36} />
               <div className="flex flex-col leading-none">
                 <span className="font-serif text-base font-bold text-cream-50 tracking-tight">Clear Point</span>
-                <span className="text-[10px] font-semibold tracking-[0.15em] uppercase text-gold-400 mt-0.5">{t('Senior Advisors', 'Senior Advisors')}</span>
+                <span className="text-[12px] font-semibold tracking-[0.15em] uppercase text-gold-400 mt-0.5">{t('Senior Advisors', 'Senior Advisors')}</span>
               </div>
+              {/* AUDIT 2026-09-12 (WCAG 2.5.3 label-in-name) — the accessible name is
+                  now derived from the visible text plus this hidden suffix, instead of
+                  an aria-label that did not contain the visible text. */}
+              <span className="sr-only">{t(' — Home', ' — Inicio')}</span>
             </a>
             <p className="text-sm leading-relaxed max-w-xs">
               {t(
@@ -108,7 +112,7 @@ export function Footer() {
               broker. Medicare Supplement MOVED to Education per Sawil 2026-06
               (pending broker authorization). */}
           <div>
-            <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h3>
+            <h2 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Services', 'Servicios')}</h2>
             <ul className="space-y-1 text-sm">
               <li><Link to={lp('/medicare-advantage')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Advantage', 'Medicare Advantage')}</Link></li>
               {/* HIDDEN per Sawil 2026-06 — Medicare Supplement moved to Education column. Restore by uncommenting. */}
@@ -120,7 +124,7 @@ export function Footer() {
           {/* Education — learning / assistance topics. Mirrors Header Education dropdown.
               Includes Medicare Supplement (educational reference until authorization). */}
           <div>
-            <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h3>
+            <h2 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Education', 'Educación')}</h2>
             <ul className="space-y-1 text-sm">
               <li><Link to={lp('/resources')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
               {/* Sawil 2026-07-28 AUDIT CPF-003 — path+hash anchors localize the
@@ -135,7 +139,7 @@ export function Footer() {
 
           {/* External Resources */}
           <div>
-            <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h3>
+            <h2 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Resources', 'Recursos')}</h2>
             <ul className="space-y-1 text-sm">
               <li><a href="https://www.medicare.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">Medicare.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
               <li><a href="https://www.ssa.gov" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">SSA.gov <ExternalLinkIcon className="w-3 h-3"/></a></li>
@@ -149,9 +153,9 @@ export function Footer() {
           {/* Contact — single cell from sm up so it pairs with Resources in the
               2-column tier (Brand spans the full row above); its own cell at lg. */}
           <div className="col-span-1">
-            <h3 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h3>
+            <h2 className="text-[13px] font-bold tracking-[0.15em] uppercase text-gold-400 mb-4">{t('Contact', 'Contacto')}</h2>
             <ul className="space-y-1 text-sm">
-              <li><a href="tel:18557208555" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">1-855-720-8555</a></li>
+              <li><a href="tel:+18557208555" className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">1-855-720-8555</a></li>
               {/* Email layout per viewport:
                   • Mobile (default, col-span-2): full-width column, fits on one
                     line at text-sm down to 320px viewport.
@@ -192,7 +196,7 @@ export function Footer() {
             for functional text) without touching brand colors. Decorative · separators
             stay dimmer and are aria-hidden. */}
         <div className="border-t border-cream-50/10 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-[14px] text-cream-50/80">
-          <span>© 2026 Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
+          <span>© {new Date().getFullYear()} Clear Point Senior Advisors. {t('All Rights Reserved.', 'Todos los Derechos Reservados.')}</span>
           <div className="flex items-center justify-center gap-x-5 gap-y-2 flex-wrap">
             <Link to={lp('/privacy-policy')} className="inline-flex items-center py-2 min-h-[44px] hover:text-cream-50 transition-colors">{t('Privacy Policy', 'Política de Privacidad')}</Link>
             <span aria-hidden className="text-cream-50/30">·</span>

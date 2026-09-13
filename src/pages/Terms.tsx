@@ -12,7 +12,7 @@ export default function Terms() {
         <h1 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-2">
           {t('Terms of Use', 'Términos de Uso')}
         </h1>
-        <p className="text-earth-500 text-sm mb-8">{t('Last Updated: May 5, 2025', 'Última Actualización: 5 de mayo de 2025')}</p>
+        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: September 12, 2026', 'Última actualización: 12 de septiembre de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>
@@ -118,7 +118,7 @@ export default function Terms() {
           <section>
             <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('11. Contact', '11. Contacto')}</h2>
             <p>
-              {t('Questions about these Terms? Contact us at ', '¿Preguntas sobre estos Términos? Contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or', 'o')} <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a>.
+              {t('Questions about these Terms? Contact us at ', '¿Preguntas sobre estos Términos? Contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 underline underline-offset-2 hover:decoration-2">info@clearpointsenioradvisors.com</a> {t('or', 'o')} <a href="tel:+18557208555" className="text-gold-500 underline underline-offset-2 hover:decoration-2">1-855-720-8555</a>.
             </p>
           </section>
         </div>

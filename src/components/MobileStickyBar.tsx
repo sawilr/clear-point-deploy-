@@ -57,7 +57,7 @@ export function MobileStickyBar() {
     // (body.cp-consent-open, see index.css) — RE-AUDIT 2026-07-27 P2, the
     // banner + FAB + this bar buried the whole first viewport at 320x568.
     <div className={`cp-mobile-sticky-bar fixed bottom-0 left-0 right-0 z-40 bg-earth-900/95 backdrop-blur-sm border-t border-cream-50/10 pt-3 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] flex gap-3 md:hidden transition-transform duration-300 ${hidden ? 'translate-y-full' : 'translate-y-0'}`}>
-      <a href="tel:18557208555" className="flex-1 flex items-center justify-center gap-2 border border-cream-50/20 text-cream-50 text-base font-semibold py-3 min-h-[44px] rounded-lg hover:bg-cream-50/5 transition-colors whitespace-nowrap">
+      <a href="tel:+18557208555" className="flex-1 flex items-center justify-center gap-2 border border-cream-50/20 text-cream-50 text-base font-semibold py-3 min-h-[44px] rounded-lg hover:bg-cream-50/5 transition-colors whitespace-nowrap">
         <PhoneIcon className="w-4 h-4 flex-shrink-0" />
         {t('Call Now', 'Llamar')}
       </a>

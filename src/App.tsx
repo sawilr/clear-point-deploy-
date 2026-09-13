@@ -100,7 +100,11 @@ export default function App() {
             spacer read as a broken page; pulsing neutral blocks now mirror the
             hero+content silhouette until the chunk lands. */}
         <Suspense fallback={
-          <div className="min-h-[60vh] px-5 py-10 max-w-6xl mx-auto" aria-busy="true" aria-live="polite">
+          /* AUDIT 2026-09-12 (PERF, CLS 0.23 on lazy routes) — the fallback was
+             60vh tall, so the footer sat in-viewport during the chunk swap and
+             jumped when the real page (always taller) arrived. Full-viewport
+             placeholder keeps the footer below the fold → no counted shift. */
+          <div className="min-h-screen px-5 py-10 max-w-6xl mx-auto" aria-busy="true" aria-live="polite">
             <div className="animate-pulse space-y-6">
               <div className="h-56 bg-cream-200 rounded-2xl" />
               <div className="h-8 bg-cream-200 rounded-lg w-2/3" />

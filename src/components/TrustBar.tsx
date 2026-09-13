@@ -43,7 +43,7 @@ export function TrustBar({ stats }: TrustBarProps) {
             </div>
           ))}
         </div>
-        <p className="text-center text-[13px] text-cream-50/55 mt-3">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
+        <p className="text-center text-[13px] text-cream-50/75 mt-3">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
         {/* Sawil 2026-06-16 compliance audit — "How We Get Paid" disclosure next
             to the "$0 Cost to You" claim. CMS best practice: clarify the
             commission model without sounding like a government benefit. */}

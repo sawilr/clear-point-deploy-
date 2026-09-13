@@ -1881,7 +1881,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             <div className="flex justify-start" aria-hidden="true">
               <div className="bg-white rounded-xl px-4 py-3 shadow-xs border border-cream-200">
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] text-earth-500 italic">{getTypingText()}</span>
+                  <span className="text-[13px] text-earth-700 italic">{getTypingText()}</span>
                   <span className="flex gap-1">
                     <span className="w-1.5 h-1.5 bg-earth-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                     <span className="w-1.5 h-1.5 bg-earth-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -1913,7 +1913,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               <div className="font-bold text-red-900">
                 {isSpanish ? 'Disculpe, su mensaje quedó preparado pero no pude confirmar el envío en este momento. Por favor llámenos directamente y le atenderemos enseguida.' : "Apologies — your message was prepared but I couldn't confirm the submission right now. Please call us directly and we'll take care of you right away."}
               </div>
-              <a href="tel:18557208555" className="inline-flex items-center gap-1.5 px-4 py-3 bg-earth-800 text-cream-50 rounded-lg text-[14px] font-semibold min-h-[44px]">
+              <a href="tel:+18557208555" className="inline-flex items-center gap-1.5 px-4 py-3 bg-earth-800 text-cream-50 rounded-lg text-[14px] font-semibold min-h-[44px]">
                 <Phone className="w-4 h-4" /> 1-855-720-8555
               </a>
             </div>
@@ -1931,7 +1931,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           shrink; the status stays pinned (flex-shrink-0). */}
       <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white min-w-0">
         <a
-          href="tel:18557208555"
+          href="tel:+18557208555"
           className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors min-w-0"
         >
           <Phone className="w-4 h-4 flex-shrink-0" />

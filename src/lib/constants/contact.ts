@@ -36,5 +36,5 @@ export const EXTERNAL_LINKS = {
   medicare: 'https://www.medicare.gov',
   ssa: 'https://www.ssa.gov',
   cms: 'https://www.cms.gov',
-  ship: 'https://www.shiptacenter.org',
+  ship: 'https://www.shiphelp.org/',
 } as const;

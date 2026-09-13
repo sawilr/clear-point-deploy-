@@ -95,7 +95,7 @@ export default function Accessibility() {
             <div className="mt-4 bg-cream-50 rounded-xl p-5 space-y-3">
               <div className="flex items-center gap-3">
                 <PhoneIcon className="w-4 h-4 text-gold-500" />
-                <a href="tel:18557208555" className="text-earth-800 font-semibold hover:text-gold-500 transition-colors">1-855-720-8555</a>
+                <a href="tel:+18557208555" className="text-earth-800 font-semibold hover:text-gold-500 transition-colors">1-855-720-8555</a>
               </div>
               <div className="flex items-center gap-3">
                 <MailIcon className="w-4 h-4 text-gold-500" />

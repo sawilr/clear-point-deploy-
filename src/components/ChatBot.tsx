@@ -1540,7 +1540,7 @@ const CHATBOT_CONTEXT = {
   agencyName: 'Clear Point Senior Advisors',
   assistantName: 'Zara',
   phone: '1-855-720-8555',
-  phoneHref: 'tel:18557208555',
+  phoneHref: 'tel:+18557208555',
   hours: 'Monday-Friday, 9am-6pm ET',
   statesServed: 'NY, NJ, and CT',
   identity: 'Independent Medicare insurance agency',

@@ -419,7 +419,7 @@ const externalLinks = [
   { title: 'Medicare.gov', url: 'https://www.medicare.gov', desc: 'Official U.S. government site for Medicare', descEs: 'Sitio oficial del gobierno de EE. UU. para Medicare' },
   { title: 'SSA.gov', url: 'https://www.ssa.gov', desc: 'Social Security Administration — apply for Extra Help', descEs: 'Administración del Seguro Social — solicite Ayuda Extra' },
   { title: 'CMS.gov', url: 'https://www.cms.gov', desc: 'Centers for Medicare & Medicaid Services', descEs: 'Centros de Servicios de Medicare y Medicaid' },
-  { title: 'SHIP Help', url: 'https://www.shiptacenter.org', desc: 'State Health Insurance Assistance Programs', descEs: 'Programas Estatales de Asistencia de Seguros de Salud' },
+  { title: 'SHIP Help', url: 'https://www.shiphelp.org/', desc: 'State Health Insurance Assistance Programs', descEs: 'Programas Estatales de Asistencia de Seguros de Salud' },
 ];
 
 export default function Resources() {
@@ -461,7 +461,7 @@ export default function Resources() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {resources.map((r, i) => (
               <div key={i} className="bg-cream-50 rounded-xl p-6 shadow-xs hover:shadow-soft transition-shadow border border-cream-200 flex flex-col">
-                <span className="inline-block text-[10px] font-bold tracking-wider uppercase text-gold-500 bg-gold-100 px-2.5 py-1 rounded-full mb-3 self-start">{t(r.tag, r.tagEs)}</span>
+                <span className="inline-block text-[12px] font-bold tracking-wider uppercase text-earth-700 bg-gold-100 px-2.5 py-1 rounded-full mb-3 self-start">{t(r.tag, r.tagEs)}</span>
                 <h3 className="font-serif text-lg font-semibold text-earth-900 mb-2">{t(r.title, r.titleEs)}</h3>
                 <p className="text-earth-600 text-sm leading-relaxed mb-4 flex-1">{t(r.desc, r.descEs)}</p>
                 <button onClick={() => setActiveGuide(i)} aria-label={t(`Read guide: ${r.title}`, `Leer guía: ${r.titleEs}`)} className="text-sm font-semibold text-gold-600 hover:text-gold-700 transition-colors self-start cursor-pointer px-3 py-2 min-h-[44px] inline-flex items-center -ml-3 rounded-lg">{t('Read guide →', 'Leer guía →')}</button>
@@ -515,7 +515,7 @@ export default function Resources() {
           >
             {/* Sticky header — close button always visible */}
             <div className="flex items-start justify-between px-6 pt-5 pb-4 flex-shrink-0 border-b border-cream-100">
-              <span className="inline-block text-[10px] font-bold tracking-wider uppercase text-gold-500 bg-gold-100 px-2.5 py-1 rounded-full mt-0.5">
+              <span className="inline-block text-[12px] font-bold tracking-wider uppercase text-earth-700 bg-gold-100 px-2.5 py-1 rounded-full mt-0.5">
                 {t(resources[activeGuide].tag, resources[activeGuide].tagEs)}
               </span>
               <button

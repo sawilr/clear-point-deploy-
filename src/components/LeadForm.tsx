@@ -372,11 +372,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             <label className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Preferred Language', 'Idioma Preferido')}</label>
             <div className="flex gap-3">
               <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer min-h-[44px]">
-                <input type="radio" name="preferred_language" value="en" aria-label={t('English', 'Inglés')} checked={formData.preferred_language === 'en'} onChange={handleChange} className="accent-earth-800" />
+                <input type="radio" name="preferred_language" value="en" checked={formData.preferred_language === 'en'} onChange={handleChange} className="accent-earth-800 w-6 h-6" />
                 English
               </label>
               <label className="flex items-center gap-2 text-sm text-earth-700 cursor-pointer min-h-[44px]">
-                <input type="radio" name="preferred_language" value="es" aria-label={t('Spanish', 'Español')} checked={formData.preferred_language === 'es'} onChange={handleChange} className="accent-earth-800" />
+                <input type="radio" name="preferred_language" value="es" checked={formData.preferred_language === 'es'} onChange={handleChange} className="accent-earth-800 w-6 h-6" />
                 Español
               </label>
             </div>
@@ -428,7 +428,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
                 aria-describedby={errors.consent ? fid('consent_err') : undefined}
                 checked={formData.tcpa_consent}
                 onChange={handleChange}
-                className="mt-0.5 w-5 h-5 accent-earth-800 flex-shrink-0"
+                className="mt-0.5 w-6 h-6 accent-earth-800 flex-shrink-0"
               />
               {/* Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the
                   EXACT canonical TCPA text that gets recorded + SHA-256 hashed, so the

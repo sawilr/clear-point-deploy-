@@ -29,7 +29,7 @@ export default function ThankYou() {
           )}
         </p>
         <a
-          href="tel:18557208555"
+          href="tel:+18557208555"
           className="cp-btn inline-flex items-center justify-center gap-2 bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all hover:shadow-soft mb-4"
         >
           <PhoneIcon className="w-4 h-4" />
@@ -40,7 +40,7 @@ export default function ThankYou() {
             {t('Return to homepage', 'Volver al inicio')}
           </Link>
         </p>
-        <p className="text-earth-500 text-xs mt-6">
+        <p className="text-earth-700 text-sm mt-6">
           {t('Reply STOP to unsubscribe from SMS. Message frequency may vary.', 'Responda STOP para cancelar suscripción de SMS. La frecuencia de mensajes puede variar.')}
         </p>
       </div>

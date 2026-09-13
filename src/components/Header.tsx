@@ -170,7 +170,7 @@ export function Header() {
                 (text-only inline). inline-flex + min-h-[44px] gives a 44px tap
                 target; -my-1 absorbs the growth so the top bar's visual height
                 is unchanged. Width (~95px) already exceeds 44px. */}
-            <a href="tel:18557208555" className="inline-flex items-center min-h-[44px] -my-1 text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-855-720-8555</a>
+            <a href="tel:+18557208555" className="inline-flex items-center min-h-[44px] -my-1 text-gold-400 font-semibold hover:text-cream-50 transition-colors whitespace-nowrap">1-855-720-8555</a>
             <span className="hidden md:inline whitespace-nowrap">&nbsp;|&nbsp; TTY: 711 &nbsp;|&nbsp; {t('Mon–Fri 9am–6pm ET', 'Lun–Vie 9am–6pm ET')}</span>
           </span>
           <div className="flex-shrink-0">
@@ -187,7 +187,7 @@ export function Header() {
             {/* Sawil 2026-07-28 AUDIT CPF-003 — href is the no-JS / middle-click /
                 crawler target, so it must be localized too: onClick alone left
                 <a href="/"> in the DOM on every /es page. */}
-            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0" aria-label={t('Clear Point Senior Advisors — Go to homepage', 'Clear Point Senior Advisors — Ir a la página principal')}>
+            <a href={lp('/')} onClick={(e) => { e.preventDefault(); navigate(lp('/')); window.scrollTo(0, 0); }} className="flex items-center gap-3 group cursor-pointer flex-shrink-0">
               <div className="transition-transform group-hover:scale-105 flex-shrink-0">
                 <LogoSvg size={40} />
               </div>
@@ -197,6 +197,10 @@ export function Header() {
                     tagline was below legible size for a 65+ audience. 12px min. */}
                 <span className="text-[12px] font-semibold tracking-[0.18em] uppercase text-gold-500 mt-1 whitespace-nowrap">{t('Senior Advisors', 'Senior Advisors')}</span>
               </div>
+              {/* AUDIT 2026-09-12 (WCAG 2.5.3 label-in-name) — accessible name from the
+                  visible text + hidden suffix; the old aria-label failed axe/Lighthouse
+                  'label-content-name-mismatch' on every page. */}
+              <span className="sr-only">{t(' — Home', ' — Inicio')}</span>
             </a>
 
             {/* Desktop Nav — tighter gap at lg to fit longer Spanish labels without
@@ -278,7 +282,7 @@ export function Header() {
                 Inline phone link is gated to 2xl (1536px+) to keep the lg-xl range
                 breathing room — phone is still always visible in the top bar above. */}
             <div className="hidden lg:flex items-center gap-3">
-              <a href="tel:18557208555" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors whitespace-nowrap">
+              <a href="tel:+18557208555" className="hidden 2xl:flex text-sm font-bold text-earth-900 items-center gap-1.5 hover:text-gold-500 transition-colors whitespace-nowrap">
                 <PhoneIcon className="w-4 h-4 flex-shrink-0" />
                 1-855-720-8555
               </a>

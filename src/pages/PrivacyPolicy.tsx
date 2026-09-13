@@ -91,7 +91,7 @@ export default function PrivacyPolicy() {
               <li>{t('Revoke TCPA consent at any time', 'Revocar el consentimiento TCPA en cualquier momento')}</li>
             </ul>
             <p className="mt-2">
-              {t('To exercise these rights, contact us at ', 'Para ejercer estos derechos, contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a> {t('or call', 'o llame al')} <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a>.
+              {t('To exercise these rights, contact us at ', 'Para ejercer estos derechos, contáctenos en ')}<a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 underline underline-offset-2 hover:decoration-2">info@clearpointsenioradvisors.com</a> {t('or call', 'o llame al')} <a href="tel:+18557208555" className="text-gold-500 underline underline-offset-2 hover:decoration-2">1-855-720-8555</a>.
             </p>
           </section>
 
@@ -174,8 +174,8 @@ export default function PrivacyPolicy() {
             <p>
               {t('If you have questions about this Privacy Policy, please contact us:', 'Si tiene preguntas sobre esta Política de Privacidad, contáctenos:')}<br />
               <strong>Clear Point Senior Advisors</strong><br />
-              Email: <a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 hover:underline">info@clearpointsenioradvisors.com</a><br />
-              Phone: <a href="tel:18557208555" className="text-gold-500 hover:underline">1-855-720-8555</a><br />
+              Email: <a href="mailto:info@clearpointsenioradvisors.com" className="text-gold-500 underline underline-offset-2 hover:decoration-2">info@clearpointsenioradvisors.com</a><br />
+              Phone: <a href="tel:+18557208555" className="text-gold-500 underline underline-offset-2 hover:decoration-2">1-855-720-8555</a><br />
               {t('TTY: 711', 'TTY: 711')}
             </p>
           </section>

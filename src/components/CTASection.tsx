@@ -98,7 +98,7 @@ export function CTASection({
             </Link>
           )}
           <a
-            href="tel:18557208555"
+            href="tel:+18557208555"
             className={`cp-btn border transition-all active:scale-[0.98] ${
               variant === 'gold'
                 ? 'bg-cream-50 text-earth-900 border-earth-800/15 hover:border-earth-800'

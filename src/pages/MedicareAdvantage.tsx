@@ -76,7 +76,7 @@ export default function MedicareAdvantage() {
                   )}
                 </p>
                 <a
-                  href="tel:18557208555"
+                  href="tel:+18557208555"
                   className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-colors"
                 >
                   {t('Call to Schedule Your SOA', 'Llame para Programar su SOA')}
@@ -112,11 +112,11 @@ export default function MedicareAdvantage() {
                       <div className="font-serif text-earth-900 font-semibold text-base mb-3">{row.feature}</div>
                       <dl className="space-y-2 text-sm">
                         <div>
-                          <dt className="text-[12px] uppercase tracking-wider text-earth-500 font-semibold">{t('Original Medicare', 'Medicare Original')}</dt>
+                          <dt className="text-[13px] uppercase tracking-wider text-earth-700 font-semibold">{t('Original Medicare', 'Medicare Original')}</dt>
                           <dd className="text-earth-700 mt-0.5">{row.orig}</dd>
                         </div>
                         <div>
-                          <dt className="text-[12px] uppercase tracking-wider text-earth-500 font-semibold">{t('Medicare Advantage', 'Medicare Advantage')}</dt>
+                          <dt className="text-[13px] uppercase tracking-wider text-earth-700 font-semibold">{t('Medicare Advantage', 'Medicare Advantage')}</dt>
                           <dd className="text-earth-700 mt-0.5">{row.ma}</dd>
                         </div>
                       </dl>

@@ -114,7 +114,7 @@ export default function OtcBenefits() {
                     'Además de los artículos OTC regulares, algunos planes Medicare Advantage pueden ofrecer una tarjeta ampliada que puede ayudar a pagar comida saludable, comestibles o ciertos recibos de servicios públicos (como luz o gas). Estos beneficios ampliados no están en todos los planes y normalmente requieren elegibilidad adicional — por ejemplo Medicaid, Extra Help/LIS, una condición crónica que cualifique, o un Plan de Necesidades Especiales (SNP). Los montos y las reglas varían por aseguradora, plan, condado o área de servicio y año del plan.'
                   )}
                 </p>
-                <p className="text-earth-500 text-[13px] leading-relaxed mt-3">
+                <p className="text-earth-700 text-sm leading-relaxed mt-3">
                   {t(
                     'This is general education, not a guarantee of benefits. A licensed advisor can verify what a specific plan in your county actually offers.',
                     'Esto es educación general, no una garantía de beneficios. Un asesor licenciado puede verificar lo que un plan específico en su condado realmente ofrece.'
@@ -162,7 +162,7 @@ export default function OtcBenefits() {
                     'Clear Point puede ayudar a explicar y organizar la información del plan, pero el asesor licenciado debe verificar los detalles del plan y el cliente decide. La elegibilidad final, la disponibilidad del plan y las reglas de OTC las determina la aseguradora y el área de servicio del plan.'
                   )}
                 </p>
-                <a href="tel:18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
+                <a href="tel:+18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
                   {t('Call 1-855-720-8555', 'Llame al 1-855-720-8555')}
                 </a>
               </div>
