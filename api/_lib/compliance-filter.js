@@ -298,14 +298,25 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
   const lead = normalized.slice(Math.max(0, matchStart - 40), matchStart);
   if (GENERALISATION_RE.test(lead) && !GENERALISATION_VETO_RE.test(lead) &&
       !GENERALISATION_LEADIN_RE.test(lead)) return false;
-  // RT5-CF-05: the means-tested scan covers the REST OF THE SENTENCE, not a
-  // 70-character window. A long education-shaped preamble used to push the
-  // program name out of the window and buy the whole claim an exemption.
+  //
+  // RED TEAM ROUND 5 (RT5-CF-13, P2). A fixed 70-character window let an
+  // unrelated INDEPENDENT CLAUSE re-scope the claim: "You are eligible for
+  // Medicare at 65, and cost-sharing depends on the plan you choose" was
+  // destroyed because "cost-sharing" landed inside the window. These are exactly
+  // the statutory-education sentences the exemption was built for.
+  //
+  // What decides the claim's scope is its OBJECT — everything from the claim to
+  // the first clause break. A following independent clause is a different
+  // statement and cannot make this one a determination. RT5-CF-05's attack is
+  // still caught, because what gives it away is the relative clause that
+  // redefines the object ("the Medicare program THAT PAYS your Part B
+  // premium"), not a program name sitting past a comma.
   const restOfSentence = normalized.slice(matchEnd).split(/[.!?]/)[0];
+  const objectSpan = restOfSentence.split(/[,;:]|\s+(?:and|but|unlike|except|however|although|though|y|pero|aunque|salvo|excepto|sin\s+embargo)\s+/i)[0];
   const tail = normalized.slice(matchEnd, matchEnd + 70);
-  if (MEANS_TESTED_RE.test(restOfSentence)) return true;     // determination → rule applies
+  if (MEANS_TESTED_RE.test(objectSpan)) return true;         // determination → rule applies
   if (GENERIC_MEDICARE_OBJECT_RE.test(tail) &&
-      !PRICED_PRODUCT_RE.test(restOfSentence) &&
+      !PRICED_PRODUCT_RE.test(objectSpan) &&
       !DESCRIBED_PROGRAM_RE.test(restOfSentence)) return false;   // statutory education → out of scope
   return true;                                               // bare or benefit-specific → rule applies
 }
@@ -331,8 +342,17 @@ const ELIGIBILITY_QUALIFIES_YOU_RE = /\b(?:your|the)\s+[\wáéíóúñü]+(?:\s+
 // "If you are approved, the plan pays the premium" is a conditional rule and
 // stays, exactly as "if you qualify" does.
 const ELIGIBILITY_APPROVED_RE = new RegExp([
-  // English: a result asserted of "you".
-  "\\b(?:you(?:'|’)?re|you\\s+are|you(?:'|’)?ve|you\\s+have|you\\s+got|you\\s+were|you\\s+now\\s+have)\\s+(?:now\\s+|already\\s+|officially\\s+|finally\\s+)?(?:been\\s+)?(?:approved|accepted|all\\s+set|set|in)\\b",
+  // English: a result asserted of "you". "approved" and "accepted" are
+  // determinations on their own.
+  "\\b(?:you(?:'|’)?re|you\\s+are|you(?:'|’)?ve|you\\s+have|you\\s+got|you\\s+were|you\\s+now\\s+have)\\s+(?:now\\s+|already\\s+|officially\\s+|finally\\s+)?(?:been\\s+)?(?:approved|accepted)\\b",
+  // RED TEAM ROUND 5 (RT5-CF-12, P2): "all set" and "in" are NOT determinations
+  // on their own — "You're all set, I have everything I need to have an advisor
+  // call you" is the standard end-of-lead-capture confirmation, and round 4
+  // replaced it with a compliance non-answer, breaking the hand-off turn for
+  // every English lead. They only become determinations when a means-tested
+  // program is named nearby, which is what "Great news, you're in! Extra Help
+  // starts next month." does.
+  "\\b(?:you(?:'|’)?re|you\\s+are)\\s+(?:now\\s+|already\\s+|officially\\s+|finally\\s+)?(?:all\\s+set|in)\\b(?=[^]{0,80}?\\b(?:extra\\s+help|ayuda\\s+adicional|ayuda\\s+extra|qmb|slmb|qdwi|\\blis\\b|low[-\\s]?income\\s+subsidy|medicaid|subsid|medicare\\s+savings|the\\s+program|el\\s+programa)\\b)",
   // "you have Extra Help" — possession of a means-tested program IS a determination.
   "\\byou\\s+(?:now\\s+)?(?:have|got|hold)\\s+(?:the\\s+)?(?:extra\\s+help|ayuda\\s+adicional|low[-\\s]?income\\s+subsidy|lis|qmb|slmb|qdwi|medicaid|medicare\\s+savings)\\b",
   // "It's official", "that's a done deal", "your Extra Help came through".
@@ -893,6 +913,10 @@ export function complianceFilter(text, lang, opts) {
   // letter in the mail" is left alone.
   var fpProgramNamed = false;
   var BARE_RESULT_RE = /^\s*(?:approved|accepted|confirmed|granted|eligible|qualified|aprobad[oa]s?|aceptad[oa]s?|confirmad[oa]s?|otorgad[oa]s?|elegible|calificad[oa])\b[^.!?]{0,12}[.!]?\s*$/i;
+  // A result with no object of its own — harmless alone, a determination when
+  // the very next fragment names the program (RT5-CF-12).
+  var fpWeakResultPending = false;
+  var WEAK_RESULT_RE = /\b(?:you(?:'|’)?re|you\s+are)\s+(?:now\s+|already\s+|officially\s+|finally\s+)?(?:all\s+set|in)\b|\b(?:ya\s+)?est[aá]\s+(?:todo\s+)?list[oa]\b/i;
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
   var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
@@ -927,6 +951,16 @@ export function complianceFilter(text, lang, opts) {
       fpChanged = true; fpTags[ELIGIBILITY_TAG] = true;
       continue;
     }
+    // RT5-CF-12, the other direction: "Great news, you're in!" says nothing on
+    // its own, and "Extra Help starts next month." says nothing on its own, but
+    // together they are a determination. A weak result followed by a program
+    // takes the weak fragment with it. (The program fragment itself is judged
+    // normally below.)
+    if (fpWeakResultPending && MEANS_TESTED_RE.test(normalized)) {
+      if (fpKeep.length) { fpKeep.pop(); fpSeps.pop(); }
+      fpChanged = true; fpTags[ELIGIBILITY_TAG] = true;
+    }
+    fpWeakResultPending = WEAK_RESULT_RE.test(normalized);
     fpProgramNamed = MEANS_TESTED_RE.test(normalized);
     var remove = false;
     var breaks = null;

@@ -141,6 +141,28 @@ removes('CF-11 "Approved." answers the status',   'Here is the status of your Ex
 keeps('CF-11 control: a real follow-up survives',
   'Would you like me to check whether you qualify for Extra Help? It takes two minutes.');
 
+// ── RT5-CF-12: "all set" about the CALL-BACK is not a determination ───────
+keeps('CF-12 end-of-lead-capture confirmation',
+  "You're all set — I have everything I need to have an advisor call you.");
+keeps('CF-12 all set, advisor will review plans',
+  "You're all set. An advisor will review your plan options with you.");
+// …but "all set" about a program still is.
+removes('CF-12 all set FOR a program',  "You're all set for Extra Help.");
+removes('CF-12 you are in, program named next', "Great news, you're in! Extra Help starts next month.");
+
+// ── RT5-CF-13: a following independent clause cannot re-scope the claim ───
+keeps('CF-13 education then cost-sharing',
+  'You are eligible for Medicare at 65, and cost-sharing depends on the plan you choose.');
+keeps('CF-13 education then a Medicaid contrast',
+  'You qualify for Medicare at 65 regardless of income, unlike Medicaid, which has income limits.');
+keeps('CF-13 education then cost-sharing, semicolon',
+  'You are eligible for Medicare at 65; cost-sharing varies by plan.');
+// …the program named in the claim's OWN object is still a determination.
+removes('CF-13 control: the object names the program',
+  'You qualify for Extra Help and the paperwork is simple.');
+removes('CF-13 control: the object names a savings program',
+  'You are eligible for the Medicare Savings Program, so your premium is covered.');
+
 if (failures.length) {
   console.error(`COMPLIANCE FILTER R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');
