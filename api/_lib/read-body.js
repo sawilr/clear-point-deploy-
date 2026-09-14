@@ -46,7 +46,23 @@ export async function readJsonBody(req, res, opts) {
         return null;
       }
     }
-    if (typeof parsed === 'object') return parsed;
+    // AUDIT 2026-09-14 (SEC-05, P3) — when the platform pre-parses the body the
+    // byte cap above never runs, so an arbitrarily large object reached every
+    // handler. The parse cost is already sunk at this point, so the guard here is
+    // an absurdity bound, not the same tight cap: handlers deliberately TRUNCATE
+    // oversized fields rather than reject them (a long chat transcript is a
+    // legitimate lead note), and that contract is what the suites pin. A body
+    // several times over the limit is not a long note, it is an attack.
+    if (typeof parsed === 'object') {
+      var ABSURD = MAX * 8;
+      var size = 0;
+      try { size = JSON.stringify(parsed).length; } catch (_circular) { size = ABSURD + 1; }
+      if (size > ABSURD) {
+        res.status(413).json({ error: 'Payload too large' });
+        return null;
+      }
+      return parsed;
+    }
     return {};
   }
 

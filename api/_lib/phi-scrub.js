@@ -25,6 +25,13 @@ const MBI_RE = /\b[1-9][A-Z][A-Z0-9]\d\s?-?\s?[A-Z][A-Z0-9]\d\s?-?\s?[A-Z]{2}\d{
 // positions; contiguous 9-digit runs are covered by NINE_DIGIT_RE below.
 const SSN_RE = /\b\d{3}([-.\s])\d{2}\1\d{4}\b/g;
 
+// AUDIT 2026-09-14 (AI-07) — credentials a caller may volunteer. The LABEL is
+// captured so the redaction reads naturally ("my password [REDACTED_CREDENTIAL]")
+// and the assistant can still respond to the topic.
+// The VALUE has to look like a secret — it must carry a digit or be quoted — or a
+// Spanish sentence like "La clave está en el sobre" would lose its verb.
+const CREDENTIAL_RE = /\b((?:my |mi |la |el |su )?(?:password|passcode|pass ?word|pin(?: number| code)?|contrase[nñ]a|clave|usuario y contrase[nñ]a|login|user ?name|credential(?:s)?|security code|c[oó]digo de seguridad|c[oó]digo de verificaci[oó]n|verification code|otp|one[- ]time (?:code|password))(?:\s+(?:de|of|para|for)\s+[\w.]{1,24})?\s*(?:is|was|are|es|era|son|:|=)\s*)(?:"[^"\n]{3,64}"|'[^'\n]{3,64}'|(?=[^\s]{0,64}\d)[A-Za-z0-9!@#$%^&*_+.-]{3,64})/gi;
+
 // Generic 9-digit run (catches SSN typos)
 const NINE_DIGIT_RE = /\b\d{9}\b/g;
 
@@ -179,6 +186,15 @@ function scrubPHIRaw(text) {
   NINE_DIGIT_RE.lastIndex = 0;
   if (NINE_DIGIT_RE.test(out)) detected.push('NINE_DIGIT');
   out = out.replace(NINE_DIGIT_RE, '[REDACTED_9D]');
+
+  // AUDIT 2026-09-14 (AI-07, P3) — a caller who types a password, PIN or portal
+  // login ("mi clave de Medicare.gov es abc123") had it forwarded verbatim to the
+  // model provider and triggered no warning. Every detected category is numeric
+  // today; this is the first credential rule. The value is replaced, the label
+  // survives so the assistant can still say "never send that here".
+  CREDENTIAL_RE.lastIndex = 0;
+  if (CREDENTIAL_RE.test(out)) detected.push('CREDENTIAL');
+  out = out.replace(CREDENTIAL_RE, function (m, label) { return label + ' [REDACTED_CREDENTIAL]'; });
 
   return { text: out, detected };
 }

@@ -71,7 +71,8 @@ function ack(res) {
 
 export default async function handler(req, res) {
   const allowedOrigin = checkOrigin(req);
-  if (!allowedOrigin) return res.status(403).json({ error: 'Origin not allowed' });
+    // AUDIT 2026-09-14 (SEC-10) — never let a rejection be cached
+  if (!allowedOrigin) { noStorePII(res); return res.status(403).json({ error: 'Origin not allowed' }); }
   applyCors(req, res, allowedOrigin);
   noStorePII(res);
 

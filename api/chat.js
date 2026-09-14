@@ -324,7 +324,7 @@ EACH figure below is tagged with the ONE Part it belongs to. A figure may ONLY a
 - [Part B] annual deductible: $283 (2026).
 - [Part A] inpatient hospital deductible: $1,736 per benefit period (2026).
 - [Part D] out-of-pocket cap: $2,100 (2026) — once a member's covered drug costs reach this, they pay $0 for covered drugs the rest of the year.
-NEVER cite a figure from an older year (2024's $164.90 Part B premium is WRONG now).
+NEVER cite a figure from an older year (the $164.90 Part B premium is the 2023 figure and is WRONG now).
 More 2026 standard figures (state these confidently when asked about THEIR Part; public facts):
 - [Part A] premium: most people pay $0 (40+ work quarters). $311/month with 30-39 quarters; $565/month with fewer than 30 quarters.
 - [Part A] hospital coinsurance: days 61-90 $434/day; lifetime-reserve days $868/day. Skilled nursing (SNF) days 21-100: $217/day.
@@ -429,6 +429,7 @@ export default async function handler(req, res) {
   // ── A15.1 CORS — allowlist our origins, reject everything else ─────────
   var allowedOrigin = checkOrigin(req);
   if (allowedOrigin === null) {
+        noStorePII(res);   // AUDIT 2026-09-14 (SEC-10) — never let a rejection be cached
     return res.status(403).json({ error: 'Origin not allowed' });
   }
   applyCors(req, res, allowedOrigin);
@@ -1263,9 +1264,13 @@ function buildContextSummary(ctx, turnLang, now) {
   if (ctx.zipCode) lines.push('Caller ZIP: ' + ctx.zipCode + (ctx.state ? ' (' + ctx.state + ')' : '') + ' — ALREADY CAPTURED. Use it as the service ZIP. NEVER ask the caller for their ZIP again.');
   if (ctx.zipCode && ctx.state) lines.push('You ALREADY KNOW the caller lives in ' + ctx.state + ' (derived from their ZIP above). NEVER ask which state they live in (NY/NJ/CT) and NEVER ask for the ZIP again. You already have both. Use the state directly: for a Medicaid/Medicaid-program question, answer using ' + ctx.state + ' specifics (e.g. "In New York, Medicaid is handled through the state Medicaid agency...") rather than asking which state. Re-asking something the caller already gave is a failure.');
   if (ctx.state) { var sp = buildStatePrograms(ctx.state); if (sp) lines.push(sp); }
-  if (ctx.name) lines.push('Caller name: ' + ctx.name + ' (already captured — DO NOT ask for it again)');
-  if (ctx.phoneNumber) lines.push('Caller phone: ' + ctx.phoneNumber + ' (already captured — DO NOT ask again)');
-  if (ctx.email) lines.push('Caller email: ' + ctx.email + ' (already captured — DO NOT ask again)');
+  // AUDIT 2026-09-14 (AI-10, P3) — the model needs to KNOW these were captured so
+  // it stops asking; it does not need their values. Only the first name is sent,
+  // because the assistant addresses the caller by it; the phone and email become
+  // presence flags. This is the same posture the lead-enrichment call already has.
+  if (ctx.name) lines.push('Caller first name: ' + String(ctx.name).trim().split(/\s+/)[0] + ' (already captured — DO NOT ask for it again; the full name is on file)');
+  if (ctx.phoneNumber) lines.push('Caller phone: ON FILE (already captured — DO NOT ask again, and never read it back)');
+  if (ctx.email) lines.push('Caller email: ON FILE (already captured — DO NOT ask again, and never read it back)');
   if (ctx.scheduledCallbackWindow) lines.push('Scheduled callback window: ' + ctx.scheduledCallbackWindow);
   if (ctx.advisorHandoffStarted) lines.push('Advisor handoff: IN PROGRESS or COMPLETE — name, phone, email already in system. NEVER ask the caller to give them again.');
   if (ctx.conversationClosed) lines.push('NOTE: Conversation was closed earlier with a warm sign-off. The caller has returned with a new question. Welcome them back briefly, then answer. Their contact details are already captured.');

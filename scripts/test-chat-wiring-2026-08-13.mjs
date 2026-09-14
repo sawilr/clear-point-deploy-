@@ -270,8 +270,13 @@ try {
     const raw = JSON.stringify(outbound);
     check('8.6 free-text phone stripped from the outbound payload', !/555-123-4567/.test(raw) && !/555-9999/.test(raw), 'a dashed phone reached the provider');
     check('8.7 free-text email stripped from the outbound payload', !/jane@test\.com/.test(raw), 'an email reached the provider');
-    check('8.8 the STRUCTURED phoneNumber context field is preserved (prompt depends on it)', /7185551234/.test(outbound.instructions || ''),
-      'the deliberate carve-out for the captured phone was lost');
+    // AUDIT 2026-09-14 (AI-10, P3) — the contract changed: the model has to KNOW a
+    // phone was captured so it stops asking, but it must never receive the number.
+    // This used to assert the opposite (the carve-out that sent 7185551234 through).
+    check('8.8 the captured phone is NOT sent to the provider', !/7185551234/.test(JSON.stringify(outbound)),
+      'the structured phone reached the provider');
+    check('8.8b the prompt still says a phone is on file (so the model stops asking)', /Caller phone: ON FILE/.test(outbound.instructions || ''),
+      'the model was not told the phone is already captured');
   }
   {
     // RT-P3b: whitespace-only model env must fall back to defaults, not model:"".

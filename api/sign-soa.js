@@ -50,7 +50,8 @@ const PRODUCT_LABEL = {
 export default async function handler(req, res) {
   // ── CORS + method gates ────────────────────────────────────────────────
   var allowedOrigin = checkOrigin(req);
-  if (allowedOrigin === null) return res.status(403).json({ error: 'Origin not allowed' });
+    // AUDIT 2026-09-14 (SEC-10) — never let a rejection be cached
+  if (allowedOrigin === null) { noStorePII(res); return res.status(403).json({ error: 'Origin not allowed' }); }
   applyCors(req, res, allowedOrigin);
   noStorePII(res); // Sawil 2026-06-29 SECURITY HOTFIX — never cache SOA/PII responses (finding 05).
   if (req.method === 'OPTIONS') return res.status(204).end();

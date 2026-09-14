@@ -254,6 +254,7 @@ export default async function handler(req, res) {
     // Rejected origin is an operational abuse signal (target 4). The header
     // value is attacker-supplied but non-PII; cap it so logs stay bounded.
     leadAudit('origin_rejected', 403, { origin: String((req.headers && req.headers.origin) || '').slice(0, 100) });
+        noStorePII(res);   // AUDIT 2026-09-14 (SEC-10) — never let a rejection be cached
     return res.status(403).json({ error: 'Origin not allowed' });
   }
   applyCors(req, res, allowedOrigin);
@@ -710,6 +711,19 @@ export default async function handler(req, res) {
       if (/^\d{3}55501\d\d$/.test(national)) return { valid: false, reason: 'Phone appears fake (555 fictional 0100-0199)' };
       if (/^555/.test(national)) return { valid: false, reason: 'Phone appears fake (555 area code)' };
       if (national.slice(3) === '8675309') return { valid: false, reason: 'Phone appears fake (867-5309)' };
+      // AUDIT 2026-09-14 (FORMS-07, P3) — the server was weaker than the client it
+      // is supposed to mirror: ANY 555 exchange is the fictional range, a number
+      // built from two distinct digits is not real, and an 8-digit ascending or
+      // descending run is a keyboard walk. The client rejected all three; the
+      // server accepted them, so a direct POST wrote them to the CRM.
+      if (national.slice(3, 6) === '555') return { valid: false, reason: 'Phone appears fake (555 exchange)' };
+      if (new Set(national.split('')).size <= 2) return { valid: false, reason: 'Phone appears fake (too few distinct digits)' };
+      var asc = '01234567890123456789';
+      var desc = '98765432109876543210';
+      for (var w = 0; w + 8 <= national.length; w++) {
+        var run = national.slice(w, w + 8);
+        if (asc.indexOf(run) !== -1 || desc.indexOf(run) !== -1) return { valid: false, reason: 'Phone appears fake (sequential digits)' };
+      }
       return { valid: true, national: national };
     }
     // Sawil 2026-06-30 AUDIT FIX C2 — validate phone ONLY when one was provided.

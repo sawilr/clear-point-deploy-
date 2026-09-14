@@ -195,12 +195,13 @@
           "value": "max-age=63072000; includeSubDomains; preload"
         },
         {
-          "key": "X-XSS-Protection",
-          "value": "1; mode=block"
+          "_comment": "AUDIT 2026-09-14 (SEC-09, P3) — X-XSS-Protection is removed. Every browser the site supports ignores it, and the legacy auditor it satisfied is not worth the header: '1; mode=block' has known XSS-introducing behaviour in old Chrome, and the CSP below is the real control.",
+          "key": "X-Permitted-Cross-Domain-Policies",
+          "value": "none"
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' https://www.googletagmanager.com https://challenges.cloudflare.com; style-src 'self'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com; frame-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';"
+          "value": "upgrade-insecure-requests; default-src 'self'; script-src 'self' https://www.googletagmanager.com https://challenges.cloudflare.com; style-src 'self'; font-src 'self'; img-src 'self' data: https:; connect-src 'self' https://www.googletagmanager.com https://*.google-analytics.com; frame-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none';"
         }
       ]
     },
