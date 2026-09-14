@@ -174,6 +174,9 @@ function governorSpanIsConditional(span) {
   // "If you qualify you qualify" — the condition is the claim itself, which is
   // not a rule statement; those need real punctuation or a named factor.
   if (/\b(qualif\w*|elegible|califica\w*|entitled)\b/i.test(span)) return false;
+  // Red-team round 4 (RT4-CF-05): "whether you like it or not" and "whether or
+  // not" are concessive, not conditional.
+  if (/\bor\s+not\b|\bo\s+no\b/i.test(span)) return false;
   const words = span.trim().split(/\s+/).filter(Boolean);
   return words.length <= 2;
 }
@@ -232,19 +235,33 @@ const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|'ve|’re|’d|
 // determinations ("you qualify for Extra Help") and bare ones ("you qualify") —
 // never for the statutory education every Medicare page carries ("you're
 // eligible for Medicare at 65"). The claim's OBJECT decides which it is.
-const MEANS_TESTED_RE = /\b(extra\s+help|ayuda\s+adicional|ayuda\s+extra|lis|low[-\s]?income\s+subsidy|subsidio|qmb|slmb|qi|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegibilidad|help\s+paying|ayuda\s+para\s+pagar|assistance\s+program|programa\s+de\s+asistencia|snap|food\s+stamps|cupones)\b/i;
+// Red-team round 4 (RT4-CF-02, P1): "the Part D subsidy" IS Extra Help and
+// "Part B buy-in" IS a Medicare Savings Program — the bare nouns belong here, and
+// the education exemption only applies when the object ENDS at the Medicare word.
+const MEANS_TESTED_RE = /\b(extra\s+help|ayuda\s+adicional|ayuda\s+extra|lis|low[-\s]?income\s+subsidy|subsid(?:y|ies|io|ios)|buy[-\s]?in|premium\s+assistance|cost[-\s]?sharing|qmb|slmb|qi|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegibilidad|help\s+paying|ayuda\s+para\s+pagar|assistance\s+program|programa\s+de\s+asistencia|snap|food\s+stamps|cupones)\b/i;
 const GENERIC_MEDICARE_OBJECT_RE = /^[\s,]*(?:for|to|para|a|en|of|de)?\s*(?:enroll(?:ment)?\s+in\s+|inscribirse\s+en\s+|sign\s+up\s+for\s+)?(?:the|a|an|el|la|un|una|su|your)?\s*(?:original\s+|traditional\s+|medicare\s+)?(?:medicare|parte?\s+[abd]\b|medigap|supplement|suplemento|advantage|coverage|cobertura)/i;
+// …but a promise about a priced product is a determination, not education.
+const PRICED_PRODUCT_RE = /\$\s?\d|\bprima\s+de\b|\bpremium\s+of\b|\b\$0\b/i;
 // A generalisation about other people ("many people like you who qualify…") is
 // not a determination about the caller.
+// Red-team round 4 (RT4-CF-04): a contrastive lead-in ("Unlike most people, you
+// qualify…") is a determination about the caller, not a generalisation.
 const GENERALISATION_RE = /\b(people|persons|folks|gente|personas|those|anyone|someone|alguien|many|muchos|muchas|quienes|los\s+que|las\s+que|others?|otros)\b[^.!?¿]{0,24}$/i;
+const GENERALISATION_VETO_RE = /\b(unlike|except|apart\s+from|a\s+diferencia\s+de|salvo|excepto|but\s+you|pero\s+usted)\b/i;
 const QUESTION_OPENER_RE = /^\s*[¿]|^\s*(?:do|does|did|are|is|was|were|will|would|can|could|should|have|has|how|when|what|which|why)\b/i;
+// Red-team round 4 (RT4-CF-01, P1): a terminal '?' is not a question when the
+// determination rides in a complement clause ("Did I mention you qualify?").
+// The exemption survives only when the interrogative subject IS the claim's
+// subject and no speech/knowledge verb introduces it.
+const RHETORICAL_QUESTION_RE = /\b(know|knew|aware|told|tell|mention|heard|believe|imagine|guess|blunt|realize|realise|lucky|sab[ií]a|sabe|dije|dijo|mencion\w*|imagina|cre[ae]|adivin\w*|entera\w*)\b/i;
 function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
   // A statement about other people ("many people like you who qualify…") is not
   // a determination about the caller, whatever its object.
-  if (GENERALISATION_RE.test(normalized.slice(Math.max(0, matchStart - 30), matchStart))) return false;
+  const lead = normalized.slice(Math.max(0, matchStart - 40), matchStart);
+  if (GENERALISATION_RE.test(lead) && !GENERALISATION_VETO_RE.test(lead)) return false;
   const tail = normalized.slice(matchEnd, matchEnd + 70);
   if (MEANS_TESTED_RE.test(tail)) return true;               // determination → rule applies
-  if (GENERIC_MEDICARE_OBJECT_RE.test(tail)) return false;   // statutory education → out of scope
+  if (GENERIC_MEDICARE_OBJECT_RE.test(tail) && !PRICED_PRODUCT_RE.test(tail)) return false;   // statutory education → out of scope
   return true;                                               // bare or benefit-specific → rule applies
 }
 // Group 1 = anchor (sentence/clause start or "sí,"), group 2 = the claim. The
@@ -258,6 +275,12 @@ const FORBIDDEN_PHRASES = [
   // Network / formulary confirmations
   /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
   /\bsu\s+(doctor|m[eé]dico|hospital|medicamento|medicina)\s+(est[aá]\s+(cubierto|en\s+la\s+red|en\s+red))/gi,
+  // Red-team round 4 (RT4-CF-07): an approval / "all set" determination is the
+  // same promise as "you qualify", stated as a result.
+  /\b(you'?re|you\s+are|usted\s+(?:est[aá]|ya\s+est[aá]))\s+(?:all\s+set|approved|aprobad[oa]|listo|lista)\b/gi,
+  /\b(you'?ve|you\s+have)\s+been\s+approved\b|\ble\s+aprobaron\b|\bya\s+(?:fue|est[aá])\s+aprobad[oa]\b/gi,
+  /\b(your\s+application|su\s+solicitud)\s+(?:will\s+be|is\s+going\s+to\s+be|ser[aá])\s+(?:approved|aprobada)\b/gi,
+  /\b(ssa|social\s+security|medicare|medicaid|el\s+estado|the\s+state)\s+will\s+approve\s+you\b|\b(?:le|lo|la)\s+van\s+a\s+aprobar\b/gi,
   // Affiliation claims (red-team round 3 RT3-CF-12: "we are Medicare advisors,
   // not Medicare itself" names a role, not an affiliation).
   /\b(we|i)\s+(are|am)\s+(medicare|cms|ssa|the\s+government|medicaid)\b(?!\s*(?:-|advisors?|agents?|brokers?|specialists?|experts?|consultants?|licensed|certified|insurance|plans?|advantage|supplement))/gi,
@@ -365,8 +388,26 @@ const EMERGENCY_USER_RES = [
   /\bsobredosis\b/,
 ];
 // Red-team round 3 (RT3-CF-11 / RT3-CF-I): "9-1-1", "9 1 1" and "nine one one"
-// are the emergency number too — a reply that carries any of them is compliant.
-const EMERGENCY_NUMBER_RE = /\b9[\s.-]?1[\s.-]?1\b|\bnine[-\s]?one[-\s]?one\b/i;
+// are the emergency number too. Red-team round 4 (RT4-CF-03, P1 LIFE SAFETY):
+// a separator-tolerant pattern also matched "$9.11", "9-11" and "section 9.1.1",
+// which silently satisfied the invariant and left a non-emergency reply standing.
+// The digits must not sit inside a number or an amount, AND an instruction verb
+// has to introduce them — a bare numeral is never a 911 instruction.
+const EMERGENCY_NUMBER_TOKEN = /(?<![\d$.,])(?:911|9(?:[\s‐-―.-]1){2})(?!\d|[.,]\d)|\bnine[-\s‐-―]?one[-\s‐-―]?one\b|\bnueve\s+uno\s+uno\b/gi;
+const EMERGENCY_VERB_RE = /\b(call|calling|dial|phone|contact|reach|llame|llamar|llama|marque|marcar|comuni[qc]|911\s*(?:now|right\s+away|inmediatamente|ya))\b/i;
+function carriesEmergencyInstruction(text) {
+  const s = String(text || '');
+  const re = new RegExp(EMERGENCY_NUMBER_TOKEN.source, 'gi');
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (re.lastIndex === m.index) re.lastIndex++;
+    const before = s.slice(Math.max(0, m.index - 40), m.index);
+    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 24);
+    if (EMERGENCY_VERB_RE.test(before) || EMERGENCY_VERB_RE.test(after)) return true;
+  }
+  return false;
+}
+const EMERGENCY_NUMBER_RE = { test: carriesEmergencyInstruction };
 const EMERGENCY_911_REPLY = {
   en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
   es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
@@ -727,19 +768,23 @@ export function complianceFilter(text, lang, opts) {
     var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
     var remove = false;
     var breaks = null;
-    // A question ("Do you qualify for Extra Help?") asks, it does not determine.
-    var isQuestion = /\?\s*$/.test(normalized) && QUESTION_OPENER_RE.test(normalized);
-    for (var ci = 0; ci < claimRes.length && !remove && !isQuestion; ci++) {
+    // A question ("Do you qualify for Extra Help?") asks, it does not determine —
+    // but only when the interrogative subject is the claim's own subject and no
+    // speech verb smuggles a determination into a complement clause (RT4-CF-01).
+    var isQuestion = /\?\s*$/.test(normalized) && QUESTION_OPENER_RE.test(normalized) && !RHETORICAL_QUESTION_RE.test(normalized);
+    for (var ci = 0; ci < claimRes.length && !remove; ci++) {
       var eligRe = new RegExp(claimRes[ci].source, 'gi'); var em;
       while ((em = eligRe.exec(normalized)) !== null) {
         if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
         if (breaks === null) breaks = clauseBreaks(normalized);
         var claimAt = ci === 1 ? em.index + (em[1] || '').length : em.index + claimSubjectOffset(em[0]);
         var deferred = eligibilityClaimIsDeferred(normalized, claimAt, breaks);
-        // A governed clause that ENDS in ':' hands the determination to the next
-        // fragment ("Whether you qualify: yes, you do.") — watch for it.
-        if (deferred && /:\s*$/.test(fpSentence)) fpDropAffirmation = true;
-        if (deferred) continue;
+        // A governed or interrogative clause hands the determination to the next
+        // fragment ("Whether you qualify: yes, you do." / "Do you qualify? Yes.")
+        // — red-team round 4 (RT4-CF-06) added the question form.
+        if ((deferred || isQuestion) && /[:?]\s*$/.test(fpSentence)) fpDropAffirmation = true;
+        if (isQuestion && claimAt > 14) { /* complement clause — keep scanning */ }
+        else if (deferred || isQuestion) continue;
         if (!eligibilityClaimIsScoped(normalized, em.index, em.index + em[0].length)) continue;
         remove = true; fpTags[ELIGIBILITY_TAG] = true; break;
       }

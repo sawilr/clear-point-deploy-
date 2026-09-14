@@ -28,6 +28,8 @@ import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 // plus a generic phone/email sweep; the CRM note keeps the original text.
 // Official reference numbers a story may legitimately quote (never redacted).
 // Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
 var OFFICIAL_NUMBERS_RE = /^(1?8006334227|1?8774862048|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/;
 var SEP_CLASS = '[\\s.\\u2010-\\u2015\\u2212/\\\\()-]';
 // Accent- and case-insensitive matcher for one name token (red-team R3-SL-01):
@@ -44,6 +46,9 @@ function tokenPattern(tok) {
     var set = ACCENT_SETS[ch.toLowerCase()];
     if (set) pat += '[' + set + set.toUpperCase() + ']';
     else pat += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Red-team round 4 (R4-SL-05): the text may carry the name in decomposed
+    // form ("Jose" + U+0301) — allow the combining marks after every letter.
+    pat += '[\\u0300-\\u036f]*';
   }
   return pat;
 }
@@ -52,9 +57,11 @@ function scrubIdentityForIntel(text, values, dob) {
   // Red-team FORMS-04-B1 / round 3 R3-SL-07: the story only - never the TCPA
   // receipt or verbatim consent blocks. The cut is taken at the LAST marker so a
   // look-alike block pasted by the client cannot truncate the real story.
-  var markerRe = /—\s*(?:TCPA Receipt|Consent Text)/g;
-  var cut = -1, mk;
-  while ((mk = markerRe.exec(out)) !== null) { cut = mk.index; if (markerRe.lastIndex === mk.index) markerRe.lastIndex++; }
+  // Red-team round 4 (R4-SL-01): cut at the FIRST em-dash marker. The handler
+  // neutralises any look-alike header in client text before appending its own,
+  // so the first one left is the server's — cutting at the last one used to let
+  // the receipt (including the caller's IP) through to the model.
+  var cut = out.search(/—\s*(?:TCPA Receipt|Consent Text)/);
   if (cut >= 0) out = out.slice(0, cut);
   // Red-team FORMS-04-N3 / round 3 R3-SL-08: numbers spelled out in words (EN/ES,
   // including "oh") become digits, with any separator and mixed with digits.
@@ -76,13 +83,14 @@ function scrubIdentityForIntel(text, values, dob) {
     return anyWord ? digits : m;
   });
   // Generic sweeps (phone / long digit runs / email), keeping official numbers.
-  var PHONE_RE = new RegExp('(?:\\+?1' + SEP_CLASS + '?)?\\(?\\d{3}\\)?' + SEP_CLASS + '?\\d{3}' + SEP_CLASS + '?\\d{4}', 'g');
+  // Red-team round 4 (R4-SL-02): separators may be two characters (") ", ". ").
+  var PHONE_RE = new RegExp('(?:\\+?1' + SEP_CLASS + '{0,2})?\\(?\\d{3}\\)?' + SEP_CLASS + '{0,2}\\d{3}' + SEP_CLASS + '{0,2}\\d{4}', 'g');
   out = out.replace(PHONE_RE, function (m) {
     var d = m.replace(/\D/g, '');
     return OFFICIAL_NUMBERS_RE.test(d) ? m : '[phone]';
   });
   // Digit groups split by single separators ("917 555 01 23", "9 1 7 5 5 5 0 1 2 3").
-  var SPACED_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\d' + SEP_CLASS + '?){9,14}\\d(?![\\p{L}\\p{N}])', 'gu');
+  var SPACED_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\d' + SEP_CLASS + '{0,2}){9,14}\\d(?![\\p{L}\\p{N}])', 'gu');
   out = out.replace(SPACED_RE, function (m) {
     var d = m.replace(/\D/g, '');
     if (OFFICIAL_NUMBERS_RE.test(d)) return m;
@@ -116,7 +124,7 @@ function scrubIdentityForIntel(text, values, dob) {
         '(?<![\\p{L}\\p{N}])' + n2(dd) + '[-/.]' + n2(mm) + '[-/.]' + yBoth + '(?![\\p{L}\\p{N}])',
         '(?<![\\p{L}\\p{N}])' + yy + '[-/.]' + n2(mm) + '[-/.]' + n2(dd) + '(?![\\p{L}\\p{N}])',
         mName + '\\s+' + n2(dd) + '(?:st|nd|rd|th)?,?\\s+' + yy,
-        n2(dd) + '[\\s-]+(?:de\\s+)?' + mName + '[\\s-]+(?:de\\s+)?' + yy,
+        n2(dd) + '[\\s-]+(?:de[l]?\\s+)?' + mName + '[\\s-]+(?:de[l]?\\s+)?' + yy,
       ];
       for (var p = 0; p < pats.length; p++) {
         try { out = out.replace(new RegExp(pats[p], 'giu'), '[date]'); } catch (_e) { /* keep going */ }
@@ -158,7 +166,11 @@ function scrubIdentityForIntel(text, values, dob) {
   tokens.sort(function (a, b) { return b.length - a.length; });
   for (var j = 0; j < tokens.length; j++) {
     var pat = tokens[j].split(/\s+/).map(tokenPattern).join('\\s+');
-    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', 'giu'), '[redacted]'); } catch (_e) { /* keep going */ }
+    // Red-team round 4 (R4-SL-03): a 1-2 character token ("Ng", "Li", "Ho") is a
+    // fragment of ordinary prose in both languages, so it is matched only in the
+    // exact capitalisation the lead supplied.
+    var flags = foldToken(tokens[j]).replace(/[^\p{L}\p{N}]/gu, '').length <= 2 ? 'gu' : 'giu';
+    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
   }
   return out;
 }

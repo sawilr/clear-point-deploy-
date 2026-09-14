@@ -251,17 +251,31 @@ function nearestTo(text, center, pattern, maxDist) {
 // of the annual single-value figures, even when the sentence also names the
 // deductible ("$1,736 per benefit period, then $434 per day").
 const PER_DAY_RE = /(coinsurance|coseguro|per day|a day|each day|por d[ií]a|al d[ií]a|daily|diari[oa]|days?\s*\d|d[ií]as?\s*\d|lifetime reserve)/i;
+// Red-team round 4 (RT4-01, P1): proximity alone is not evidence. An amount is
+// only the figure the concept names when it sits in the SAME clause as the
+// keyword and no other cost noun intervenes — otherwise "the Part B deductible
+// is $257 a year, and after that you pay about $40 for a visit" rewrote the $40.
+const OTHER_COST_NOUN_RE = /\b(copay|copayment|coinsurance|copago|coseguro|visit|visita|office|consulta|per\s+month|al\s+mes|a\s+month|monthly\s+cost|costs?\s+you|cuesta|paga|pay\s+about|pays?\s+)\b/i;
 function classifyAt(text, offset) {
   const win = text.slice(Math.max(0, offset - 75), offset + 75).toLowerCase();
   const near = text.slice(Math.max(0, offset - 30), offset + 30);
   if (PER_DAY_RE.test(near)) return null;
-  // Keyword resolution runs on a bounded segment (maxDist is 70) — scanning the
-  // whole reply once per amount made a long reply quadratic.
-  const segLo = Math.max(0, offset - 160);
-  const seg = text.slice(segLo, offset + 160);
-  const segOffset = offset - segLo;
+  // Keyword resolution is bounded by the amount's own CLAUSE inside its sentence:
+  // that keeps it linear AND stops a keyword from claiming an unrelated amount.
+  const sInfo = sentenceAround(text, offset);
+  const rel = offset - sInfo.start;
+  const cBounds = clauseAround(sInfo.text, rel);
+  let seg = sInfo.text.slice(cBounds.start, cBounds.end);
+  let segOffset = rel - cBounds.start;
+  // A leading prepositional phrase ("For Part B, the deductible is $300") puts the
+  // keyword in the previous clause — widen to the sentence when the clause has
+  // none. The cost-noun and magnitude guards below still apply.
+  if (!/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) { seg = sInfo.text; segOffset = rel; }
   const part = nearestTo(seg, segOffset, /\bpart\s*[abd]\b|\bparte\s*[abd]\b/, 70);
   if (!part) return null;
+  // Another cost noun between the concept and the amount means the amount
+  // belongs to that noun, not to the concept.
+  if (OTHER_COST_NOUN_RE.test(seg.slice(Math.max(0, segOffset - 40), segOffset))) return null;
   // The Part letter is the FINAL char of the match ("part b" / "parte b" → "b"),
   // NOT every a/b/d in the phrase ("parte" also contains an "a").
   const letter = part.trim().slice(-1).toLowerCase(); // a|b|d
@@ -283,6 +297,13 @@ function classifyAt(text, offset) {
 
 // TRUE when the sentence already states the correct figure somewhere else — the
 // amount under review is then the other side of a comparison or a range.
+// Red-team round 4 (RT4-01): a figure two orders of magnitude away from the
+// verified value is not a mis-stated version of it — it is a different amount.
+function magnitudePlausible(val, fig) {
+  if (!isFinite(val) || val <= 0) return false;
+  const ratio = val > fig.value ? val / fig.value : fig.value / val;
+  return ratio <= 3;
+}
 function sentenceCarriesFigure(sentence, fig) {
   const plain = String(fig.value);
   const grouped = fig.display;
@@ -306,11 +327,13 @@ export function verifyMedicareFigures(text) {
     // is matched whole — it used to be read as the decimal 1.73 and rewritten
     // into "$1,7366". The trailing (?!\d) keeps any unmatched digit out.
     // Red-team round 3 (MED02-RT3-16): amounts written as "257 dólares" / "USD 257".
-    const MONEY = /(\$\s?|USD\s?)(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+|\d+(?:\.\d{1,2})?)(?!\d)|(\d{1,3}(?:[.,]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(d[oó]lares|dollars)\b/gi;
+    // Red-team round 4 (RT4-07): the Spanish decimal-comma form ("$1.736,50",
+    // "$250,50") is matched whole, so a correct figure is never half-rewritten.
+    const MONEY = /(\$\s?|USD\s?)(\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+|\d+,\d{2}(?!\d)|\d+(?:\.\d{1,2})?)(?!\d)|(\d{1,3}(?:[.,]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(d[oó]lares|dollars)\b/gi;
     const out = text.replace(MONEY, function (match, cur, num, plainNum, unit, offset) {
       const raw = String(num != null ? num : plainNum);
       const dotThousands = /^\d{1,3}(?:\.\d{3})+$/.test(raw);
-      const commaDecimal = unit != null && /^\d{1,3}(?:\.\d{3})*,\d{1,2}$/.test(raw);
+      const commaDecimal = /^\d{1,3}(?:\.\d{3})*,\d{1,2}$/.test(raw);
       const val = parseFloat(dotThousands ? raw.replace(/\./g, '')
         : commaDecimal ? raw.replace(/\./g, '').replace(',', '.')
           : raw.replace(/,/g, ''));
@@ -318,7 +341,10 @@ export function verifyMedicareFigures(text) {
       const amountAt = offset + (num != null ? String(cur || '').length : 0);
       const sentInfo = sentenceAround(text, amountAt);
       if (DISQUALIFY_CONTEXT.test(sentInfo.text)) return match; // variability / history — leave it
-      if (DISQUALIFY_BEFORE_AMOUNT.test(text.slice(Math.max(sentInfo.start, amountAt - 16), amountAt))) return match;
+      // Red-team round 4 (RT4-02): the window ends at the digits, so the '$' or
+      // 'USD' the marker introduces has to come off before the anchored test.
+      const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 20), amountAt).replace(/(?:\$|USD)\s*$/i, '');
+      if (DISQUALIFY_BEFORE_AMOUNT.test(beforeAmount)) return match;
       const concept = classifyAt(text, amountAt);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
       const fig = MEDICARE_FIGURES_2026[concept];
@@ -327,7 +353,13 @@ export function verifyMedicareFigures(text) {
       // Red-team round 3 (MED02-RT3-03): a sentence that ALREADY carries the
       // right figure is a comparison ("increased from $257 to $283") — rewriting
       // the other side produces "$283 to $283". Never touch those.
-      if (sentenceCarriesFigure(sentInfo.text, fig)) return match;
+      // Red-team round 4 (RT4-03): scope the comparison guard to the amount's own
+      // clause, so the right figure quoted elsewhere in a long sentence does not
+      // silence a genuine correction.
+      const relAmt = amountAt - sentInfo.start;
+      const cb2 = clauseAround(sentInfo.text, relAmt);
+      if (sentenceCarriesFigure(sentInfo.text.slice(cb2.start, cb2.end), fig)) return match;
+      if (!magnitudePlausible(val, fig)) return match;   // a different amount, not a mis-stated one
       // Correct only a genuinely different definitive value.
       if (Math.abs(val - fig.value) > 0.009) {
         corrections.push({ concept: concept, said: val, correct: fig.value });

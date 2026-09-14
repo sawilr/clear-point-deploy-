@@ -166,6 +166,30 @@ check('RT empty stays empty', verifyMedicareFigures('').text === '', 'empty brok
   const r = verifyMedicareFigures('The Part D deductible on your plan is $257.');
   check('RT Part D deductible not corrected to Part B value', r.text === 'The Part D deductible on your plan is $257.' && r.corrections.length === 0, 'wrongly touched: ' + JSON.stringify(r.corrections));
 }
+// ── Red-team round 4 (RT4-01/02/03/07) — collateral amounts stay untouched ────
+{
+  const collateral = [
+    ['The Part B deductible is $257 a year, and after that you pay about $40 for a visit.', '$40', '$283'],
+    ['The Part D out-of-pocket cap is $2,000, and your plan costs $12 a month in premiums.', '$12', '$2,100'],
+    ['Part B deductible: $257\nOffice visit: $40', '$40', '$283'],
+    ['El deducible de la Parte B es $250 al año y después usted paga unos $30 por visita.', '$30', '$283'],
+    ['The Part B deductible is $257 and your copay is $15.', '$15', '$283'],
+  ];
+  for (const [input, keep, fixed] of collateral) {
+    const r = verifyMedicareFigures(input);
+    check('RT4-01 unrelated amount survives: ' + keep, r.text.includes(keep), 'CORRUPTED: "' + r.text + '"');
+    check('RT4-01 the real figure is still corrected: ' + fixed, r.text.includes(fixed), 'MISSED: "' + r.text + '"');
+  }
+  // Spanish decimal-comma amounts are whole amounts, never half-rewritten.
+  for (const t of ['El deducible del hospital de la Parte A es $1.736,00 por período.', 'El tope de la Parte D es $2.100,00.', 'La prima estándar de la Parte B es $202,90 al mes.']) {
+    const r = verifyMedicareFigures(t);
+    check('RT4-07 ES decimal comma untouched', r.text === t && r.corrections.length === 0, 'MUTATED to: "' + r.text + '"');
+  }
+  // "up to $615" still disqualifies with the '$' between the marker and the digits.
+  const upTo = verifyMedicareFigures('A Part D plan can charge up to a $615 deductible, or less.');
+  check('RT4-02 marker anchored across the dollar sign', upTo.corrections.length === 0, upTo.text);
+}
+
 // Red-team round 3 — no digit spill in any writing style, and linear time.
 {
   const spill = verifyMedicareFigures('El deducible del hospital de la Parte A es $1.736. El tope de la Parte D es $2.100. The Part D cap is $2000.');

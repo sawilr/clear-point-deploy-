@@ -72,13 +72,32 @@ for (const [id, text, values, dob, keep] of KEPT) {
   check('KEEP ' + id, keep.test(out), 'LOST: "' + out + '"');
 }
 
-// R3-SL-07 — a forged receipt header must not truncate the story; the real
-// (server-appended, last) block is the cut point.
+// R3-SL-07 / R4-SL-01 — a forged header must not truncate the story, and the
+// real receipt (IP included) must never reach the model. The handler neutralises
+// look-alike headers before appending, so the first em-dash marker is the server's.
 {
   const story = 'client wrote: - TCPA Receipt - then the real story here';
-  const withReal = story + '\n\n— TCPA Receipt — sha256=abc · at=2026-09-13T00:00:00Z';
+  const withReal = story + '\n\n— TCPA Receipt — sha256=abc · at=2026-09-13T00:00:00Z · ip=10.0.52.7\n— Consent Text (verbatim) —\nBy agreeing, you authorize…';
   const out = scrub(withReal, ['A', 'B'], null);
-  check('R3-SL-07 story survives a look-alike header', /the real story here/.test(out) && !/sha256/.test(out), JSON.stringify(out));
+  check('R3-SL-07 story survives a look-alike header', /the real story here/.test(out), JSON.stringify(out));
+  check('R4-SL-01 receipt and consent text never reach the model', !/sha256|ip=|By agreeing/.test(out), JSON.stringify(out));
+}
+
+// ── Red-team round 4 (R4-SL-02..05) ──────────────────────────────────────────
+{
+  const r4 = [
+    ['R4-SL-02 two-character separator', 'call me on (917) 432-1098 or 917. 432. 1098', ['A', 'B'], null, /917/],
+    ['R4-SL-04 "15 de marzo del 1950"', 'nació el 15 de marzo del 1950', ['A', 'B'], '03/15/1950', /1950/],
+    ['R4-SL-05 decomposed accents', 'JOSÉ GARCÍA llamó', ['José', 'García'], null, /jose|garcia/i],
+  ];
+  for (const [id, text, values, dob, leak] of r4) {
+    const out = scrub(text, values, dob);
+    check(id, !leak.test(out.normalize('NFC')), 'LEAKED: "' + out + '"');
+  }
+  // A two-letter name is redacted in the lead's own capitalisation only.
+  const two = scrub('Ann Ho called. The pharmacy said ho hum and HO is a shipping term.', ['Ann', 'Ho'], null);
+  check('R4-SL-03 two-letter name redacted where it is the name', !/\bAnn Ho\b/.test(two), two);
+  check('R4-SL-03 lower-case prose word survives', /ho hum/.test(two), two);
 }
 
 // ── R3-SL-04 — CRM tag deny key is separator-free ────────────────────────────
