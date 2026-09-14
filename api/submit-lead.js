@@ -47,8 +47,28 @@ var PHONE_SEP = '[\\s.,\\u2010-\\u2015\\u2212/\\\\()-]';
 // Accent- and case-insensitive matcher for one name token (red-team R3-SL-01):
 // "JOSE", "jose", "Jose" and "Jose" with any accent are the same person.
 var ACCENT_SETS = { a: 'aàáâäãåā', e: 'eèéêëē', i: 'iìíîïī', o: 'oòóôöõō', u: 'uùúûüū', n: 'nñ', c: 'cç', y: 'yýÿ' };
+//
+// RED TEAM ROUND 5 (R5-SL-08, P3). Cyrillic and Greek letters that are visually
+// identical to Latin ones went straight through the identity scrub: a name
+// written with а, е, о, р, с, х or their capitals looks exactly like the lead's
+// name to a reader and matches nothing. The confusables are folded to Latin on
+// BOTH sides — the pattern and the haystack — so the match survives the
+// substitution. Only the copy sent to the enrichment model is folded; the CRM
+// note keeps the original text.
+var CONFUSABLES = {
+  'А': 'A', 'В': 'B', 'Е': 'E', 'З': '3', 'И': 'N', 'К': 'K', 'М': 'M', 'Н': 'H', 'О': 'O',
+  'Р': 'P', 'С': 'C', 'Т': 'T', 'У': 'Y', 'Х': 'X', 'Ѕ': 'S', 'І': 'I', 'Ј': 'J',
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x', 'ѕ': 's', 'і': 'i', 'ј': 'j',
+  'Α': 'A', 'Β': 'B', 'Ε': 'E', 'Ζ': 'Z', 'Η': 'H', 'Ι': 'I', 'Κ': 'K', 'Μ': 'M', 'Ν': 'N',
+  'Ο': 'O', 'Ρ': 'P', 'Τ': 'T', 'Υ': 'Y', 'Χ': 'X',
+  'α': 'a', 'ο': 'o', 'ρ': 'p', 'ν': 'v', 'κ': 'k', 'ι': 'i', 'τ': 't', 'υ': 'u', 'χ': 'x',
+};
+var CONFUSABLE_RE = /[АВЕЗИКМНОРСТУХЅІЈаеорсухѕіјΑΒΕΖΗΙΚΜΝΟΡΤΥΧαορνκιτυχ]/g;
+function foldConfusables(s) {
+  return String(s).replace(CONFUSABLE_RE, function (c) { return CONFUSABLES[c] || c; });
+}
 function foldToken(tok) {
-  return String(tok).normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return foldConfusables(String(tok).normalize('NFD').replace(/[̀-ͯ]/g, ''));
 }
 //
 // RED TEAM ROUND 5 (R5-SL-03, P2). The round-4 case-sensitivity fix chose the
@@ -83,7 +103,10 @@ function scrubIdentityForIntel(text, values, dob) {
   // Red-team round 4 (R4-SL-05): normalise the haystack — a decomposed name
   // ("Sofi" + U+0301 + "a") or one carrying a zero-width character used to slip
   // past every pattern. Both sides are compared in the same composed form.
-  var out = String(text || '').normalize('NFC').replace(/[​-‍⁠﻿]/g, '');
+  // R5-SL-08: the haystack is folded the same way the patterns are, so a name
+  // spelled with Cyrillic look-alikes still matches. The fold is 1:1 on code
+  // points, so every offset in the CRM copy still lines up.
+  var out = foldConfusables(String(text || '').normalize('NFC').replace(/[​-‍⁠﻿]/g, ''));
   // Red-team FORMS-04-B1 / round 3 R3-SL-07: the story only - never the TCPA
   // receipt or verbatim consent blocks. The cut is taken at the LAST marker so a
   // look-alike block pasted by the client cannot truncate the real story.
@@ -126,7 +149,12 @@ function scrubIdentityForIntel(text, values, dob) {
   });
   // Generic sweeps (phone / long digit runs / email), keeping official numbers.
   // Red-team round 4 (R4-SL-02): separators may be two characters (") ", ". ").
-  var PHONE_RE = new RegExp('(?:\\+?1' + PHONE_SEP + '{0,3})?\\(?\\d{3}\\)?' + PHONE_SEP + '{0,3}\\d{3}' + PHONE_SEP + '{0,3}\\d{4}', 'g');
+  // RED TEAM ROUND 5 (R5-SL-10, P3): without token boundaries this matched INSIDE
+  // a longer digit run, consuming the first ten digits and leaving the tail in
+  // the clear — below the nine-digit floor of the generic mask, so the remainder
+  // was never masked at all. The guards make it match whole tokens only, and the
+  // generic sweep then takes the long run in one piece.
+  var PHONE_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\+?1' + PHONE_SEP + '{0,3})?\\(?\\d{3}\\)?' + PHONE_SEP + '{0,3}\\d{3}' + PHONE_SEP + '{0,3}\\d{4}(?![\\p{L}\\p{N}])', 'gu');
   out = out.replace(PHONE_RE, function (m) {
     var d = m.replace(/\D/g, '');
     return OFFICIAL_NUMBERS_RE.test(d) ? m : '[phone]';
@@ -240,6 +268,36 @@ function scrubIdentityForIntel(text, values, dob) {
       }
     }
   }
+  //
+  // RED TEAM ROUND 5 (R5-SL-11, P3). The metadata beside these notes is
+  // deliberately coarsened to Safe-Harbor form — a three-digit ZIP and a
+  // five-year age band — and the notes then handed the model the ZIP5 and the
+  // exact age in plain prose, in the same request. Coarsening one channel while
+  // the other stays exact protects nobody. Both are now banded in the prose to
+  // match, so the two channels agree.
+  //
+  // A ZIP is only masked when it is written AS a ZIP: a bare five-digit number
+  // is far more often a dollar figure or a plan ID, and those carry meaning the
+  // advisor needs.
+  out = out.replace(/\b(zip|zip\s*code|postal\s*code|c[oó]digo\s*postal)\b([^\d\n]{0,12})(\d{3})\d{2}(?![\d-])/gi,
+    function (_m, label, gap, three) { return label + gap + three + 'xx'; });
+  out = out.replace(/(?<![\p{L}\p{N}$.,-])(\d{3})\d{2}(?=\s*(?:zip|c[oó]digo\s*postal)\b)/giu, '$1xx');
+  // An exact age is banded the same five years the metadata uses.
+  var ageBand = function (n) {
+    var v = Number(n);
+    if (!isFinite(v) || v < 18 || v > 120) return null;
+    if (v >= 90) return '90+';
+    var lo = Math.floor(v / 5) * 5;
+    return lo + '-' + (lo + 4);
+  };
+  out = out.replace(/\b(i\s*(?:a|')m|i\s+am|im)\s+(\d{2,3})(?=\s*(?:years?\s*old|yrs?\b|\b))/gi,
+    function (m, lead, n) { var b = ageBand(n); return b ? lead + ' ' + b : m; });
+  out = out.replace(/\b(tengo|cumpl[oí]|voy\s+a\s+cumplir|tiene)\s+(?:los\s+)?(\d{2,3})(?=\s*a[nñ]os)/gi,
+    function (m, verb, n) { var b = ageBand(n); return b ? verb + ' ' + b : m; });
+  // The lookbehind keeps this from banding the upper bound of a band the two
+  // rules above already wrote ("75-79 years old" must not become "75-75-79").
+  out = out.replace(/(?<![\d-])(\d{2,3})\s+(years?\s+old|a[nñ]os\s+de\s+edad)\b/gi,
+    function (m, n, tail) { var b = ageBand(n); return b ? b + ' ' + tail : m; });
   // Exact values, longest first. Red-team round 3 (R3-SL-01/02/03): names match
   // case- AND accent-insensitively; the full "First Last" bigram is redacted
   // unconditionally; a value whose tokens are all shorter than 3 characters
@@ -269,7 +327,17 @@ function scrubIdentityForIntel(text, values, dob) {
     else for (var q2 = 0; q2 < parts.length; q2++) { if (!STOP.test(parts[q2])) tokens.push(parts[q2]); }
     if (parts.length > 1) tokens.push(parts.join(''));    // "O'Brien-Smith" joined
   }
-  if (nameParts.length > 1) tokens.push(nameParts.join(' '));   // the full name
+  if (nameParts.length > 1) {
+    tokens.push(nameParts.join(' '));   // the full name
+    // RED TEAM ROUND 5 (R5-SL-09, P3): the full name with no separator at all is
+    // how it arrives in a handle or a spoken email address — "mariagonzalez",
+    // "maria.gonzalez", "Maria_Gonzalez" — and none of those was ever a token,
+    // so the lead's full name travelled to the enrichment model intact. The
+    // reversed order is how a Spanish speaker often writes it.
+    tokens.push(nameParts.join(''));
+    tokens.push(nameParts.slice().reverse().join(' '));
+    tokens.push(nameParts.slice().reverse().join(''));
+  }
   tokens = tokens.filter(function (x, idx, arr) { return x && arr.indexOf(x) === idx; });
   tokens.sort(function (a, b) { return b.length - a.length; });
   for (var j = 0; j < tokens.length; j++) {
@@ -278,7 +346,9 @@ function scrubIdentityForIntel(text, values, dob) {
     // exact capitalisation the lead supplied.
     var bare = foldToken(tokens[j]).replace(/[^\p{L}\p{N}]/gu, '');
     var caseSensitive = bare.length <= 2 || (!/\s/.test(tokens[j]) && AMBIGUOUS_NAME.test(bare));
-    var pat = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, caseSensitive); }).join('\\s+');
+    // R5-SL-09: the separator between the parts of a name may be whitespace, a
+    // dot, an underscore, a hyphen — or nothing at all.
+    var pat = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, caseSensitive); }).join('[\\s._-]*');
     var flags = caseSensitive ? 'gu' : 'giu';
     try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
     //
@@ -291,7 +361,7 @@ function scrubIdentityForIntel(text, values, dob) {
     // when an introduction cue puts it in a name position. The everyday word
     // ("la pastilla rosa", "cerca del mar") has no such cue and survives.
     if (caseSensitive && bare.length > 2) {
-      var anyCase = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, false); }).join('\\s+');
+      var anyCase = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, false); }).join('[\\s._-]*');
       try {
         out = out.replace(new RegExp(
           '(\\b(?:soy|me\\s+llamo|mi\\s+nombre\\s+es|se\\s+llama|habla|le\\s+habla|aqu[ií]|atentamente|firmado|firma|saludos|sr\\.?|sra\\.?|srta\\.?|se[nñ]or|se[nñ]ora|se[nñ]orita|don|do[nñ]a|' +

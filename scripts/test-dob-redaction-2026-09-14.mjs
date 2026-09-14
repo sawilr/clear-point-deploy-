@@ -39,7 +39,7 @@ function liftFunction(name) {
   return SRC.slice(start, i + 1);
 }
 
-const DEPS = ['foldToken', 'tokenPattern', 'scrubIdentityForIntel'];
+const DEPS = ['foldConfusables', 'foldToken', 'tokenPattern', 'scrubIdentityForIntel'];
 const factory = new Function(
   'var OFFICIAL_NUMBERS_RE = ' + (SRC.match(/var OFFICIAL_NUMBERS_RE = (.+);/) || [, '/^$/'])[1] + ';\n' +
   'var SEP_CLASS = ' + (SRC.match(/var SEP_CLASS = (.+);/) || [, "'[\\\\s-]'"])[1] + ';\n' +
@@ -47,6 +47,8 @@ const factory = new Function(
   'var ACCENT_SETS = ' + (SRC.match(/var ACCENT_SETS = (\{[^\n]+\});/) || [, '{}'])[1] + ';\n' +
   'var AMBIGUOUS_NAME = ' + (SRC.match(/var AMBIGUOUS_NAME = (.+);/) || [, '/^$/'])[1] + ';\n' +
   'var WORD_DIGITS = ' + (SRC.match(/var WORD_DIGITS = (\{[\s\S]*?\});/) || [, '{}'])[1] + ';\n' +
+  'var CONFUSABLES = ' + (SRC.match(/var CONFUSABLES = (\{[\s\S]*?\n\};)/) || [, '{};'])[1] + '\n' +
+  'var CONFUSABLE_RE = ' + (SRC.match(/var CONFUSABLE_RE = (.+);/) || [, '/(?!)/g'])[1] + ';\n' +
   DEPS.map(liftFunction).join('\n') + '\n' +
   'return scrubIdentityForIntel;'
 );

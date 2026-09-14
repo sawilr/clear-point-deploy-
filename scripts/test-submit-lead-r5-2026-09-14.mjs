@@ -40,9 +40,12 @@ const head = [
   'var ACCENT_SETS = ' + SRC.match(/var ACCENT_SETS = (\{[^\n]+\});/)[1] + ';',
   'var AMBIGUOUS_NAME = ' + SRC.match(/var AMBIGUOUS_NAME = (.+);/)[1] + ';',
   'var WORD_DIGITS = ' + SRC.match(/var WORD_DIGITS = (\{[\s\S]*?\});/)[1] + ';',
+  'var CONFUSABLES = ' + SRC.match(/var CONFUSABLES = (\{[\s\S]*?\n\};)/)[1],
+  'var CONFUSABLE_RE = ' + SRC.match(/var CONFUSABLE_RE = (.+);/)[1] + ';',
 ].join('\n');
-const scrub = new Function(head + '\n' + ['foldToken', 'tokenPattern', 'scrubIdentityForIntel'].map(lift).join('\n') + '\nreturn scrubIdentityForIntel;')();
+const scrub = new Function(head + '\n' + ['foldConfusables', 'foldToken', 'tokenPattern', 'scrubIdentityForIntel'].map(lift).join('\n') + '\nreturn scrubIdentityForIntel;')();
 
+const NAMES = ['Maria', 'Gonzalez'];
 let passed = 0;
 const failures = [];
 function eq(label, got, want) {
@@ -118,7 +121,11 @@ ok('SL-05 a 7-digit local number written as digits is masked',
   'got ' + JSON.stringify(scrub('my number is 5550123', ['A', 'B'], '')));
 // Short quantities and years are NOT phone numbers and must survive.
 eq('SL-05 a year survives', scrub('I have had this plan since 2019.', ['A', 'B'], ''), 'I have had this plan since 2019.');
-eq('SL-05 a ZIP survives', scrub('My ZIP is 11201 in Brooklyn.', ['A', 'B'], ''), 'My ZIP is 11201 in Brooklyn.');
+// A labelled ZIP is no longer left whole — R5-SL-11 coarsens it to three
+// digits to match the metadata. What matters for R5-SL-05 is that it is not
+// mistaken for a phone number and blanked entirely: the area is still legible.
+eq('SL-05 a ZIP is coarsened, not masked as a number',
+  scrub('My ZIP is 11201 in Brooklyn.', ['A', 'B'], ''), 'My ZIP is 112xx in Brooklyn.');
 eq('SL-05 a dollar amount survives', scrub('The premium is 174 dollars.', ['A', 'B'], ''), 'The premium is 174 dollars.');
 {
   const t = 'Call 1-800-MEDICARE at 1-800-633-4227 for help.';
@@ -139,6 +146,9 @@ ok('SL-06 control: an unknown lead_type still produces no tag', leadTypeFn('anyt
 
 // ── R5-SL-07: the support bot's controlled vocabulary survives ───────────
 const denyFn = new Function('tag',
+  'var CONFUSABLES = ' + SRC.match(/var CONFUSABLES = (\{[\s\S]*?\n\};)/)[1] + '\n' +
+  'var CONFUSABLE_RE = ' + SRC.match(/var CONFUSABLE_RE = (.+);/)[1] + ';\n' +
+  lift('foldConfusables') + '\n' +
   lift('foldToken') + '\n' +
   SRC.match(/var _denyKeys = .+;/)[0] + '\n' +
   SRC.match(/var _denyFamilyPrefix = .+;/)[0] + '\n' +
@@ -171,6 +181,57 @@ for (const tag of ['Consent Captured', 'ConsentCaptured', 'consent_captured', 'C
   'Status-NewLead', 'Status Enrolled', 'DNC', 'Do Not Call', 'Temp-Hot', 'AI-Flagged',
   'SOA', 'SOA-Signed', 'utm-source', 'Source-Google', 'LeadType-MA_LEAD']) {
   ok(`SL-07 the server-owned tag "${tag}" is still refused`, denyFn(tag), 'ALLOWED');
+}
+
+// ── R5-SL-08: a homoglyph is the same name to a reader ───────────────────
+for (const [label, text] of [
+  ['Cyrillic o in the surname', 'Hi, I am Maria Gоnzalez and I need help.'],
+  ['Cyrillic a in the given name', 'Hi, I am Mаria Gonzalez and I need help.'],
+  ['Greek omicron', 'Soy Maria Gοnzalez y necesito ayuda.'],
+]) {
+  const got = scrub(text, NAMES, '');
+  ok(`SL-08 ${label} is still redacted`, got.includes('[redacted]') && !/onzalez|aria/.test(got.replace('[redacted]', '')), 'got ' + JSON.stringify(got));
+}
+
+// ── R5-SL-09: the full name with no separator is still the full name ─────
+for (const [label, text] of [
+  ['joined handle',     'my email handle is mariagonzalez at gmail'],
+  ['dotted handle',     'write to maria.gonzalez about it'],
+  ['underscore handle', 'my user is Maria_Gonzalez on the portal'],
+  ['reversed order',    'soy Gonzalez Maria y necesito ayuda'],
+]) {
+  const got = scrub(text, NAMES, '');
+  ok(`SL-09 ${label} is redacted`, got.includes('[redacted]'), 'got ' + JSON.stringify(got));
+}
+
+// ── R5-SL-10: a long run must be masked whole, not decapitated ───────────
+{
+  const got = scrub('my number is 917555012345678 ok', NAMES, '');
+  ok('SL-10 a 15-digit run leaves no digits behind', !/\d/.test(got), 'got ' + JSON.stringify(got));
+}
+ok('SL-10 a normal phone is still masked',
+  scrub('call me at 917-555-0123 please', NAMES, '').includes('[phone]'));
+
+// ── R5-SL-11: the prose must not undo the metadata coarsening ────────────
+for (const [label, text, mustNotContain] of [
+  ['EN zip',      'My ZIP is 11201 and I live in Brooklyn.', '11201'],
+  ['ES zip',      'Mi codigo postal es 07302 en Jersey City.', '07302'],
+  ['EN age',      "I'm 78 years old and on a fixed income.", '78'],
+  ['ES age',      'Tengo 78 anos y vivo sola.', '78'],
+  ['bare age',    'I am 67 and just retired.', '67'],
+]) {
+  const got = scrub(text, NAMES, '');
+  ok(`SL-11 ${label} is coarsened`, !got.includes(mustNotContain), 'got ' + JSON.stringify(got));
+}
+// …and a five-digit number that is NOT a ZIP keeps its meaning.
+for (const [label, text, mustContain] of [
+  ['a dollar figure',     'The premium is 11201 dollars, which cannot be right.', '11201'],
+  ['a plan id',           'My plan number is H1234-005 on the card.', 'H1234-005'],
+  ['a year',              'I have had this plan since 2019.', '2019'],
+  ['an unlabelled total', 'The total was 12500 for the year.', '12500'],
+]) {
+  const got = scrub(text, NAMES, '');
+  ok(`SL-11 control: ${label} survives`, got.includes(mustContain), 'got ' + JSON.stringify(got));
 }
 
 if (failures.length) {
