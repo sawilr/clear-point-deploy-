@@ -26,17 +26,39 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // A bare "$0" elsewhere is not this claim: "you pay $0 for covered Part D drugs
 // once you reach the cap" is a statutory fact, and the agency's own "$0 Cost to
 // You" is about our fee, not a plan premium.
-const CLAIM_RE = /(?:\$\s?0|\bzero\b|\bcero\b)[^.!?\n]{0,40}?\b(?:premium|prima)\b|\b(?:premium|prima)\b[^.!?\n]{0,40}?(?:\$\s?0\b|\bzero\b|\bcero\b)|\bpremium[-\s]free\b|\bsin\s+prima\b/gi;
+//
+// RED TEAM ROUND 6 (RT6-06, P2). Three realistic renderings walked past the
+// first version: "no monthly premium at all" (the zero written as a negation),
+// "$0/month ... plans" (the zero separated from the word premium by a cadence),
+// and "$0 premium vary by county" — that last one passed because the bare word
+// "vary" counted as a cost qualifier, which it is not: it says the PRICE varies,
+// not that the beneficiary still owes the Part B premium.
+// The window excludes quotes, commas and brackets so a comma-separated keyword
+// ARRAY ("'no puedo pagar medicare', 'prima'") is not read as a sentence.
+const CLAIM_RE = /(?:\$\s?0|\bzero\b|\bcero\b|\bno\b)[^.!?\n'"`,\[\]]{0,30}?\b(?:premium|prima)\b|\b(?:premium|prima)\b[^.!?\n'"`,\[\]]{0,30}?(?:\$\s?0\b|\bzero\b|\bcero\b)|\bpremium[-\s]free\b|\bsin\s+prima\b|\$\s?0\s*(?:\/|\s+(?:a|per)\s+)\s*(?:mo\b|month|mes)|\b(?:plan|plans|planes|cobertura|coverage)\b[^.!?\n]{0,40}?(?:costs?\s+you\s+nothing|is\s+completely\s+free|es\s+totalmente\s+grat\w+)/gi;
 // Premium-free PART A is the statutory fact, not a plan promise: the phrase
 // names its own subject and nobody is being sold anything.
 const PART_A_RE = /\bpart\s*a\b|\bparte\s*a\b/i;
 // What makes it honest: Part B keeps being paid, or the other costs are named.
-const QUALIFIER_RE = /\bpart\s*b\s+premium\b|\bparte\s*b\b|\bprima\s+de\s+la\s+parte\s*b\b|\bdeducti(?:ble|bles)\b|\bdeducible|\bcopay|\bcopago|\bcoinsurance\b|\bcoseguro\b|\bnetwork\s+rules\b|\breglas\s+de\s+red\b|\bnot\s+all\s+plans\b|\bno\s+todos\s+los\s+planes\b|\bplan\s+availability\b|\bvar(?:y|ies|[ií]a)\b|\bbeyond\s+part\s*b\b/i;
+// RT6-06: "vary" left this list. A claim that the PRICE varies by county is not
+// a statement of what the beneficiary still owes, which is the whole point of
+// the qualifier. What remains names a real remaining cost or the Part B premium.
+const QUALIFIER_RE = /\bpart\s*b\s+premium\b|\bparte\s*b\b|\bprima\s+de\s+la\s+parte\s*b\b|\bdeducti(?:ble|bles)\b|\bdeducible|\bcopay|\bcopago|\bcoinsurance\b|\bcoseguro\b|\bnetwork\s+rules\b|\breglas\s+de\s+red\b|\bout[-\s]of[-\s]pocket\b|\bgastos\s+de\s+bolsillo\b|\bbeyond\s+part\s*b\b/i;
 
 // Copy lives in these files. Route components and the shared content modules.
 const SCAN_DIRS = ['src/pages', 'src/components', 'src/data', 'src/lib'];
-// Not user-visible copy: the compliance filter fixtures and the test corpora.
-const SKIP_FILE = /(safetyRouter|complianceFilter|customerServiceEngine)\.ts$/;
+//
+// RED TEAM ROUND 6 (RT6-07, P2). customerServiceEngine.ts was on this list under
+// a comment calling it "not user-visible copy". It is the opposite: it holds the
+// deterministic reply a senior gets when they ask what a zero-dollar premium
+// means. A red team replaced that reply with "your coverage is completely free"
+// and the gate printed OK — the file it refused to read is the single
+// highest-risk file for this exact rule. It is scanned now.
+//
+// The two that remain hold detection patterns, not replies, and the assertion
+// below proves it rather than trusting the comment.
+const SKIP_FILE = /(safetyRouter|complianceFilter)\.ts$/;
+const SKIP_REASON = 'holds detection patterns only, no reply strings';
 
 const problems = [];
 
@@ -52,15 +74,27 @@ function sentencesAround(text, index) {
   return text.slice(start, Math.min(end2 + 1, start + 700));
 }
 
-function walk(dir, out = []) {
+function walk(dir, out = [], skippedOnly = false) {
   let entries;
   try { entries = readdirSync(dir); } catch { return out; }
   for (const name of entries) {
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.tsx?$/.test(name) && !SKIP_FILE.test(name)) out.push(p);
+    if (statSync(p).isDirectory()) walk(p, out, skippedOnly);
+    else if (/\.tsx?$/.test(name) && (skippedOnly ? SKIP_FILE.test(name) : !SKIP_FILE.test(name))) out.push(p);
   }
   return out;
+}
+
+// RT6-07: a skipped file that emits reply strings is a hole in this gate, so the
+// skip list has to justify itself on every run rather than in a comment.
+for (const dir of SCAN_DIRS) {
+  for (const file of walk(join(root, dir), [], true)) {
+    if (!SKIP_FILE.test(file)) continue;
+    const src = readFileSync(file, 'utf8');
+    if (/^\s*(?:en|es)\s*:\s*['"`]/m.test(src)) {
+      problems.push(`${file.slice(root.length + 1)} is on the skip list as "${SKIP_REASON}", but it contains reply strings. Either scan it or correct the reason.`);
+    }
+  }
 }
 
 for (const dir of SCAN_DIRS) {

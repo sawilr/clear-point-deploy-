@@ -45,7 +45,19 @@ if (apiYear !== chatYear || apiYear !== tsYear) {
 {
   const { pathToFileURL } = await import('node:url');
   const mod = await import(pathToFileURL(join(root, 'api/_lib/medicare-figures.js')).href);
-  const figs = mod.MEDICARE_FIGURES_2026 || {};
+  //
+  // RED TEAM ROUND 6 (RT6-02, P2). `mod.MEDICARE_FIGURES_2026 || {}` meant that
+  // renaming the export — which is exactly what the January rollover does —
+  // turned the whole value check into a no-op loop over an empty object, and the
+  // gate printed OK. Measured: the export renamed to 2027 AND every dollar
+  // figure in the prompt made wrong ($8,000 Part D cap, $174.70 Part B premium)
+  // still exited 0. A gate that cannot find what it checks has FAILED, not
+  // passed, and the key count stops a half-emptied object from passing either.
+  const figs = mod['MEDICARE_FIGURES_' + apiYear] || mod.MEDICARE_FIGURES_2026;
+  if (!figs || typeof figs !== 'object' || Object.keys(figs).length < 4) {
+    console.error(`[figures-year] cannot find a populated MEDICARE_FIGURES_${apiYear} export in api/_lib/medicare-figures.js — the value check cannot run, so this build is not verified.`);
+    process.exit(1);
+  }
   const chat = read('api/chat.js');
   const ts = read('src/data/medicare-figures-2026.ts');
   const problems = [];

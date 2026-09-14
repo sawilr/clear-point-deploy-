@@ -102,13 +102,29 @@ for (const file of walk(join(root, 'src'))) {
   }
 }
 
+//
+// RED TEAM ROUND 6 (RT6-05, P2). Sections 3 and 4 were `if (found) { check }`
+// with no else, so an ordinary refactor made them skip themselves in silence
+// while the gate printed the all-clear. Measured: writing the attribute as
+// `name={'medicare_status'}` — valid JSX, identical DOM — and deriving the union
+// the normal TypeScript way with `(typeof VALUES)[number]` hid two real drift
+// defects that were still in the tree, and the gate exited 0.
+//
+// A structural probe that finds nothing has FAILED. Section 1 already said so;
+// these two now match it, and each asserts a minimum member count so a probe
+// that matches an empty shell cannot pass either.
+
 // ── 3. The LeadForm coverage <select> options must be accepted. ──────────
 {
   const form = readFileSync(join(root, 'src', 'components', 'LeadForm.tsx'), 'utf8');
-  const select = form.match(/name="medicare_status"[\s\S]*?<\/select>/);
-  if (select) {
-    for (const [, value] of select[0].matchAll(/<option value="([^"]*)"/g)) {
-      if (!value) continue;
+  const select = form.match(/name=(?:"medicare_status"|\{\s*['"`]medicare_status['"`]\s*\})[\s\S]*?<\/select>/);
+  if (!select) {
+    fail('cannot find the medicare_status <select> in src/components/LeadForm.tsx — this check cannot run, so the coverage values are unverified');
+  } else {
+    const options = [...select[0].matchAll(/<option value=(?:"([^"]*)"|\{\s*['"`]([^'"`]*)['"`]\s*\})/g)]
+      .map((m) => m[1] ?? m[2]).filter((v) => v);
+    if (options.length < 4) fail(`the medicare_status <select> yielded only ${options.length} option values — the parse is wrong, not the form`);
+    for (const value of options) {
       if (MEDICARE_STATUSES.indexOf(norm(value)) === -1) {
         fail(`the LeadForm coverage option "${value}" is not in the server MEDICARE_STATUSES allow-list`);
       }
@@ -119,9 +135,16 @@ for (const file of walk(join(root, 'src'))) {
 // ── 4. Clara's MedicareStatus union must be accepted. ────────────────────
 {
   const clara = readFileSync(join(root, 'src', 'lib', 'claraOuterFlow.ts'), 'utf8');
+  // Both the literal union and the `as const` array it is commonly derived from.
   const union = clara.match(/export type MedicareStatus\s*=\s*([^;]+);/);
-  if (union) {
-    for (const [, value] of union[1].matchAll(/'([^']+)'/g)) {
+  const derived = clara.match(/export const MEDICARE_STATUS_VALUES\s*=\s*\[([^\]]*)\]\s*as\s+const/);
+  const source = (derived && derived[1]) || (union && !/\[number\]/.test(union[1]) ? union[1] : null);
+  if (!source) {
+    fail("cannot resolve Clara's MedicareStatus values in src/lib/claraOuterFlow.ts — this check cannot run, so they are unverified");
+  } else {
+    const values = [...source.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    if (values.length < 3) fail(`Clara's MedicareStatus resolved to only ${values.length} values — the parse is wrong, not the union`);
+    for (const value of values) {
       if (MEDICARE_STATUSES.indexOf(norm(value)) === -1) {
         fail(`Clara's MedicareStatus value "${value}" is not in the server MEDICARE_STATUSES allow-list`);
       }

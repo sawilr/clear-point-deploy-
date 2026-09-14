@@ -58,8 +58,35 @@ for (const s of list) {
   const r = spawnSync('npx', ['tsx', `scripts/${s}`], { shell: true, encoding: 'utf8', timeout: 15 * 60 * 1000 });
   const out = (r.stdout || '') + (r.stderr || '');
   const summary = out.split('\n').reverse().find((l) => /passed|PASS|assertions|checks|RESULT/i.test(l) && l.trim()) || '';
-  const ok = r.status === 0;
+  //
+  // RED TEAM ROUND 6 (RT6-13, P2). The exit status was the only signal, and the
+  // runner printed the suite's own "0/3 checks passed, 3 FAILED" line right next
+  // to the word PASS without reading it. Two ways a suite reported green while
+  // asserting nothing: it forgot process.exit(1) after printing its failures, and
+  // its fixture array was empty so it printed "0/0 assertions passed". A suite
+  // whose fixtures vanish must not be able to report success.
+  //
+  // The summary line is evidence now: a zero total, a pass count below the total,
+  // or a failure marker anywhere in the output fails the suite whatever it
+  // exited with.
+  const clean = summary.replace(/\x1b\[[0-9;]*m/g, '');
+  const counts = clean.match(/(\d+)\s*(?:\/|of)\s*(\d+)/) || clean.match(/RESULT:\s*(\d+)\s+passed,\s*(\d+)\s+failed/i);
+  let evidenceOk = true;
+  let why = '';
+  if (counts) {
+    const a = Number(counts[1]), b = Number(counts[2]);
+    // "12/12 passed" and "RESULT: 12 passed, 0 failed" are both matched above;
+    // the first form means a-of-b, the second means a passed and b failed.
+    const isResultForm = /RESULT:\s*\d+\s+passed/i.test(clean);
+    if (isResultForm) { if (b > 0) { evidenceOk = false; why = `${b} reported failures`; } if (a === 0) { evidenceOk = false; why = 'asserted nothing'; } }
+    else { if (b === 0) { evidenceOk = false; why = 'asserted nothing'; } else if (a < b) { evidenceOk = false; why = `${b - a} reported failures`; } }
+  }
+  if (/\bFAILED\b|\bFAILURES\b|AssertionError|✗/.test(out) && !/0\s+failed|FAILURES:\s*$/i.test(clean)) {
+    if (r.status === 0 && evidenceOk) { evidenceOk = false; why = 'failure markers in the output'; }
+  }
+  const ok = r.status === 0 && evidenceOk;
   if (!ok) failed++;
+  if (r.status === 0 && !evidenceOk) console.log(`      (exit 0 but ${why} — the runner does not take a suite's word for it)`);
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${s.padEnd(52)} ${((Date.now() - started) / 1000).toFixed(1)}s  ${summary.replace(/\x1b\[[0-9;]*m/g, '').trim().slice(0, 90)}`);
   if (!ok) console.log(out.split('\n').filter((l) => /✗|FAIL|Error|error/.test(l)).slice(0, 8).map((l) => '      ' + l.trim().slice(0, 160)).join('\n'));
 }
