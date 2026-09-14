@@ -357,7 +357,15 @@
      sentence returned the launcher, so the text a visitor has to read before
      choosing was painted over. While the banner is open the launcher steps
      aside; it comes back as soon as the visitor chooses. */
-  body.cp-consent-open .cp-zara-fab { opacity: 0; pointer-events: none; }
+  /* AUDIT 2026-09-14 (CPR5-CLIENT-04, P2) — this hid the launcher from the MOUSE
+     only. A tab scan found it still at stop #64, the stop right after the
+     banner's own buttons: an invisible 93x56 focus target with no focus ring
+     (WCAG 2.4.7 and 2.4.11), and pressing Enter there opened the chat panel on
+     top of the consent decision this rule exists to protect —
+     `pointer-events: none` blocks hit-testing, not keyboard activation.
+     `display: none` removes it from the tab order and the accessibility tree
+     together; the other two properties stay as belt and braces. */
+  body.cp-consent-open .cp-zara-fab { display: none; opacity: 0; pointer-events: none; }
 }
 
 /* AUDIT 2026-09-14 (CPR5-CLIENT-03, P1) — background scroll lock for the

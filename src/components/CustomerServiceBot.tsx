@@ -216,6 +216,18 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(
     () => typeof window !== 'undefined' && (window.innerHeight < 600 || window.innerWidth < 768)
   );
+  // CPR5-CLIENT-12 — true on the narrow phones where the longer Spanish
+  // placeholder wraps inside a fixed-height input. Tracked rather than read once
+  // so a rotation or a resized window picks the right wording up.
+  const [narrowViewport, setNarrowViewport] = useState<boolean>(
+    () => typeof window !== 'undefined' && window.innerWidth <= 360
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setNarrowViewport(window.innerWidth <= 360);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
   // Debounce scroll-pin detection so transient typing-indicator
   // appear/disappear doesn't flip the pin state.
   const scrollPinDebounceRef = useRef<number | null>(null);
@@ -1520,10 +1532,30 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     // Red-team round 4 (CPR4-CLIENT-03): a bare acknowledgement ("ok", "claro",
     // "correcto") is not authorisation to be contacted. Only an unambiguous
     // agreement counts; everything else falls through to the re-prompt.
-    const AGREE = /^(s[ií],?\s*acepto|acepto|autorizo|estoy de acuerdo|de acuerdo|yes,?\s*i agree|i agree|i consent|agreed|s[ií],?\s*autorizo)$/;
-    const DECLINE = /^(no|nope|ahora no|not now|no,?\s*gracias|no,?\s*thanks|no thank you|no quiero|i do not agree|don'?t agree|no acepto|no autorizo)$/;
-    if (AGREE.test(t)) return 'agree';
+    //
+    // AUDIT 2026-09-14 (CPR5-CLIENT-06 P2 and CPR5-CLIENT-09 P3). The round-4
+    // narrowing was right about consent and wrong about refusal, and it looped
+    // the wrong visitor.
+    //
+    // DECLINE is checked FIRST and matches by CONTAINMENT, because a false
+    // decline is the safe direction and a missed one is not. "stop" — the
+    // statutory SMS opt-out keyword this site's own pages teach — classified as
+    // unclear, so a visitor who used the word we taught them was told their
+    // answer was not good enough and asked again for authorisation. So did
+    // "Remove me", "No me llamen" and "I don't agree" (that last one only
+    // because the alternation was anchored and the sentence starts with "I").
+    //
+    // AGREE stays strict — a bare acknowledgement like "ok" or "claro" is still
+    // not authorisation — but it no longer refuses the plain answer to its own
+    // yes/no question. 21 of 28 affirmative phrasings were being re-prompted,
+    // including "Yes", "Sí", "I agree to be contacted" and "Autorizo que me
+    // llamen", while plain "no" was accepted: an asymmetry that looped only the
+    // consenting visitor. The consenting verbs may now carry their object, and a
+    // bare yes to an explicit yes/no prompt counts.
+    const DECLINE = /^(?:no|nope|nah|non)$|\b(stop|unsubscribe|remove\s+me|opt\s*out|cancel|do\s*n[o']?t\s+(?:agree|contact|call|text)|no\s+me\s+(?:llame|llamen|contacte|contacten|manden)|no\s+estoy\s+de\s+acuerdo|no\s+acepto|no\s+autorizo|no\s+quiero|dejen\s+de|d[eé]jenme\s+en\s+paz|ahora\s+no|not\s+now|no\s+gracias|no\s+thanks?|no\s+thank\s+you)\b/;
+    const AGREE = /^(?:(?:s[ií]|yes|ok(?:ay)?|sure)[,.\s]*)?(?:acepto|autorizo|estoy\s+de\s+acuerdo|de\s+acuerdo|i\s+agree|i\s+consent|i\s+accept|agreed|doy\s+mi\s+consentimiento)(?:\s+(?:que\s+me\s+(?:llamen|contacten|llame|contacte)|a\s+que\s+me\s+(?:llamen|contacten)|to\s+be\s+(?:contacted|called)|to\s+contact\s+me))?$|^(?:s[ií]|yes)$/;
     if (DECLINE.test(t)) return 'decline';
+    if (AGREE.test(t)) return 'agree';
     return 'unclear';
   }
   async function handleOuterConsent(agree: boolean, typed = false) {
@@ -2267,7 +2299,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
                   ? 'Solo su nombre…'
                   : state.step === 'asking_zip'
                     ? '5 dígitos…'
-                    : 'Escriba su mensaje…'
+                    // AUDIT 2026-09-14 (CPR5-CLIENT-12, P4) — "Escriba su
+                    // mensaje…" wraps inside a fixed-height input at 320px and
+                    // renders as "Escriba su" with "mensaje" cut off at the
+                    // bottom edge. The shorter Spanish wording fits on one line;
+                    // the accessible name below keeps the full phrase.
+                    : narrowViewport
+                      ? 'Escriba aquí…'
+                      : 'Escriba su mensaje…'
                 : state.step === 'asking_name'
                   ? 'Just your name…'
                   : state.step === 'asking_zip'
