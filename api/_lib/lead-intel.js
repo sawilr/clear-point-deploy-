@@ -85,13 +85,28 @@ export async function analyzeLeadIntelligence(input) {
   // Trim aggressively — long transcripts blow the token budget.
   if (notes.length > 4000) notes = notes.slice(0, 4000) + '… [truncated]';
 
+  // RED TEAM ROUND 5 (R5-SL-02, P1) — a boundary guard, independent of what the
+  // caller allow-lists. These lines sit ABOVE the notes delimiter, so anything
+  // that reaches them uncapped outranks the scrubbed story: a 50,000-character
+  // state slipped past the 4,000-character notes cap, and a newline inside a
+  // metadata value let an injected instruction occupy its own line. Every
+  // metadata value is now single-lined and short, whatever the caller passed.
+  function meta(v, max) {
+    if (v == null) return '';
+    return String(v).replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, max || 40);
+  }
+  var mZip = meta(metadata.zipCode, 5);
+  var mState = meta(metadata.state, 20);
+  var mAge = meta(metadata.age, 10);
+  var mStatus = meta(metadata.medicareStatus, 40);
+
   var userPayload = [
-    'Source: ' + source,
-    'Language: ' + language,
-    metadata.zipCode ? 'ZIP: ' + metadata.zipCode : null,
-    metadata.state ? 'State: ' + metadata.state : null,
-    metadata.age ? 'Age: ' + metadata.age : null,
-    metadata.medicareStatus ? 'Current coverage: ' + metadata.medicareStatus : null,
+    'Source: ' + meta(source, 60),
+    'Language: ' + meta(language, 10),
+    mZip ? 'ZIP: ' + mZip : null,
+    mState ? 'State: ' + mState : null,
+    mAge ? 'Age: ' + mAge : null,
+    mStatus ? 'Current coverage: ' + mStatus : null,
     '',
     '=== Lead notes / conversation ===',
     notes,
