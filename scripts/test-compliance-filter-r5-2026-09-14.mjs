@@ -224,6 +224,43 @@ keeps('CF-15 control: a stranded pronoun with nothing after it',
     JSON.stringify(r.text));
 }
 
+// RED TEAM ROUND 6 — the round-5 fixes attacked in turn.
+
+// CF6-04: cutting the object at any "and" cut it at a COORDINATED NOUN PHRASE,
+// so the second programme rode out on the first one's education exemption.
+removes('CF6-04 coordinated object',        'You are eligible for Medicare and Extra Help.');
+removes('CF6-04 coordinated with a comma',  'You qualify for Medicare, and also for Extra Help.');
+removes('CF6-04 ES coordinated',            'Usted es elegible para Medicare y para la Ayuda Adicional.', 'es');
+// …and the sentence the exemption exists for still survives.
+keeps('CF6-04 control: a real following clause still ends the object',
+  'You are eligible for Medicare at 65, and cost-sharing depends on the plan you choose.');
+
+// CF6-07: the Spanish verb list enumerated inflections and missed the future,
+// the periphrastic future and the present perfect — the tenses a bot reaches for
+// when it promises something.
+removes('CF6-07 ES simple future',        'Usted calificara para Ayuda Adicional.', 'es');
+removes('CF6-07 ES future plural',        'Ustedes calificaran para Ayuda Adicional.', 'es');
+removes('CF6-07 ES present perfect',      'Usted ha calificado para Ayuda Adicional.', 'es');
+removes('CF6-07 ES periphrastic future',  'Usted va a calificar para Ayuda Adicional.', 'es');
+removes('CF6-07 ES embedded future',      'Ya sabemos que usted calificara para el subsidio por bajos ingresos.', 'es');
+// The hedge is still a hedge, and that is what the stem could have broken.
+keeps('CF6-07 control: "puede calificar" is a hedge, not a determination',
+  'Usted puede calificar para Ayuda Adicional; un asesor licenciado puede revisarlo.', 'es');
+keeps('CF6-07 control: EN hedge survives',
+  'You may qualify for Extra Help, and a licensed advisor can review it with you.');
+
+// CF6-16: the caregiver refusal fired whenever a relative was MENTIONED, so
+// correct education about the caller's own rights was destroyed.
+keeps('CF6-16 AEP education beside a daughter',
+  'Su hija puede acompanarle en la llamada, y usted puede cambiar de plan durante el periodo de inscripcion abierta.', 'es');
+keeps('CF6-16 taking a message is allowed',
+  'Con gusto tomo el mensaje de su hija; su cobertura no cambia por hablar conmigo.', 'es');
+// …and the refusal still fires when the relative holds the authority.
+removes('CF6-16 control: the relative IS the subject',
+  'Su hija puede hacer cambios en su plan si ella llama.', 'es');
+removes('CF6-16 control: explicit power of attorney',
+  'You are authorized to make changes because you are her power of attorney.');
+
 if (failures.length) {
   console.error(`COMPLIANCE FILTER R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

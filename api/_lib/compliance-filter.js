@@ -73,7 +73,7 @@ const SEP_ASSERT_RE = new RegExp([
   '\\b(have|has|had|get|gets|receive|are\\s+in|is\\s+open|opens|opened|runs|lasts|extends|gives\\s+you|grants|triggers|starts|began|begins)\\b',
   '\\b(tiene|tienen|tendr|recibe|obtiene|le\\s+da|se\\s+abre|abre|dura|empieza|comienza|corre|activa)\\w*',
   '\\b(autom[aá]tic\\w*|automatically)\\b',
-  '\\b(qualif\\w*|eligib\\w*|calific\\w*|elegib\\w*)\\b',
+  '\\b(qualif\\w*|eligib\\w*|calific[\wáéíóúñüÁÉÍÓÚÑÜ]*|elegib\\w*)\\b',
   '\\b(right\\s+now|ahora\\s+mismo|today|hoy|immediately|inmediatamente|de\\s+una\\s+vez)\\b',
   '\\b(most\\s+people|la\\s+mayor[ií]a\\s+de\\s+(las\\s+)?personas|anyone\\s+who|cualquiera\\s+que|todos\\s+los\\s+que)\\b',
 ].join('|'), 'i');
@@ -236,7 +236,7 @@ function claimSubjectOffset(matchText) {
 // Red-team round 3 (RT3-CF-K): "may/might/could qualify" is the hedge CMS and
 // SSA themselves use — it states a possibility, not a determination, so those
 // fillers are excluded here rather than rewritten into a non-answer.
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|calific(?:aron|aba[n]?|ar[ií]an?|[aá]s|a[sn]?|[oó])|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|calific[\wáéíóúñüÁÉÍÓÚÑÜ]*|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 // Red-team round 3 (RT3-CF-A, P1): the rule exists for MEANS-TESTED
 // determinations ("you qualify for Extra Help") and bare ones ("you qualify") —
 // never for the statutory education every Medicare page carries ("you're
@@ -312,7 +312,25 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
   // redefines the object ("the Medicare program THAT PAYS your Part B
   // premium"), not a program name sitting past a comma.
   const restOfSentence = normalized.slice(matchEnd).split(/[.!?]/)[0];
-  const objectSpan = restOfSentence.split(/[,;:]|\s+(?:and|but|unlike|except|however|although|though|y|pero|aunque|salvo|excepto|sin\s+embargo)\s+/i)[0];
+  //
+  // RED TEAM ROUND 6 (CF6-04, P1 — a hole in the RT5-CF-13 fix). Cutting the
+  // object at any "and" cut it at a COORDINATED NOUN PHRASE too, so "You are
+  // eligible for Medicare and Extra Help" left an object span of " for
+  // Medicare", bought the statutory-education exemption on it, and carried the
+  // Extra Help determination out. Both earlier revisions removed that sentence.
+  //
+  // The RT5-CF-13 reasoning was about a following INDEPENDENT CLAUSE, which has
+  // its own finite verb ("…, and cost-sharing DEPENDS on the plan"). A second
+  // noun under the same verb is not that. The span now ends only at a boundary
+  // that starts a new subject and verb, so both cases keep working.
+  const FINITE_VERB = '(?:is|are|was|were|has|have|depends?|varies|vary|applies|apply|costs?|comes?|starts?|means?|es|son|era|eran|tiene[ns]?|depende[n]?|var[ií]an?|aplica[n]?|cuesta[n]?|empieza[n]?|significa[n]?)';
+  const CLAUSE_BOUNDARY_RE = new RegExp(
+    '[;:]' +
+    '|\\s+(?:unlike|except|salvo|excepto)\\s+' +
+    '|,?\\s+(?:and|but|however|although|though|y|pero|aunque|sin\\s+embargo)\\s+' +
+    '(?=(?:the\\s+|your\\s+|su\\s+|sus\\s+|el\\s+|la\\s+|los\\s+|las\\s+|a\\s+|an\\s+|un\\s+|una\\s+)?[\\wáéíóúñü-]+\\s+' + FINITE_VERB + '\\b)',
+    'i');
+  const objectSpan = restOfSentence.split(CLAUSE_BOUNDARY_RE)[0];
   const tail = normalized.slice(matchEnd, matchEnd + 70);
   if (MEANS_TESTED_RE.test(objectSpan)) return true;         // determination → rule applies
   if (GENERIC_MEDICARE_OBJECT_RE.test(tail) &&
@@ -324,7 +342,7 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
 // claim position for the deferral test is the END of the anchor.
 // The filler may not swallow the conjunction or a subject pronoun — "Si usted
 // califica" must anchor on "Si " so the deferral test sees the governor.
-const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú])\b)[\wáéíóúñü]+\s+){0,2}(?:calific(?:aron|aba[n]?|ar[ií]an?|[aá]s|a[sn]?|[oó])|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú]|puede[ns]?|podr[ií]an?|podr[ií]a[ns]?|quiz[aá]s?|tal|vez|posiblemente|tal_vez)\b)[\wáéíóúñü]+\s+){0,4}(?:calific[\wáéíóúñüÁÉÍÓÚÑÜ]*|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 const ELIGIBILITY_QUALIFIES_YOU_RE = /\b(?:your|the)\s+[\wáéíóúñü]+(?:\s+[\wáéíóúñü]+)?\s+(?:qualifies|entitles)\s+you\b/gi;
 //
 // RED TEAM ROUND 5 (RT5-CF-07, P1). Round 4 answered the approval determination
@@ -1546,8 +1564,35 @@ export function complianceFilter(text, lang, opts) {
   var tp14Hit = false;
   var tp14Clean = out.split(/(?<=[.!?])\s+/).filter(function (s) {
     var isThirdParty = THIRD_PARTY_RE.test(s);
-    if (AUTHORITY_CLAIM_RE.test(s) && (isThirdParty || /\bauthoriz|autorizad/i.test(s))) { tp14Hit = true; return false; }
-    if (isThirdParty && THIRD_PARTY_CONFIRM_RE.test(s)) { tp14Hit = true; return false; }
+    //
+    // RED TEAM ROUND 6 (CF6-16, P1). The two halves never had to be about the
+    // same person. A bare possessive anywhere in the sentence ("su hija") plus
+    // the caller's OWN capability ("usted puede cambiar de plan durante el
+    // período de inscripción abierta") fired the caregiver refusal and destroyed
+    // correct open-enrollment education. "Con gusto tomo el mensaje de su hija"
+    // went the same way, though taking a message is what this rule's own comment
+    // says is allowed.
+    //
+    // The refusal is for a THIRD PARTY claiming authority. So the third party
+    // has to be the one the authority is attributed to: either the sentence
+    // carries an explicit authority word, or the relative is the subject of the
+    // capability verb. The caller's own rights are not a third party's claim.
+    // The third party must be the subject OF THE CAPABILITY, not merely present
+    // in the sentence: the relative has to sit immediately before the authority
+    // verb the rule matched. "Su hija puede acompañarle …, y usted puede cambiar
+    // de plan" has a daughter and a capability and they belong to different
+    // people, which is the whole defect.
+    var RELATIVE_SUBJECT_RE = /\b(?:su|tu)\s+(?:hija|hijo|madre|padre|mam[aá]|pap[aá]|esposa|esposo|cuidador\w*|apoderad\w*|representante)\s*$|\b(?:your|their|his|her)\s+(?:daughter|son|wife|husband|spouse|caregiver|guardian|mother|father)\s*$/i;
+    var EXPLICIT_AUTHORITY_RE = /\bauthoriz|autorizad|\bPOA\b|power\s+of\s+attorney|apoderad|on\s+(?:their|his|her)\s+behalf|en\s+su\s+nombre\b/i;
+    var authMatch = new RegExp(AUTHORITY_CLAIM_RE.source, 'i').exec(s);
+    var thirdPartyHoldsIt = false;
+    if (authMatch) {
+      var lead = s.slice(Math.max(0, authMatch.index - 40), authMatch.index);
+      thirdPartyHoldsIt = RELATIVE_SUBJECT_RE.test(lead);
+    }
+    if (authMatch && (EXPLICIT_AUTHORITY_RE.test(s) || thirdPartyHoldsIt)) { tp14Hit = true; return false; }
+    if (isThirdParty && THIRD_PARTY_CONFIRM_RE.test(s) &&
+        (EXPLICIT_AUTHORITY_RE.test(s) || thirdPartyHoldsIt || /\b(as|since|because)\s+(you'?re|you\s+are|your)\b/i.test(s))) { tp14Hit = true; return false; }
     return true;
   });
   if (tp14Hit) {
