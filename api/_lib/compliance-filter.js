@@ -230,7 +230,7 @@ function claimSubjectOffset(matchText) {
 // Red-team round 3 (RT3-CF-K): "may/might/could qualify" is the hedge CMS and
 // SSA themselves use — it states a possibility, not a determination, so those
 // fillers are excluded here rather than rewritten into a non-answer.
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 // Red-team round 3 (RT3-CF-A, P1): the rule exists for MEANS-TESTED
 // determinations ("you qualify for Extra Help") and bare ones ("you qualify") —
 // never for the statutory education every Medicare page carries ("you're
@@ -288,7 +288,14 @@ const FORBIDDEN_PHRASES = [
 ];
 // Red-team round 3 (RT3-CF-12): sentence split that does not break on common
 // abbreviations ("Dr. Smith says…"); the separator is captured so it survives.
-const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|Ing|e\.g|i\.e|vs|etc)\.)(?<=[.!?:])\s+|\n+)/i;
+// Red-team round 4 (RT4-CF-10): a list marker ("1.") must not terminate a part,
+// or removing the item leaves a naked number behind.
+const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|Ing|e\.g|i\.e|vs|etc)\.)(?<!(?:^|\n)[ \t]{0,4}\d{1,2}\.)(?<=[.!?:])\s+|\n+)/i;
+// Red-team round 4 (RT4-CF-14): default-ignorable characters (soft hyphen, word
+// joiner, combining grapheme joiner, bidi marks) are invisible to a reader and
+// used to break a pattern. They are stripped from the DETECTION copy only — the
+// kept text stays byte-identical.
+const INVISIBLE_RE = /[­͏؜᠎​-‏‪-‮⁠-⁤﻿]/g;
 
 // ── Plan-recommendation sentences (AUDIT 2026-09-03 R2-C12, P1) ─────────
 // These used to live in FORBIDDEN_PHRASES with inline replacement, which left
@@ -301,6 +308,10 @@ const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|In
 // directory", "le recomiendo el sitio del plan").
 const PLAN_REC_SENTENCE_RES = [
   /\b(the\s+best\s+plan|el\s+mejor\s+plan)\s+(for\s+you|para\s+usted|es|is)\b/gi,
+  // Red-team round 4 (RT4-CF-12): "Plan F is your best Medigap option" used to
+  // survive as "a Medigap plan is your best Medigap option" — the letter was
+  // rewritten but the recommendation itself stayed.
+  /\b(?:is|are|ser[ií]a|es)\s+(?:your|the|su|el|la)\s+best\b|\b(?:your|the)\s+best\s+(?:medigap\s+)?(?:plan|option|choice|coverage|fit)\b|\b(?:su|el)\s+mejor\s+(?:plan|opci[oó]n|cobertura)\b/gi,
   /\bi\s+(?:highly\s+)?recommend\s+(?:the|that)\s+(?!you\b)(?!(?:website|site|page|directory|document|summary|number)\b)(?:[\w'’-]+\s+){0,6}plan\b(?!\s+(?:directory|finder|comparison|directorio|comparador))/gi,
   /\brecommend\s+that\s+you\s+(?:enroll\s+in|sign\s+up\s+for|choose|pick|switch\s+to|get)\s+(?:the\s+|that\s+)?(?:[\w'’-]+\s+){0,6}plan\b/gi,
   /\ble\s+recomiend[oa]\s+(?:mucho\s+)?(?:el|este|ese|un)\s+(?!(?:sitio|p[aá]gina|directorio|documento|resumen|portal|n[uú]mero)\b)(?:[\w'’-]+\s+){0,5}plan\b(?!\s+(?:directorio|comparador))/gi,
@@ -637,7 +648,16 @@ const SAFE_REPLACEMENT = {
  *   - violations: tags of every rule that fired (for logging / telemetry).
  */
 export function complianceFilter(text, lang, opts) {
-  if (!text) return { text: text || '', violations: [] };
+  // Red-team round 4 (RT4-CF-13): an empty reply to a caller in an emergency is
+  // still a reply without the 911 instruction — it must not skip the net.
+  if (!text) {
+    var emptyUser = (opts && typeof opts.latestUserText === 'string') ? opts.latestUserText
+      : ((opts && typeof opts.userText === 'string') ? opts.userText : null);
+    if (emptyUser !== null && matchesEmergency(emptyUser)) {
+      return { text: EMERGENCY_911_REPLY[lang === 'en' ? 'en' : 'es'], violations: ['emergency_no_911'] };
+    }
+    return { text: text || '', violations: [] };
+  }
   var now = (opts && opts.now) || new Date();
   var out = text;
   var violations = [];
@@ -742,7 +762,7 @@ export function complianceFilter(text, lang, opts) {
   // each rule tags the violation once.
   var fpParts = out.split(FP_SPLIT_RE);
   var fpTags = {}; var fpKeep = []; var fpSeps = []; var fpChanged = false;
-  var fpDropBullets = false; var fpDropAffirmation = false;
+  var fpDropBullets = false; var fpDropAffirmation = false; var fpLabelIdx = [];
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
   var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
@@ -765,7 +785,7 @@ export function complianceFilter(text, lang, opts) {
     }
     // Detection copy only (the kept sentence stays byte-identical): collapse
     // whitespace and normalise curly apostrophes (red-team D4).
-    var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
+    var normalized = String(fpSentence).replace(INVISIBLE_RE, '').replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
     var remove = false;
     var breaks = null;
     // A question ("Do you qualify for Extra Help?") asks, it does not determine —
@@ -798,10 +818,11 @@ export function complianceFilter(text, lang, opts) {
     }
     if (remove) {
       fpChanged = true;
-      // Red-team D7 / round 3 RT3-CF-07: a label kept just before the removed
-      // sentence ("Note:", "Here's the thing:") goes with it, and bullets under
-      // a removed label are dropped in the next iterations.
-      if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) { fpKeep.pop(); fpSeps.pop(); }
+      // Red-team D7 / round 3 RT3-CF-07 / round 4 RT4-CF-08: a label kept just
+      // before the removed sentence ("Note:", "Here's the thing:") goes with it —
+      // but only if nothing survives under it, so a heading whose other bullets
+      // remain is not deleted out from under them.
+      if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) fpLabelIdx.push(fpKeep.length - 1);
       if (/:\s*$/.test(fpSentence)) fpDropBullets = true;
       // Red-team round 3 (RT3-CF-L): the removed part's separator may be the line
       // break that kept the neighbours apart — carry it to the previous part.
@@ -812,7 +833,19 @@ export function complianceFilter(text, lang, opts) {
   }
   if (fpChanged) {
     Object.keys(fpTags).forEach(function (t) { violations.push(t); });
-    out = fpKeep.map(function (s, i) { return s + (fpSeps[i] || ''); }).join('').trim();
+    // Drop a label only when nothing is left under it (RT4-CF-08).
+    var fpDropped = {};
+    for (var li = 0; li < fpLabelIdx.length; li++) {
+      var idx = fpLabelIdx[li];
+      var survivorBelow = false;
+      for (var ni = idx + 1; ni < fpKeep.length; ni++) {
+        if (fpDropped[ni]) continue;
+        if (/^\s*(?:[-•*·]|\d+[.)])\s/.test(fpKeep[ni])) { survivorBelow = true; }
+        break;
+      }
+      if (!survivorBelow) fpDropped[idx] = true;
+    }
+    out = fpKeep.map(function (s, i) { return fpDropped[i] ? '' : s + (fpSeps[i] || ''); }).join('').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
     if (!out) out = safe;
     else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
@@ -1081,12 +1114,17 @@ export function complianceFilter(text, lang, opts) {
   // Explicit protective warning — must survive untouched. F-07: allow an
   // optional modal ("we WILL never ask", "we would not need") in the
   // we/I-never alternative.
-  var SSN_WARNING_RE = /(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:will|would|do|shall)?\s*(?:never|don'?t|do\s+not|not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
+  // Red-team round 4 (RT4-CF-09): the Spanish negative warning ("Nunca dé su
+  // número de Seguro Social…") was not in this list, so the unspaced-dash clause
+  // split deleted the protective half and left the reply opening mid-sentence.
+  var SSN_WARNING_RE = /\b(?:nunca|jam[aá]s|no)\s+(?:le\s+)?(?:d[eé]|des|dar|comparta|compartir|env[ií]e|proporcione|escriba|revele|diga)\b|(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:will|would|do|shall)?\s*(?:never|don'?t|do\s+not|not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
   function isSsnAdviceSentence(s) {
     var hasToken = SSN_TOKEN_RE.test(s);
     if (!hasToken && SSN_POSSESSIVE_ES_RE.test(s) && !SS_BENEFIT_CTX_RE.test(s)) hasToken = true;
     if (!hasToken) return false;
-    if (SSN_WARNING_RE.test(s)) return false;      // protective warning — keep
+    // Red-team round 4 (RT4-CF-09): test the warning on the accent-stripped copy
+    // too, so "Nunca dé…" is recognised whatever form the accent arrives in.
+    if (SSN_WARNING_RE.test(s) || SSN_WARNING_RE.test(normLoose(s))) return false;   // protective warning — keep
     if (!SSN_TOKEN_RE.test(s) && SS_BENEFIT_CTX_RE.test(s)) return false;
     return true;
   }
