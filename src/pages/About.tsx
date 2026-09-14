@@ -19,8 +19,8 @@ export default function About() {
         eyebrowEs="Conozca Clear Point Senior Advisors"
         headline="Clear Point Senior Advisors"
         headlineEs="Clear Point Senior Advisors"
-        subheadline="Our licensed advisory team helps Medicare beneficiaries understand their options with clear, bilingual, no-pressure education. Serving New York, New Jersey, and Connecticut."
-        subheadlineEs="Nuestro equipo asesor licenciado ayuda a beneficiarios de Medicare a entender sus opciones con educación clara, bilingüe y sin presión. Sirviendo Nueva York, Nueva Jersey y Connecticut."
+        subheadline="Clear Point helps Medicare beneficiaries understand their options with clear, bilingual, no-pressure education. Serving New York, New Jersey, and Connecticut."
+        subheadlineEs="Clear Point ayuda a beneficiarios de Medicare a entender sus opciones con educación clara, bilingüe y sin presión. Sirviendo Nueva York, Nueva Jersey y Connecticut."
         variant="page"
       />
 
@@ -166,7 +166,7 @@ export default function About() {
             <p className="text-cream-100/70 text-sm">
               {t('Agent Compensation Disclosure: ', 'Divulgación de Compensación del Agente: ')}
               <span className="text-cream-50">
-                {t('Clear Point Senior Advisors and our licensed advisory team are compensated directly by Medicare Advantage and Part D plan sponsors when you enroll in a plan through us. There is no cost to you for our services.', 'Clear Point Senior Advisors y nuestro equipo asesor licenciado son compensados directamente por los patrocinadores de planes de Medicare Advantage y Parte D cuando se inscribe en un plan a través de nosotros. No hay costo para usted por nuestros servicios.')}
+                {t('Clear Point Senior Advisors is compensated directly by Medicare Advantage and Part D plan sponsors when you enroll in a plan through us. There is no cost to you for our services.', 'Clear Point Senior Advisors y nuestro equipo asesor licenciado son compensados directamente por los patrocinadores de planes de Medicare Advantage y Parte D cuando se inscribe en un plan a través de nosotros. No hay costo para usted por nuestros servicios.')}
               </span>
             </p>
           </div>

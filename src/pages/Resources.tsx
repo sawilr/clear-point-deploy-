@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { CTASection } from '../components/CTASection';
@@ -433,6 +433,33 @@ export default function Resources() {
   const gridReveal = useScrollReveal();
   const externalReveal = useScrollReveal();
   const [activeGuide, setActiveGuide] = useState<number | null>(null);
+  // AUDIT 2026-09-13 (R4F-01, P1) — the guide dialog declared aria-modal but did
+  // nothing a modal has to do: focus stayed on the page behind it, Tab walked out
+  // of it, Escape did not close it and focus never came back. WCAG 2.1.2 / 2.4.3.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (activeGuide === null) return;
+    openerRef.current = document.activeElement as HTMLElement | null;
+    const node = dialogRef.current;
+    const FOCUSABLE = 'a[href],button:not([disabled]),textarea,input,select,[tabindex]:not([tabindex="-1"])';
+    node?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setActiveGuide(null); return; }
+      if (e.key !== 'Tab' || !node) return;
+      const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      openerRef.current?.focus?.();
+    };
+  }, [activeGuide]);
 
   return (
     <div className="min-h-screen bg-cream-50">
@@ -507,6 +534,7 @@ export default function Resources() {
           role="presentation"
         >
           <div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby="guide-modal-title"

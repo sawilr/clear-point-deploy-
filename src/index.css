@@ -352,6 +352,12 @@
    viewport. Once the visitor chooses, the class drops and the bar returns. */
 @media (max-width: 430px) {
   body.cp-consent-open .cp-mobile-sticky-bar { display: none; }
+  /* AUDIT 2026-09-13 (R4F-03) — the floating Help launcher sat ON TOP of the
+     consent paragraph at every common phone width: elementFromPoint over the
+     sentence returned the launcher, so the text a visitor has to read before
+     choosing was painted over. While the banner is open the launcher steps
+     aside; it comes back as soon as the visitor chooses. */
+  body.cp-consent-open .cp-zara-fab { opacity: 0; pointer-events: none; }
 }
 
 /* ── UNIFIED CTA BUTTON SYSTEM (Sawil 2026-06-19) ──

@@ -240,6 +240,13 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // messages still look clean (small gap below); long messages with
         // options/chips become readable from the top.
         const msgs = cc.querySelectorAll('[data-msg-id]');
+        // AUDIT 2026-09-13 (R4F-04) — before the visitor has said anything, the
+        // topmost block is the compliance notice (automated assistant, do not
+        // share sensitive data, TPMO). Anchoring the greeting's top scrolled that
+        // notice out of view on a phone, so the page opened on the word
+        // "records." Stay at the top until the conversation actually starts.
+        const hasUserTurn = Array.from(msgs).some((el) => (el as HTMLElement).className.includes('justify-end'));
+        if (!hasUserTurn) { cc.scrollTo({ top: 0, behavior: 'auto' }); return; }
         const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
         // Sawil 2026-07-15 MOBILE SCROLL PATCH (mirrors Zara) — treat the
         // trailing consecutive BOT messages as ONE block; anchor the block's
