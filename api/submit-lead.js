@@ -730,8 +730,24 @@ export default async function handler(req, res) {
     if (intakeBits.length > 0) {
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— Intake —\n' + intakeBits.join('\n');
     }
+    //
+    // RED TEAM ROUND 5 (R5-SL-13, P3). scrubPHI deliberately lets a 10-digit
+    // phone through — it is documented above — and these two fields are appended
+    // AFTER the main PHI net, so a phone typed into "best time to contact" was
+    // minted as a CRM tag NAME: CallTime-9175550123, visible in every tag list
+    // and every workflow filter. A digit run of 4 or more is never a call time
+    // or an interest, so the tag is refused outright rather than half-masked.
+    //
+    // RED TEAM ROUND 5 (R5-SL-14, P4). The old character class DELETED every
+    // accented letter, so on the Spanish path "Mañana" became "Maana" and
+    // "Atención médica" became "Atencin mdica" — mojibake tags on half the leads
+    // this bilingual site serves. Accents are folded to their Latin base now.
     function _tagify(prefix, v) {
-      var t = String(v || '').replace(/[^a-zA-Z0-9 ]/g, '').trim().replace(/\s+/g, '-').slice(0, 40);
+      var raw = String(v || '');
+      // Four consecutive digits, or seven across separators, is an identifier —
+      // a phone, a member number, a date — never a call time or an interest.
+      if (/\d{4,}/.test(raw) || /(?:\d[\s.()-]{0,2}){7,}/.test(raw)) return '';
+      var t = foldToken(raw).replace(/[^a-zA-Z0-9 -]/g, '').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
       return t ? prefix + '-' + t : '';
     }
     var _bestTimeTag = _tagify('CallTime', best_time_to_contact);
@@ -821,6 +837,16 @@ export default async function handler(req, res) {
         if (typeof body.page_url === 'string' && body.page_url.trim()) {
           var _raw = body.page_url.slice(0, 400);
           try { _raw = decodeURIComponent(_raw); } catch (_d) { /* keep raw */ }
+          // RED TEAM ROUND 5 (R5-SL-17, P4). Resolving a RELATIVE string against
+          // the production origin turned "contact" into
+          // "https://clearpointsenioradvisors.com/contact" — a receipt recording
+          // a page the browser never visited, which is worse evidence than none.
+          // And the WHATWG parser silently deletes tabs and newlines, so a path
+          // carrying control characters was rewritten into a clean-looking one
+          // before the charset test ever saw it. A path must LOOK like a path
+          // before it is parsed, and control characters disqualify it outright.
+          if (!/^https?:\/\//i.test(_raw) && _raw.charAt(0) !== '/') throw new Error('not_a_path');
+          if (/[\u0000-\u001f\u007f]/.test(_raw)) throw new Error('control_chars');
           var _pu = new URL(_raw, 'https://clearpointsenioradvisors.com');
           var _path = _pu.pathname;
           try { _path = decodeURIComponent(_path); } catch (_d2) { /* keep raw */ }
@@ -846,6 +872,7 @@ export default async function handler(req, res) {
     var frontendTags = [];
     var _rejectedTags = 0;
     var _malformedTags = 0;
+    var _truncatedTags = 0;   // R5-SL-16: tags dropped by the 20-tag cap
     // Red-team round 3 (R3-SL-04): the deny check runs on a SEPARATOR-FREE key, so
     // "ConsentCaptured", "Status–NewLead" (en dash), "consent_captured-" and
     // "STATUS NEW LEAD" all collapse to the same family name.
@@ -873,7 +900,12 @@ export default async function handler(req, res) {
     // appended after this filter so a client cannot forge one either way.
     var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|temp|urg|intent|utm|source|leadtype|outcome|compliance)-/;
     if (Array.isArray(body.tags)) {
-      for (var i = 0; i < body.tags.length && frontendTags.length < 20; i++) {
+      // RED TEAM ROUND 5 (R5-SL-16, P4): the loop used to stop at the cap, so
+      // tags past the twentieth vanished without being counted and the audit line
+      // reported zero losses while data disappeared. The whole array is walked
+      // (the 64KB body cap already bounds it) and the overflow is counted.
+      for (var i = 0; i < body.tags.length; i++) {
+        if (frontendTags.length >= 20) { if (body.tags[i] != null) _truncatedTags++; continue; }
         var tag = body.tags[i];
         // AUDIT 2026-09-12/13 (FORMS-01 + red-team R1/B2/N2) — client-supplied tags may
         // only DESCRIBE the lead (interest, call time, category, state, audience,
@@ -895,7 +927,7 @@ export default async function handler(req, res) {
         } else if (body.tags[i] != null) { _malformedTags++; }
       }
     }
-    if (_rejectedTags || _malformedTags) leadAudit('tags_rejected', null, { n: _rejectedTags + _malformedTags, denied: _rejectedTags, malformed: _malformedTags });
+    if (_rejectedTags || _malformedTags || _truncatedTags) leadAudit('tags_rejected', null, { n: _rejectedTags + _malformedTags + _truncatedTags, denied: _rejectedTags, malformed: _malformedTags, truncated: _truncatedTags });
     var allTags = ['Status-NewLead'];
     for (var j = 0; j < frontendTags.length; j++) { if (allTags.indexOf(frontendTags[j]) === -1) allTags.push(frontendTags[j]); }
 
@@ -1389,7 +1421,13 @@ export default async function handler(req, res) {
     // routing read the ORIGINAL client strings (coerced to a string so a hostile
     // type can never throw after the CRM contact has been written), not the
     // allow-listed tag value.
-    var rawFormName = String((typeof body.form_name === 'string' && body.form_name.trim()) || lead_source_raw || '').slice(0, 120).toLowerCase();
+    // RED TEAM ROUND 5 (R5-SL-15, P4): the routing read the TRIMMED form name
+    // and the fallback below re-read the untrimmed one. A whitespace-only
+    // form_name is truthy, so the fallback never consulted lead_source_raw and
+    // then trimmed itself to nothing — an opportunity with an EMPTY source
+    // label. Trim once, use the same value in both places.
+    var _formName = (typeof body.form_name === 'string' ? body.form_name.trim().replace(/\s+/g, ' ') : '');
+    var rawFormName = String(_formName || lead_source_raw || '').slice(0, 120).toLowerCase();
     var sourceLabel;
     if (rawFormName.indexOf('chatbot') !== -1 || rawFormName.indexOf('zara') !== -1) {
       sourceLabel = 'Zara ChatBot';
@@ -1404,7 +1442,7 @@ export default async function handler(req, res) {
     } else if (rawFormName.length > 0) {
       // Red-team round 4 (R4-SL-08): a non-string form_name used to throw here,
       // AFTER the contact had been written — a 500 with a half-created lead.
-      sourceLabel = String((typeof body.form_name === 'string' && body.form_name) || lead_source_raw || 'Website Lead').trim().slice(0, 120);
+      sourceLabel = String(_formName || lead_source_raw || 'Website Lead').slice(0, 120) || 'Website Lead';
     } else {
       sourceLabel = 'Website Lead';
     }

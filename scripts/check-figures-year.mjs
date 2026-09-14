@@ -14,15 +14,25 @@ import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(root, p), 'utf8');
+// RED TEAM ROUND 5 (RT5-MED-11, P3): `src.match()` returns the FIRST match of an
+// unanchored pattern, so a stale COMMENT naming the old year shadowed the real
+// constant — the build passed while production ran on a different figure year.
+// The pattern is anchored to a declaration at the start of a line, and two
+// different values anywhere in the file is itself the error.
 const pick = (src, re, label) => {
-  const m = src.match(re);
-  if (!m) { console.error(`[figures-year] cannot find ${label}`); process.exit(1); }
-  return Number(m[1]);
+  const all = [...src.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'))];
+  if (!all.length) { console.error(`[figures-year] cannot find ${label}`); process.exit(1); }
+  const values = [...new Set(all.map((m) => Number(m[1])))];
+  if (values.length > 1) {
+    console.error(`[figures-year] AMBIGUOUS: ${label} is declared as ${values.join(' and ')} in the same file — one of them is stale.`);
+    process.exit(1);
+  }
+  return values[0];
 };
 
-const apiYear = pick(read('api/_lib/medicare-figures.js'), /MEDICARE_FIGURES_YEAR\s*=\s*(\d{4})/, 'api/_lib/medicare-figures.js MEDICARE_FIGURES_YEAR');
-const chatYear = pick(read('api/chat.js'), /const FIGURES_YEAR\s*=\s*(\d{4})/, 'api/chat.js FIGURES_YEAR');
-const tsYear = pick(read('src/data/medicare-figures-2026.ts'), /MEDICARE_FIGURES_YEAR\s*=\s*(\d{4})/, 'src/data/medicare-figures-2026.ts MEDICARE_FIGURES_YEAR');
+const apiYear = pick(read('api/_lib/medicare-figures.js'), /^\s*(?:export\s+)?(?:const|let|var)\s+MEDICARE_FIGURES_YEAR\s*=\s*(\d{4})/m, 'api/_lib/medicare-figures.js MEDICARE_FIGURES_YEAR');
+const chatYear = pick(read('api/chat.js'), /^\s*(?:export\s+)?(?:const|let|var)\s+FIGURES_YEAR\s*=\s*(\d{4})/m, 'api/chat.js FIGURES_YEAR');
+const tsYear = pick(read('src/data/medicare-figures-2026.ts'), /^\s*(?:export\s+)?(?:const|let|var)\s+MEDICARE_FIGURES_YEAR\s*=\s*(\d{4})/m, 'src/data/medicare-figures-2026.ts MEDICARE_FIGURES_YEAR');
 
 if (apiYear !== chatYear || apiYear !== tsYear) {
   console.error(`[figures-year] MISMATCH: api/_lib=${apiYear} chat.js=${chatYear} src/data=${tsYear} — update all three together.`);
@@ -70,6 +80,16 @@ if (year > apiYear) {
   else { console.error(msg); process.exit(1); }
 } else if (year === apiYear && now.getMonth() >= 9) {
   console.warn(`[figures-year] NOTICE: PY${apiYear + 1} marketing window is open — CMS has published (or will publish) ${apiYear + 1} figures. Stage them as FUTURE in compliance/regulatory-database.json and plan the January rollover.`);
-} else {
+} else if (apiYear > year + 1) {
+  // RED TEAM ROUND 5 (RT5-MED-12, P4): a figures year two or more ahead of the
+  // calendar is a typo, not a plan. It used to print "OK — matches".
+  console.error(`[figures-year] IMPOSSIBLE: the figures are declared for ${apiYear} but the calendar year is ${year}. CMS has not published figures that far ahead — check the year constants for a typo.`);
+  process.exit(1);
+} else if (apiYear === year + 1) {
+  console.warn(`[figures-year] STAGED: the build carries ${apiYear} figures and the calendar year is still ${year}. This is the January rollover staged early — the runtime backstop will correct replies to ${apiYear} values from now on, including for callers asking about ${year}. Deploy only if that is intended.`);
+} else if (year === apiYear) {
   console.log(`[figures-year] OK — figures year ${apiYear} matches the calendar (${year}).`);
+} else {
+  console.error(`[figures-year] UNEXPECTED: figures year ${apiYear} against calendar year ${year} — no branch covers this combination.`);
+  process.exit(1);
 }

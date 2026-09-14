@@ -234,6 +234,67 @@ for (const [label, text, mustContain] of [
   ok(`SL-11 control: ${label} survives`, got.includes(mustContain), 'got ' + JSON.stringify(got));
 }
 
+// ── R5-SL-13 and R5-SL-14: the CRM tag minted from a free-text field ─────
+const tagify = new Function('prefix', 'v',
+  'var CONFUSABLES = ' + SRC.match(/var CONFUSABLES = (\{[\s\S]*?\n\};)/)[1] + '\n' +
+  'var CONFUSABLE_RE = ' + SRC.match(/var CONFUSABLE_RE = (.+);/)[1] + ';\n' +
+  lift('foldConfusables') + '\n' + lift('foldToken') + '\n' +
+  lift('_tagify') + '\nreturn _tagify(prefix, v);');
+
+// A phone typed into "best time to contact" must never become a tag NAME.
+for (const v of ['9175550123', '917-555-0123', 'call me at 917 555 0123', '(917) 555-0123 anytime', '1234567']) {
+  ok(`SL-13 no tag is minted from ${JSON.stringify(v)}`, tagify('CallTime', v) === '', 'got ' + JSON.stringify(tagify('CallTime', v)));
+}
+// …while a real call time still becomes one, accents and all.
+for (const [v, want] of [
+  ['Morning', 'CallTime-Morning'],
+  ['Mañana', 'CallTime-Manana'],
+  ['Por la tarde', 'CallTime-Por-la-tarde'],
+  ['Atención médica', 'CallTime-Atencion-medica'],
+  ['Anytime', 'CallTime-Anytime'],
+]) {
+  eq(`SL-14 ${JSON.stringify(v)} keeps its letters`, tagify('CallTime', v), want);
+}
+
+// ── R5-SL-15: the opportunity source label is never empty ────────────────
+const sourceLabelFn = new Function('form_name', 'lead_source_raw',
+  'var body = { form_name: form_name };\n' +
+  SRC.match(/var _formName = .+;/)[0] + '\n' +
+  SRC.match(/var rawFormName = .+;/)[0] + '\n' +
+  SRC.slice(SRC.indexOf('var sourceLabel;'), SRC.indexOf("sourceLabel = 'Website Lead';") + 40) + '\n' +
+  'return sourceLabel;');
+for (const [label, formName, raw, want] of [
+  ['whitespace-only form_name falls back', '   ', 'contact_form', 'Free Plan Review'],
+  ['whitespace-only with no raw source',   '   ', '', 'Website Lead'],
+  ['empty string falls back',              '', 'smart_review', 'Smart Medicare Review'],
+  ['a real name is kept',                  'Homepage Hero Form', '', 'Homepage Form'],
+  ['a non-string is survivable',           null, 'contact_form', 'Free Plan Review'],
+]) {
+  const got = sourceLabelFn(formName, raw);
+  ok(`SL-15 ${label}`, got === want && String(got).trim() !== '', `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
+
+// ── R5-SL-17: the receipt records a page the browser actually visited ────
+const pageFn = new Function('pageUrl',
+  'var body = { page_url: pageUrl };\n' +
+  'var page_url = "";\n' +
+  'try {\n' +
+  SRC.slice(SRC.indexOf("if (typeof body.page_url === 'string' && body.page_url.trim()) {"),
+            SRC.indexOf('} catch (_e) { page_url = \'\'; }')) +
+  '\n} catch (_e) { page_url = ""; }\nreturn page_url;');
+for (const [label, v, want] of [
+  ['a bare relative word is not a path', 'contact', ''],
+  ['a traversal is not a path',          '../../etc/passwd', ''],
+  ['a newline in the path is refused',   '/contact\nX', ''],
+  ['a tab in the path is refused',       '/contact\tX', ''],
+  ['an off-site URL is refused',         'https://evil.example.com/contact', ''],
+  ['a real absolute URL is kept',        'https://clearpointsenioradvisors.com/contact', '/contact'],
+  ['a real root-relative path is kept',  '/es/contact', '/es/contact'],
+]) {
+  const got = pageFn(v);
+  ok(`SL-17 ${label}`, got === want, `got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+}
+
 if (failures.length) {
   console.error(`SUBMIT-LEAD R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');
