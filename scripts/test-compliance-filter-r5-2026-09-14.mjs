@@ -109,6 +109,38 @@ keeps('CF-07 control: how to apply',
 keeps('CF-07 control: ES conditional',
   'Si lo aprueban, el programa paga su prima de la Parte B.', 'es');
 
+// ── RT5-CF-08: the rule was bilingual only in the present tense ───────────
+removes('CF-08 ES preterite',  'Usted calificó el mes pasado para Ayuda Adicional, así que sus copagos ya bajaron.', 'es');
+removes('CF-08 voseo califica','Vos calificás para Ayuda Adicional.', 'es');
+removes('CF-08 voseo sos',     'Vos sos elegible para Ayuda Adicional.', 'es');
+removes('CF-08 ES imperfect',  'Usted calificaba para Ayuda Adicional el año pasado.', 'es');
+removes('CF-08 EN twin, the control that already worked', 'You qualified last month for Extra Help.');
+
+// ── RT5-CF-09: a crowd mentioned for comfort is not a generalisation ──────
+removes('CF-09 like many others',        'Like many others, you qualify for Extra Help.');
+removes('CF-09 just like the people',    'Just like the people I helped yesterday, you qualify for Extra Help.');
+removes('CF-09 ES como muchas personas', 'Como muchas personas en su situación, usted califica para Ayuda Adicional.', 'es');
+// …a true generalisation, where the crowd IS the subject, still survives.
+keeps('CF-09 control: the crowd is the subject',
+  'Many people like you who qualify for Extra Help never apply.');
+keeps('CF-09 control: contrastive lead-in is still a determination’s opposite',
+  'Some people never find out about Extra Help at all.');
+
+// ── RT5-CF-10: one invisible character must not defeat the scan ───────────
+removes('CF-10 variation selector',  'You qua️lify for Extra Help.');
+removes('CF-10 LTR isolate',         'You qua⁦lify for Extra Help.');
+removes('CF-10 Hangul filler',       'You quaㅤlify for Extra Help.');
+removes('CF-10 ES variation selector','Usted cali︀fica para Ayuda Adicional.', 'es');
+removes('CF-10 zero-width space (already covered, kept as a control)', 'You qua​lify for Extra Help.');
+
+// ── RT5-CF-11: the answer that carries the determination ─────────────────
+removes('CF-11 "You do." answers the question',   'Do you qualify for Extra Help? You do.');
+removes('CF-11 "confirmed." answers the label',   'Whether you qualify for Extra Help: confirmed.');
+removes('CF-11 "Approved." answers the status',   'Here is the status of your Extra Help application. Approved.');
+// …an ordinary short sentence after a question is not an affirmation.
+keeps('CF-11 control: a real follow-up survives',
+  'Would you like me to check whether you qualify for Extra Help? It takes two minutes.');
+
 if (failures.length) {
   console.error(`COMPLIANCE FILTER R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

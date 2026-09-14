@@ -236,7 +236,7 @@ function claimSubjectOffset(matchText) {
 // Red-team round 3 (RT3-CF-K): "may/might/could qualify" is the hedge CMS and
 // SSA themselves use — it states a possibility, not a determination, so those
 // fillers are excluded here rather than rewritten into a non-answer.
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|calific(?:aron|aba[n]?|ar[ií]an?|[aá]s|a[sn]?|[oó])|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 // Red-team round 3 (RT3-CF-A, P1): the rule exists for MEANS-TESTED
 // determinations ("you qualify for Extra Help") and bare ones ("you qualify") —
 // never for the statutory education every Medicare page carries ("you're
@@ -272,7 +272,20 @@ const PRICED_PRODUCT_RE = /\$\s?\d|\bprima\s+de\b|\bpremium\s+of\b|\b\$0\b|\b(?:
 // Red-team round 4 (RT4-CF-04): a contrastive lead-in ("Unlike most people, you
 // qualify…") is a determination about the caller, not a generalisation.
 const GENERALISATION_RE = /\b(people|persons|folks|gente|personas|those|anyone|someone|alguien|many|muchos|muchas|quienes|los\s+que|las\s+que|others?|otros)\b[^.!?¿]{0,24}$/i;
+// RED TEAM ROUND 5 (RT5-CF-09, P2): RT4-CF-04 vetoed only the CONTRASTIVE
+// lead-in ("Unlike most people, you qualify"). The COMPARATIVE one still
+// shielded the determination: "Like many others, you qualify for Extra Help"
+// and "Como muchas personas en su situación, usted califica" are statements
+// about the caller with a crowd mentioned for comfort, not statements about
+// the crowd.
 const GENERALISATION_VETO_RE = /\b(unlike|except|apart\s+from|a\s+diferencia\s+de|salvo|excepto|but\s+you|pero\s+usted)\b/i;
+// A COMMA between the crowd and the claim marks a lead-in rather than a
+// subject: "Like many others, you qualify" and "Como muchas personas en su
+// situación, usted califica" are determinations about the caller with a crowd
+// mentioned for comfort. Without the comma the crowd IS the subject — "Many
+// people like you who qualify for Extra Help never apply" is a true
+// generalisation and must survive.
+const GENERALISATION_LEADIN_RE = /,[^,]{0,24}$/;
 const QUESTION_OPENER_RE = /^\s*[¿]|^\s*(?:do|does|did|are|is|was|were|will|would|can|could|should|have|has|how|when|what|which|why)\b/i;
 // Red-team round 4 (RT4-CF-01, P1): a terminal '?' is not a question when the
 // determination rides in a complement clause ("Did I mention you qualify?").
@@ -283,7 +296,8 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
   // A statement about other people ("many people like you who qualify…") is not
   // a determination about the caller, whatever its object.
   const lead = normalized.slice(Math.max(0, matchStart - 40), matchStart);
-  if (GENERALISATION_RE.test(lead) && !GENERALISATION_VETO_RE.test(lead)) return false;
+  if (GENERALISATION_RE.test(lead) && !GENERALISATION_VETO_RE.test(lead) &&
+      !GENERALISATION_LEADIN_RE.test(lead)) return false;
   // RT5-CF-05: the means-tested scan covers the REST OF THE SENTENCE, not a
   // 70-character window. A long education-shaped preamble used to push the
   // program name out of the window and buy the whole claim an exemption.
@@ -299,7 +313,7 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
 // claim position for the deferral test is the END of the anchor.
 // The filler may not swallow the conjunction or a subject pronoun — "Si usted
 // califica" must anchor on "Si " so the deferral test sees the governor.
-const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú])\b)[\wáéíóúñü]+\s+){0,2}(?:califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|eres\s+elegible|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú])\b)[\wáéíóúñü]+\s+){0,2}(?:calific(?:aron|aba[n]?|ar[ií]an?|[aá]s|a[sn]?|[oó])|(?:es|sos|eres|era|eras|fue|fueron|ser[ií]a)\s+elegibles?|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))(?![\wáéíóúñüÁÉÍÓÚÑÜ])(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 const ELIGIBILITY_QUALIFIES_YOU_RE = /\b(?:your|the)\s+[\wáéíóúñü]+(?:\s+[\wáéíóúñü]+)?\s+(?:qualifies|entitles)\s+you\b/gi;
 //
 // RED TEAM ROUND 5 (RT5-CF-07, P1). Round 4 answered the approval determination
@@ -358,7 +372,13 @@ const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|In
 // joiner, combining grapheme joiner, bidi marks) are invisible to a reader and
 // used to break a pattern. They are stripped from the DETECTION copy only — the
 // kept text stays byte-identical.
-const INVISIBLE_RE = /[­͏؜᠎​-‏‪-‮⁠-⁤﻿]/g;
+// RED TEAM ROUND 5 (RT5-CF-10, P2): the hand-written list stopped at U+2064
+// and omitted the variation selectors and the Hangul fillers, so ONE
+// invisible character defeated every claim pattern — "You qua\u{fe0f}lify for
+// Extra Help." survived byte-identical. A Unicode property class covers the
+// whole family, including code points assigned in future revisions. This only
+// builds the DETECTION copy; the kept text stays byte-identical.
+const INVISIBLE_RE = /[\p{Default_Ignorable_Code_Point}\p{Cf}\u3164\uffa0]/gu;
 
 // ── Plan-recommendation sentences (AUDIT 2026-09-03 R2-C12, P1) ─────────
 // These used to live in FORBIDDEN_PHRASES with inline replacement, which left
@@ -865,6 +885,14 @@ export function complianceFilter(text, lang, opts) {
   var fpParts = out.split(FP_SPLIT_RE);
   var fpTags = {}; var fpKeep = []; var fpSeps = []; var fpChanged = false;
   var fpDropBullets = false; var fpDropAffirmation = false; var fpLabelIdx = [];
+  // RT5-CF-11: "Here is the status of your Extra Help application. Approved."
+  // splits the determination across two fragments so neither carries both the
+  // program and the result. A fragment naming a means-tested program arms this;
+  // a following fragment that is NOTHING BUT a result word is that program's
+  // determination. Bounded to a bare result so "Approved applications get a
+  // letter in the mail" is left alone.
+  var fpProgramNamed = false;
+  var BARE_RESULT_RE = /^\s*(?:approved|accepted|confirmed|granted|eligible|qualified|aprobad[oa]s?|aceptad[oa]s?|confirmad[oa]s?|otorgad[oa]s?|elegible|calificad[oa])\b[^.!?]{0,12}[.!]?\s*$/i;
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
   var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
@@ -879,7 +907,12 @@ export function complianceFilter(text, lang, opts) {
     // affirmation that answers a governed eligibility clause IS the claim.
     if (fpDropAffirmation) {
       fpDropAffirmation = false;
-      if (/^\s*(?:yes|yep|yeah|s[ií])\b[^.!?]{0,24}[.!]?\s*$/i.test(fpSentence)) {
+      // RED TEAM ROUND 5 (RT5-CF-11, P2): four affirmation words was a list, and
+      // the determination only had to be confirmed a fifth way. "Do you qualify
+      // for Extra Help? You do." and "Whether you qualify for Extra Help:
+      // confirmed." both passed whole — the question fragment is correctly
+      // exempted and the fragment carrying the actual answer was not recognised.
+      if (/^\s*(?:yes|yep|yeah|sure|absolutely|definitely|correct|confirmed|approved|you\s+(?:do|are|did|have)|that'?s\s+right|s[ií]|claro|as[ií]\s+es|correcto|confirmado|aprobad[oa]|exacto|efectivamente)\b[^.!?]{0,24}[.!]?\s*$/i.test(fpSentence)) {
         fpChanged = true; fpTags[ELIGIBILITY_TAG] = true;
         if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) { fpKeep.pop(); fpSeps.pop(); }
         continue;
@@ -888,6 +921,13 @@ export function complianceFilter(text, lang, opts) {
     // Detection copy only (the kept sentence stays byte-identical): collapse
     // whitespace and normalise curly apostrophes (red-team D4).
     var normalized = String(fpSentence).replace(INVISIBLE_RE, '').replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
+    // RT5-CF-11: the result word that answers a program named one fragment ago.
+    if (fpProgramNamed && BARE_RESULT_RE.test(normalized)) {
+      fpProgramNamed = false;
+      fpChanged = true; fpTags[ELIGIBILITY_TAG] = true;
+      continue;
+    }
+    fpProgramNamed = MEANS_TESTED_RE.test(normalized);
     var remove = false;
     var breaks = null;
     // A question ("Do you qualify for Extra Help?") asks, it does not determine —
