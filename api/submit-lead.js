@@ -50,14 +50,25 @@ var ACCENT_SETS = { a: 'aàáâäãåā', e: 'eèéêëē', i: 'iìíîïī', o:
 function foldToken(tok) {
   return String(tok).normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
-function tokenPattern(tok) {
+//
+// RED TEAM ROUND 5 (R5-SL-03, P2). The round-4 case-sensitivity fix chose the
+// regex FLAGS but the accent class itself always carried both cases, so for any
+// name containing a, e, i, o, u, n, c or y the lowercase word still matched.
+// Measured: a lead named Cruz turned "la palabra cruz aparece aquí" into
+// "[redacted]", and 12 of the 38 ambiguous names still shredded ordinary prose —
+// "el amor no paga las medicinas", "the art museum", "Cada estrella del cielo".
+// The case decision now reaches INSIDE the pattern.
+function tokenPattern(tok, caseSensitive) {
   var folded = foldToken(tok);
   var pat = '';
   for (var i = 0; i < folded.length; i++) {
     var ch = folded[i];
     var set = ACCENT_SETS[ch.toLowerCase()];
-    if (set) pat += '[' + set + set.toUpperCase() + ']';
-    else pat += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (set) {
+      pat += caseSensitive
+        ? '[' + (ch === ch.toLowerCase() ? set : set.toUpperCase()) + ']'
+        : '[' + set + set.toUpperCase() + ']';
+    } else pat += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Red-team round 4 (R4-SL-05): the text may carry the name in decomposed
     // form ("Jose" + U+0301) — allow the combining marks after every letter.
     pat += '[\\u0300-\\u036f]*';
@@ -99,7 +110,19 @@ function scrubIdentityForIntel(text, values, dob) {
     // A run of plain digit groups is a phone number / date already written as
     // digits: leave its formatting to the sweeps below, which know the official
     // numbers and the date shapes.
-    return anyWord ? digits : m;
+    if (!anyWord) return m;
+    //
+    // RED TEAM ROUND 5 (R5-SL-05, P2). Emitting bare digits here handed the run
+    // to the sweeps below, and none of them takes a 7- or 8-digit result: the
+    // phone shape needs 3+3+4, the spaced shape needs 9, the generic run needs
+    // 9. So "my line is five five five oh one two three" came out as
+    // "my line is 5550123" — the scrubber made a spoken phone number MORE
+    // machine-readable than it found it. A run the caller SPELLED OUT is masked
+    // right here, at its own length, instead of being handed on as digits.
+    if (OFFICIAL_NUMBERS_RE.test(digits)) return m;
+    if (digits.length >= 7 && digits.length <= 11) return '[phone]';
+    if (digits.length >= 4) return '[number]';
+    return digits;
   });
   // Generic sweeps (phone / long digit runs / email), keeping official numbers.
   // Red-team round 4 (R4-SL-02): separators may be two characters (") ", ". ").
@@ -117,8 +140,12 @@ function scrubIdentityForIntel(text, values, dob) {
   });
   // Red-team round 3 (R3-SL-14): a spelled-out SSN/MBI/card arrives here as a
   // bare digit run AFTER scrubPHI has already run upstream - mask it now.
-  out = out.replace(/(?<![\p{L}\p{N}])\d{9,19}(?![\p{L}\p{N}])/gu, function (m) {
-    return OFFICIAL_NUMBERS_RE.test(m) ? m : '[number]';
+  // R5-SL-05: the floor drops from 9 to 7 so a bare local number ("555-0123"
+  // written as 5550123) is masked too. A year, a ZIP and an ordinary quantity
+  // are all shorter than 7 digits and are untouched.
+  out = out.replace(/(?<![\p{L}\p{N}])\d{7,19}(?![\p{L}\p{N}])/gu, function (m) {
+    if (OFFICIAL_NUMBERS_RE.test(m)) return m;
+    return m.length === 7 || m.length === 10 || m.length === 11 ? '[phone]' : '[number]';
   });
   out = out.replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu, '[email]');
   // Dates. Red-team round 3 (R3-SL-06/15): the SUPPLIED date of birth is redacted
@@ -246,14 +273,32 @@ function scrubIdentityForIntel(text, values, dob) {
   tokens = tokens.filter(function (x, idx, arr) { return x && arr.indexOf(x) === idx; });
   tokens.sort(function (a, b) { return b.length - a.length; });
   for (var j = 0; j < tokens.length; j++) {
-    var pat = tokens[j].split(/\s+/).map(tokenPattern).join('\\s+');
     // Red-team round 4 (R4-SL-03): a 1-2 character token ("Ng", "Li", "Ho") is a
     // fragment of ordinary prose in both languages, so it is matched only in the
     // exact capitalisation the lead supplied.
     var bare = foldToken(tokens[j]).replace(/[^\p{L}\p{N}]/gu, '');
     var caseSensitive = bare.length <= 2 || (!/\s/.test(tokens[j]) && AMBIGUOUS_NAME.test(bare));
+    var pat = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, caseSensitive); }).join('\\s+');
     var flags = caseSensitive ? 'gu' : 'giu';
     try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
+    //
+    // RED TEAM ROUND 5 (R5-SL-04, P2). Case-sensitivity alone trades one leak
+    // for another: a lead named Sol, Mar or Luz who writes it lowercase and not
+    // beside the surname had their own given name passed to the enrichment
+    // model — "me llamo sol y tengo 78" came back untouched. Seniors typing in
+    // Spanish routinely lower-case their own name, and that is this site's
+    // population. So the ambiguous name is ALSO redacted case-insensitively
+    // when an introduction cue puts it in a name position. The everyday word
+    // ("la pastilla rosa", "cerca del mar") has no such cue and survives.
+    if (caseSensitive && bare.length > 2) {
+      var anyCase = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, false); }).join('\\s+');
+      try {
+        out = out.replace(new RegExp(
+          '(\\b(?:soy|me\\s+llamo|mi\\s+nombre\\s+es|se\\s+llama|habla|le\\s+habla|aqu[ií]|atentamente|firmado|firma|saludos|sr\\.?|sra\\.?|srta\\.?|se[nñ]or|se[nñ]ora|se[nñ]orita|don|do[nñ]a|' +
+          'my\\s+name\\s+is|i\\s+am|i\'?m|this\\s+is|signed|regards|sincerely|mr\\.?|mrs\\.?|ms\\.?|miss)[\\s,]+)' +
+          anyCase + '(?![\\p{L}\\p{N}])', 'giu'), '$1[redacted]');
+      } catch (_e) { /* keep going */ }
+    }
   }
   return out;
 }
@@ -489,7 +534,11 @@ export default async function handler(req, res) {
     // Red-team round 4 (R4-SL-06): the allow-list has to hold the strings the
     // front end actually sends — deleting separators turned "Website Chatbot"
     // into an unknown value and tagged almost every real lead Source-other.
-    var LEAD_SOURCES = ['web', 'website', 'website_chatbot', 'chatbot', 'clara_bot', 'zara', 'zara_chatbot', 'clearpoint_senior_advisors_website', 'clear_point_senior_advisors_website', 'form', 'contact_form', 'smartreview', 'smart_review', 'smart_medicare_review', 'customer_service', 'customer_service_bot', 'clara_outer_flow', 'contact', 'free_review', 'referral', 'google', 'facebook', 'qa'];
+    var LEAD_SOURCES = ['web', 'website', 'website_chatbot', 'chatbot', 'clara_bot', 'zara', 'zara_chatbot', 'clearpoint_senior_advisors_website', 'clear_point_senior_advisors_website', 'form', 'contact_form', 'smartreview', 'smart_review', 'smart_medicare_review', 'customer_service', 'customer_service_bot', 'clara_outer_flow', 'contact', 'free_review', 'referral', 'google', 'facebook', 'qa',
+      // Found by scripts/check-allowlist-drift.mjs on its first run (2026-09-14):
+      // ChatBot.tsx sends lead_source 'zara_education', which was in LEAD_TYPES
+      // but not here, so every Zara education lead was tagged Source-other.
+      'zara_education'];
     var lead_source_raw = typeof body.lead_source === 'string' ? body.lead_source.slice(0, 120) : '';
     var lead_source = (function (v) {
       var s = v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -620,7 +669,18 @@ export default async function handler(req, res) {
 
     // Red-team round 3 (R3-SL-05): LeadType-* is a server-owned family — only the
     // lead types Clara and the forms actually produce may mint one.
-    var LEAD_TYPES = ['existing_client_inquiry', 'existing_client_unverified', 'qualified_prospect', 'out_of_scope_optin_callback', 'out_of_service_area_interest', 'smart_review', 'contact_form', 'zara_education'];
+    //
+    // RED TEAM ROUND 5 (R5-SL-06, P2, regression). Round 4 learned that an
+    // allow-list has to hold the strings the front end actually sends, and
+    // applied that lesson to lead_source only. lead_type kept a list that
+    // matched NONE of the six values Smart Medicare Review emits, so the whole
+    // surface silently lost its LeadType-* routing tag: MA_LEAD, PDP_LEAD,
+    // COST_REVIEW_TRIAGE, NEEDS_TRIAGE, MEDIGAP_REVIEW and
+    // LOW_PRIORITY_EDUCATION_REQUEST all normalised to '' and no tag was
+    // written. Before the allow-list existed they produced LeadType-MA_LEAD.
+    // The six come from LEAD_TYPE_TAG in src/lib/smartReviewRouting.ts.
+    var LEAD_TYPES = ['existing_client_inquiry', 'existing_client_unverified', 'qualified_prospect', 'out_of_scope_optin_callback', 'out_of_service_area_interest', 'smart_review', 'contact_form', 'zara_education',
+      'ma_lead', 'pdp_lead', 'cost_review_triage', 'needs_triage', 'medigap_review', 'low_priority_education_request'];
     var lead_type = (function (v) {
       var s = typeof v === 'string' ? v.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() : '';
       return LEAD_TYPES.indexOf(s) !== -1 ? s : '';
@@ -721,12 +781,27 @@ export default async function handler(req, res) {
     // "STATUS NEW LEAD" all collapse to the same family name.
     // Round-3 follow-up (FORMS-01): "Do Not Call" and "Status-Enrolled" drive the
     // same suppression and reporting as the families already owned by the server.
-    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
+    //
+    // RED TEAM ROUND 5 (R5-SL-07, P2). Denying the whole `consent` and `lang`
+    // FAMILIES took out six of the support bot's ten controlled tags, including
+    // consent_no — the bot's explicit "the caller did NOT consent" marker. The
+    // server only ever ADDS "Consent Captured" when consent is true and never
+    // records a negative, so denying consent_no destroyed the only
+    // negative-consent signal reaching the CRM. That is the opposite of what a
+    // TCPA deny-list is for. The families are now anchored to the SERVER's own
+    // spellings; the bot's descriptive values are namespaced and cannot collide
+    // with "Consent Captured" or "Lang-ES". The `soa` key is also tightened so
+    // ordinary words that start with those three letters survive — "soap-note"
+    // and "soar-program" were being denied as SOA workflow tags.
+    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa|soasigned|soarecorded|soapending|soa[0-9][a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
     // Family prefixes are matched on the DASH key, so the family has to be a real
     // token: "urg-high" is denied, the support bot's "urgency_elevated" is not.
     // "status-*" is deliberately absent — only its exact values above are owned,
     // so status_existing_client_claimed keeps flowing.
-    var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|consent|temp|urg|intent|utm|lang|language|source|leadtype|outcome|compliance)-/;
+    // R5-SL-07: `consent-` and `lang|language-` left this list; their exact
+    // server spellings are in _denyKeys above, and the server-generated tags are
+    // appended after this filter so a client cannot forge one either way.
+    var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|temp|urg|intent|utm|source|leadtype|outcome|compliance)-/;
     if (Array.isArray(body.tags)) {
       for (var i = 0; i < body.tags.length && frontendTags.length < 20; i++) {
         var tag = body.tags[i];
