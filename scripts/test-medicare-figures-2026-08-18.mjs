@@ -220,10 +220,24 @@ check('RT empty stays empty', verifyMedicareFigures('').text === '', 'empty brok
 {
   const spill = verifyMedicareFigures('El deducible del hospital de la Parte A es $1.736. El tope de la Parte D es $2.100. The Part D cap is $2000.');
   check('RT3 no digit spill in any separator style', !/\$2,1000|\$1,7366|\$2830|\$1\.7366|\$2\.1000/.test(spill.text), spill.text);
-  const t0 = Date.now();
-  verifyMedicareFigures('The Part B deductible is $257. '.repeat(1600));
-  const ms = Date.now() - t0;
-  check('RT3 50 KB reply under 200 ms', ms < 200, ms + ' ms');
+  // 2026-09-14: this assertion failed once at 208 ms against a 200 ms budget
+  // while a red-team workflow was saturating the machine, and passed on three
+  // immediate re-runs. A wall-clock check with a 4% margin is a flaky test, and
+  // a flaky test inside a safety battery teaches people to ignore a red run.
+  //
+  // What it is actually here to catch is a return to QUADRATIC time, which shows
+  // up as a five- or ten-fold blowout, not a 4% one. So take the BEST of three
+  // runs — the floor, which is the machine's real capability — and keep the
+  // budget where it is. A genuine regression fails every run and fails wide.
+  const INPUT = 'The Part B deductible is $257. '.repeat(1600);
+  verifyMedicareFigures(INPUT);   // warm up, so JIT compilation is not timed
+  let ms = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const t0 = Date.now();
+    verifyMedicareFigures(INPUT);
+    ms = Math.min(ms, Date.now() - t0);
+  }
+  check('RT3 50 KB reply under 200 ms', ms < 200, ms + ' ms (best of 3)');
 }
 
 // Source of truth sanity.
