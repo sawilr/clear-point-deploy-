@@ -86,7 +86,23 @@ const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m
 // out of your check", "around $200 a month"), so it now only applies to a round
 // amount. $257 is not a rounding of anything; $250 is.
 const APPROX_BEFORE_AMOUNT = /(around|about|approx\w*|aproximad\w*|roughly|unos|cerca de|m[aá]s o menos)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
+//
+// RED TEAM ROUND 6 (RT6-MED-04, P2). Round 5 narrowed the approximation marker
+// to round amounts, which was right, and stopped there, which was not: EVERY
+// round amount became exempt. So "the Part D out-of-pocket cap is about $8,000"
+// — the pre-IRA figure round 5 named as the single most likely stale number a
+// model can emit — walked straight through behind the word "about".
+//
+// A rounding stays near what it rounds. $200 is a rounding of $202.90; $8,000 is
+// not a rounding of $2,100, it is a wrong figure wearing an estimate's clothes.
 function isRoundAmount(val) { return isFinite(val) && val > 0 && val % 10 === 0; }
+// The programmes under which a beneficiary's own share really is $0.
+const SUBSIDY_CONTEXT_RE = /\b(qmb|slmb|\bqi\b|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegib|extra\s+help|ayuda\s+adicional|ayuda\s+extra|low[-\s]?income\s+subsidy|\blis\b|subsidio)\b/i;
+function isPlausibleRoundingOf(val, fig) {
+  if (!isRoundAmount(val)) return false;
+  const ratio = val > fig.value ? val / fig.value : fig.value / val;
+  return ratio <= 1.25;
+}
 // AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
 // A figure is left alone when the SENTENCE it sits in is about another contract
 // year (a year token that is not ours, a CY/PY/FY-prefixed year, a 'YY form, or a
@@ -406,8 +422,25 @@ const COST_EXCLUSION_RE = /\b(?:separate\s+from|apart\s+from|aside\s+from|other\
 // penalty adds $400", "The plan pays $500". So: on the widened path, reject
 // when the amount's clause has a competing subject — a noun phrase before a
 // value verb that names neither a Part nor a figure type.
-// The head of the subject is the word immediately before the value verb.
-const CLAUSE_SUBJECT_RE = /([\w'’À-ɏ-]+)[ \t]+(is|are|was|were|es|son|era|eran|cuesta|cuestan|adds?|costs?|pays?|covers?|includes?|gives?|aporta|cubre|paga|pagan|da)[ \t]+(?:about[ \t]+|around[ \t]+|roughly[ \t]+|approximately[ \t]+|unos[ \t]+|cerca[ \t]+de[ \t]+)?(?:\$|USD)/i;
+//
+// RED TEAM ROUND 6 (RT6-MED-09, P1). Two gaps let the NEXT clause's amount be
+// claimed by this one's concept. The verb list was missing the ordinary ways a
+// plan hands someone money or a bill — charges, offers, gives you, you get, you
+// owe — and nothing allowed a bare article between the verb and the amount, so
+// "there is a $50 charge" and "the plan charges a $45 monthly premium" had no
+// recognisable subject at all and sailed through to the widened path. The
+// second one is the worst of them: it rewrote a MONTHLY PREMIUM to the annual
+// deductible value, because the left-biased keyword search preferred the
+// "deductible" behind it to the "premium" beside it.
+const CLAUSE_SUBJECT_RE = /([\w'’À-ɏ-]+)[ \t]+(is|are|was|were|es|son|era|eran|hay|cuesta|cuestan|adds?|costs?|charges?|offers?|provides?|allows?|grants?|gets?|owes?|receives?|pays?|covers?|includes?|gives?|aporta|ofrece|cobra|recibe|debe|otorga|cubre|paga|pagan|da)[ \t]+(?:about[ \t]+|around[ \t]+|roughly[ \t]+|approximately[ \t]+|unos[ \t]+|cerca[ \t]+de[ \t]+)?(?:(?:a|an|the|another|each|el|la|los|las|un|una|otro|otra)[ \t]+)?(?:\$|USD)/i;
+//
+// A DIFFERENT product or benefit named in the subject is a competitor whatever
+// else the phrase contains (RT6-MED-03/09). The word "premium" inside "your
+// Medigap Plan G premium" used to vouch for the whole clause, so a Medigap
+// premium — the most business-critical number this system quotes — was rewritten
+// to the Part B premium. The same list breaks list-ancestor inheritance: a
+// nested item under "Extras" or "Medigap Plan G" does not inherit "Part B".
+const COMPETING_PRODUCT_RE = /\b(medigap|supplement(?:al)?|suplemento|advantage|plan\s+[a-n]\b|part\s*c\b|plan'?s\b|del\s+plan\b|de\s+su\s+plan\b|drug\s+plan|drug\s+deductible|plan\s+de\s+medicamentos|dental|vision|visi[oó]n|hearing|audici[oó]n|grocery|allowance|asignaci[oó]n|tarjeta|otc\b|gym|fitness|transportation|transporte|extras?|adicionales|penalty|penalizaci[oó]n|late[-\s]enrollment|charge|recargo|surcharge)\b/i;
 // An ANAPHORIC subject on a copula points back at whatever the previous clause
 // named — "…, and for this year it is $257" is still the deductible's own
 // predicate. A personal pronoun does not qualify: "you pay about $40" names
@@ -427,7 +460,13 @@ function clauseHasCompetingSubject(clause) {
   // A subject phrase that names the concept itself is the correct predicate,
   // not a competitor. Bounded to this clause so a neighbouring "deductible"
   // cannot vouch for "the dental max is $500".
-  if (CONCEPT_WORD_RE.test(clause.slice(0, m.index + head.length))) return false;
+  //
+  // RT6-MED-03: …but a phrase naming a DIFFERENT product is a competitor even
+  // when it also contains a concept word. "your Medigap Plan G premium" holds
+  // "premium" and is not the Part B premium.
+  const subjectPhrase = clause.slice(0, m.index + head.length);
+  if (COMPETING_PRODUCT_RE.test(subjectPhrase)) return true;
+  if (CONCEPT_WORD_RE.test(subjectPhrase)) return false;
   return true;
 }
 //
@@ -467,6 +506,11 @@ function inheritedConcept(text, offset, sInfo) {
       if (!prev.trim()) continue;
       const ind = indentWidth(prev);
       if (ind < want) {
+        // RT6-MED-03/09: an ancestor naming a different product ends the chain.
+        // A bullet under "Medigap Plan G" or under "Extras" does not inherit the
+        // "Part B" two levels above it — that ancestor is describing something
+        // else, and everything below it belongs to that something else.
+        if (COMPETING_PRODUCT_RE.test(prev)) return '';
         parts.unshift(prev.trim());
         want = ind;
         if (ind === 0) break;
@@ -476,6 +520,9 @@ function inheritedConcept(text, offset, sInfo) {
     return KEYWORD.test(joined) ? joined : '';
   }
   // Prose: only an anaphoric sentence inherits, and only from ONE sentence back.
+  // RT6-MED-09: and never across a topic change — "It is worth knowing you also
+  // get $500 a year for dental" is a new subject, not the deductible again.
+  if (COMPETING_PRODUCT_RE.test(sInfo.text)) return '';
   if (!ANAPHORIC_SENTENCE_RE.test(sInfo.text)) return '';
   const beforeSentence = text.slice(0, sInfo.start);
   const prev = sentenceAround(beforeSentence, Math.max(0, beforeSentence.length - 1));
@@ -506,6 +553,12 @@ function classifyAt(text, offset) {
     // its own subject the amount belongs to that subject, and no keyword
     // elsewhere in the sentence can claim it.
     if (clauseHasCompetingSubject(seg)) return null;
+    // RT6-MED-09: a competing product or benefit named ANYWHERE in the clause
+    // ends it too, whatever grammatical shape the clause takes. "y hay un
+    // recargo de $50" has no subject this parser can see, and the surcharge is
+    // still not the Part B deductible. Erring here costs a missed correction;
+    // erring the other way rewrites a real plan cost.
+    if (COMPETING_PRODUCT_RE.test(seg)) return null;
     seg = sInfo.text; segOffset = rel; widened = true;
   }
   // RT5-MED-06: the concept may live one level up — on a parent list line, or in
@@ -641,7 +694,7 @@ export function verifyMedicareFigures(text) {
       // 'USD' the marker introduces has to come off before the anchored test.
       const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 30), amountAt).replace(/(?:\$|USD)\s*$/i, '');
       if (DISQUALIFY_BEFORE_AMOUNT.test(beforeAmount)) return match;
-      if (isRoundAmount(val) && APPROX_BEFORE_AMOUNT.test(beforeAmount)) return match;
+      const approximated = APPROX_BEFORE_AMOUNT.test(beforeAmount);
       const concept = classifyAt(text, amountAt);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
       // RED TEAM ROUND 5 (RT5-MED-05, P1). The IRMAA / income family used to
@@ -657,6 +710,20 @@ export function verifyMedicareFigures(text) {
       }
       const fig = MEDICARE_FIGURES_2026[concept];
       if (!fig) return match;
+      // RT6-MED-04: the approximation marker protects a genuine ROUNDING of this
+      // figure, not any round number that follows the word "about".
+      if (approximated && isPlausibleRoundingOf(val, fig)) return match;
+      //
+      // RED TEAM ROUND 6 (RT6-MED-02, graded P3 after adversarial review). "$0 is
+      // always corrected" is right for a hallucinated zero and wrong for a
+      // SUBSIDISED one: a caller with QMB, an MSP, Medicaid or full Extra Help
+      // legitimately owes $0, and rewriting that to $283 tells a dual-eligible
+      // senior they owe money they do not. The statutory figure is unchanged for
+      // them — Medicaid pays it — so the sentence is about who pays, not what the
+      // figure is. Narrow by design: the clause itself must name the programme.
+      // Read across the SENTENCE: "If you have QMB, your share … would be $0"
+      // names the programme in the conditional clause, not beside the amount.
+      if (val === 0 && SUBSIDY_CONTEXT_RE.test(sentInfo.text)) return match;
       if (aboutOtherYear(text, amountAt, fig.year)) return match; // another contract year — not ours to rewrite
       // Red-team round 3 (MED02-RT3-03): a sentence that ALREADY carries the
       // right figure is a comparison ("increased from $257 to $283") — rewriting

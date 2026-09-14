@@ -150,6 +150,52 @@ keeps('MED-08 list caption under a blank line',
 corrects('MED-08 control: a 2026 caption still allows the correction',
   '- Part B deductible: $257\n\nThose are the 2026 numbers.', 'part_b_deductible', 257);
 
+// ═══ RED TEAM ROUND 6 — the round-5 guards attacked in turn ═══════════════
+// Round 6 found that three of the round-5 fixes had swapped one defect for
+// another, and that two of them rewrote correct, business-critical numbers.
+
+// ── RT6-MED-03: a different product's premium is not the Part B premium ───
+keeps('MED-03 Medigap Plan G premium beside the Part B premium',
+  'The standard Part B premium is $202.90, and your Medigap Plan G premium is $145 a month.');
+keeps('MED-03 ES Medigap premium',
+  'La prima estándar de la Parte B es $202.90, y su prima de Medigap Plan G es $145 al mes.');
+keeps("MED-03 the plan's own drug deductible",
+  "Your Part B costs are set, but your plan's drug deductible is $500 for 2026.");
+keeps('MED-03 a nested list under a Medigap heading',
+  'Standard 2026 amounts:\n- Part B\n  - standard premium: $202.90\n  - Medigap Plan G\n    - monthly premium: $145\n');
+
+// ── RT6-MED-09: the next clause's benefit is not this concept's amount ────
+keeps('MED-09 the plan charges a monthly premium',
+  'The 2026 Part B deductible is $283, and the plan charges a $45 monthly premium.');
+keeps('MED-09 a grocery card allowance',
+  'The 2026 Part B deductible is $283, and the plan offers a $60 quarterly grocery card.');
+keeps('MED-09 a specialist charge with no visible subject',
+  'In 2026 the Part B deductible is $283, and for each specialist there is a $50 charge.');
+keeps('MED-09 ES recargo por consulta',
+  'En 2026 el deducible de la Parte B es $283, y hay un recargo de $50 por cada consulta especializada.');
+keeps('MED-09 inheritance must not cross a topic change',
+  'Let us talk about the Part B deductible. It is worth knowing you also get $500 a year for dental.');
+keeps('MED-09 a nested list under an Extras heading',
+  '2026 costs:\n- Part B\n  - deductible: $283\n  - Extras\n    - dental allowance: $500\n');
+
+// ── RT6-MED-04: "about" protects a rounding, not any round number ─────────
+corrects('MED-04 "about $8,000" is not a rounding of $2,100',
+  'In 2026 the Part D out-of-pocket cap is about $8,000.', 'part_d_oop_cap', 8000);
+corrects('MED-04 "roughly $150" is not a rounding of $202.90',
+  'The standard Part B premium in 2026 is roughly $150 a month for most people.', 'part_b_standard_premium', 150);
+keeps('MED-04 control: "around $200" IS a rounding of $202.90',
+  'The standard Part B premium in 2026 is around $200 a month for most people.');
+
+// ── RT6-MED-02: a subsidised $0 is true; a hallucinated $0 is not ─────────
+keeps('MED-02 QMB pays the caller share',
+  'If you have QMB, your share of the Part B deductible would normally be $0.');
+keeps('MED-02 ES QMB',
+  'Si usted tiene QMB, normalmente su parte del deducible de la Parte B seria $0.');
+keeps('MED-02 full Extra Help zeroes the cap',
+  'With full Extra Help your 2026 Part D out-of-pocket cap is effectively $0.');
+corrects('MED-02 control: a bare $0 with no programme named is still corrected',
+  'The 2026 Part B deductible is $0.', 'part_b_deductible', 0);
+
 if (failures.length) {
   console.error(`MEDICARE FIGURES R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

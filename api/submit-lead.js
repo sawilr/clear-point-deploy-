@@ -231,8 +231,30 @@ function scrubIdentityForIntel(text, values, dob) {
   }
   // ── ALWAYS-ON date sweep (R5-SL-01). Runs whether or not a DOB was supplied. ──
   {
+    //
+    // RED TEAM ROUND 6 (R6-SL-01, P0 HIPAA — a hole in the round-5 P0 fix).
+    // Making the sweep always-on was necessary and not sufficient: the
+    // plausibility window it inherited stops at the current year minus 50, which
+    // is 1976 today. Medicare is not only for people over 65 — a disability lead
+    // qualifies at any age, and this agency serves them. So "I was born on
+    // 5/12/1985 and I get SSDI" went to the enrichment model untouched, while
+    // the same sentence with 1950 was redacted. The window was silently
+    // age-gating the identifier it exists to remove.
+    //
+    // The window is not wrong, it is misapplied. It exists to protect
+    // APPOINTMENT and ENROLLMENT dates from being mistaken for birth dates, and
+    // that job only matters when nothing says the date IS a birth date. When the
+    // note carries an explicit birth cue, a stated birth date is a birth date
+    // whatever the year.
+    var BIRTH_CUE_RE = /\b(?:born|birth\s*date|birthday|b-?day|date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|naci|nacio|nacid[oa]|nacimiento|cumplea[nñ]os|cumplo\s+a[nñ]os|fecha\s+de\s+nacimiento)\b/i;
+    var birthCued = BIRTH_CUE_RE.test(out) || BIRTH_CUE_RE.test(foldToken(out));
     var maxBirth = new Date().getFullYear() - 50;
-    var yearOk = function (y) { y = Number(y); return y >= 1900 && y <= maxBirth; };
+    var yearOk = function (y) {
+      y = Number(y);
+      if (!(y >= 1900)) return false;
+      if (birthCued) return y <= new Date().getFullYear();   // any stated birth year
+      return y <= maxBirth;
+    };
     out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
@@ -250,8 +272,7 @@ function scrubIdentityForIntel(text, values, dob) {
     // appointment date ("el quince de marzo tengo cita") would be redacted too,
     // and unlike the with-year patterns above there is nothing else in the
     // string to mark it as a birth date.
-    var BIRTH_CUE_RE = /\b(?:born|birth\s*date|birthday|b-?day|date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|naci|nacio|nacid[oa]|nacimiento|cumplea[nñ]os|cumplo\s+a[nñ]os|fecha\s+de\s+nacimiento)\b/i;
-    if (BIRTH_CUE_RE.test(out) || BIRTH_CUE_RE.test(foldToken(out))) {
+    if (birthCued) {
       var M_EN = '(?:' + MONTHS_EN.join('|') + '|' + MONTHS_EN.map(function (x) { return x.slice(0, 3) + '\\.?'; }).join('|') + ')';
       var M_ES = '(?:' + MONTHS_ES.join('|') + '|' + MONTHS_ES.map(function (x) { return x.slice(0, 3) + '\\.?'; }).join('|') + ')';
       var DAY_ES = '(?:primero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|dieciséis|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintidos|veintidós|veintitres|veintitrés|veinticuatro|veinticinco|veintiseis|veintiséis|veintisiete|veintiocho|veintinueve|treinta(?:\\s+y\\s+uno)?)';
@@ -262,6 +283,23 @@ function scrubIdentityForIntel(text, values, dob) {
         M_EN + '\\s+' + DAY_EN,
         '(?:the\\s+)?' + DAY_EN + '\\s+of\\s+' + M_EN,
         M_EN + '\\s+\\d{1,2}(?:st|nd|rd|th)?',
+        //
+        // RED TEAM ROUND 6 (R6-SL-11, P1): four more shapes that leaked WITH a
+        // birth cue already present. All four are cue-gated like the rest, so
+        // widening them cannot touch an appointment date.
+        //
+        // "Born 15-Mar-1950" / "15.mar.1950" — day, abbreviated month, year,
+        // joined by separators the month-name patterns above do not allow.
+        '\\d{1,2}[\\s./-]{1,2}' + M_EN + '[\\s./-]{1,2}\\d{2,4}',
+        '\\d{1,2}[\\s./-]{1,2}' + M_ES + '[\\s./-]{1,2}\\d{2,4}',
+        // "the 15th of March 1950" — a NUMERIC ordinal, where DAY_EN only knows
+        // the spelled-out ones and the month-first pattern cannot reach back.
+        '(?:the\\s+)?\\d{1,2}(?:st|nd|rd|th)\\s+of\\s+' + M_EN + '(?:[\\s,]+\\d{2,4})?',
+        // "3/15/50" and "15.03.50" — a TWO-DIGIT year, which every generic
+        // pattern above rejects because they all require 19xx or 20xx.
+        '\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2}',
+        // "el 15 del 3 del 50" — the all-numeric Spanish spoken form.
+        '(?:el\\s+)?\\d{1,2}\\s+del?\\s+\\d{1,2}\\s+del?\\s+\\d{2,4}',
       ];
       for (var yl = 0; yl < yearless.length; yl++) {
         try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + yearless[yl] + '(?![\\p{L}\\p{N}])', 'giu'), '[date]'); } catch (_e) { /* keep going */ }

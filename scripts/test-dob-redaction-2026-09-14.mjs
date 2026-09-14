@@ -104,6 +104,31 @@ keeps('appointment date survives without a birth cue', 'Can we talk on March 15 
 keeps('ES appointment date survives', 'Puedo hablar el 15 de marzo sobre mi plan.', ['15 de marzo']);
 keeps('recent date is not a birth date', 'I got the letter on 01/15/2026 and it confused me.', ['01/15/2026']);
 
+// ═══ RED TEAM ROUND 6 — the hole in the round-5 P0 fix ═══════════════════
+// Making the sweep always-on was necessary and not sufficient. The plausibility
+// window it inherited stops at the current year minus 50 — 1976 today — so a
+// DISABILITY lead, who qualifies for Medicare at any age and whom this agency
+// serves, had their birth date pass untouched. The window was silently
+// age-gating the identifier it exists to remove.
+
+bothWays('R6 disability lead, born 1985', 'I was born on 5/12/1985 and I get SSDI.', ['5/12/1985', '1985'], '1985-05-12');
+bothWays('R6 disability lead, DOB 1985', 'DOB 03-15-1985 (SSDI).', ['03-15-1985'], '1985-03-15');
+bothWays('R6 ES nacio 1977', 'Nacio el 03/15/1977, tiene Medicare por incapacidad.', ['03/15/1977'], '1977-03-15');
+bothWays('R6 ES fecha de nacimiento 1978', 'Fecha de nacimiento: 15/03/1978.', ['15/03/1978'], '1978-03-15');
+bothWays('R6 birthday 1990', 'My birthday is June 1, 1990 and I am on disability.', ['June 1, 1990'], '1990-06-01');
+
+// R6-SL-11 — four shapes that leaked even inside the old window, with a cue.
+bothWays('R6 abbreviated month, hyphens', 'Born 15-Mar-1950.', ['15-Mar-1950'], '1950-03-15');
+bothWays('R6 numeric ordinal with "of"', 'I was born on the 15th of March 1950.', ['15th of March'], '1950-03-15');
+bothWays('R6 two-digit year', 'I was born 3/15/50, so I turn 76 this year.', ['3/15/50'], '1950-03-15');
+bothWays('R6 ES all-numeric spoken form', 'Naci el 15 del 3 del 50.', ['15 del 3 del 50'], '1950-03-15');
+
+// …and the window still does its real job where no birth cue is present.
+keeps('R6 control: an appointment date survives', 'Can we talk on 03/15/2026 about my plan?', ['03/15/2026']);
+keeps('R6 control: ES appointment date survives', 'Mi cita es el 15 de marzo de 2026.', ['15 de marzo de 2026']);
+keeps('R6 control: an enrollment date survives', 'My Part B started 01/01/2016.', ['01/01/2016']);
+keeps('R6 control: a letter date survives', 'The letter is dated 5/12/2026.', ['5/12/2026']);
+
 if (failures.length) {
   console.error(`DOB REDACTION: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');
