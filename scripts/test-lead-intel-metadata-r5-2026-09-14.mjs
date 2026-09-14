@@ -118,6 +118,24 @@ const payloadFn = new Function('metadata', 'source', 'language', 'notes',
     JSON.stringify(p));
 }
 
+// ═══ RED TEAM ROUND 6 — R6-SL-05 ════════════════════════════════════════
+// scrubPHI returns { text, detected }, and the round-5 change to the coverage
+// field forgot `.text`. The CRM was being handed the whole object, which
+// coerces to "[object Object]" and may make GHL reject the contact create —
+// and that call is not retried on a 4xx, so it would lose the lead.
+{
+  const line = (HANDLER.split('\n').find((l) => l.includes('var medicare_status = scrubPHI(')) || '');
+  ok('R6-SL-05 the coverage field reads .text off the scrub result',
+    /\)\.text;\s*$/.test(line), line ? line.trim() : '(line not found)');
+}
+{
+  // And the belt: every custom-field value is coerced to a string before the
+  // POST, so the next one of these fails a suite instead of a lead.
+  ok('R6-SL-05 custom fields are string-coerced before the CRM call',
+    /non-string custom field coerced/.test(HANDLER) && /typeof f\.value === 'string'/.test(HANDLER),
+    'guard not found in api/submit-lead.js');
+}
+
 if (failures.length) {
   console.error(`LEAD-INTEL METADATA R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

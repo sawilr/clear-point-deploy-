@@ -282,6 +282,35 @@
   .support-main { flex: none; min-height: 0; overflow: visible; }
 }
 
+/* AUDIT 2026-09-14 (RT6-01, P1) — the escape hatch for a viewport too short to
+   hold the conversation. Support.tsx adds this class below ~560 CSS pixels of
+   height, which is where a 390px phone lands at 175% and 200% browser zoom —
+   the setting a senior with low vision actually uses.
+
+   Measured before this rule, at 195x422: the transcript collapsed to zero
+   height, the language chips sat 250 to 375 pixels below the fold, and the page
+   could not scroll at all — wheel, End and scrollTo(0,5000) all left scrollY at
+   0. The CMS 42 CFR 422.2267(e)(41) paragraph was permanently unreachable, ten
+   of its ten lines below the fold in Spanish.
+
+   The pinned shell exists to stop iOS dragging the page out from under the
+   conversation when the keyboard opens, and that only matters when the content
+   fits. When it does not, the page behaves like every other page on the site.
+   Same shape as the md+ rule above, so there is one behaviour to reason about. */
+body.cp-support-scroll .support-shell {
+  position: static;
+  display: block;
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+  transform: none;
+}
+body.cp-support-scroll .support-main { flex: none; min-height: 0; overflow: visible; }
+/* The panel is h-full of a shell that now has no fixed height, so let it take
+   the height its own content needs instead of collapsing to nothing. */
+body.cp-support-scroll .support-main > section,
+body.cp-support-scroll .support-main > section > div { height: auto; overflow: visible; }
+
 /* ── UNIFIED CONTENT CONTAINER (Sawil 2026-06-19) ──
    THE single responsive band for the whole site. It normalizes all three
    legacy container patterns to one width curve by also matching the Tailwind

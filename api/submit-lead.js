@@ -671,7 +671,12 @@ export default async function handler(req, res) {
     var MEDICARE_STATUSES = ['none', 'original', 'advantage', 'supplement', 'partd', 'dual',
       'original_medicare', 'medicare_advantage', 'not_sure', 'ab_active', 'near_65'];
     var medicare_status_raw = typeof body.medicare_status === 'string' ? body.medicare_status : '';
-    var medicare_status = scrubPHI(_capEarly(medicare_status_raw, 60).replace(/[\r\n\t]+/g, ' ').trim());
+    // RED TEAM ROUND 6 (R6-SL-05, P2 — a regression I introduced in round 5):
+    // scrubPHI returns { text, detected }, and this one call site forgot `.text`.
+    // The CRM coverage field was being handed the whole object, which coerces to
+    // "[object Object]" at best and may 400 the contact create at worst — and
+    // ghlFetchRetry does not retry a 4xx, so that would lose the lead outright.
+    var medicare_status = scrubPHI(_capEarly(medicare_status_raw, 60).replace(/[\r\n\t]+/g, ' ').trim()).text;
     var medicare_status_token = (function (v) {
       var s = String(v).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
       if (!s) return '';
@@ -1251,7 +1256,17 @@ export default async function handler(req, res) {
         // are dropped by the filter below (so a lead without either still submits fine).
         { id: 'PpDDusEEsMz4xNIcrwRW', key: 'contact.best_time_to_call', value: best_time_to_contact || '' },
         { id: 'fLxx7s1GpVJYlxJl08G6', key: 'contact.medicare_interest', value: interest_type || '' }
-      ].filter(function (f) { return f.value; }),
+      // R6-SL-05: a custom-field value that is not a string is a bug upstream —
+      // an object coerces to "[object Object]" in the CRM, and GHL may reject
+      // the whole contact create, which ghlFetchRetry does not retry. Coerce
+      // defensively AND say so loudly, so the next one shows up in the logs of
+      // the request that caused it instead of as a silently mangled field.
+      ].filter(function (f) { return f.value; }).map(function (f) {
+        if (typeof f.value === 'string') return f;
+        console.warn('[submit-lead] non-string custom field coerced', { key: f.key, type: typeof f.value });
+        leadAudit('customfield_type', null, { key: f.key, type: typeof f.value });
+        return { id: f.id, key: f.key, value: f.value == null ? '' : String(f.value.text || f.value) };
+      }).filter(function (f) { return f.value; }),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
