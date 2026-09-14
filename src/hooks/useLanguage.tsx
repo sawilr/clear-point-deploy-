@@ -24,9 +24,14 @@ export function toSpanishPath(pathname: string): string {
 }
 
 // Routes with NO /es twin: /soa/:token (per-user, 24h secure links — never
-// indexed) and /thank-you (post-submit confirmation, noindex). Switching
-// language on these stays client-side only, exactly as before.
-const NO_ES_TWIN = /^\/(soa\/|thank-you$)/;
+// indexed). Switching language on these stays client-side only.
+//
+// AUDIT 2026-09-14 (FORMS-11, P2) — /thank-you used to live in this set, which
+// meant https://clearpointsenioradvisors.com/es/thank-you answered with the SPA
+// 404 page. That URL is the natural destination for any Spanish conversion
+// redirect, and a 404 after a successful submit is the worst possible moment to
+// lose someone. It now has a real twin like every other content route.
+const NO_ES_TWIN = /^\/soa\//;
 
 interface LanguageContextValue {
   lang: Lang;
@@ -83,7 +88,13 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     // /es/* on a stored preference contradicted the "URL wins" rule this
     // provider already applies to /es URLs. Root '/' carries no explicit
     // language intent, so personalization still applies there.
-    if (storedLang === 'es' && pathname === '/' && !urlIsSpanish) {
+    // FORMS-11 — /thank-you is the second such path. It is not chosen by the
+    // visitor either: it is where a conversion redirect drops them, and that
+    // redirect has no way to know which language they were reading. Same rule,
+    // same one-shot replace, and an explicit /es/thank-you link still wins
+    // because urlIsSpanish short-circuits it.
+    const NO_LANGUAGE_INTENT = pathname === '/' || pathname === '/thank-you';
+    if (storedLang === 'es' && NO_LANGUAGE_INTENT && !urlIsSpanish) {
       navigate(toSpanishPath(pathname) + window.location.search + window.location.hash, { replace: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

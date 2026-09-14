@@ -46,10 +46,15 @@ if (routes.length < 13) {
 // own title/canonical (it inherited the homepage title) and was indexable.
 // A post-submit confirmation page must not compete with the homepage in search:
 // give it its own metadata + robots noindex,follow.
+// AUDIT 2026-09-14 (FORMS-11) — Spanish strings added so /es/thank-you gets the
+// same pre-JS shell. Still noindex in BOTH languages: the twin exists so a
+// Spanish conversion redirect does not land on a 404, not to be crawled.
 routes.push({
   path: '/thank-you',
   title: 'Thank You | Clear Point Senior Advisors',
   description: 'Your request was received. A licensed Clear Point Senior Advisors advisor will contact you during business hours.',
+  titleEs: 'Gracias | Clear Point Senior Advisors',
+  descriptionEs: 'Recibimos su solicitud. Un asesor licenciado de Clear Point Senior Advisors se comunicará con usted en horario de oficina.',
   noindex: true,
 });
 
@@ -77,7 +82,10 @@ function renderRoute(route, lang = 'en') {
   html = html.replace(/(<meta name="twitter:description" content=")[^"]*(")/, `$1${esc(description)}$2`);
   // Canonical: RouteMeta upserts the same tag client-side (querySelector), so
   // pre-seeding it is idempotent — no duplicate tag after hydration.
-  if (!/rel="canonical"/.test(html)) {
+  // FORMS-11 — noindex routes get NO canonical, matching RouteMeta, which
+  // strips the tag client-side on /thank-you and /soa/*. Leaving one in the
+  // pre-JS shell meant a non-JS crawler saw a canonical the live page denies.
+  if (!route.noindex && !/rel="canonical"/.test(html)) {
     html = html.replace('</head>', `    <link rel="canonical" href="${canonical}" />\n  </head>`);
   }
   // Sawil 2026-07-27 ES ROUTES — hreflang cluster per content page (en / es /
@@ -111,9 +119,10 @@ for (const route of routes) {
   writtenPaths.push(route.path);
   written++;
   // Sawil 2026-07-27 ES ROUTES — every content route also gets its /es twin
-  // with Spanish title/description baked in. /thank-you (noindex, no titleEs)
-  // stays EN-only by design.
-  if (!route.noindex) {
+  // with Spanish title/description baked in. FORMS-11: the gate is now the
+  // presence of Spanish strings, not indexability, so noindex /thank-you gets
+  // its twin too. Identical output for every content route (all carry titleEs).
+  if (route.titleEs && route.descriptionEs) {
     writeRoute(esPath(route.path), renderRoute(route, 'es'));
     writtenPaths.push(esPath(route.path));
     written++;

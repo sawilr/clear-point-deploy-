@@ -44,7 +44,10 @@ export const ES_SCAN_SENTINEL = 'DIST_MISSING';
 const LANG_SWITCH_ATTR = 'data-lang-switch';
 
 // Routes with no /es twin — linking to them from Spanish is correct by design.
-const NO_ES_TWIN = /^\/(soa\/|thank-you(\/|$|[?#]))/;
+// AUDIT 2026-09-14 (FORMS-11) — /thank-you left this set: it now has a real
+// Spanish twin, so a hardcoded /thank-you link inside Spanish markup is a
+// defect again and this scan must flag it.
+const NO_ES_TWIN = /^\/soa\//;
 
 // Static files, not content routes.
 const ASSET_PATH = /^\/(assets\/|favicon|robots\.txt$|sitemap)/;

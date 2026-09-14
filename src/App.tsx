@@ -236,7 +236,11 @@ export default function App() {
             {CONTENT_ROUTES.map(({ path, element }) => (
               <Route key={esPath(path)} path={esPath(path)} element={element} />
             ))}
+            {/* AUDIT 2026-09-14 (FORMS-11) — the Spanish twin. Both stay
+                noindex (RouteMeta keys off the EN base path), so adding it
+                costs nothing in search and stops /es/thank-you 404ing. */}
             <Route path="/thank-you" element={<ThankYou />} />
+            <Route path="/es/thank-you" element={<ThankYou />} />
             {/* PHASE A16 — SOA signing route. Token issued by /api/soa-token. */}
             <Route path="/soa/:token" element={<SignSOA />} />
             {/* PHASE 7 — Branded 404 fallback. */}

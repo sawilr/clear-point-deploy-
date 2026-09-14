@@ -519,10 +519,13 @@ function midState(lang) {
   // actually catches CPF-003 now: any HARD-CODED internal path literal in
   // src/pages or src/components that never goes through useLocalizedPath().
   {
-    const ALLOW_TARGET = /^(\/es(\/|$)|\/thank-you|\/soa\/|\/assets\/|\/favicon|\/robots\.txt|\/sitemap|#)/;
-    // /thank-you has no ES twin, so its own "back home" link can never render
-    // inside the /es space — the audit explicitly scopes it out.
-    const ALLOW_FILE = /(ThankYou|LanguageToggle)\.tsx$/;
+    // AUDIT 2026-09-14 (FORMS-11) — /thank-you left BOTH allow-lists. It has a
+    // real Spanish twin now, so a hardcoded /thank-you target is a localization
+    // defect like any other, and ThankYou.tsx routes its own home link through
+    // useLocalizedPath(). LanguageToggle keeps its exemption: crossing the
+    // EN <-> /es boundary is the entire job of that one control.
+    const ALLOW_TARGET = /^(\/es(\/|$)|\/soa\/|\/assets\/|\/favicon|\/robots\.txt|\/sitemap|#)/;
+    const ALLOW_FILE = /(LanguageToggle)\.tsx$/;
     const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^[ \t]*\/\/.*$/gm, ' ');
     const linkOffenders = [];
     const scanSrc = (dir) => {

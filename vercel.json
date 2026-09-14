@@ -101,6 +101,10 @@
       "destination": "/index.html"
     },
     {
+      "source": "/es/thank-you",
+      "destination": "/index.html"
+    },
+    {
       "source": "/soa/:token",
       "destination": "/index.html"
     },

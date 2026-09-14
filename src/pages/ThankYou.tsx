@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router';
-import { useLanguage } from '../hooks/useLanguage';
+import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { CheckIcon, PhoneIcon } from '../components/icons';
 import { track, Events } from '../lib/analytics';
 
@@ -8,6 +8,9 @@ import { track, Events } from '../lib/analytics';
 // destination. Fires a generic, PII-free thank_you_view event on mount.
 export default function ThankYou() {
   const { t, lang } = useLanguage();
+  // FORMS-11 — now that /es/thank-you exists, "Return to homepage" must keep a
+  // Spanish visitor inside /es instead of dropping them onto the English root.
+  const lp = useLocalizedPath();
 
   useEffect(() => {
     track(Events.THANK_YOU_VIEW, { event_category: 'lead', event_label: 'thank_you_page', language: lang });
@@ -36,7 +39,7 @@ export default function ThankYou() {
           1-855-720-8555
         </a>
         <p className="text-earth-600 text-sm mt-4">
-          <Link to="/" className="underline text-earth-800 font-semibold hover:text-gold-500">
+          <Link to={lp('/')} className="underline text-earth-800 font-semibold hover:text-gold-500">
             {t('Return to homepage', 'Volver al inicio')}
           </Link>
         </p>
