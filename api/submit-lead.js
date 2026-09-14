@@ -124,10 +124,22 @@ function scrubIdentityForIntel(text, values, dob) {
   // Dates. Red-team round 3 (R3-SL-06/15): the SUPPLIED date of birth is redacted
   // in every rendering whatever the year (disability leads are under 65); the
   // plausible-birth-year window only governs OTHER dates in the story.
+  //
+  // RED TEAM ROUND 5 (R5-SL-01, P0 HIPAA). Everything below — INCLUDING the
+  // generic plausible-birth-year sweep — used to sit inside the
+  // `if (/\d{4}/.test(dobStr))` gate. Four of the five lead surfaces send no
+  // date of birth at all: Zara sends the empty string, and LeadForm, the
+  // support bot and Clara send nothing. On every one of them the entire date
+  // redaction was dead code, so "Nací el 15 de marzo de 1950" typed into the
+  // caller's own story reached the enrichment model verbatim. A full birth date
+  // is a HIPAA Safe-Harbor identifier.
+  //
+  // The split is now explicit: patterns built FROM a supplied DOB stay gated on
+  // having one, and the generic sweep runs on every request.
   var dobStr = dob == null ? '' : String(dob);
+  var MONTHS_EN = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  var MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
   if (/\d{4}/.test(dobStr)) {
-    var MONTHS_EN = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
-    var MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
     var parsed = null;
     var iso = dobStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
     var mdy = dobStr.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
@@ -138,23 +150,68 @@ function scrubIdentityForIntel(text, values, dob) {
       var n2 = function (s) { return '0?' + s; };
       var mName = '(?:' + MONTHS_EN[parsed.m - 1] + '|' + MONTHS_EN[parsed.m - 1].slice(0, 3) + '\\.?|' + MONTHS_ES[parsed.m - 1] + '|' + MONTHS_ES[parsed.m - 1].slice(0, 3) + '\\.?)';
       var yBoth = '(?:' + yy + '|' + yy.slice(2) + ')';
+      // R5-SL-12 (3): an ISO date followed by a time ("1950-03-15T00:00:00Z")
+      // used to defeat the trailing letter/digit guard — the 'T' is a letter, so
+      // the lookahead failed and the whole date survived. The timestamp tail is
+      // now consumed as part of the match.
+      var isoTail = '(?:[T ]\\d{2}:\\d{2}(?::\\d{2})?(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)?';
       var pats = [
         '(?<![\\p{L}\\p{N}])' + n2(mm) + '[-/.]' + n2(dd) + '[-/.]' + yBoth + '(?![\\p{L}\\p{N}])',
         '(?<![\\p{L}\\p{N}])' + n2(dd) + '[-/.]' + n2(mm) + '[-/.]' + yBoth + '(?![\\p{L}\\p{N}])',
-        '(?<![\\p{L}\\p{N}])' + yy + '[-/.]' + n2(mm) + '[-/.]' + n2(dd) + '(?![\\p{L}\\p{N}])',
+        '(?<![\\p{L}\\p{N}])' + yy + '[-/.]' + n2(mm) + '[-/.]' + n2(dd) + isoTail + '(?![\\p{L}\\p{N}])',
         mName + '\\s+' + n2(dd) + '(?:st|nd|rd|th)?,?\\s+' + yy,
         n2(dd) + '[\\s-]+(?:de[l]?\\s+)?' + mName + '[\\s-]+(?:de[l]?\\s+)?' + yy,
+        // R5-SL-12 (2): the YEAR-LESS form. "Cumplo años el 15 de marzo" names
+        // the caller's own birthday, and next to the five-year age band in the
+        // lead-intel metadata that pins the birth date to within days. Only the
+        // day and month of THIS lead's supplied DOB are redacted, so an
+        // unrelated date in the story is untouched.
+        '(?:el\\s+)?' + n2(dd) + '\\s+de\\s+' + mName + '(?![\\s-]*(?:de[l]?\\s+)?\\d)',
+        mName + '\\s+' + n2(dd) + '(?:st|nd|rd|th)?(?!,?\\s*\\d)',
       ];
       for (var p = 0; p < pats.length; p++) {
         try { out = out.replace(new RegExp(pats[p], 'giu'), '[date]'); } catch (_e) { /* keep going */ }
       }
     }
+  }
+  // ── ALWAYS-ON date sweep (R5-SL-01). Runs whether or not a DOB was supplied. ──
+  {
     var maxBirth = new Date().getFullYear() - 50;
     var yearOk = function (y) { y = Number(y); return y >= 1900 && y <= maxBirth; };
     out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
-      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
+      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
+      // R5-SL-12 (3), generic side: an ISO date carrying a time survived the
+      // trailing \b because the 'T' is a word character.
+      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, function (m, y) { return yearOk(y) ? '[date]' : m; });
+
+    // R5-SL-12 (1): SPELLED-OUT and YEAR-LESS birth dates. Safe Harbor requires
+    // removing every element of a date smaller than the year, so the day and
+    // month are the identifying part — "Nací el quince de marzo" is as good as
+    // a birth date once the lead-intel metadata contributes an age band.
+    //
+    // These fire ONLY next to an explicit birth cue. Without that guard an
+    // appointment date ("el quince de marzo tengo cita") would be redacted too,
+    // and unlike the with-year patterns above there is nothing else in the
+    // string to mark it as a birth date.
+    var BIRTH_CUE_RE = /\b(?:born|birth\s*date|birthday|b-?day|date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|naci|nacio|nacid[oa]|nacimiento|cumplea[nñ]os|cumplo\s+a[nñ]os|fecha\s+de\s+nacimiento)\b/i;
+    if (BIRTH_CUE_RE.test(out) || BIRTH_CUE_RE.test(foldToken(out))) {
+      var M_EN = '(?:' + MONTHS_EN.join('|') + '|' + MONTHS_EN.map(function (x) { return x.slice(0, 3) + '\\.?'; }).join('|') + ')';
+      var M_ES = '(?:' + MONTHS_ES.join('|') + '|' + MONTHS_ES.map(function (x) { return x.slice(0, 3) + '\\.?'; }).join('|') + ')';
+      var DAY_ES = '(?:primero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|dieciséis|diecisiete|dieciocho|diecinueve|veinte|veintiuno|veintidos|veintidós|veintitres|veintitrés|veinticuatro|veinticinco|veintiseis|veintiséis|veintisiete|veintiocho|veintinueve|treinta(?:\\s+y\\s+uno)?)';
+      var DAY_EN = '(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[\\s-](?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth)|thirtieth|thirty[\\s-]first)';
+      var yearless = [
+        '(?:el\\s+)?' + DAY_ES + '\\s+de[l]?\\s+' + M_ES,
+        '(?:el\\s+)?\\d{1,2}\\s+de[l]?\\s+' + M_ES,
+        M_EN + '\\s+' + DAY_EN,
+        '(?:the\\s+)?' + DAY_EN + '\\s+of\\s+' + M_EN,
+        M_EN + '\\s+\\d{1,2}(?:st|nd|rd|th)?',
+      ];
+      for (var yl = 0; yl < yearless.length; yl++) {
+        try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + yearless[yl] + '(?![\\p{L}\\p{N}])', 'giu'), '[date]'); } catch (_e) { /* keep going */ }
+      }
+    }
   }
   // Exact values, longest first. Red-team round 3 (R3-SL-01/02/03): names match
   // case- AND accent-insensitively; the full "First Last" bigram is redacted

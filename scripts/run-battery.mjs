@@ -37,6 +37,8 @@ const SUITES = [
   'test-customer-service-language-lock.mjs',
   'test-compliance-filter-r3-2026-09-13.mjs',
   'test-submit-lead-r3-2026-09-13.mjs',
+  'test-emergency-postcondition-2026-09-14.mjs',
+  'test-dob-redaction-2026-09-14.mjs',
 ];
 
 const only = process.argv.slice(2);

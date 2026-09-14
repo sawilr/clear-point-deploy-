@@ -405,16 +405,55 @@ const EMERGENCY_USER_RES = [
 // The digits must not sit inside a number or an amount, AND an instruction verb
 // has to introduce them — a bare numeral is never a 911 instruction.
 const EMERGENCY_NUMBER_TOKEN = /(?<![\d$.,])(?:911|9(?:[\s‐-―.-]1){2})(?!\d|[.,]\d)|\bnine[-\s‐-―]?one[-\s‐-―]?one\b|\bnueve\s+uno\s+uno\b/gi;
-const EMERGENCY_VERB_RE = /\b(call|calling|dial|phone|contact|reach|llame|llamar|llama|marque|marcar|comuni[qc]|911\s*(?:now|right\s+away|inmediatamente|ya))\b/i;
+//
+// RED TEAM ROUND 5 (RT5-CF-01, P0 LIFE SAFETY — regression introduced by the
+// round-4 guard above). RT4-CF-03's verb test asked only whether an instruction
+// verb occurred ANYWHERE in the 40 characters around the number. "Call", "dial",
+// "contact", "llame" and "marcar" are ordinary Medicare-service vocabulary, so
+// seven non-emergency sentences satisfied the invariant and a caller who wrote
+// "I am having chest pain and I cannot breathe" was answered with a request for
+// their ZIP code. The worst of them: "Please call your plan at 9-1-1-ext 4 for
+// that billing question."
+//
+// THE COST IS NOT SYMMETRIC, AND THAT DECIDES THE DESIGN. A false ACCEPT leaves
+// a non-emergency reply standing in front of someone describing a heart attack.
+// A false REJECT replaces a correct reply with EMERGENCY_911_REPLY — which is
+// also a correct emergency instruction. So this function is DEFAULT-DENY: it
+// answers "yes" only when the number is the direct object of an instruction
+// verb, or is followed by an urgency marker. An unusual phrasing loses its
+// wording to the canonical reply, and that is the right way to be wrong.
+//
+// Connectors are a CLOSED set. That is what separates "call 911" and
+// "comuníquese con el 911" from "call us on 9-1-1" and "call your plan at
+// 9-1-1" — in the second pair the direct object is the office, not the
+// emergency number, and the digits are a phone extension or a date.
+const EMERGENCY_INSTRUCTION_BEFORE_RE =
+  /\b(?:call|calling|dial|dialing|phone|ring|llame|llamen|llamar|llama|marque|marcar|marca|comun[ií]quese|comuniquen)(?:\s+(?:al|a|to|the|el|la|los|con))*\s*$/i;
+// "911 right now", "911 inmediatamente" — an urgency marker on the number itself
+// is an instruction no matter how the sentence opened.
+const EMERGENCY_URGENCY_AFTER_RE =
+  /^[\s,]*(?:right\s+(?:now|away)|now|immediately|at\s+once|ahora\s+mismo|ahora|de\s+inmediato|inmediatamente|ya)\b/i;
+// Reference numbering ("rule 9.1.1", "page 9-1-1") and unit/time tails
+// ("9-1-1-ext 4", "9 1 1 de la tarde") mean the digits are not a phone number.
+const EMERGENCY_TOKEN_REFERENCE_RE =
+  /\b(?:rule|regla|section|secci[oó]n|page|p[aá]gina|version|versi[oó]n|form|formulario|chapter|cap[ií]tulo|item|line|l[ií]nea|paragraph|p[aá]rrafo|step|paso|no\.|nro\.?|n[uú]m(?:ero)?\.?|#)\s*$/i;
+const EMERGENCY_TOKEN_TAIL_RE =
+  /^(?:\s*[-–—]?\s*(?:ext|extension|x|apt|apto|ste|suite|st|street|ave|avenue|rd|road|blvd|bldg)\b|[\s,]*(?:de\s+la\s+(?:tarde|ma[nñ]ana|noche)|a\.?\s?m\.?|p\.?\s?m\.?|am|pm)\b)/i;
 function carriesEmergencyInstruction(text) {
   const s = String(text || '');
   const re = new RegExp(EMERGENCY_NUMBER_TOKEN.source, 'gi');
   let m;
   while ((m = re.exec(s)) !== null) {
     if (re.lastIndex === m.index) re.lastIndex++;
-    const before = s.slice(Math.max(0, m.index - 40), m.index);
-    const after = s.slice(m.index + m[0].length, m.index + m[0].length + 24);
-    if (EMERGENCY_VERB_RE.test(before) || EMERGENCY_VERB_RE.test(after)) return true;
+    const end = m.index + m[0].length;
+    // Adjacency only — never read across a sentence boundary or a line break.
+    const beforeRaw = s.slice(Math.max(0, m.index - 48), m.index);
+    const before = beforeRaw.slice(beforeRaw.search(/[^.!?\n]*$/));
+    const after = s.slice(end, end + 32);
+    if (EMERGENCY_TOKEN_REFERENCE_RE.test(before)) continue;
+    if (EMERGENCY_TOKEN_TAIL_RE.test(after)) continue;
+    if (EMERGENCY_INSTRUCTION_BEFORE_RE.test(before)) return true;
+    if (EMERGENCY_URGENCY_AFTER_RE.test(after)) return true;
   }
   return false;
 }
