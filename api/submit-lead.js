@@ -30,8 +30,20 @@ import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 // Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
 // Official reference numbers a story may legitimately quote (never redacted).
 // Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
 var OFFICIAL_NUMBERS_RE = /^(1?8006334227|1?8774862048|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/;
 var SEP_CLASS = '[\\s.\\u2010-\\u2015\\u2212/\\\\()-]';
+// The phone shape may also be comma-separated ("917, 555, 0123"); the generic
+// digit-run masks below must NOT cross a comma, or two official numbers listed
+// one after the other read as one long number (red-team round 4).
+var PHONE_SEP = '[\\s.,\\u2010-\\u2015\\u2212/\\\\()-]';
 // Accent- and case-insensitive matcher for one name token (red-team R3-SL-01):
 // "JOSE", "jose", "Jose" and "Jose" with any accent are the same person.
 var ACCENT_SETS = { a: 'aàáâäãåā', e: 'eèéêëē', i: 'iìíîïī', o: 'oòóôöõō', u: 'uùúûüū', n: 'nñ', c: 'cç', y: 'yýÿ' };
@@ -52,8 +64,15 @@ function tokenPattern(tok) {
   }
   return pat;
 }
+// Red-team round 4 (R4-SL-09): a single-token name that is also an everyday word
+// is matched only where it is capitalised, so a Spanish story about "la pastilla
+// rosa" or "cerca del mar" is not shredded when the lead is named Rosa or Mar.
+var AMBIGUOUS_NAME = /^(rosa|mar|cruz|luz|paz|sol|amor|ana|eva|pia|june|april|grace|hope|joy|ray|will|bill|may|mark|rich|art|guy|pat|sue|don|rose|dawn|faith|angel|jesus|milagro|consuelo|dolores|nieves|perla|estrella|america|reina|olga)$/i;
 function scrubIdentityForIntel(text, values, dob) {
-  var out = String(text || '');
+  // Red-team round 4 (R4-SL-05): normalise the haystack — a decomposed name
+  // ("Sofi" + U+0301 + "a") or one carrying a zero-width character used to slip
+  // past every pattern. Both sides are compared in the same composed form.
+  var out = String(text || '').normalize('NFC').replace(/[​-‍⁠﻿]/g, '');
   // Red-team FORMS-04-B1 / round 3 R3-SL-07: the story only - never the TCPA
   // receipt or verbatim consent blocks. The cut is taken at the LAST marker so a
   // look-alike block pasted by the client cannot truncate the real story.
@@ -84,13 +103,13 @@ function scrubIdentityForIntel(text, values, dob) {
   });
   // Generic sweeps (phone / long digit runs / email), keeping official numbers.
   // Red-team round 4 (R4-SL-02): separators may be two characters (") ", ". ").
-  var PHONE_RE = new RegExp('(?:\\+?1' + SEP_CLASS + '{0,2})?\\(?\\d{3}\\)?' + SEP_CLASS + '{0,2}\\d{3}' + SEP_CLASS + '{0,2}\\d{4}', 'g');
+  var PHONE_RE = new RegExp('(?:\\+?1' + PHONE_SEP + '{0,3})?\\(?\\d{3}\\)?' + PHONE_SEP + '{0,3}\\d{3}' + PHONE_SEP + '{0,3}\\d{4}', 'g');
   out = out.replace(PHONE_RE, function (m) {
     var d = m.replace(/\D/g, '');
     return OFFICIAL_NUMBERS_RE.test(d) ? m : '[phone]';
   });
   // Digit groups split by single separators ("917 555 01 23", "9 1 7 5 5 5 0 1 2 3").
-  var SPACED_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\d' + SEP_CLASS + '{0,2}){9,14}\\d(?![\\p{L}\\p{N}])', 'gu');
+  var SPACED_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\d' + SEP_CLASS + '{0,3}){9,14}\\d(?![\\p{L}\\p{N}])', 'gu');
   out = out.replace(SPACED_RE, function (m) {
     var d = m.replace(/\D/g, '');
     if (OFFICIAL_NUMBERS_RE.test(d)) return m;
@@ -135,7 +154,7 @@ function scrubIdentityForIntel(text, values, dob) {
     out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
       .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
-      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
+      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
   }
   // Exact values, longest first. Red-team round 3 (R3-SL-01/02/03): names match
   // case- AND accent-insensitively; the full "First Last" bigram is redacted
@@ -144,21 +163,26 @@ function scrubIdentityForIntel(text, values, dob) {
   // words and titles - a token that IS the lead's name is redacted even when it
   // doubles as a common word, because the CRM note keeps the original text and
   // only the LLM input is scrubbed.
-  var STOP = /^(le|al|la|el|de|del|los|las|un|una|y|o|si|no|mi|su|se|me|te|lo|and|the|for|dr|sr|sra|srta|mrs|mr|ms|jr|ii|iii)$/i;
+  var STOP = /^(le|al|la|el|de|del|los|las|un|una|y|o|si|no|mi|su|se|me|te|lo|es|en|con|por|para|que|and|the|for|he|she|it|we|do|does|is|are|to|in|on|at|of|or|as|by|an|be|my|you|your|dr|sr|sra|srta|mrs|mr|ms|jr|ii|iii)$/i;
   var tokens = [];
   var nameParts = [];
   for (var i = 0; i < values.length; i++) {
     var v = values[i];
     if (typeof v !== 'string') continue;
-    var t = v.trim();
+    var t = v.normalize('NFC').replace(/[​-‍⁠﻿]/g, '').trim();
     if (t.length < 2) continue;
     if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push(t); continue; }
     nameParts.push(t);
     var parts = t.split(/[\s()"'‘’“”,._-]+/).filter(Boolean);
-    tokens.push(t);                                       // the value exactly as given
+    // The value exactly as given — unless it is a bare function word ("Le",
+    // "He", "Do"), which would shred ordinary prose (red-team R4-SL-03).
+    if (!STOP.test(t)) tokens.push(t);
     var kept = parts.filter(function (x) { return x.length >= 3 && !STOP.test(x); });
     if (kept.length) { for (var q = 0; q < kept.length; q++) tokens.push(kept[q]); }
-    else for (var q2 = 0; q2 < parts.length; q2++) tokens.push(parts[q2]);  // Ng, Li, Xu…
+    // Red-team round 4 (R4-SL-03): a short family name that is also a function
+    // word ("Le", "He", "Do") is never pushed on its own — the full-name bigram
+    // below still redacts it where it is actually the lead's name.
+    else for (var q2 = 0; q2 < parts.length; q2++) { if (!STOP.test(parts[q2])) tokens.push(parts[q2]); }
     if (parts.length > 1) tokens.push(parts.join(''));    // "O'Brien-Smith" joined
   }
   if (nameParts.length > 1) tokens.push(nameParts.join(' '));   // the full name
@@ -169,7 +193,9 @@ function scrubIdentityForIntel(text, values, dob) {
     // Red-team round 4 (R4-SL-03): a 1-2 character token ("Ng", "Li", "Ho") is a
     // fragment of ordinary prose in both languages, so it is matched only in the
     // exact capitalisation the lead supplied.
-    var flags = foldToken(tokens[j]).replace(/[^\p{L}\p{N}]/gu, '').length <= 2 ? 'gu' : 'giu';
+    var bare = foldToken(tokens[j]).replace(/[^\p{L}\p{N}]/gu, '');
+    var caseSensitive = bare.length <= 2 || (!/\s/.test(tokens[j]) && AMBIGUOUS_NAME.test(bare));
+    var flags = caseSensitive ? 'gu' : 'giu';
     try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
   }
   return out;
@@ -371,11 +397,15 @@ export default async function handler(req, res) {
       if (s === 'es' || s === 'spanish' || s === 'español' || s === 'espanol') return 'es';
       return 'en';
     })(body.preferred_language);
-    var LEAD_SOURCES = ['web', 'chatbot', 'zara', 'form', 'smartreview', 'smart_review', 'customer_service', 'customer_service_bot', 'clara_outer_flow', 'contact', 'free_review', 'referral', 'google', 'facebook', 'qa'];
+    // Red-team round 4 (R4-SL-06): the allow-list has to hold the strings the
+    // front end actually sends — deleting separators turned "Website Chatbot"
+    // into an unknown value and tagged almost every real lead Source-other.
+    var LEAD_SOURCES = ['web', 'website', 'website_chatbot', 'chatbot', 'clara_bot', 'zara', 'zara_chatbot', 'clearpoint_senior_advisors_website', 'clear_point_senior_advisors_website', 'form', 'contact_form', 'smartreview', 'smart_review', 'smart_medicare_review', 'customer_service', 'customer_service_bot', 'clara_outer_flow', 'contact', 'free_review', 'referral', 'google', 'facebook', 'qa'];
+    var lead_source_raw = typeof body.lead_source === 'string' ? body.lead_source.slice(0, 120) : '';
     var lead_source = (function (v) {
-      var s = typeof v === 'string' ? v.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') : '';
+      var s = v.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
       return LEAD_SOURCES.indexOf(s) !== -1 ? s : (s ? 'other' : '');
-    })(body.lead_source);
+    })(lead_source_raw);
     var medicare_status = body.medicare_status;
     var utm_source = body.utm_source;
     var utm_medium = body.utm_medium; var utm_campaign = body.utm_campaign;
@@ -1067,7 +1097,11 @@ export default async function handler(req, res) {
     // ChatBot sends 'Website Chatbot - Medicare Plan Review Request'
     // SmartMedicareReview sends 'Smart Medicare Review'
     // LeadForm sends '{source} Form' (e.g. 'contact-page Form', 'homepage-hero Form')
-    var rawFormName = String(typeof body.form_name === 'string' ? body.form_name : (lead_source || '')).toLowerCase();
+    // Red-team round 4 (R4-SL-07/08): the opportunity label and its keyword
+    // routing read the ORIGINAL client strings (coerced to a string so a hostile
+    // type can never throw after the CRM contact has been written), not the
+    // allow-listed tag value.
+    var rawFormName = String((typeof body.form_name === 'string' && body.form_name.trim()) || lead_source_raw || '').slice(0, 120).toLowerCase();
     var sourceLabel;
     if (rawFormName.indexOf('chatbot') !== -1 || rawFormName.indexOf('zara') !== -1) {
       sourceLabel = 'Zara ChatBot';
@@ -1080,7 +1114,9 @@ export default async function handler(req, res) {
     } else if (rawFormName.indexOf('extra') !== -1) {
       sourceLabel = 'Extra Help';
     } else if (rawFormName.length > 0) {
-      sourceLabel = (body.form_name || body.lead_source || 'Website Lead').trim();
+      // Red-team round 4 (R4-SL-08): a non-string form_name used to throw here,
+      // AFTER the contact had been written — a 500 with a half-created lead.
+      sourceLabel = String((typeof body.form_name === 'string' && body.form_name) || lead_source_raw || 'Website Lead').trim().slice(0, 120);
     } else {
       sourceLabel = 'Website Lead';
     }

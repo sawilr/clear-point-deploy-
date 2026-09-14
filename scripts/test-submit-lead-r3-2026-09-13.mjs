@@ -98,6 +98,33 @@ for (const [id, text, values, dob, keep] of KEPT) {
   const two = scrub('Ann Ho called. The pharmacy said ho hum and HO is a shipping term.', ['Ann', 'Ho'], null);
   check('R4-SL-03 two-letter name redacted where it is the name', !/\bAnn Ho\b/.test(two), two);
   check('R4-SL-03 lower-case prose word survives', /ho hum/.test(two), two);
+  // A short family name that is also a function word never shreds prose.
+  for (const [text, values, keep] of [
+    ['Le duele la rodilla y no le alcanza para el copago.', ['Anh', 'Le'], /Le duele la rodilla/],
+    ['He is my husband and he pays the premium every month.', ['Wei', 'He'], /He is my husband/],
+    ['I do not know what to do about my drug costs.', ['Minh', 'Do'], /what to do about/],
+  ]) {
+    const out = scrub(text, values, null);
+    check('R4-SL-03 function-word surname keeps prose intact', keep.test(out), out);
+  }
+  check('R4-SL-03 the full name is still redacted', !/Anh Le/.test(scrub('Anh Le called about the bill.', ['Anh', 'Le'], null)), scrub('Anh Le called about the bill.', ['Anh', 'Le'], null));
+  // Everyday Spanish words that happen to be the lead's name survive in lower case.
+  for (const [text, values, keep] of [
+    ['la pastilla rosa me da nauseas', ['Rosa', 'Fernandez'], /pastilla rosa/],
+    ['vivimos cerca del mar en Long Island', ['Mar', 'Castillo'], /cerca del mar/],
+  ]) {
+    const out = scrub(text, values, null);
+    check('R4-SL-09 everyday word survives: ' + keep.source, keep.test(out), out);
+  }
+  check('R4-SL-09 the name itself is still redacted', !/Rosa Fernandez/.test(scrub('Rosa Fernandez called today.', ['Rosa', 'Fernandez'], null)), 'leaked');
+  // Separator-rich phone shapes.
+  for (const t of ['call me at 917 - 555 - 0123 please', 'call 917, 555, 0123', 'my number: 917 – 555 – 0123', 'llame al 917. 555. 0123']) {
+    const out = scrub(t, ['Ana', 'Ruiz'], null);
+    check('R4-SL-02 masked: ' + t.slice(0, 24), !/917/.test(out), out);
+  }
+  // Two official numbers listed together must both survive.
+  const offList = scrub('TTY 1-877-486-2048, 1-800-633-4227 and 1-855-720-8555', ['Ana', 'Ruiz'], null);
+  check('R4-SL-02 adjacent official numbers survive', offList === 'TTY 1-877-486-2048, 1-800-633-4227 and 1-855-720-8555', offList);
 }
 
 // ── R3-SL-04 — CRM tag deny key is separator-free ────────────────────────────
