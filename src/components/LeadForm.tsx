@@ -38,6 +38,8 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
   const uid = useId();
   const fid = (name: string) => `${uid}-${name}`;
   const firstNameRef = useRef<HTMLInputElement>(null);
+  // FORMS-10 — focus target for a failed submission (see the banner below).
+  const submitErrorRef = useRef<HTMLDivElement>(null);
   const formStartedRef = useRef(false);
   // Sawil 2026-07-09 SECURITY — form render timestamp for the server-side
   // min-fill-time bot gate (real users take far longer than 3s to fill this).
@@ -68,6 +70,11 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
   }, [location.search]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(false);
+  // FORMS-10 — announce AND land on the failure banner once it renders.
+  useEffect(() => {
+    if (!error) return;
+    submitErrorRef.current?.focus();
+  }, [error]);
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
@@ -315,8 +322,14 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           {t('Takes 2 minutes · No pressure · Confidential', 'Toma 2 minutos · Sin presión · Confidencial')}
         </p>
 
+        {/* AUDIT 2026-09-14 (FORMS-10, P3) — parity with SmartMedicareReview: a
+            failed SEND must move focus, not only paint a red banner. The submit
+            button is disabled during the request, so focus can be left nowhere. */}
+        <p aria-live="polite" className="sr-only">
+          {submitting ? t('Sending your request…', 'Enviando su solicitud…') : ''}
+        </p>
         {error && (
-          <div role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+          <div ref={submitErrorRef} tabIndex={-1} role="alert" className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4 focus:outline-none focus:ring-2 focus:ring-red-400/50">
             <p className="text-red-700 text-xs">
               {rateLimited
                 ? (lang === 'es' ? FREE_REVIEW_LIMIT_ES : FREE_REVIEW_LIMIT_EN)

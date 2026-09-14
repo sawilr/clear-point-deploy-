@@ -88,6 +88,14 @@ export function SmartMedicareReview() {
   // the top of the viewport so the new question is visible. Covers chips,
   // Continue, Back, Step-1 sub-views, and the final success state.
   const cardRef = useRef<HTMLDivElement>(null);
+  // FORMS-10 — a failed submit must MOVE focus, not just paint red text. The
+  // submit button is disabled while sending, so focus would otherwise land
+  // nowhere and a keyboard/screen-reader user would never learn the send failed.
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    errorRef.current?.focus();
+  }, [error]);
   useEffect(() => {
     const el = cardRef.current;
     if (!el) return;
@@ -123,6 +131,17 @@ export function SmartMedicareReview() {
   const [medicaidExtraHelp, setMedicaidExtraHelp] = useState('');
 
   const isEs = lang === 'es';
+
+  // AUDIT 2026-09-14 (FORMS-10, P3) — the step-4 inline errors were rendered but
+  // never BOUND to their field: a screen-reader user who tabbed back into the
+  // phone box heard the label and nothing about why it was rejected. These
+  // derived flags drive both the message and the field's aria-invalid /
+  // aria-describedby, so the error travels with the control (WCAG 3.3.1).
+  const firstNameInvalid = firstName.length > 1 && !validatePersonName(firstName).valid;
+  const lastNameInvalid = lastName.length > 1 && !validatePersonName(lastName).valid;
+  const phoneTooShort = phone.length > 0 && phone.length < 10;
+  const phoneRejected = phone.length === 10 && !validatePhone(phone).valid;
+  const emailInvalid = !!email && !validateEmail(email).valid;
   // The human-readable selection label (localized) and the canonical EN
   // label used for the CRM `interest_type` field.
   const selectionLabel = selectedOption
@@ -791,34 +810,34 @@ export function SmartMedicareReview() {
                     aria-label removed — the label now provides the accessible name. */}
                 <label className="block">
                   <span className="block text-sm font-medium text-earth-700 mb-1">{t('First Name', 'Nombre')} *</span>
-                  <input type="text" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                  <input id="smr-first" aria-invalid={firstNameInvalid || undefined} aria-describedby={firstNameInvalid ? 'smr-first-err' : undefined} type="text" autoComplete="given-name" value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder={t('First Name', 'Nombre')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 </label>
-                {firstName.length > 1 && !validatePersonName(firstName).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                {firstNameInvalid && <p id="smr-first-err" role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <label className="block">
                   <span className="block text-sm font-medium text-earth-700 mb-1">{t('Last Name', 'Apellido')} *</span>
-                  <input type="text" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                  <input id="smr-last" aria-invalid={lastNameInvalid || undefined} aria-describedby={lastNameInvalid ? 'smr-last-err' : undefined} type="text" autoComplete="family-name" value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder={t('Last Name', 'Apellido')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 </label>
-                {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
+                {lastNameInvalid && <p id="smr-last-err" role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <label className="block">
                   <span className="block text-sm font-medium text-earth-700 mb-1">{t('Phone Number', 'Teléfono')} *</span>
-                  <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono')} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={24} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                  <input id="smr-phone" aria-invalid={phoneTooShort || phoneRejected || undefined} aria-describedby={phoneTooShort ? 'smr-phone-short' : phoneRejected ? 'smr-phone-err' : undefined} type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono')} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={24} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 </label>
-                {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-700">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
-                {phone.length === 10 && !validatePhone(phone).valid && (() => {
+                {phoneTooShort && <p id="smr-phone-short" role="alert" className="text-xs text-red-700">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
+                {phoneRejected && (() => {
                   // Sawil 2026-06-19 — clearer error for reserved-fictional "555"
                   // numbers (the anti-fake-lead reject), so the generic "valid
                   // 10-digit" wording does not confuse a real user/QA. Validation
                   // itself is unchanged — 555 numbers are still rejected.
                   const is555 = /555|fictional/i.test(validatePhone(phone).flags.join(' '));
-                  return <p role="alert" className="text-xs text-red-700">{is555
+                  return <p id="smr-phone-err" role="alert" className="text-xs text-red-700">{is555
                     ? t('Please enter a real phone number. Numbers with 555 are commonly used for testing and cannot be accepted.', 'Ingrese un número de teléfono real. Los números con 555 suelen usarse para pruebas y no se pueden aceptar.')
                     : t('Please enter a valid 10-digit U.S. phone number.', 'Por favor ingrese un número de teléfono válido de Estados Unidos de 10 dígitos.')}</p>;
                 })()}
                 <label className="block">
                   <span className="block text-sm font-medium text-earth-700 mb-1">{t('Email (optional)', 'Correo electrónico (opcional)')}</span>
-                  <input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                  <input id="smr-email" aria-invalid={emailInvalid || undefined} aria-describedby={emailInvalid ? 'smr-email-err' : undefined} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t('Email (optional)', 'Correo (opcional)')} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 </label>
-                {email && !validateEmail(email).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
+                {emailInvalid && <p id="smr-email-err" role="alert" className="text-xs text-red-700">{t('Please enter a valid email address, or leave it blank if you prefer.', 'Por favor ingrese un correo electrónico válido, o déjelo en blanco si prefiere.')}</p>}
               </div>
               <button onClick={nextStep} disabled={!canAdvanceStep()} className="cp-btn mt-5 w-full bg-earth-800 text-cream-50 hover:bg-earth-900 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
                 {t('Continue', 'Continuar')} <ChevronRight className="w-4 h-4" />
@@ -995,7 +1014,14 @@ export function SmartMedicareReview() {
                 )}
               </p>
 
-              {error && <p className="text-sm text-red-700 mb-3">{error}</p>}
+              {/* AUDIT 2026-09-14 (FORMS-10, P3) — a submission failure was only a
+                  colour change: nothing announced it, so a screen-reader user was
+                  left waiting. role=alert speaks it the moment it appears, and the
+                  in-flight state is announced politely (WCAG 4.1.3). */}
+              {error && <p ref={errorRef} tabIndex={-1} role="alert" className="text-sm text-red-700 mb-3 focus:outline-none focus:ring-2 focus:ring-red-400/50 rounded">{error}</p>}
+              <p aria-live="polite" className="sr-only">
+                {submitting ? t('Sending your request…', 'Enviando su solicitud…') : ''}
+              </p>
 
               <button
                 onClick={handleSubmit}
