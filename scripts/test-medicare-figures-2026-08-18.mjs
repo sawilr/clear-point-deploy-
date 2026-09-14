@@ -190,6 +190,32 @@ check('RT empty stays empty', verifyMedicareFigures('').text === '', 'empty brok
   check('RT4-02 marker anchored across the dollar sign', upTo.corrections.length === 0, upTo.text);
 }
 
+// ── Red-team round 4, second pass (RT4-08/10/11/12) ──────────────────────────
+{
+  const corrects = [
+    ['RT4-08 incidental "ingresos" in another clause', 'Si sus ingresos son bajos puede calificar para Ayuda Adicional y el deducible de la Parte B es $250.', '$283'],
+    ['RT4-08 incidental "last time"', 'The plan you were on last time had a different network, and the Part B deductible is $257.', '$283'],
+    ['RT4-10 long apposition before the amount', 'The Part B deductible, which is the amount you pay out of your own pocket before Medicare begins paying its share each calendar year, is $257.', '$283'],
+    ['RT4-10 concept early in a verbose sentence', 'Under Original Medicare, Part B has an annual deductible that everybody pays before coverage starts, and for this year it is $257.', '$283'],
+    ['RT4-11 postfix USD', 'The Part D out-of-pocket cap is 2,000 USD this year.', '2,100 USD'],
+    ['RT4-11 space after the dollar sign', 'The Part B deductible is $ 257 this year.', '283'],
+    ['RT4-12 space-separated thousands, wrong value', 'The Part A hospital deductible is $1 632 per benefit period.', '$1 736'],
+  ];
+  for (const [id, input, want] of corrects) {
+    const r = verifyMedicareFigures(input);
+    check(id, r.text.includes(want), 'got: "' + r.text + '"');
+  }
+  const survives = [
+    ['RT4-08 IRMAA context anywhere in the sentence', 'Because your income two years ago was above the threshold that Social Security uses, the standard Part B premium in your case is $259.00 a month.'],
+    ['RT4-12 space-separated thousands, right value', 'El deducible de hospital de la Parte A es $1 736 por período de beneficios.'],
+    ['RT4-03 bare digits are not a currency comparison', 'The Part D out-of-pocket cap is $2,100 — we have helped 2,100 seniors with it.'],
+  ];
+  for (const [id, input] of survives) {
+    const r = verifyMedicareFigures(input);
+    check(id, r.text === input && r.corrections.length === 0, 'MUTATED to: "' + r.text + '"');
+  }
+}
+
 // Red-team round 3 — no digit spill in any writing style, and linear time.
 {
   const spill = verifyMedicareFigures('El deducible del hospital de la Parte A es $1.736. El tope de la Parte D es $2.100. The Part D cap is $2000.');

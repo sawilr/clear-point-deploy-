@@ -58,6 +58,9 @@ const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'p
 //     introduce, so a lead-in like "About the Part B deductible: it is $257"
 //     must not silence the correction.
 const DISQUALIFY_CONTEXT = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|(?<!regardless\s{1,3}of\s{1,3})\bincome\b|(?<!sin\s{1,3}importar\s{1,3}(?:el\s{1,3}|sus\s{1,3})?)ingresos?\b|depend|depende|varies|var[ií]a|could be|might be|puede ser|last year|previous|previo|used to|el a[ñn]o pasado|[uú]ltimo a[ñn]o|a[ñn]o anterior|anteriormente|\bwas\b|\bwere\b|\bera\b|\bfue\b|\bfueron\b|\b2019\b|\b2020\b|\b2021\b|\b2022\b|\b2023\b|\b2024\b|\b2025\b|you (?:said|told|mentioned)|usted (?:dijo|mencion[oó])|your bill|su factura)/i;
+// The IRMAA / income-adjustment family qualifies the WHOLE sentence: it changes
+// what the figure means, wherever it appears (red-team round 4, RT4-08).
+const DISQUALIFY_SENTENCE_WIDE = /(irmaa|higher income|income[-\s]related|ajuste por ingresos|(?:income|ingresos?)[^.!?]{0,70}(?:threshold|above|higher|exceed|adjust|umbral|m[aá]s alto|super|ajust)|(?:threshold|above|higher|exceed|umbral|m[aá]s alto)[^.!?]{0,70}(?:income|ingresos?))/i;
 // Only when they IMMEDIATELY introduce the amount (≤14 chars before the '$').
 const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m[aá]ximo|\bmax\b|maximum|around|about|approx\w*|aproximad\w*|roughly|unos|cerca de|starts? at|starting at|comienza en|desde)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
 // AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
@@ -276,8 +279,14 @@ function classifyAt(text, offset) {
   // A leading prepositional phrase ("For Part B, the deductible is $300") puts the
   // keyword in the previous clause — widen to the sentence when the clause has
   // none. The cost-noun and magnitude guards below still apply.
-  if (!/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) { seg = sInfo.text; segOffset = rel; }
-  const part = nearestTo(seg, segOffset, /\bpart\s*[abd]\b|\bparte\s*[abd]\b/, 70);
+  let widened = false;
+  if (!/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) { seg = sInfo.text; segOffset = rel; widened = true; }
+  // Red-team round 4 (RT4-10): inside the amount's own clause the keyword may sit
+  // behind a long apposition ("The Part B deductible, which is the amount you pay
+  // …, is $257"), so the radius is the clause itself. The sentence fallback keeps
+  // the tight radius, and the cost-noun and magnitude guards apply either way.
+  const maxDist = widened ? 160 : Math.max(160, seg.length);
+  const part = nearestTo(seg, segOffset, /\bpart\s*[abd]\b|\bparte\s*[abd]\b/, maxDist);
   if (!part) return null;
   // Another cost noun between the concept and the amount means the amount
   // belongs to that noun, not to the concept.
@@ -289,7 +298,7 @@ function classifyAt(text, offset) {
   // left-biased way as the Part letter, so "Your Part B premium is $202.90 and
   // the Part B deductible is $257" classifies each amount on its own keyword
   // instead of cancelling out.
-  const kind = nearestTo(seg, segOffset, /deductible|deducible|premium|prima|out[-\s.]?of[-\s.]?pocket|catastrophic|catastr[oó]f|m[aá]ximo de bolsillo|tope/, 70);
+  const kind = nearestTo(seg, segOffset, /deductible|deducible|premium|prima|out[-\s.]?of[-\s.]?pocket|catastrophic|catastr[oó]f|m[aá]ximo de bolsillo|tope/, maxDist);
   const deductible = kind ? /deduc/.test(kind) : /deductible|deducible/.test(win);
   const premium = kind ? /premium|prima/.test(kind) : /premium|prima/.test(win);
   const oopCap = kind ? /out|pocket|catastr|bolsillo|tope/.test(kind) : /out[-\s.]?of[-\s.]?pocket|catastrophic|catastr[oó]f|tope (de|máximo)|m[aá]ximo de bolsillo|\bcap\b/.test(win);
@@ -339,18 +348,31 @@ export function verifyMedicareFigures(text) {
     // Red-team round 3 (MED02-RT3-16): amounts written as "257 dólares" / "USD 257".
     // Red-team round 4 (RT4-07): the Spanish decimal-comma form ("$1.736,50",
     // "$250,50") is matched whole, so a correct figure is never half-rewritten.
-    const MONEY = /(\$\s?|USD\s?)(\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+|\d+,\d{2}(?!\d)|\d+(?:\.\d{1,2})?)(?!\d)|(\d{1,3}(?:[.,]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(d[oó]lares|dollars)\b/gi;
+    // Red-team round 4 (RT4-11/12): "$ 257" with spacing, the space-separated
+    // thousands form "$1 736" (which used to be half-matched into "$1,736 736"),
+    // and the postfix "2,000 USD" notation are all matched whole now.
+    const MONEY = /(\$\s{0,3}|USD\s{0,3})(\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+|\d{1,3}(?: \d{3})+|\d+,\d{2}(?!\d)|\d+(?:\.\d{1,2})?)(?!\d| \d{3}\b)|(\d{1,3}(?:[.,]\d{3})*(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s?(d[oó]lares|dollars|USD)\b/gi;
     const out = text.replace(MONEY, function (match, cur, num, plainNum, unit, offset) {
       const raw = String(num != null ? num : plainNum);
       const dotThousands = /^\d{1,3}(?:\.\d{3})+$/.test(raw);
+      const spaceThousands = /^\d{1,3}(?: \d{3})+$/.test(raw);
       const commaDecimal = /^\d{1,3}(?:\.\d{3})*,\d{1,2}$/.test(raw);
       const val = parseFloat(dotThousands ? raw.replace(/\./g, '')
-        : commaDecimal ? raw.replace(/\./g, '').replace(',', '.')
-          : raw.replace(/,/g, ''));
+        : spaceThousands ? raw.replace(/ /g, '')
+          : commaDecimal ? raw.replace(/\./g, '').replace(',', '.')
+            : raw.replace(/,/g, ''));
       if (!isFinite(val)) return match;
       const amountAt = offset + (num != null ? String(cur || '').length : 0);
       const sentInfo = sentenceAround(text, amountAt);
-      if (DISQUALIFY_CONTEXT.test(sentInfo.text)) return match; // variability / history — leave it
+      // Red-team round 4 (RT4-08): the IRMAA / income family genuinely qualifies a
+      // whole sentence; the history and variability markers only qualify the
+      // clause they sit in, or one incidental "ingresos" three clauses away
+      // silences a real correction.
+      const relForCtx = amountAt - sentInfo.start;
+      const ctxClause = clauseAround(sentInfo.text, relForCtx);
+      const clauseText = sentInfo.text.slice(ctxClause.start, ctxClause.end);
+      if (DISQUALIFY_SENTENCE_WIDE.test(sentInfo.text)) return match;
+      if (DISQUALIFY_CONTEXT.test(clauseText)) return match; // variability / history in this clause
       // Red-team round 4 (RT4-02): the window ends at the digits, so the '$' or
       // 'USD' the marker introduces has to come off before the anchored test.
       const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 30), amountAt).replace(/(?:\$|USD)\s*$/i, '');
@@ -373,7 +395,9 @@ export function verifyMedicareFigures(text) {
       // Correct only a genuinely different definitive value.
       if (Math.abs(val - fig.value) > 0.009) {
         corrections.push({ concept: concept, said: val, correct: fig.value });
-        const shown = dotThousands ? fig.display.replace(/,/g, '.') : fig.display;
+        const shown = dotThousands ? fig.display.replace(/,/g, '.')
+          : spaceThousands ? fig.display.replace(/,/g, ' ')
+            : fig.display;
         return unit != null ? shown + ' ' + unit : (cur || '$') + shown;
       }
       return match; // already correct
