@@ -103,8 +103,8 @@ export default function Contact() {
       <CTASection
         headline="Prefer to Call? We Are Ready."
         headlineEs="¿Prefiere Llamar? Estamos Listos."
-        subheadline="Speak with a licensed Medicare advisor today. No robots. No hold music. Just real help."
-        subheadlineEs="Hable con un asesor de Medicare licenciado hoy. Sin robots. Sin música de espera. Solo ayuda real."
+        subheadline="Speak with a licensed Medicare advisor today. An automated assistant answers first and connects you with an advisor. Calls may be recorded."
+        subheadlineEs="Hable con un asesor de Medicare licenciado hoy. Una asistente automatizada contesta primero y le comunica con un asesor. Las llamadas pueden ser grabadas."
         variant="dark"
         onPrimaryClick={handleScrollToForm}
       />

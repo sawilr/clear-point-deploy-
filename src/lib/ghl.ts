@@ -323,8 +323,8 @@ export function clearPendingLeads(): void {
 
 export function getSuccessMessage(lang: 'en' | 'es'): string {
   return lang === 'es'
-    ? 'Gracias. Hemos recibido su información. Un agente licenciado de ClearPoint Senior Advisors se comunicará con usted pronto.'
-    : 'Thank you. Your information has been received. A licensed agent from ClearPoint Senior Advisors will contact you soon.';
+    ? 'Gracias. Hemos recibido su información. Un agente licenciado de Clear Point Senior Advisors se comunicará con usted pronto.'
+    : 'Thank you. Your information has been received. A licensed agent from Clear Point Senior Advisors will contact you soon.';
 }
 
 export function getErrorMessage(lang: 'en' | 'es'): string {

@@ -485,8 +485,13 @@ export default async function handler(req, res) {
     // arrived but was never read. Sanitize both, persist them as structured note
     // lines (survives custom-field mapping changes) and as filterable GHL tags.
     // No GHL custom-field ID exists for these today — inventing an ID would 400.
-    var best_time_to_contact = _cap(body.best_time_to_contact, 64).replace(/[\r\n\t]+/g, ' ').trim();
-    var interest_type = _cap(body.interest_type, 80).replace(/[\r\n\t]+/g, ' ').trim();
+    // AUDIT 2026-09-13 (R4-HIPAA-01, P1) — these two land in the CRM note and the
+    // conversation-summary field, and the live producer fills best_time_to_contact
+    // with a free-text caller message. They are appended AFTER the PHI net ran, so
+    // they carry it themselves — the same treatment consent_text and the signer
+    // user agent already get.
+    var best_time_to_contact = scrubPHI(_cap(body.best_time_to_contact, 64)).text.replace(/[\r\n\t]+/g, ' ').trim();
+    var interest_type = scrubPHI(_cap(body.interest_type, 80)).text.replace(/[\r\n\t]+/g, ' ').trim();
     var intakeBits = [];
     if (best_time_to_contact) intakeBits.push('Best time to contact: ' + best_time_to_contact);
     if (interest_type) intakeBits.push('Interest/topic: ' + interest_type);
@@ -823,10 +828,20 @@ export default async function handler(req, res) {
         leadNotes: scrubIdentityForIntel((lead_notes || conversation_summary || '').toString(), [first_name, last_name, phone, email], date_of_birth),
         language: preferred_language || 'en',
         source: lead_source || 'unknown',
+        // AUDIT 2026-09-13 (R4-HIPAA-02, P1) — the identity scrub above is
+        // pointless if the same request re-supplies two HIPAA Safe-Harbor
+        // identifiers beside it. The advisor context the model needs is the
+        // area and the age band, not the ZIP5 and the exact age.
         metadata: {
-          zipCode: zip,
+          zipCode: String(zip || '').slice(0, 3),
           state: derived_state,
-          age: age || calculated_age,
+          age: (function (a) {
+            var n = Number(a);
+            if (!isFinite(n) || n <= 0) return '';
+            if (n >= 90) return '90+';
+            var lo = Math.floor(n / 5) * 5;
+            return lo + '-' + (lo + 4);
+          })(age || calculated_age),
           medicareStatus: medicare_status,
         },
       });

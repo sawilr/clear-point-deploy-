@@ -1836,6 +1836,14 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
                 ? 'Clear Point Senior Advisors es una agencia de seguros independiente y no está conectada ni respaldada por el gobierno de EE. UU. ni por el programa federal de Medicare.'
                 : 'Clear Point Senior Advisors is an independent insurance agency and is not connected with or endorsed by the U.S. government or the federal Medicare program.'}
             </p>
+            {/* AUDIT 2026-09-13 (REC-03 / FTC-02, P1) — /support is the one route
+                with no footer, so the recording, automated-answer and commission
+                disclosures have to travel with this notice. */}
+            <p className="mt-1">
+              {isSpanish
+                ? 'Las llamadas con Clear Point pueden ser grabadas por calidad y cumplimiento; una asistente automatizada puede contestar primero. Nuestro servicio no tiene costo para usted: si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora, y el costo de su plan no aumenta.'
+                : 'Calls with Clear Point may be recorded for quality and compliance, and an automated assistant may answer first. Our service is no cost to you: if you enroll in a plan through us, Clear Point may be compensated by the insurance carrier, and your plan cost is not increased.'}
+            </p>
             {/* Red-team RT-CLIENT-06 (WCAG 2.5.3): the accessible name is the visible
                 text plus this hidden suffix instead of a non-matching aria-label. */}
             <span className="sr-only">{isSpanish ? ' (toque para ocultar este aviso)' : ' (tap to hide this notice)'}</span>

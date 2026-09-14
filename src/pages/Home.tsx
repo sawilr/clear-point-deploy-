@@ -16,8 +16,10 @@ const services = [
     image: '/senior-adv-3.jpg',
     title: 'Medicare Advantage',
     titleEs: 'Medicare Advantage',
-    description: 'All-in-one plans that may include dental, vision, hearing, and Part D drug coverage — sometimes at a $0 monthly premium.',
-    descriptionEs: 'Planes todo en uno que pueden incluir beneficios dentales, visión, audición y cobertura de medicamentos, a veces con prima mensual de $0.',
+    // AUDIT 2026-09-13 (FTC-04, P1) — a "$0 premium" claim has to say what the
+    // beneficiary still pays, or the net impression is that the plan is free.
+    description: 'All-in-one plans that may include dental, vision, hearing, and Part D drug coverage — sometimes at a $0 monthly plan premium. You generally still pay your Part B premium, and plan deductibles, copays and network rules still apply.',
+    descriptionEs: 'Planes todo en uno que pueden incluir beneficios dentales, visión, audición y cobertura de medicamentos, a veces con prima mensual del plan de $0. Normalmente usted sigue pagando su prima de la Parte B, y aplican deducibles, copagos y reglas de red del plan.',
     link: '/medicare-advantage',
   },
   // HIDDEN per Sawil 2026-06: Medicare Supplement / Medigap moved to Education
@@ -62,8 +64,8 @@ const faqItems = [
   {
     q: "What's the difference between Medicare Advantage and a Supplement?",
     qEs: '¿Cuál es la diferencia entre Medicare Advantage y un Suplemento?',
-    a: "With Medicare Advantage, you stay in Medicare but receive your Part A and Part B benefits through a private plan instead of through Original Medicare (often available with a $0 premium and may include extra benefits, which vary by plan and area). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
-    aEs: 'Con Medicare Advantage usted sigue en Medicare, pero recibe sus beneficios de las Partes A y B a través de un plan privado en lugar del Medicare Original (frecuentemente con prima de $0 y puede incluir beneficios extra, que varían por plan y área). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
+    a: "With Medicare Advantage, you stay in Medicare but receive your Part A and Part B benefits through a private plan instead of through Original Medicare (often available with a $0 plan premium — you generally still pay your Part B premium — and may include extra benefits, which vary by plan and area). Medicare Supplement (Medigap) works alongside Original Medicare to reduce out-of-pocket costs. Which option fits depends on your health usage and budget — we can help you review the differences with a licensed advisor.",
+    aEs: 'Con Medicare Advantage usted sigue en Medicare, pero recibe sus beneficios de las Partes A y B a través de un plan privado en lugar del Medicare Original (frecuentemente con prima del plan de $0 — normalmente usted sigue pagando su prima de la Parte B — y puede incluir beneficios extra, que varían por plan y área). El Suplemento de Medicare trabaja junto al Medicare Original para reducir costos de bolsillo. Cuál opción se ajusta depende de su uso de salud y presupuesto — podemos ayudarle a revisar las diferencias con un asesor licenciado.',
   },
   {
     q: 'When can I enroll or change my Medicare plan?',
@@ -377,7 +379,10 @@ export default function Home() {
                   <div className="mb-4"><LogoSvg size={52} /></div>
                   <h3 className="font-serif text-xl text-cream-50 mb-3">{t('Ready to Talk?', '¿Listo para Hablar?')}</h3>
                   <p className="text-cream-100/70 text-base leading-relaxed mb-6 max-w-sm mx-auto">
-                    {t('Our advisors are available Monday through Friday, 9am–6pm Eastern Time. No robots. No hold music. Just a real person who knows Medicare.', 'Nuestros asesores están disponibles de lunes a viernes, 9am–6pm hora del Este. Sin robots. Sin música de espera. Solo una persona real que conoce Medicare.')}
+                    {/* AUDIT 2026-09-13 (FTC-01 / REC-01, P0) — the line is answered by an
+                        automated assistant before a licensed advisor joins, so the old
+                        "No robots… just a real person" promise was false as deployed. */}
+                    {t('Our licensed advisors are available Monday through Friday, 9am–6pm Eastern Time. An automated assistant answers first and connects you with an advisor. Calls may be recorded for quality and compliance.', 'Nuestros asesores licenciados están disponibles de lunes a viernes, 9am–6pm hora del Este. Una asistente automatizada contesta primero y le comunica con un asesor. Las llamadas pueden ser grabadas por calidad y cumplimiento.')}
                   </p>
                   <span className="font-serif text-xl sm:text-2xl font-bold text-gold-300 block mb-5 whitespace-nowrap">1-855-720-8555</span>
                   <a href="tel:+18557208555" className="cp-btn bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">

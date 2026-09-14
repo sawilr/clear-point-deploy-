@@ -977,8 +977,14 @@ export function SmartMedicareReview() {
                   recording disclosure sits with the consent, outside the sealed
                   TCPA text so the receipt hash and version are untouched. */}
               <p className="text-sm text-earth-700 mb-3">
-                {t('Calls with our licensed advisors and phone assistants may be recorded for quality and compliance.',
-                  'Las llamadas con nuestros asesores licenciados y asistentes telefónicos pueden ser grabadas por calidad y cumplimiento.')}
+                {t('Calls with our licensed advisors and phone assistants may be recorded for quality and compliance. An automated assistant may answer first.',
+                  'Las llamadas con nuestros asesores licenciados y asistentes telefónicos pueden ser grabadas por calidad y cumplimiento. Una asistente automatizada puede contestar primero.')}
+              </p>
+              {/* AUDIT 2026-09-13 (FTC-02/FTC-03, P1) — material connection inside
+                  the conversion path, at the same size as the consent copy. */}
+              <p className="text-sm text-earth-700 mb-3">
+                {t('Our service is no cost to you. If you enroll in a plan through us, Clear Point may be compensated by the insurance carrier. Your plan cost is not increased because you use our help.',
+                  'Nuestro servicio no tiene costo para usted. Si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora. El costo de su plan no aumenta por usar nuestra ayuda.')}
               </p>
 
               {/* Disclaimer */}

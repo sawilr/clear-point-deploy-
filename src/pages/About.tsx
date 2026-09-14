@@ -48,8 +48,8 @@ export default function About() {
                 </p>
                 <p>
                   {t(
-                    "Our advisors speak English and Spanish fluently. Medicare is confusing enough without a language barrier. When you call Clear Point, you will speak with a real person who understands your situation — in English or Spanish.",
-                    'Nuestros asesores hablan inglés y español con fluidez. Medicare ya es lo suficientemente confuso sin una barrera del idioma. Cuando llame a Clear Point, hablará con una persona real que entiende su situación — en inglés o español.'
+                    "Our advisors speak English and Spanish fluently. Medicare is confusing enough without a language barrier. When you call Clear Point, an automated assistant answers first and connects you with a licensed advisor who understands your situation — in English or Spanish.",
+                    'Nuestros asesores hablan inglés y español con fluidez. Medicare ya es lo suficientemente confuso sin una barrera del idioma. Cuando llame a Clear Point, una asistente automatizada contesta primero y le comunica con un asesor licenciado que entiende su situación — en inglés o español.'
                   )}
                 </p>
               </div>
@@ -65,8 +65,8 @@ export default function About() {
               </p>
               <p className="text-cream-100/70 text-sm leading-relaxed">
                 {t(
-                  'Our advisors speak English and Spanish fluently. Medicare is confusing enough without a language barrier. When you call Clear Point, you will speak with a real person who understands your situation.',
-                  'Nuestros asesores hablan inglés y español con fluidez. Medicare ya es lo suficientemente confuso sin una barrera del idioma. Cuando llame a Clear Point, hablará con una persona real que entiende su situación.'
+                  'Our advisors speak English and Spanish fluently. Medicare is confusing enough without a language barrier. When you call Clear Point, an automated assistant answers first and connects you with a licensed advisor who understands your situation.',
+                  'Nuestros asesores hablan inglés y español con fluidez. Medicare ya es lo suficientemente confuso sin una barrera del idioma. Cuando llame a Clear Point, una asistente automatizada contesta primero y le comunica con un asesor licenciado que entiende su situación.'
                 )}
               </p>
             </div>

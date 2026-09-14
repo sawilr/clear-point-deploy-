@@ -107,7 +107,7 @@ export function validateSOA(payload: Partial<SOASigningPayload>, expectedName: s
 /** Build the structured GHL note from a signed SOA record. */
 export function ghlNoteFromSOA(rec: SOAFullRecord): string {
   return [
-    `[SOA SIGNED — ClearPoint Senior Advisors]`,
+    `[SOA SIGNED — Clear Point Senior Advisors]`,
     `soa_id: ${rec.soaId}`,
     `signed_at: ${rec.signedAt}`,
     `signer_full_name: ${rec.fullName}`,

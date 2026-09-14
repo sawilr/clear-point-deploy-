@@ -191,6 +191,22 @@ export function Footer() {
           <span>{t('Agent of Record: Sawil Reyes', 'Agente de Registro: Sawil Reyes')}</span>
         </div>
 
+        {/* AUDIT 2026-09-13 (REC-03, P1) — every route puts a click-to-call in
+            front of the visitor, so the recording and automated-answer disclosure
+            belongs here, where it renders by construction, not only where a
+            consent box happens to appear. 42 CFR 422.2274(g)(2)(ii). */}
+        <p className="text-[14px] text-cream-50/80 leading-relaxed mb-4">
+          {t('Calls to and from Clear Point may be recorded for quality and compliance. An automated assistant may answer first and connect you with a licensed advisor.',
+            'Las llamadas con Clear Point pueden ser grabadas por calidad y cumplimiento. Una asistente automatizada puede contestar primero y comunicarle con un asesor licenciado.')}
+        </p>
+        {/* AUDIT 2026-09-13 (FTC-02, P1) — the material connection has to travel
+            with the "free" claim, which appears on 21 of 27 routes. Stating it
+            once in the footer puts it on every page by construction. */}
+        <p className="text-[14px] text-cream-50/80 leading-relaxed mb-4">
+          {t('Our service is no cost to you. If you enroll in a plan through us, Clear Point may be compensated by the insurance carrier. Your plan cost is not increased because you use our help.',
+            'Nuestro servicio no tiene costo para usted. Si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora. El costo de su plan no aumenta por usar nuestra ayuda.')}
+        </p>
+
         {/* Bottom */}
         {/* Sawil 2026-07-09 a11y — links /70→/80: senior-audience legibility (AA→AAA
             for functional text) without touching brand colors. Decorative · separators
