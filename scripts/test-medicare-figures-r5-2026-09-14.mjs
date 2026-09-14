@@ -119,6 +119,37 @@ keeps('an already-correct figure is left alone',
 keeps('an "up to" amount is a range, not a claim',
   'For Part B in 2026 some people pay up to $615 a month.');
 
+// ── RT5-MED-06: the concept lives one level up ───────────────────────────
+corrects('MED-06 four-deep list, concept on a parent line',
+  '2026 figures:\n- Medicare\n  - Part B\n    - Costs\n      - deductible: $257', 'part_b_deductible', 257);
+corrects('MED-06 EN anaphoric sentence',
+  'Let us talk about the Part B deductible. In 2026 it is $257.', 'part_b_deductible', 257);
+corrects('MED-06 ES anaphoric sentence',
+  'Hablemos del deducible de la Parte B. En 2026 es de $257.', 'part_b_deductible', 257);
+// …and inheriting must not hand the next amount to the same concept.
+keeps('MED-06 control: a copay in the following sentence',
+  'The Part B deductible is $283. My copay for a specialist is $50.');
+keeps('MED-06 control: the four-deep list under a 2027 heading',
+  '2027 figures:\n- Medicare\n  - Part B\n    - Costs\n      - deductible: $300');
+
+// ── RT5-MED-07: a hyphenated year range is a year range ──────────────────
+keeps('MED-07 hyphenated range in prose',
+  'For 2027-2028 the Part B deductible will be $300.');
+keeps('MED-07 hyphenated range as a heading',
+  '2027-2028 figures:\n- Part B deductible: $300');
+keeps('MED-07 a range that includes our year is still a range',
+  '2026-2027 figures:\n- Part B deductible: $300');
+keeps('MED-07 control: the en-dash form already worked',
+  'For 2027–2028 the Part B deductible will be $300.');
+
+// ── RT5-MED-08: a caption below the figures counts ───────────────────────
+keeps('MED-08 table caption under a blank line',
+  '| Item | Amount |\n|---|---|\n| Part B deductible | $300 |\n\nTable: projected 2027 amounts.');
+keeps('MED-08 list caption under a blank line',
+  '- Part B deductible: $300\n- Part A deductible: $1,800\n\nThose are the 2027 numbers.');
+corrects('MED-08 control: a 2026 caption still allows the correction',
+  '- Part B deductible: $257\n\nThose are the 2026 numbers.', 'part_b_deductible', 257);
+
 if (failures.length) {
   console.error(`MEDICARE FIGURES R5: ${passed} passed, ${failures.length} FAILED\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

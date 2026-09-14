@@ -124,10 +124,26 @@ function blankDigits(s) {
     .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}/g, function (m) { return ' '.repeat(m.length); })
     .replace(/\b1-\d{3}-[A-Z0-9-]{4,}\b/gi, function (m) { return ' '.repeat(m.length); });
 }
+//
+// RED TEAM ROUND 5 (RT5-MED-07, P2). A hyphenated year RANGE was invisible to
+// both sides of YEAR_TOKEN at once: 2027 was suppressed by the trailing
+// `(?!-\d)` and 2028 by the leading `(?<!-)`, so "For 2027-2028 the Part B
+// deductible will be $300" registered NO year at all and was rewritten to the
+// 2026 value. The en-dash form was protected, "CY 2026/2027" was protected —
+// the plain hyphen was the one broken separator, and it is the one a model
+// types. Ranges are collected before the token scan so both endpoints count.
+const YEAR_RANGE_RE = /(20\d{2})\s?[-–—/]\s?(20\d{2})/g;
 function yearsIn(s) {
   const out = [];
   let txt = blankDigits(s);
   for (const [re, y] of SPELLED_YEARS) txt = txt.replace(re, function (m) { return String(y) + ' '.repeat(Math.max(0, m.length - 4)); });
+  var rangeRe = new RegExp(YEAR_RANGE_RE.source, 'g');
+  var rm;
+  while ((rm = rangeRe.exec(txt)) !== null) {
+    out.push({ year: Number(rm[1]), index: rm.index });
+    out.push({ year: Number(rm[2]), index: rm.index + rm[0].length - 4 });
+    if (rangeRe.lastIndex === rm.index) rangeRe.lastIndex++;
+  }
   const re = new RegExp(YEAR_TOKEN.source, 'gi');
   let m;
   while ((m = re.exec(txt)) !== null) {
@@ -203,7 +219,22 @@ function fragmentContext(text, offset) {
   }
   let end = text.indexOf('\n\n', offset);
   if (end < 0) end = text.length;
-  return text.slice(start, Math.min(end, offset + 2000));
+  let ctx = text.slice(start, Math.min(end, offset + 2000));
+  //
+  // RED TEAM ROUND 5 (RT5-MED-08, P2). The walk only ever went UP, so a year
+  // caption placed BELOW the figures was never consulted — and a caption under a
+  // blank line is exactly the layout a model produces for a table. "| Part B
+  // deductible | $300 |\n\nTable: projected 2027 amounts." had its cell rewritten
+  // to the 2026 value. Remove the blank line and the caption was already seen, so
+  // the blank line was the whole defect. The next non-empty line after the block
+  // is now included when it reads like a caption.
+  const CAPTION_RE = /^\s*(?:table|figure|fig\.|source|note|nota|fuente|tabla|figura|those\s+are|these\s+are|estas?\s+son|estos\s+son|projected|proyectad[oa]s?|all\s+amounts|todas?\s+las\s+cifras)\b/i;
+  let after = text.slice(end, Math.min(text.length, end + 400));
+  const nextLine = (after.match(/^\s*\n?\s*([^\n]+)/) || [])[1];
+  if (nextLine && (CAPTION_RE.test(nextLine) || (nextLine.length <= 80 && /[.:]\s*$/.test(nextLine)))) {
+    ctx += '\n' + nextLine;
+  }
+  return ctx;
 }
 //
 // RED TEAM ROUND 5 (RT5-MED-02, P1). fragmentContext walks UP from the amount
@@ -399,6 +430,62 @@ function clauseHasCompetingSubject(clause) {
   if (CONCEPT_WORD_RE.test(clause.slice(0, m.index + head.length))) return false;
   return true;
 }
+//
+// RED TEAM ROUND 5 (RT5-MED-06, P2). Bounding the keyword search by the
+// sentence — and treating '\n' as a hard sentence boundary — meant the concept
+// was invisible whenever it sat one level up. A four-deep bullet list under a
+// 2026 heading ("- Medicare / - Part B / - Costs / - deductible: $257") was
+// never classified, and neither was the most ordinary prose shape there is:
+// "Let us talk about the Part B deductible. In 2026 it is $257."
+//
+// Both inherit their concept from immediately above, so the lookup does too —
+// a list item from its indentation ancestors, an anaphoric sentence from the
+// sentence before it. The inherited text is only ever PREPENDED as context; the
+// competing-subject and cost-noun guards still run against the amount's own
+// clause, so "The Part B deductible is $283. My copay for a specialist is $50."
+// does not hand the $50 to Part B.
+const ANAPHORIC_SENTENCE_RE = /(?:^|[\s,;])(?:it|that|this|they|ello|eso|esto)\s+(?:is|are|was|were|es|son)\b|(?:^|[\s,;])(?:es|son)\s+(?:de\s|\$)|(?:^|[\s,;])(?:the\s+)?(?:amount|figure|cifra|monto)\s+is\b/i;
+function indentWidth(line) {
+  const lead = (String(line).match(/^[ \t]*/) || [''])[0];
+  return lead.replace(/\t/g, '    ').length;
+}
+function inheritedConcept(text, offset, sInfo) {
+  const KEYWORD = /\bpart\s*[abd]\b|\bparte\s*[abd]\b/i;
+  if (sInfo.isFragment) {
+    // Walk to the top of the list collecting each strictly-shallower ancestor.
+    const lb = lineBounds(text, offset);
+    let want = indentWidth(text.slice(lb.start, lb.end));
+    if (want <= 0) return '';
+    const parts = [];
+    let pos = lb.start;
+    for (let i = 0; i < 200 && pos > 0; i++) {
+      const prevEnd = pos - 1;
+      const ps = text.lastIndexOf('\n', prevEnd - 1);
+      const pStart = ps < 0 ? 0 : ps + 1;
+      const prev = text.slice(pStart, prevEnd);
+      pos = pStart;
+      if (!prev.trim()) continue;
+      const ind = indentWidth(prev);
+      if (ind < want) {
+        parts.unshift(prev.trim());
+        want = ind;
+        if (ind === 0) break;
+      }
+    }
+    const joined = parts.join(' ');
+    return KEYWORD.test(joined) ? joined : '';
+  }
+  // Prose: only an anaphoric sentence inherits, and only from ONE sentence back.
+  if (!ANAPHORIC_SENTENCE_RE.test(sInfo.text)) return '';
+  const beforeSentence = text.slice(0, sInfo.start);
+  const prev = sentenceAround(beforeSentence, Math.max(0, beforeSentence.length - 1));
+  if (!prev || !prev.text || !KEYWORD.test(prev.text)) return '';
+  // Exactly one Part concept, or the reference is ambiguous.
+  const hits = prev.text.match(/\bpart\s*[abd]\b|\bparte\s*[abd]\b/gi) || [];
+  const distinct = {};
+  for (let i = 0; i < hits.length; i++) distinct[hits[i].trim().slice(-1).toLowerCase()] = true;
+  return Object.keys(distinct).length === 1 ? prev.text.trim() : '';
+}
 function classifyAt(text, offset) {
   const win = text.slice(Math.max(0, offset - 75), offset + 75).toLowerCase();
   const near = text.slice(Math.max(0, offset - 30), offset + 30);
@@ -420,6 +507,12 @@ function classifyAt(text, offset) {
     // elsewhere in the sentence can claim it.
     if (clauseHasCompetingSubject(seg)) return null;
     seg = sInfo.text; segOffset = rel; widened = true;
+  }
+  // RT5-MED-06: the concept may live one level up — on a parent list line, or in
+  // the sentence this one refers back to.
+  if (widened && !/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) {
+    const inherited = inheritedConcept(text, offset, sInfo);
+    if (inherited) { seg = inherited + '\n' + seg; segOffset += inherited.length + 1; }
   }
   // Red-team round 4 (RT4-10): inside the amount's own clause the keyword may sit
   // behind a long apposition ("The Part B deductible, which is the amount you pay
