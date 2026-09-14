@@ -83,13 +83,13 @@ for (const [id, text, values, dob, keep] of KEPT) {
 
 // ── R3-SL-04 — CRM tag deny key is separator-free ────────────────────────────
 {
-  const denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead)$/;
+  const denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
   const denyFamilyPrefix = /^(cp|soa|dnc|dnd|consent|temp|urg|intent|utm|lang|language|source|leadtype|outcome|compliance)-/;
   const denied = (tag) => {
     const dashKey = foldToken(tag).toLowerCase().replace(/[\s_‐-―−-]+/g, '-').replace(/^-+|-+$/g, '');
     return denyKeys.test(dashKey.replace(/-/g, '')) || denyFamilyPrefix.test(dashKey);
   };
-  for (const t of ['ConsentCaptured', 'consentcaptured', 'Consent Captured -', '-consent-captured', 'consent_captured', 'STATUS NEW LEAD', 'status_new_lead', 'Status–NewLead', 'status-newlead-', 'temp-hot-', 'temphot', 'dnd-', 'dnc-all', 'soa-', 'soa-signed', 'ai-flagged-', 'high-priority-', 'warm-lead-', 'intent-9-', 'lang-es-', 'source-web-', 'consent-revoked-', 'status-soa', 'utm-spring', 'compliance-ok', 'outcome-enrolled', 'cp-anything']) {
+  for (const t of ['ConsentCaptured', 'consentcaptured', 'Consent Captured -', '-consent-captured', 'consent_captured', 'STATUS NEW LEAD', 'status_new_lead', 'Status–NewLead', 'status-newlead-', 'temp-hot-', 'temphot', 'dnd-', 'dnc-all', 'soa-', 'soa-signed', 'ai-flagged-', 'high-priority-', 'warm-lead-', 'intent-9-', 'lang-es-', 'source-web-', 'consent-revoked-', 'status-soa', 'utm-spring', 'compliance-ok', 'outcome-enrolled', 'cp-anything', 'Do Not Call', 'do_not_call', 'DoNotCall', 'Status-Enrolled', 'status enrolled', 'Enrolled', 'No Llamar', 'Unsubscribed']) {
     check('R3-SL-04 denied: ' + t, denied(t), 'ACCEPTED');
   }
   for (const t of ['interest-medigap', 'calltime-morning', 'category_billing', 'urgency_elevated', 'confidence_high', 'state-ny', 'audience-senior', 'status_existing_client_claimed']) {

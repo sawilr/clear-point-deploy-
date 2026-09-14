@@ -559,7 +559,9 @@ export default async function handler(req, res) {
     // Red-team round 3 (R3-SL-04): the deny check runs on a SEPARATOR-FREE key, so
     // "ConsentCaptured", "Status–NewLead" (en dash), "consent_captured-" and
     // "STATUS NEW LEAD" all collapse to the same family name.
-    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead)$/;
+    // Round-3 follow-up (FORMS-01): "Do Not Call" and "Status-Enrolled" drive the
+    // same suppression and reporting as the families already owned by the server.
+    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
     // Family prefixes are matched on the DASH key, so the family has to be a real
     // token: "urg-high" is denied, the support bot's "urgency_elevated" is not.
     // "status-*" is deliberately absent — only its exact values above are owned,

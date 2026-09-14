@@ -1803,10 +1803,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // page. min-h-0 is required on flex children for overflow to work.
         // PHASE E — aria-live polite so screen readers announce bot turns
         // but do not get spammed by typing indicator (which is aria-hidden).
-        className="flex-1 min-h-0 overflow-y-auto overscroll-contain relative"
+        // AUDIT 2026-09-13 (AI-03, P2) — a scrollable transcript must be
+        // reachable from the keyboard, or a switch user cannot read back what
+        // Clara said once the log overflows.
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain relative focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
         role="log"
         aria-live="polite"
         aria-atomic="false"
+        tabIndex={0}
+        aria-label={isSpanish ? 'Conversación con Clara' : 'Conversation with Clara'}
       >
         {/* PHASE E — persistent privacy band, collapsible after first user
             turn. Senior can tap to re-expand. Always shows a 1-line summary

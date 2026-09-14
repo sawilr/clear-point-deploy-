@@ -973,6 +973,14 @@ export function SmartMedicareReview() {
                 </span>
               </label>
 
+              {/* AUDIT 2026-09-13 (CMS-06, P2) — 42 CFR 422.2274(g)(2)(ii): the
+                  recording disclosure sits with the consent, outside the sealed
+                  TCPA text so the receipt hash and version are untouched. */}
+              <p className="text-sm text-earth-700 mb-3">
+                {t('Calls with our licensed advisors and phone assistants may be recorded for quality and compliance.',
+                  'Las llamadas con nuestros asesores licenciados y asistentes telefónicos pueden ser grabadas por calidad y cumplimiento.')}
+              </p>
+
               {/* Disclaimer */}
               <p className="text-xs text-earth-600 mb-4 leading-relaxed">
                 {t(

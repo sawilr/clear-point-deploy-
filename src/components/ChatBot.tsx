@@ -6,6 +6,7 @@ import { Calendar, ChevronRight, Mic, MicOff, Minus, Phone, RotateCcw, Send, Use
 import { createVoiceRecognizer, isVoiceSupported } from '../lib/voiceInput';
 import { normalizeSpokenNumbers } from '../lib/spokenNumbers';
 import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
+import { tpmoDisclaimerText } from '../lib/tpmoConfig';
 import { getOfficeStatus } from '../lib/afterHours';
 
 import { getZipInfo } from '../lib/zipLookup';
@@ -2777,11 +2778,17 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       messages: language === 'es'
         ? [
             { text: `Soy Zara, la asistente virtual de ${CHATBOT_CONTEXT.agencyName}. Le doy información educativa general de Medicare; no reemplazo la orientación personalizada de un asesor licenciado, y no le pediré ni debe compartir datos sensibles por este chat.`, pace: 'short' },
-            { text: 'Somos una agencia independiente — no somos Medicare, CMS ni el gobierno de los Estados Unidos. ¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'long' },
+            // AUDIT 2026-09-13 (CMS-02, P1) — la declaración TPMO 42 CFR 422.2267(e)(41)
+            // también dentro del chat, no solo en el pie de página.
+            { text: 'Somos una agencia independiente — no somos Medicare, CMS ni el gobierno de los Estados Unidos. ' + tpmoDisclaimerText('es'), pace: 'long' },
+            { text: '¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'short' },
           ]
         : [
             { text: `I'm Zara, the virtual assistant for ${CHATBOT_CONTEXT.agencyName}. I share general Medicare education; I don't replace a licensed advisor's personalized guidance, and I won't ask for — and you shouldn't share — sensitive information in this chat.`, pace: 'short' },
-            { text: "We're an independent agency — not Medicare, CMS, or the U.S. government. Would you like to ask a general Medicare question?", options: [{ label: 'Yes', value: 'ask_question' }, { label: 'Request review', value: 'request_review' }], pace: 'long' },
+            // AUDIT 2026-09-13 (CMS-02, P1) — the 42 CFR 422.2267(e)(41) statement
+            // inside the chat too, not only in the page footer.
+            { text: "We're an independent agency — not Medicare, CMS, or the U.S. government. " + tpmoDisclaimerText('en'), pace: 'long' },
+            { text: 'Would you like to ask a general Medicare question?', options: [{ label: 'Yes', value: 'ask_question' }, { label: 'Request review', value: 'request_review' }], pace: 'short' },
           ],
     };
   }

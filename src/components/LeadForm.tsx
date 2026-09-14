@@ -441,6 +441,14 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
               </span>
             </label>
             {errors.consent && <p id={fid('consent_err')} role="alert" className="text-xs text-red-700 mt-2">{errors.consent}</p>}
+            {/* AUDIT 2026-09-13 (CMS-06, P2) — 42 CFR 422.2274(g)(2)(ii): the
+                recording disclosure has to sit where the caller agrees to be
+                called, not only in the privacy policy. Kept OUTSIDE the sealed
+                TCPA text so the consent hash and version stay unchanged. */}
+            <p className="text-sm text-earth-700 mt-2">
+              {t('Calls with our licensed advisors and phone assistants may be recorded for quality and compliance.',
+                'Las llamadas con nuestros asesores licenciados y asistentes telefónicos pueden ser grabadas por calidad y cumplimiento.')}
+            </p>
           </div>
 
           {/* Privacy / HIPAA-style notice */}
