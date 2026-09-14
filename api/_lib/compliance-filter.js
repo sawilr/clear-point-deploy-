@@ -174,9 +174,15 @@ function governorSpanIsConditional(span) {
   // "If you qualify you qualify" — the condition is the claim itself, which is
   // not a rule statement; those need real punctuation or a named factor.
   if (/\b(qualif\w*|elegible|califica\w*|entitled)\b/i.test(span)) return false;
-  // Red-team round 4 (RT4-CF-05): "whether you like it or not" and "whether or
-  // not" are concessive, not conditional.
-  if (/\bor\s+not\b|\bo\s+no\b/i.test(span)) return false;
+  // Red-team round 4 (RT4-CF-05) aimed at the CONCESSIVE idiom "whether you like
+  // it or not". RED TEAM ROUND 5 (RT5-CF-03, P1): the veto it added fires on any
+  // "or not", and "whether or not you qualify" is the conditional — in fact the
+  // safest phrasing the bot has. It destroyed "I can't tell you whether or not
+  // you qualify for Extra Help — only SSA can", which is the model compliance
+  // sentence. The concessive forms are already vetoed by GOVERNOR_VETO_RE
+  // ("like it or not", "guste o no", "quiera o no"), so a bare "or not"
+  // immediately after the governor is left alone as the conditional it is.
+  if (/\b(?:like\s+it|want\s+it|guste|quiera)\s+(?:or|o)\s+n[o']?t?\b/i.test(span)) return false;
   const words = span.trim().split(/\s+/).filter(Boolean);
   return words.length <= 2;
 }
@@ -239,9 +245,28 @@ const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:\s*,[^,]{0,40},)?(?:'re|'d
 // "Part B buy-in" IS a Medicare Savings Program — the bare nouns belong here, and
 // the education exemption only applies when the object ENDS at the Medicare word.
 const MEANS_TESTED_RE = /\b(extra\s+help|ayuda\s+adicional|ayuda\s+extra|lis|low[-\s]?income\s+subsidy|subsid(?:y|ies|io|ios)|buy[-\s]?in|premium\s+assistance|cost[-\s]?sharing|qmb|slmb|qi|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegibilidad|help\s+paying|ayuda\s+para\s+pagar|assistance\s+program|programa\s+de\s+asistencia|snap|food\s+stamps|cupones)\b/i;
+//
+// RED TEAM ROUND 5 (RT5-CF-05, P1). The comment above says the education
+// exemption applies only when the object ENDS at the Medicare word, but the
+// pattern had no terminator, so everything after "Medicare" rode free: "You
+// qualify for the Medicare program that pays your Part B premium every single
+// month of the year, which is called QMB" was kept in full. That is a QMB
+// determination wearing an education prefix. The pattern is now anchored to the
+// end of the object — a plan-neutral tail, punctuation, or end of string.
 const GENERIC_MEDICARE_OBJECT_RE = /^[\s,]*(?:for|to|para|a|en|of|de)?\s*(?:enroll(?:ment)?\s+in\s+|inscribirse\s+en\s+|sign\s+up\s+for\s+)?(?:the|a|an|el|la|un|una|su|your)?\s*(?:original\s+|traditional\s+|medicare\s+)?(?:medicare|parte?\s+[abd]\b|medigap|supplement|suplemento|advantage|coverage|cobertura)/i;
+// The object is NOT the generic product when a relative clause redefines it by
+// what it pays for — "the Medicare program that pays your Part B premium" is a
+// Medicare Savings Program described instead of named, and naming it "Medicare"
+// was how a QMB determination bought the education exemption.
+const DESCRIBED_PROGRAM_RE = /\b(?:that|which|who|que|quien|quienes)\s+(?:also\s+|tambi[eé]n\s+)?(?:pays?|pay|covers?|cover|helps?|reduces?|lowers?|eliminates?|waives?|paga|pagan|cubre|cubren|ayuda|ayudan|reduce|reducen|baja|bajan|elimina|eliminan)\b/i;
 // …but a promise about a priced product is a determination, not education.
-const PRICED_PRODUCT_RE = /\$\s?\d|\bprima\s+de\b|\bpremium\s+of\b|\b\$0\b/i;
+//
+// RED TEAM ROUND 5 (RT5-CF-06, P1): the only thing this knew was the dollar
+// sign, so "a Medicare Advantage plan with zero premium and dental included, so
+// you would pay nothing extra each month" walked straight through while the
+// same promise written "$0 premium" was removed. The written forms are the ones
+// a model reaches for most.
+const PRICED_PRODUCT_RE = /\$\s?\d|\bprima\s+de\b|\bpremium\s+of\b|\b\$0\b|\b(?:zero|no|0)[-\s]?(?:dollar[-\s]?)?(?:premiums?|copays?|copayments?|deductibles?|costs?|primas?|copagos?|deducibles?)\b|\bfree\b|\bgratis\b|\bsin\s+(?:prima|costo|costos|copago|deducible)\b|\bcero\s+(?:d[oó]lares|prima|copago)\b|\bnothing\s+(?:extra|more|at\s+all|each\s+month|a\s+month)\b|\bno\s+(?:cost|charge|premium)\s+to\s+you\b|\bpremium[-\s]free\b/i;
 // A generalisation about other people ("many people like you who qualify…") is
 // not a determination about the caller.
 // Red-team round 4 (RT4-CF-04): a contrastive lead-in ("Unlike most people, you
@@ -259,9 +284,15 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
   // a determination about the caller, whatever its object.
   const lead = normalized.slice(Math.max(0, matchStart - 40), matchStart);
   if (GENERALISATION_RE.test(lead) && !GENERALISATION_VETO_RE.test(lead)) return false;
+  // RT5-CF-05: the means-tested scan covers the REST OF THE SENTENCE, not a
+  // 70-character window. A long education-shaped preamble used to push the
+  // program name out of the window and buy the whole claim an exemption.
+  const restOfSentence = normalized.slice(matchEnd).split(/[.!?]/)[0];
   const tail = normalized.slice(matchEnd, matchEnd + 70);
-  if (MEANS_TESTED_RE.test(tail)) return true;               // determination → rule applies
-  if (GENERIC_MEDICARE_OBJECT_RE.test(tail) && !PRICED_PRODUCT_RE.test(tail)) return false;   // statutory education → out of scope
+  if (MEANS_TESTED_RE.test(restOfSentence)) return true;     // determination → rule applies
+  if (GENERIC_MEDICARE_OBJECT_RE.test(tail) &&
+      !PRICED_PRODUCT_RE.test(restOfSentence) &&
+      !DESCRIBED_PROGRAM_RE.test(restOfSentence)) return false;   // statutory education → out of scope
   return true;                                               // bare or benefit-specific → rule applies
 }
 // Group 1 = anchor (sentence/clause start or "sí,"), group 2 = the claim. The
@@ -270,15 +301,47 @@ function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
 // califica" must anchor on "Si " so the deferral test sees the governor.
 const ELIGIBILITY_CLAIM_ES_IMPLICIT_RE = /(^|[:;,—]\s*|\bs[ií],?\s+)((?:(?:usted|ustedes|t[uú])\s+)?(?!(?:mucha|muchos|muchas|algunas|algunos|la\s+gente|las\s+personas|quien|quienes|todos|todas|nadie|pocos|pocas)\b)(?:(?!(?:s[ií]|usted|ustedes|t[uú])\b)[\wáéíóúñü]+\s+){0,2}(?:califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|eres\s+elegible|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos))\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
 const ELIGIBILITY_QUALIFIES_YOU_RE = /\b(?:your|the)\s+[\wáéíóúñü]+(?:\s+[\wáéíóúñü]+)?\s+(?:qualifies|entitles)\s+you\b/gi;
+//
+// RED TEAM ROUND 5 (RT5-CF-07, P1). Round 4 answered the approval determination
+// with four surface forms, so the determination only had to be phrased a fifth
+// way. Eleven of twelve probes walked through, including "It's official — you
+// have Extra Help starting today", "Great news, you're in!", "Your Extra Help
+// came through", "Ya quedó aprobado para Ayuda Adicional" and "Está aprobado
+// desde hoy" — the natural Spanish renderings, which the old pattern missed
+// because it required the literal subject "usted" that Spanish drops.
+//
+// This is a RESULT-STATE rule instead of an enumeration: a completed approval,
+// acceptance or possession asserted about the caller, in any tense, with the
+// subject optional. It joins the eligibility-claim list rather than the
+// forbidden-phrase list, so it inherits the deferral and question exemptions —
+// "If you are approved, the plan pays the premium" is a conditional rule and
+// stays, exactly as "if you qualify" does.
+const ELIGIBILITY_APPROVED_RE = new RegExp([
+  // English: a result asserted of "you".
+  "\\b(?:you(?:'|’)?re|you\\s+are|you(?:'|’)?ve|you\\s+have|you\\s+got|you\\s+were|you\\s+now\\s+have)\\s+(?:now\\s+|already\\s+|officially\\s+|finally\\s+)?(?:been\\s+)?(?:approved|accepted|all\\s+set|set|in)\\b",
+  // "you have Extra Help" — possession of a means-tested program IS a determination.
+  "\\byou\\s+(?:now\\s+)?(?:have|got|hold)\\s+(?:the\\s+)?(?:extra\\s+help|ayuda\\s+adicional|low[-\\s]?income\\s+subsidy|lis|qmb|slmb|qdwi|medicaid|medicare\\s+savings)\\b",
+  // "It's official", "that's a done deal", "your Extra Help came through".
+  "\\b(?:it(?:'|’)?s|that(?:'|’)?s|this\\s+is)\\s+(?:now\\s+)?official\\b",
+  "\\b(?:is|are|was|were)\\s+a\\s+done\\s+deal\\b",
+  "\\b(?:came|went)\\s+through\\b",
+  // An agency acting on the caller.
+  "\\b(?:approved|accepted|enrolled|admitted)\\s+you\\b",
+  // Spanish, pro-drop and every tense: "ya quedó aprobado", "está aprobado",
+  // "fue aprobada", "ha quedado aprobado".
+  "\\b(?:ya\\s+)?(?:qued[oó]|quedaron|est[aá]|est[aá]n|fue|fueron|ha\\s+quedado|han\\s+quedado|ha\\s+sido|han\\s+sido|sali[oó])\\s+(?:ya\\s+)?(?:aprobad[oa]s?|aceptad[oa]s?|admitid[oa]s?|inscrit[oa]s?)\\b",
+  // "le aprobaron", "lo aceptaron en el programa".
+  "\\b(?:le|lo|la|les|los|las)\\s+(?:aprobaron|aceptaron|admitieron|inscribieron)\\b",
+  "\\bsu\\s+solicitud\\s+(?:fue|ha\\s+sido|qued[oó])\\s+(?:aprobad|aceptad)[oa]\\b",
+  "\\b(?:ya\\s+)?es\\s+oficial\\b",
+  // "ya tiene Ayuda Adicional" — possession, Spanish.
+  "\\b(?:ya\\s+)?(?:tiene|tienes|cuenta\\s+con)\\s+(?:la\\s+)?(?:ayuda\\s+adicional|ayuda\\s+extra|extra\\s+help|qmb|slmb|medicaid|subsidio)\\b",
+].join('|'), 'gi');
 const FORBIDDEN_PHRASES = [
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
   // Network / formulary confirmations
   /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
   /\bsu\s+(doctor|m[eé]dico|hospital|medicamento|medicina)\s+(est[aá]\s+(cubierto|en\s+la\s+red|en\s+red))/gi,
-  // Red-team round 4 (RT4-CF-07): an approval / "all set" determination is the
-  // same promise as "you qualify", stated as a result.
-  /\b(you'?re|you\s+are|usted\s+(?:est[aá]|ya\s+est[aá]))\s+(?:all\s+set|approved|aprobad[oa]|listo|lista)\b/gi,
-  /\b(you'?ve|you\s+have)\s+been\s+approved\b|\ble\s+aprobaron\b|\bya\s+(?:fue|est[aá])\s+aprobad[oa]\b/gi,
   /\b(your\s+application|su\s+solicitud)\s+(?:will\s+be|is\s+going\s+to\s+be|ser[aá])\s+(?:approved|aprobada)\b/gi,
   /\b(ssa|social\s+security|medicare|medicaid|el\s+estado|the\s+state)\s+will\s+approve\s+you\b|\b(?:le|lo|la)\s+van\s+a\s+aprobar\b/gi,
   // Affiliation claims (red-team round 3 RT3-CF-12: "we are Medicare advisors,
@@ -803,7 +866,7 @@ export function complianceFilter(text, lang, opts) {
   var fpTags = {}; var fpKeep = []; var fpSeps = []; var fpChanged = false;
   var fpDropBullets = false; var fpDropAffirmation = false; var fpLabelIdx = [];
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
-  var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE];
+  var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
     var fpSentence = fpParts[pi] || ''; var fpSep = fpParts[pi + 1] || '';
     // Red-team round 3 (RT3-CF-07): bullets that hung off a removed label
@@ -842,8 +905,16 @@ export function complianceFilter(text, lang, opts) {
         // fragment ("Whether you qualify: yes, you do." / "Do you qualify? Yes.")
         // — red-team round 4 (RT4-CF-06) added the question form.
         if ((deferred || isQuestion) && /[:?]\s*$/.test(fpSentence)) fpDropAffirmation = true;
-        if (isQuestion && claimAt > 14) { /* complement clause — keep scanning */ }
-        else if (deferred || isQuestion) continue;
+        // RED TEAM ROUND 5 (RT5-CF-02, P1). RT4-CF-06 added the complement-clause
+        // branch so a determination could not hide inside a question ("Do you
+        // know that you qualify?"). But it tested the question shape BEFORE the
+        // deferral, so any question whose claim sat past character 14 fell
+        // through to removal even when the claim was properly deferred. That
+        // destroyed "Would you like me to check whether you qualify for Extra
+        // Help?" — Clara's most natural and most compliant offer-to-check turn.
+        // Deferral wins: only an UNDEFERRED claim inside a question is suspect.
+        if (deferred) continue;
+        if (isQuestion && claimAt <= 14) continue;
         if (!eligibilityClaimIsScoped(normalized, em.index, em.index + em[0].length)) continue;
         remove = true; fpTags[ELIGIBILITY_TAG] = true; break;
       }
@@ -1156,14 +1227,41 @@ export function complianceFilter(text, lang, opts) {
   // Red-team round 4 (RT4-CF-09): the Spanish negative warning ("Nunca dé su
   // número de Seguro Social…") was not in this list, so the unspaced-dash clause
   // split deleted the protective half and left the reply opening mid-sentence.
-  var SSN_WARNING_RE = /\b(?:nunca|jam[aá]s|no)\s+(?:le\s+)?(?:d[eé]|des|dar|comparta|compartir|env[ií]e|proporcione|escriba|revele|diga)\b|(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:will|would|do|shall)?\s*(?:never|don'?t|do\s+not|not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|d[eé]|proporcione)\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
-  function isSsnAdviceSentence(s) {
+  //
+  // RED TEAM ROUND 5 (RT5-CF-04, P1). Two things went wrong in round 4. The
+  // Spanish alternative allowed a bare "no" before "d[eé]", and the whole test
+  // was also run on the accent-stripped copy — so "No dé por sentado nada y
+  // escriba su número de Seguro Social completo aquí" normalised to "no de …"
+  // and the sentence that TELLS the caller to type their full SSN into chat was
+  // whitelisted as a protective warning. Three more solicitations came through
+  // the same door, including "Nunca dé su número de Seguro Social a nadie
+  // excepto a mí."
+  //
+  // The accent is now handled inside the pattern instead of by normalising the
+  // sentence, the bare "no + de" form is gone (the Spanish preposition "de" is
+  // not a verb), and — the part that actually matters — the exemption is
+  // CONDITIONAL. A clause that carries a warning AND a solicitation aimed at the
+  // reader is a solicitation. A warning cannot launder the sentence it opens.
+  var SSN_WARNING_RE = /\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:d[eé](?=[\s,.;:!?]|$)|des|dar|comparta|compartir|env[ií]e|proporcione|escriba|revele|diga)|(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:share|give|provide|send|type|enter|reveal|include|put|write)\b|\b(?:we|clearpoint|i)\s+(?:will|would|do|shall)?\s*(?:never|don'?t|do\s+not|not)\s+(?:ask|request|need|require|store|save|keep)\b|\bno\s+(?:comparta|env[ií]e|escriba|ingrese|introduzca|revele|proporcione|d[eé](?=\s+su|\s+tu|\s+el|\s+ese))\b|\b(?:nunca|jam[aá]s)\s+(?:le\s+)?(?:pedimos|solicitamos|almacenamos|guardamos|necesitamos)\b/i;
+  // A solicitation aimed at the reader, or an exception carved out for us.
+  // Accented tails ("mí", "sí", "dárnoslo") cannot end on \b — JS treats an
+  // accented letter as a non-word character, so \b after it never matches.
+  var SSN_SOLICIT_RE = /(?:escr[ií]ba\w*|escribirl\w*|d[ií]game\w*|d[ií]ganos|d[aá]rmel[oa]|d[aá]rnosl[oa]|m[aá]ndeme|m[aá]ndenos|env[ií]emel[oa]|ingr[eé]sel[oa]|p[oó]ngal[oa]|type\s+it|write\s+it|send\s+it|give\s+it\s+to\s+(?:me|us)|enter\s+it|put\s+it\s+here|share\s+it\s+with\s+(?:me|us))(?![a-záéíóúñü])|(?:excepto|salvo|menos)\s+(?:a\s+)?(?:m[ií]|nosotros|clear\s*point)(?![a-záéíóúñü])|except\s+(?:to\s+)?(?:me|us|clear\s*point)(?![a-z])|(?:a\s+nosotros|conmigo)\s+s[ií](?![a-záéíóúñü])|pero\s+(?:puede|puedes|s[ií])\b/i;
+  /**
+   * `whole` is the sentence the clause came from. RT5-CF-04: the clause split
+   * that lets a warning and an SSN mention be judged separately also lets the
+   * solicitation sit in a DIFFERENT clause from the warning — "Nunca diga su
+   * número de Seguro Social por teléfono, pero puede escribirlo aquí" put the
+   * warning in clause one and "type it here" in clause two, and each clause
+   * passed on its own. The warning is local; the solicitation that cancels it
+   * is read across the whole sentence.
+   */
+  function isSsnAdviceSentence(s, whole) {
     var hasToken = SSN_TOKEN_RE.test(s);
     if (!hasToken && SSN_POSSESSIVE_ES_RE.test(s) && !SS_BENEFIT_CTX_RE.test(s)) hasToken = true;
     if (!hasToken) return false;
-    // Red-team round 4 (RT4-CF-09): test the warning on the accent-stripped copy
-    // too, so "Nunca dé…" is recognised whatever form the accent arrives in.
-    if (SSN_WARNING_RE.test(s) || SSN_WARNING_RE.test(normLoose(s))) return false;   // protective warning — keep
+    var solicitScope = typeof whole === 'string' ? whole : s;
+    if (SSN_WARNING_RE.test(s) && !SSN_SOLICIT_RE.test(solicitScope)) return false;   // protective warning — keep
     if (!SSN_TOKEN_RE.test(s) && SS_BENEFIT_CTX_RE.test(s)) return false;
     return true;
   }
@@ -1184,7 +1282,7 @@ export function complianceFilter(text, lang, opts) {
   function splitClauses(text) {
     return String(text).replace(/[ \t]{2,}/g, ' ').split(CLAUSE_SPLIT_RE).filter(function (x) { return x && x.trim(); });
   }
-  var anySsnClause = splitClauses(out).some(isSsnAdviceSentence);
+  var anySsnClause = splitClauses(out).some(function (c) { return isSsnAdviceSentence(c, out); });
   if (anySsnClause) {
     // Sentence-level split for reassembly (keeps output readable), then a
     // clause-level check inside each sentence.
@@ -1194,9 +1292,9 @@ export function complianceFilter(text, lang, opts) {
       // Drop only the offending CLAUSE, keeping any compliant clauses in the
       // same sentence (e.g. the MBI warning survives; the SSN advice does not).
       var clauses = splitClauses(s);
-      if (!clauses.some(isSsnAdviceSentence)) return s;
+      if (!clauses.some(function (c) { return isSsnAdviceSentence(c, s); })) return s;
       ssnHit = true;
-      var kept = clauses.filter(function (c) { return !isSsnAdviceSentence(c); });
+      var kept = clauses.filter(function (c) { return !isSsnAdviceSentence(c, s); });
       if (!kept.length) return '';
       var joined = kept.join(' ').trim().replace(/[,;]\s*$/, '');
       return /[.!?]$/.test(joined) ? joined : joined + '.';

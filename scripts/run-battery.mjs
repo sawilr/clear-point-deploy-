@@ -41,6 +41,7 @@ const SUITES = [
   'test-dob-redaction-2026-09-14.mjs',
   'test-medicare-figures-r5-2026-09-14.mjs',
   'test-figures-year-scope-r5-2026-09-14.mjs',
+  'test-compliance-filter-r5-2026-09-14.mjs',
 ];
 
 const only = process.argv.slice(2);
