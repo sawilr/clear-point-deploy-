@@ -12,7 +12,9 @@ export default function PrivacyPolicy() {
         <h1 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-2">
           {t('Privacy Policy', 'Política de Privacidad')}
         </h1>
-        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: August 2026', 'Última Actualización: Agosto de 2026')}</p>
+        {/* AUDIT 2026-09-13 (TRUST-02 / R4F-05) — §5 gained the AI-processor and
+            call-recording disclosures on this date; the stamp has to move with it. */}
+        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: September 13, 2026', 'Última Actualización: 13 de septiembre de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>

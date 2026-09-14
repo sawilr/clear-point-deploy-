@@ -104,7 +104,16 @@ class RouteBoundary extends Component<{ children: ReactNode; es: boolean; pathna
       <section className="max-w-2xl mx-auto px-5 py-16 text-center" aria-live="polite">
         <h1 className="font-serif text-2xl text-earth-900 mb-3">{es ? 'No pudimos cargar esta página' : "We couldn't load this page"}</h1>
         <p className="text-earth-700 mb-6">{es ? 'Revise su conexión e inténtelo de nuevo. También puede llamarnos al ' : 'Please check your connection and try again. You can also call us at '}<a className="font-semibold underline" href="tel:+18557208555">1-855-720-8555</a> (TTY 711).</p>
-        <button type="button" onClick={() => this.setState({ failed: false, at: String(Date.now()) })} className="cp-btn inline-flex items-center justify-center min-h-[48px] px-6 rounded-lg bg-earth-800 text-cream-50 font-semibold">
+        {/* Red-team round 4 (CPR4-CLIENT-01): clearing the boundary state alone
+            was inert — React caches the rejected module promise, so the same
+            lazy() import fails again with no new request. A user-initiated
+            reload is the only thing that really re-fetches the chunk; the rescue
+            marker is cleared first so the automatic retry can run again. */}
+        <button type="button" onClick={() => {
+          try { history.replaceState({ ...(history.state || {}), [RELOAD_MARK]: 0 }, '') } catch { /* ignore */ }
+          storageSet('session', 'cp_chunk_reload', '')
+          window.location.reload()
+        }} className="cp-btn inline-flex items-center justify-center min-h-[48px] px-6 rounded-lg bg-earth-800 text-cream-50 font-semibold">
           {es ? 'Intentar de nuevo' : 'Try again'}
         </button>
       </section>
@@ -176,11 +185,17 @@ export default function App() {
     <div className={`bg-cream-50 ${isSupportPage ? 'support-shell' : 'min-h-screen pb-[calc(env(safe-area-inset-bottom)+96px)] md:pb-0'}`}>
       {/* WCAG 2.4.1 Bypass Blocks — Skip link must be first focusable element on the page.
           Visually hidden until focused via Tab; then appears as a high-contrast pill at top-left. */}
+      {/* AUDIT 2026-09-13 (R4F-10) — the link's wording follows the URL, while
+          <html lang> follows the stored preference, so on an English URL viewed
+          by a Spanish-preference visitor the two disagreed. Marking the link's
+          own language keeps it correct for a screen reader either way
+          (WCAG 3.1.2, language of parts). */}
       <a
         href="#main-content"
+        lang={isEs ? 'es' : 'en'}
         className="cp-skip-link sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:bg-earth-900 focus:text-cream-50 focus:px-4 focus:py-2 focus:rounded-lg focus:outline focus:outline-2 focus:outline-gold-400 focus:font-semibold focus:text-base"
       >
-        {location.pathname === '/es' || location.pathname.startsWith('/es/') ? 'Saltar al contenido principal' : 'Skip to main content'}
+        {isEs ? 'Saltar al contenido principal' : 'Skip to main content'}
       </a>
       <ScrollToTop />
       <RouteMeta />

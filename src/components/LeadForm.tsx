@@ -357,7 +357,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input id={fid('phone')} aria-invalid={errors.phone ? true : undefined} aria-describedby={errors.phone ? fid('phone-err') : undefined} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="\(\d{3}\) \d{3}-\d{4}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
+            <input id={fid('phone')} aria-invalid={errors.phone ? true : undefined} aria-describedby={errors.phone ? fid('phone-err') : undefined} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="[0-9]{10}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
             {errors.phone && <p id={fid('phone-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
           </div>
           <div>

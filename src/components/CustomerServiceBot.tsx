@@ -1492,7 +1492,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   }
   function classifyConsentAnswer(text: string): 'agree' | 'decline' | 'unclear' {
     const t = text.trim().toLowerCase().replace(/[¡!¿?.]+$/g, '');
-    const AGREE = /^(s[ií]|yes|yeah|yep|ok|okay|acepto|s[ií],?\s*acepto|de acuerdo|i agree|agree|agreed|claro|por supuesto|correcto|autorizo|yes,?\s*i agree)$/;
+    // Red-team round 4 (CPR4-CLIENT-03): a bare acknowledgement ("ok", "claro",
+    // "correcto") is not authorisation to be contacted. Only an unambiguous
+    // agreement counts; everything else falls through to the re-prompt.
+    const AGREE = /^(s[ií],?\s*acepto|acepto|autorizo|estoy de acuerdo|de acuerdo|yes,?\s*i agree|i agree|i consent|agreed|s[ií],?\s*autorizo)$/;
     const DECLINE = /^(no|nope|ahora no|not now|no,?\s*gracias|no,?\s*thanks|no thank you|no quiero|i do not agree|don'?t agree|no acepto|no autorizo)$/;
     if (AGREE.test(t)) return 'agree';
     if (DECLINE.test(t)) return 'decline';

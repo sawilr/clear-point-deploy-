@@ -59,7 +59,7 @@ const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'p
 //     must not silence the correction.
 const DISQUALIFY_CONTEXT = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|(?<!regardless\s{1,3}of\s{1,3})\bincome\b|(?<!sin\s{1,3}importar\s{1,3}(?:el\s{1,3}|sus\s{1,3})?)ingresos?\b|depend|depende|varies|var[ií]a|could be|might be|puede ser|last year|previous|previo|used to|el a[ñn]o pasado|[uú]ltimo a[ñn]o|a[ñn]o anterior|anteriormente|\bwas\b|\bwere\b|\bera\b|\bfue\b|\bfueron\b|\b2019\b|\b2020\b|\b2021\b|\b2022\b|\b2023\b|\b2024\b|\b2025\b|you (?:said|told|mentioned)|usted (?:dijo|mencion[oó])|your bill|su factura)/i;
 // Only when they IMMEDIATELY introduce the amount (≤14 chars before the '$').
-const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m[aá]ximo|\bmax\b|maximum|around|about|approx|aproximad|roughly|unos|cerca de|starts? at|starting at|comienza en|desde)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
+const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m[aá]ximo|\bmax\b|maximum|around|about|approx\w*|aproximad\w*|roughly|unos|cerca de|starts? at|starting at|comienza en|desde)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
 // AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
 // A figure is left alone when the SENTENCE it sits in is about another contract
 // year (a year token that is not ours, a CY/PY/FY-prefixed year, a 'YY form, or a
@@ -158,19 +158,25 @@ function clauseAround(sentence, rel) {
 // a blank line separates them ("2027 figures:\n\n- Part B deductible: $300").
 function fragmentContext(text, offset) {
   const lb = lineBounds(text, offset);
+  // Red-team round 4 (RT4-04): a ':' line is a PARENT heading inside the block
+  // ("2027 figures:" → "- Part B:" → "  - deductible: $300"), not a stop, and a
+  // long list or a run of blank lines must not hide the heading either. Walk to
+  // the top of the block under a character budget, stopping only at a line that
+  // names a year without an amount — the heading we were looking for.
   let start = lb.start, blanks = 0;
-  for (let i = 0; i < 12 && start > 0; i++) {
+  for (let i = 0; i < 60 && start > 0 && lb.start - start < 4000; i++) {
     const prevNl = start - 1;
     const ps = text.lastIndexOf('\n', prevNl - 1);
     const pStart = ps < 0 ? 0 : ps + 1;
     const prev = text.slice(pStart, prevNl);
     start = pStart;
-    if (!prev.trim()) { blanks++; if (blanks > 2) break; continue; }
-    if (/:\s*$/.test(prev.trim()) || (/20\d{2}/.test(prev) && !/\$/.test(prev))) break;
+    if (!prev.trim()) { blanks++; if (blanks > 4) break; continue; }
+    blanks = 0;
+    if (/20\d{2}/.test(prev) && !/\$/.test(prev)) break;
   }
   let end = text.indexOf('\n\n', offset);
   if (end < 0) end = text.length;
-  return text.slice(start, Math.min(end, offset + 800));
+  return text.slice(start, Math.min(end, offset + 2000));
 }
 function paragraphAround(text, offset) {
   let s = text.lastIndexOf('\n\n', offset); s = s < 0 ? 0 : s;
@@ -308,7 +314,11 @@ function sentenceCarriesFigure(sentence, fig) {
   const plain = String(fig.value);
   const grouped = fig.display;
   const dotted = grouped.replace(/,/g, '.');
-  const re = new RegExp('(?<![\\d.,])(?:' + [grouped, dotted, plain].map(function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')(?![\\d])');
+  const alts = [grouped, dotted, plain].map(function (s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|');
+  // Red-team round 4 (RT4-03): only a CURRENCY-formatted occurrence counts. A page
+  // number, a count of people or a phone fragment that happens to equal the figure
+  // must not silence a genuine correction.
+  const re = new RegExp('(?:\\$\\s?|USD\\s?)(?:' + alts + ')(?![\\d])|(?<![\\d.,])(?:' + alts + ')(?![\\d])\\s?(?:d[oó]lares|dollars)\\b', 'i');
   return re.test(sentence);
 }
 
@@ -343,7 +353,7 @@ export function verifyMedicareFigures(text) {
       if (DISQUALIFY_CONTEXT.test(sentInfo.text)) return match; // variability / history — leave it
       // Red-team round 4 (RT4-02): the window ends at the digits, so the '$' or
       // 'USD' the marker introduces has to come off before the anchored test.
-      const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 20), amountAt).replace(/(?:\$|USD)\s*$/i, '');
+      const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 30), amountAt).replace(/(?:\$|USD)\s*$/i, '');
       if (DISQUALIFY_BEFORE_AMOUNT.test(beforeAmount)) return match;
       const concept = classifyAt(text, amountAt);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
