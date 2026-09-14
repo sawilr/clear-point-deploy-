@@ -39,6 +39,8 @@ const SUITES = [
   'test-submit-lead-r3-2026-09-13.mjs',
   'test-emergency-postcondition-2026-09-14.mjs',
   'test-dob-redaction-2026-09-14.mjs',
+  'test-medicare-figures-r5-2026-09-14.mjs',
+  'test-figures-year-scope-r5-2026-09-14.mjs',
 ];
 
 const only = process.argv.slice(2);

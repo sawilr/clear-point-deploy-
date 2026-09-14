@@ -57,12 +57,36 @@ const AUTO_CORRECT = new Set(['part_b_standard_premium', 'part_b_deductible', 'p
 //   • AMOUNT markers ("up to $615", "about $257") only qualify the amount they
 //     introduce, so a lead-in like "About the Part B deductible: it is $257"
 //     must not silence the correction.
-const DISQUALIFY_CONTEXT = /(irmaa|higher income|higher than|más alto|mas alto|adjust|ajust|(?<!regardless\s{1,3}of\s{1,3})\bincome\b|(?<!sin\s{1,3}importar\s{1,3}(?:el\s{1,3}|sus\s{1,3})?)ingresos?\b|depend|depende|varies|var[ií]a|could be|might be|puede ser|last year|previous|previo|used to|el a[ñn]o pasado|[uú]ltimo a[ñn]o|a[ñn]o anterior|anteriormente|\bwas\b|\bwere\b|\bera\b|\bfue\b|\bfueron\b|\b2019\b|\b2020\b|\b2021\b|\b2022\b|\b2023\b|\b2024\b|\b2025\b|you (?:said|told|mentioned)|usted (?:dijo|mencion[oó])|your bill|su factura)/i;
+// RED TEAM ROUND 5 (RT5-MED-05, P1): the old inline lookbehinds only matched
+// the exact adjacent form, so "regardless of YOUR income" and "no matter your
+// income" — the two most natural ways to state the CORRECT rule — still read as
+// income context and silenced the correction. Exemption phrases are now removed
+// from the text before either income test runs, which also covers the Spanish
+// forms without a second lookbehind.
+const INCOME_EXEMPTION_RE = /\b(?:regardless\s+of|no\s+matter|whatever|irrespective\s+of|sin\s+importar|independientemente\s+de|sea\s+cual\s+sea)\s+(?:\S+\s+){0,2}(?:income|ingresos?)\b/gi;
+function stripIncomeExemptions(s) { return String(s).replace(INCOME_EXEMPTION_RE, ' '); }
+// RT5-MED-05: the income family moved OUT of the universal clause test and into
+// DISQUALIFY_INCOME_CLAUSE below, which runs only for the Part B standard
+// premium. "Even for higher-income seniors the 2026 Part B deductible is $257"
+// used to be silenced by the bare word "income" even though the Part B
+// deductible does not vary with income — the sentence is a hallucination and
+// correcting it is exactly this module's job.
+const DISQUALIFY_CONTEXT = /(higher than|más alto|mas alto|adjust|ajust|depend|depende|varies|var[ií]a|could be|might be|puede ser|last year|previous|previo|used to|el a[ñn]o pasado|[uú]ltimo a[ñn]o|a[ñn]o anterior|anteriormente|\bwas\b|\bwere\b|\bera\b|\bfue\b|\bfueron\b|\b2019\b|\b2020\b|\b2021\b|\b2022\b|\b2023\b|\b2024\b|\b2025\b|you (?:said|told|mentioned)|usted (?:dijo|mencion[oó])|your bill|su factura)/i;
 // The IRMAA / income-adjustment family qualifies the WHOLE sentence: it changes
 // what the figure means, wherever it appears (red-team round 4, RT4-08).
+// Premium-only, clause-scoped. Pairs with DISQUALIFY_SENTENCE_WIDE below.
+const DISQUALIFY_INCOME_CLAUSE = /(irmaa|higher income|income[-\s]related|ajuste por ingresos|\bincome\b|ingresos?\b)/i;
 const DISQUALIFY_SENTENCE_WIDE = /(irmaa|higher income|income[-\s]related|ajuste por ingresos|(?:income|ingresos?)[^.!?]{0,70}(?:threshold|above|higher|exceed|adjust|umbral|m[aá]s alto|super|ajust)|(?:threshold|above|higher|exceed|umbral|m[aá]s alto)[^.!?]{0,70}(?:income|ingresos?))/i;
 // Only when they IMMEDIATELY introduce the amount (≤14 chars before the '$').
-const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m[aá]ximo|\bmax\b|maximum|around|about|approx\w*|aproximad\w*|roughly|unos|cerca de|starts? at|starting at|comienza en|desde)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
+const DISQUALIFY_BEFORE_AMOUNT = /(up to|as low as|at least|no more than|hasta|m[aá]ximo|\bmax\b|maximum|starts? at|starting at|comienza en|desde)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
+// RED TEAM ROUND 5 (RT5-MED-04). An approximation marker used to disqualify the
+// amount outright, which meant "you pay about $257 as the deductible" — a
+// specific wrong figure wearing an estimate's clothes — was never corrected.
+// The marker's real job is to protect a deliberate ROUNDING ("about $250 comes
+// out of your check", "around $200 a month"), so it now only applies to a round
+// amount. $257 is not a rounding of anything; $250 is.
+const APPROX_BEFORE_AMOUNT = /(around|about|approx\w*|aproximad\w*|roughly|unos|cerca de|m[aá]s o menos)\s*(?:a|an|de|un|una|el|la)?\s*$/i;
+function isRoundAmount(val) { return isFinite(val) && val > 0 && val % 10 === 0; }
 // AUDIT 2026-09-12/13 (MED-02/AI-01 + red-team MED02-RT-01..05) — year scoping.
 // A figure is left alone when the SENTENCE it sits in is about another contract
 // year (a year token that is not ours, a CY/PY/FY-prefixed year, a 'YY form, or a
@@ -181,6 +205,51 @@ function fragmentContext(text, offset) {
   if (end < 0) end = text.length;
   return text.slice(start, Math.min(end, offset + 2000));
 }
+//
+// RED TEAM ROUND 5 (RT5-MED-02, P1). fragmentContext walks UP from the amount
+// under three budgets — 60 lines, 5 blank lines, 4,000 characters — and round 4
+// treated "walked out of budget" as "no other year found", which silently means
+// "this is our year, rewrite it". Measured edges: 59 intervening list lines kept
+// a 2027 figure safe and 60 rewrote it; 4 blank lines safe, 5 rewrote; 3,830
+// characters safe, 4,030 rewrote. On a 4,000-line list under a "2027 figures:"
+// heading, 3,717 lines came back rewritten to 2026 values. It is also quadratic:
+// a 124 KB reply took 1,262 ms against a 200 ms budget.
+//
+// The walk is replaced by a single pass over the reply that records, for every
+// line, the year most recently declared by a heading above it — a line naming a
+// year and carrying no amount. One O(n) pass, no budgets, no edge to find. The
+// result is memoised per reply because the caller asks once per dollar amount.
+let YEAR_HEADING_MEMO = { text: null, lineStarts: null, years: null };
+function buildYearHeadings(text) {
+  const lines = text.split('\n');
+  const lineStarts = new Array(lines.length);
+  const years = new Array(lines.length);
+  let at = 0;
+  let current = null;
+  for (let i = 0; i < lines.length; i++) {
+    lineStarts[i] = at;
+    at += lines[i].length + 1;
+    const line = lines[i];
+    if (/20\d{2}/.test(line) && line.indexOf('$') < 0) {
+      const found = yearsIn(line);
+      if (found.length) current = found.map(function (y) { return y.year; });
+    }
+    years[i] = current;
+  }
+  return { text: text, lineStarts: lineStarts, years: years };
+}
+/** Years declared by the nearest heading above `offset`, or null when none. */
+function headingYearsAt(text, offset) {
+  if (YEAR_HEADING_MEMO.text !== text) YEAR_HEADING_MEMO = buildYearHeadings(text);
+  const starts = YEAR_HEADING_MEMO.lineStarts;
+  // Binary search for the line containing `offset`.
+  let lo = 0, hi = starts.length - 1, idx = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid] <= offset) { idx = mid; lo = mid + 1; } else { hi = mid - 1; }
+  }
+  return YEAR_HEADING_MEMO.years[idx] || null;
+}
 function paragraphAround(text, offset) {
   let s = text.lastIndexOf('\n\n', offset); s = s < 0 ? 0 : s;
   let e = text.indexOf('\n\n', offset); e = e < 0 ? text.length : e;
@@ -218,6 +287,17 @@ function aboutOtherYear(text, offset, year) {
   // $300") — a present-tense sentence after a next-year sentence is about now.
   const futureProse = new RegExp(FUTURE_VERB, 'i').test(sent.text);
   if (!sent.isFragment && !futureProse) return false;
+  // RT5-MED-02: the heading map is consulted FIRST for line fragments. It has no
+  // budget to run out of, so a 2027 heading still governs line 4,000 of a list.
+  if (sent.isFragment) {
+    const headYears = headingYearsAt(text, offset);
+    if (headYears) {
+      const headOurs = headYears.indexOf(year) >= 0;
+      const headOthers = headYears.some(function (y) { return y !== year; });
+      if (headOthers) return true;   // another year governs this line — hands off
+      if (headOurs) return false;
+    }
+  }
   const ctx = sent.isFragment ? fragmentContext(text, offset) : paragraphAround(text, offset);
   const cys = yearsIn(ctx);
   const ctxOurs = cys.some(function (y) { return y.year === year; }) || CURRENT_MARKER.test(ctx);
@@ -264,7 +344,61 @@ const PER_DAY_RE = /(coinsurance|coseguro|per day|a day|each day|por d[ií]a|al 
 // only the figure the concept names when it sits in the SAME clause as the
 // keyword and no other cost noun intervenes — otherwise "the Part B deductible
 // is $257 a year, and after that you pay about $40 for a visit" rewrote the $40.
-const OTHER_COST_NOUN_RE = /\b(copay|copayment|coinsurance|copago|coseguro|visit|visita|office|consulta|per\s+month|al\s+mes|a\s+month|monthly\s+cost|costs?\s+you|cuesta|paga|pay\s+about|pays?\s+)\b/i;
+//
+// RED TEAM ROUND 5 (RT5-MED-04, P1). The list above also held the monthly
+// cadence — "per month", "al mes", "costs you", "cuesta" — and any of them
+// anywhere in the 40 characters before the amount killed the correction. But
+// the Part B premium IS a monthly amount, so "The standard Part B premium per
+// month in 2026 is $174.70" is the most natural way to state it and the guard
+// permanently disabled the very figure it was protecting. Nine of thirteen
+// legitimate wrong-figure sentences were silenced.
+//
+// What remains is only nouns that name a genuinely DIFFERENT amount, and they
+// now have to sit between the concept keyword and the amount — closer to the
+// amount than the keyword is — before they count. "Apart from your copay the
+// 2026 Part B deductible is $257" keeps its correction because the keyword is
+// the nearer of the two.
+const OTHER_COST_NOUN_RE = /\b(copay|copayment|coinsurance|copago|coseguro|office\s+visit|visita|consulta)\b/i;
+const COST_EXCLUSION_RE = /\b(?:separate\s+from|apart\s+from|aside\s+from|other\s+than|not\s+counting|besides|excluding|aparte\s+de|adem[aá]s\s+de|distinto\s+de|sin\s+contar)\s+(?:\S+\s+){0,3}?(?:copay|copayment|coinsurance|copago|coseguro|office\s+visit|visita|consulta)s?\b/gi;
+//
+// RED TEAM ROUND 5 (RT5-MED-01, P1). When the amount's own clause carries no
+// Part keyword the lookup widens to the whole sentence, and round 4 widened the
+// radius to 160 characters in BOTH directions. That let any dollar amount
+// within 160 characters of a Part keyword be rewritten: "The plan pays $500
+// toward hearing aids each year, which is a separate benefit entirely from the
+// Part B deductible in 2026" came back as "$283".
+//
+// The discriminator is grammatical, not metric. In a real hit the amount is the
+// PREDICATE of the concept ("The Part B deductible, which is …, is $257" — the
+// clause is a bare "is $257"). In every false positive the clause has its own
+// subject naming something else: "the dental max is $500", "the late-enrollment
+// penalty adds $400", "The plan pays $500". So: on the widened path, reject
+// when the amount's clause has a competing subject — a noun phrase before a
+// value verb that names neither a Part nor a figure type.
+// The head of the subject is the word immediately before the value verb.
+const CLAUSE_SUBJECT_RE = /([\w'’À-ɏ-]+)[ \t]+(is|are|was|were|es|son|era|eran|cuesta|cuestan|adds?|costs?|pays?|covers?|includes?|gives?|aporta|cubre|paga|pagan|da)[ \t]+(?:about[ \t]+|around[ \t]+|roughly[ \t]+|approximately[ \t]+|unos[ \t]+|cerca[ \t]+de[ \t]+)?(?:\$|USD)/i;
+// An ANAPHORIC subject on a copula points back at whatever the previous clause
+// named — "…, and for this year it is $257" is still the deductible's own
+// predicate. A personal pronoun does not qualify: "you pay about $40" names
+// what the caller pays, which is a different amount.
+const ANAPHORIC_HEAD_RE = /^(?:it|that|this|these|those|which|ello|eso|esto|esta|este|esa|ese)$/i;
+const COPULA_RE = /^(?:is|are|was|were|es|son|era|eran)$/i;
+const CONCEPT_WORD_RE = /\b(part\s*[abd]|parte\s*[abd]|deductible|deducible|premium|prima|out[-\s.]?of[-\s.]?pocket|catastrophic|catastr[oó]f|bolsillo|tope|cap)\b/i;
+function clauseHasCompetingSubject(clause) {
+  const m = CLAUSE_SUBJECT_RE.exec(clause);
+  if (!m) return false;                                   // bare predicate: ", is $257"
+  const head = m[1];
+  const verb = m[2];
+  if (ANAPHORIC_HEAD_RE.test(head) && COPULA_RE.test(verb)) return false;
+  // A bare number or year is not a subject: "…, and in 2026 is $257" is still
+  // the predicate of whatever the previous clause named (RT5-MED-04).
+  if (/^\d+$/.test(head)) return false;
+  // A subject phrase that names the concept itself is the correct predicate,
+  // not a competitor. Bounded to this clause so a neighbouring "deductible"
+  // cannot vouch for "the dental max is $500".
+  if (CONCEPT_WORD_RE.test(clause.slice(0, m.index + head.length))) return false;
+  return true;
+}
 function classifyAt(text, offset) {
   const win = text.slice(Math.max(0, offset - 75), offset + 75).toLowerCase();
   const near = text.slice(Math.max(0, offset - 30), offset + 30);
@@ -280,7 +414,13 @@ function classifyAt(text, offset) {
   // keyword in the previous clause — widen to the sentence when the clause has
   // none. The cost-noun and magnitude guards below still apply.
   let widened = false;
-  if (!/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) { seg = sInfo.text; segOffset = rel; widened = true; }
+  if (!/\bpart\s*[abd]\b|\bparte\s*[abd]\b/i.test(seg)) {
+    // RT5-MED-01: before widening, check the clause we are leaving. If it names
+    // its own subject the amount belongs to that subject, and no keyword
+    // elsewhere in the sentence can claim it.
+    if (clauseHasCompetingSubject(seg)) return null;
+    seg = sInfo.text; segOffset = rel; widened = true;
+  }
   // Red-team round 4 (RT4-10): inside the amount's own clause the keyword may sit
   // behind a long apposition ("The Part B deductible, which is the amount you pay
   // …, is $257"), so the radius is the clause itself. The sentence fallback keeps
@@ -288,9 +428,25 @@ function classifyAt(text, offset) {
   const maxDist = widened ? 160 : Math.max(160, seg.length);
   const part = nearestTo(seg, segOffset, /\bpart\s*[abd]\b|\bparte\s*[abd]\b/, maxDist);
   if (!part) return null;
-  // Another cost noun between the concept and the amount means the amount
-  // belongs to that noun, not to the concept.
-  if (OTHER_COST_NOUN_RE.test(seg.slice(Math.max(0, segOffset - 40), segOffset))) return null;
+  // RT5-MED-01: on the widened path the keyword must also come BEFORE the
+  // amount. A keyword trailing the amount ("… $500 … separate from the Part B
+  // deductible") describes what the amount is NOT.
+  if (widened) {
+    const kwIdx = seg.toLowerCase().search(/\bpart\s*[abd]\b|\bparte\s*[abd]\b/);
+    if (kwIdx < 0 || kwIdx > segOffset) return null;
+  }
+  // RT5-MED-04: a competing cost noun disqualifies the amount only when it sits
+  // between the keyword and the amount AND is the nearer of the two.
+  // An EXCLUSION lead-in names the other cost in order to rule it out — "the
+  // Part B deductible is separate from your copay and in 2026 is $257" is a
+  // statement about the deductible, not about the copay. Neutralise the noun
+  // the exclusion introduces before measuring distances (RT5-MED-04).
+  const beforeSeg = seg.slice(0, segOffset).replace(COST_EXCLUSION_RE, ' ');
+  const costIdx = beforeSeg.toLowerCase().search(OTHER_COST_NOUN_RE);
+  if (costIdx >= 0) {
+    const kwIdx = beforeSeg.toLowerCase().search(/\bpart\s*[abd]\b|\bparte\s*[abd]\b|deductible|deducible|premium|prima|out[-\s.]?of[-\s.]?pocket|bolsillo|tope/);
+    if (kwIdx < 0 || costIdx > kwIdx) return null;
+  }
   // The Part letter is the FINAL char of the match ("part b" / "parte b" → "b"),
   // NOT every a/b/d in the phrase ("parte" also contains an "a").
   const letter = part.trim().slice(-1).toLowerCase(); // a|b|d
@@ -314,10 +470,26 @@ function classifyAt(text, offset) {
 // amount under review is then the other side of a comparison or a range.
 // Red-team round 4 (RT4-01): a figure two orders of magnitude away from the
 // verified value is not a mis-stated version of it — it is a different amount.
+//
+// RED TEAM ROUND 5 (RT5-MED-03, P1). A 3x band is narrower than the errors this
+// module exists to catch. Measured: it corrected a Part D out-of-pocket cap only
+// between $700 and $6,300, so "$8,000" — the real pre-IRA catastrophic figure
+// and the single most likely stale number a model can produce — passed
+// untouched, as did a transposed digit ($2,830 for $283) and a dropped one.
+// Worse, `val <= 0` meant "implausible", so "The 2026 Part B deductible is $0"
+// was the one wrong answer the backstop was guaranteed to let through, and it
+// is the one that costs a senior the most.
+//
+// The band exists because round 4 used it to paper over RT4-01, where a distant
+// keyword captured an unrelated amount. That is now fixed at the source by the
+// competing-subject and cost-noun rules in classifyAt, so the band can be what
+// it was meant to be: a sanity check against an amount that is not a version of
+// this figure at all. $0 is always corrected.
 function magnitudePlausible(val, fig) {
-  if (!isFinite(val) || val <= 0) return false;
+  if (!isFinite(val) || val < 0) return false;
+  if (val === 0) return true;          // a $0 deductible, premium or cap is never right
   const ratio = val > fig.value ? val / fig.value : fig.value / val;
-  return ratio <= 3;
+  return ratio <= 20;
 }
 function sentenceCarriesFigure(sentence, fig) {
   const plain = String(fig.value);
@@ -371,14 +543,25 @@ export function verifyMedicareFigures(text) {
       const relForCtx = amountAt - sentInfo.start;
       const ctxClause = clauseAround(sentInfo.text, relForCtx);
       const clauseText = sentInfo.text.slice(ctxClause.start, ctxClause.end);
-      if (DISQUALIFY_SENTENCE_WIDE.test(sentInfo.text)) return match;
-      if (DISQUALIFY_CONTEXT.test(clauseText)) return match; // variability / history in this clause
+      if (DISQUALIFY_CONTEXT.test(stripIncomeExemptions(clauseText))) return match; // variability / history in this clause
       // Red-team round 4 (RT4-02): the window ends at the digits, so the '$' or
       // 'USD' the marker introduces has to come off before the anchored test.
       const beforeAmount = text.slice(Math.max(sentInfo.start, amountAt - 30), amountAt).replace(/(?:\$|USD)\s*$/i, '');
       if (DISQUALIFY_BEFORE_AMOUNT.test(beforeAmount)) return match;
+      if (isRoundAmount(val) && APPROX_BEFORE_AMOUNT.test(beforeAmount)) return match;
       const concept = classifyAt(text, amountAt);
       if (!concept || !AUTO_CORRECT.has(concept)) return match;
+      // RED TEAM ROUND 5 (RT5-MED-05, P1). The IRMAA / income family used to
+      // disqualify the whole sentence for EVERY figure, but only the Part B
+      // standard premium varies with income. So "Because your income is above
+      // the threshold, your 2026 Part A hospital inpatient deductible is $2,000"
+      // — a pure hallucination, since the Part A deductible does not vary with
+      // income at all — was left standing. The test now runs after
+      // classification and applies only to the one income-adjusted figure.
+      if (concept === 'part_b_standard_premium') {
+        if (DISQUALIFY_SENTENCE_WIDE.test(stripIncomeExemptions(sentInfo.text))) return match;
+        if (DISQUALIFY_INCOME_CLAUSE.test(stripIncomeExemptions(clauseText))) return match;
+      }
       const fig = MEDICARE_FIGURES_2026[concept];
       if (!fig) return match;
       if (aboutOtherYear(text, amountAt, fig.year)) return match; // another contract year — not ours to rewrite
