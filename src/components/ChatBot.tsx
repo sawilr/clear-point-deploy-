@@ -310,7 +310,7 @@ export function buildAssistanceSubmenu(language: ChatLanguage): QueuedBotMessage
       ? [
           { label: 'Medicaid', value: 'edu_medicaid' },
           { label: 'Programa de Ahorro de Medicare (MSP)', value: 'edu_msp' },
-          { label: 'Ayuda Extra / LIS', value: 'edu_extra_help' },
+          { label: 'Ayuda Adicional / LIS', value: 'edu_extra_help' },
           { label: 'Hablar con un asesor', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver al menú principal', value: 'edu_back_to_topics' },
         ]
@@ -887,7 +887,7 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
     ],
     edu_part_d: [
       { text: 'La Parte D ayuda a cubrir el costo de medicamentos recetados. Cada plan de Parte D tiene su propia lista de medicamentos cubiertos (llamada formulario) y red de farmacias.', pace: 'long' },
-      { text: 'Si no se inscribe cuando es elegible por primera vez y no tiene otra cobertura de medicamentos acreditable, podría pagar una penalidad por inscripción tardía - a menos que califique para Ayuda Extra.', pace: 'long' },
+      { text: 'Si no se inscribe cuando es elegible por primera vez y no tiene otra cobertura de medicamentos acreditable, podría pagar una penalidad por inscripción tardía - a menos que califique para Ayuda Adicional.', pace: 'long' },
       { text: 'No puedo revisar medicamentos específicos aquí. Un asesor licenciado puede revisar sus medicinas para encontrar un plan que las cubra.', pace: 'long' },
       {
         text: isSupported
@@ -895,7 +895,7 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
           : 'También hay programas nacionales que pueden ayudar con costos de medicamentos. ¿Quiere saber más?',
         options: [
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
-          { label: 'Explicar Ayuda Extra', value: 'edu_extra_help' },
+          { label: 'Explicar Ayuda Adicional', value: 'edu_extra_help' },
           { label: 'Ayuda con costos', value: 'edu_cost_help' },
         ],
         pace: 'short',
@@ -907,11 +907,11 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
     edu_assistance_menu: buildAssistanceSubmenu('es'),
     edu_cost_help: buildAssistanceSubmenu('es'),
     edu_extra_help: [
-      { text: 'Ayuda Extra - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'long' },
+      { text: 'Ayuda Adicional - también llamado Subsidio de Bajo Ingreso o LIS - es un programa federal que ayuda a pagar los costos de medicamentos recetados de la Parte D.', pace: 'long' },
       { text: `En 2026, el límite de ingresos es aproximadamente $${D.extraHelp.incomeLimitSingle.toLocaleString()}/mes para una persona soltera y $${D.extraHelp.incomeLimitCouple.toLocaleString()}/mes para una pareja. El límite de recursos es aproximadamente $${D.extraHelp.assetLimitSingle.toLocaleString()} para soltero y $${D.extraHelp.assetLimitCouple.toLocaleString()} para pareja (no cuenta su casa, un auto ni fondos funerarios).`, pace: 'slow' },
-      { text: `Con Ayuda Extra, los copagos de medicamentos genéricos bajan hasta $${D.extraHelp.genericCopay.toFixed(2)} y los de marca hasta $${D.extraHelp.brandCopay.toFixed(2)} por receta en 2026.`, pace: 'slow' },
+      { text: `Con Ayuda Adicional, los copagos de medicamentos genéricos bajan hasta $${D.extraHelp.genericCopay.toFixed(2)} y los de marca hasta $${D.extraHelp.brandCopay.toFixed(2)} por receta en 2026.`, pace: 'slow' },
       { text: 'Algunas personas califican automáticamente - por ejemplo, si tiene ambos Medicare y Medicaid completo, Seguridad de Ingreso Suplementario (SSI), o califica a través de un Programa de Ahorros de Medicare.', pace: 'long' },
-      { text: 'Importante: Las personas que reciben Ayuda Extra no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
+      { text: 'Importante: Las personas que reciben Ayuda Adicional no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Adicional.', pace: 'long' },
       { text: 'Esto es solo una revisión preliminar. La elegibilidad final la determina el Seguro Social o su estado.', pace: 'short' },
       {
         text: '¿Quiere que un asesor licenciado le ayude a verificar si podría calificar?',
@@ -927,7 +927,7 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
       { text: 'Medicare tiene penalidades por inscripción tardía en la Parte B y Parte D si retrasas la inscripción sin tener otra cobertura acreditable.', pace: 'long' },
       { text: 'Penalidad de Parte B: Generalmente se añade un 10% a su prima mensual de Parte B por cada período completo de 12 meses que pudo haber tenido Parte B pero no se inscribió. Esta penalidad generalmente es permanente y continúa mientras tenga Parte B.', pace: 'slow' },
       { text: 'Penalidad de Parte D: Puede aplicar si pasas 63 días o más seguidos sin Parte D u otra cobertura de medicamentos acreditable. El monto se calcula según cuántos meses estuviste sin cobertura y se suma a su prima de Parte D.', pace: 'slow' },
-      { text: 'Importante: Las personas que reciben Ayuda Extra (LIS) no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Extra.', pace: 'long' },
+      { text: 'Importante: Las personas que reciben Ayuda Adicional (LIS) no pagan la penalidad por inscripción tardía de la Parte D mientras tengan Ayuda Adicional.', pace: 'long' },
       { text: 'Si tiene cobertura de empleador, sindicato, gobierno federal, estatal, plan de retiro, VA, TRICARE o FEHB: no cancele ninguna cobertura actual sin antes consultar con su administrador de beneficios Y un asesor licenciado. Cancelar podría dejarle sin cobertura o generar penalidades.', pace: 'slow' },
       { text: 'No puedo calcular una penalidad final sin saber las fechas exactas. Un asesor licenciado puede revisar su cronograma.', pace: 'short' },
       {
@@ -972,7 +972,7 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
     ],
     edu_linet: [
       { text: 'LI NET significa Transición para Recién Elegibles de Bajos Ingresos. Es un programa temporal de cobertura de medicamentos recetados de la Parte D de Medicare.', pace: 'long' },
-      { text: 'LI NET proporciona cobertura temporal inmediata de Parte D para ciertos beneficiarios de Medicare de bajos ingresos que aún no están inscritos en un plan de medicamentos de Medicare. Ayuda a cubrir el vacío cuando alguien recién califica para Medicaid o Ayuda Extra y necesita sus medicamentos de inmediato.', pace: 'long' },
+      { text: 'LI NET proporciona cobertura temporal inmediata de Parte D para ciertos beneficiarios de Medicare de bajos ingresos que aún no están inscritos en un plan de medicamentos de Medicare. Ayuda a cubrir el vacío cuando alguien recién califica para Medicaid o Ayuda Adicional y necesita sus medicamentos de inmediato.', pace: 'long' },
       { text: 'Este no es un plan permanente - brinda cobertura temporal hasta que un plan regular de Parte D o Medicare Advantage con cobertura de medicamentos entre en vigor.', pace: 'long' },
       { text: 'No puedo prometer elegibilidad para LI NET, pero si esta situación se parece a la suya, un asesor licenciado puede ayudar a verificar si LI NET aplica y conectarte.', pace: 'short' },
       {
@@ -1010,7 +1010,7 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
       { text: 'Inscripción Anual: Del 15 de octubre al 7 de diciembre. Puede revisar o cambiar su cobertura de Medicare Advantage y Parte D para el año siguiente.', pace: 'slow' },
       { text: 'Inscripción Abierta de Medicare Advantage: Del 1 de enero al 31 de marzo. Si ya tiene un plan Medicare Advantage, puede cambiarte a otro o regresar a Medicare Original.', pace: 'slow' },
       { text: 'Inscripción General: Del 1 de enero al 31 de marzo. Puede aplicar si no se inscribió en la Parte A o B cuando era elegible por primera vez y no califica para un Período Especial. Pueden aplicar penalidades.', pace: 'slow' },
-      { text: 'Período Especial: Ciertos eventos de vida - como mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Extra - pueden permitirle inscribirse o cambiar planes fuera de los períodos normales.', pace: 'slow' },
+      { text: 'Período Especial: Ciertos eventos de vida - como mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Adicional - pueden permitirle inscribirse o cambiar planes fuera de los períodos normales.', pace: 'slow' },
       { text: 'Las reglas de Medicare Supplement pueden ser diferentes a las de Advantage y Parte D. Pueden depender del estado, cuándo se inscribió en Parte B y si aplican preguntas de salud.', pace: 'long' },
       {
         text: '¿Quiere ayuda para verificar qué período de inscripción puede aplicar en su caso?',
@@ -1223,12 +1223,12 @@ export function getMedicareEducation(topic: string, language: ChatLanguage, stat
       { text: 'Si recibe el Seguro de Discapacidad del Seguro Social (SSDI), generalmente se vuelve elegible para Medicare después de un período de espera de 24 meses desde que comienzan sus beneficios por discapacidad.', pace: 'long' },
       { text: 'Algunas condiciones califican para Medicare sin la espera de 24 meses: ELA (enfermedad de Lou Gehrig) califica de inmediato, y la Enfermedad Renal en Etapa Terminal (ESRD) tiene sus propias reglas separadas.', pace: 'long' },
       { text: 'Durante el período de espera de 24 meses, es posible que necesite otras opciones de cobertura. Un asesor licenciado puede revisar qué puede estar disponible en su área.', pace: 'long' },
-      { text: 'Una vez que tenga Medicare por discapacidad, también puede calificar para Ayuda Extra / LIS para reducir los costos de medicamentos recetados, u otros programas de asistencia dependiendo de sus ingresos y recursos.', pace: 'long' },
+      { text: 'Una vez que tenga Medicare por discapacidad, también puede calificar para Ayuda Adicional / LIS para reducir los costos de medicamentos recetados, u otros programas de asistencia dependiendo de sus ingresos y recursos.', pace: 'long' },
       { text: 'A los 65 años, su cobertura de Medicare continúa automáticamente — no necesita reinscribirse.', pace: 'long' },
       {
         text: '¿Quiere saber más o hablar con un asesor?',
         options: [
-          { label: 'Ayuda Extra / LIS', value: 'edu_extra_help' },
+          { label: 'Ayuda Adicional / LIS', value: 'edu_extra_help' },
           { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
           { label: 'Volver a Beneficios Especiales', value: 'edu_special_benefits' },
           { label: 'Volver a temas', value: 'edu_back_to_topics' },
@@ -1510,9 +1510,9 @@ function getStatePrograms(state: string, language: ChatLanguage): QueuedBotMessa
         { text: 'Esto es lo que está disponible en Florida:', pace: 'short' },
         { text: '• SHINE (Sirviendo las Necesidades de Seguro de Salud de Personas Mayores) — consejería gratuita e imparcial de Medicare por voluntarios entrenados.', pace: 'long' },
         { text: '• Programas de Ahorros de Medicare — para 2026, use la base federal: QMB alrededor de $1,350/mes soltero / $1,824 pareja; SLMB alrededor de $1,616/mes soltero / $2,184 pareja; QI alrededor de $1,816/mes soltero / $2,455 pareja. Límites federales de recursos: $9,950 soltero / $14,910 casado para QMB/SLMB/QI. Las reglas exactas de Florida deben verificarse con la agencia estatal, SHINE, Medicaid o un asesor licenciado.', pace: 'long' },
-        { text: '• Ayuda Extra / LIS — programa federal que puede ayudar con costos de medicamentos de Parte D.', pace: 'long' },
+        { text: '• Ayuda Adicional / LIS — programa federal que puede ayudar con costos de medicamentos de Parte D.', pace: 'long' },
         { text: '• Medicaid de Florida — para beneficiarios con doble elegibilidad. La elegibilidad depende de ingresos, recursos, edad, discapacidad, situación del hogar y categoría del programa.', pace: 'long' },
-        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Extra, MSP, y encontrar un plan de Parte D con un formulario que cubra sus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'long' },
+        { text: 'El mejor enfoque en Florida generalmente es revisar la elegibilidad para Ayuda Adicional, MSP, y encontrar un plan de Parte D con un formulario que cubra sus medicamentos al menor costo total. Un asesor licenciado puede ayudar con todo esto.', pace: 'long' },
         { text: 'Esta es información educativa general, no una determinación final de elegibilidad. Florida SHINE y un asesor licenciado pueden ayudar a verificar su situación.', pace: 'short' },
         {
           text: '¿Quiere una revisión gratuita?',
@@ -2726,7 +2726,7 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
       topic: 'Extra Help / LIS',
       messages: language === 'es'
         ? [
-            { text: 'Ayuda Extra, también llamada LIS, puede ayudar con costos de medicamentos Parte D para personas que califican.', pace: 'long' },
+            { text: 'Ayuda Adicional, también llamada LIS, puede ayudar con costos de medicamentos Parte D para personas que califican.', pace: 'long' },
             { text: 'No puedo confirmar si califica por chat. ¿Quiere información general o ayuda solicitando una revisión?', options: reviewOptions, pace: 'long' },
           ]
         : [
@@ -4288,7 +4288,7 @@ export function ChatBot() {
               : `We already covered the main help programs in ${sLabel}, like MSP/QMB, QI-1, EPIC, Medicaid, and Extra Help. So I don't repeat myself, I can explain one in detail or connect you with an educational review.`,
             options: memory.language === 'es'
               ? [
-                  { label: 'Ayuda Extra', value: 'edu_extra_help' },
+                  { label: 'Ayuda Adicional', value: 'edu_extra_help' },
                   { label: 'Solicitar revisión', value: 'request_review', icon: <Calendar className="w-4 h-4" /> },
                   { label: 'Hacer otra pregunta', value: 'edu_back_to_topics' },
                 ]
@@ -5749,7 +5749,7 @@ export function ChatBot() {
             </div>
           </div>
 
-          <div ref={chatBodyRef} onScroll={handleChatScroll} role="log" aria-live="polite" aria-atomic="false" className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+          <div ref={chatBodyRef} onScroll={handleChatScroll} role="log" aria-live="polite" aria-atomic="false" tabIndex={0} aria-label={t('Conversation', 'Conversación')} className="flex-1 overflow-y-auto overscroll-contain min-h-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500">
             {/* Privacy/disclaimer — inside scroll body so it naturally scrolls away
                 as conversation progresses; does not permanently consume chat height */}
             <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">

@@ -35,7 +35,6 @@ const REMOVE = [
   ['Sí califica usted para Ayuda Adicional.', 'es'],
   ['Tú calificas para Ayuda Adicional.', 'es'],
   ['Usted calificaría para Ayuda Adicional.', 'es'],
-  ['¿Usted califica? Sí, califica.', 'es'],
   // RT3-CF-03 — natural English forms
   ["You've qualified for Extra Help.", 'en'],
   ['Your income qualifies you for Extra Help.', 'en'],
@@ -106,6 +105,56 @@ const KEEP = [
 for (const [text, lang] of KEEP) {
   const r = run(text, lang);
   check('KEEP ' + text, r.text === text && r.violations.length === 0, 'MUTATED to: "' + r.text + '" v=' + r.violations.join(','));
+}
+
+// ── RT3-CF-A / K / J — scope of the eligibility rule ──
+{
+  // Statutory Medicare education is NOT a means-tested determination (RT3-CF-A, P1).
+  for (const [text, lang] of [
+    ["You're eligible for Medicare at 65.", 'en'],
+    ['When you turn 65, you become eligible for Medicare.', 'en'],
+    ['You will be eligible for Medicare when you turn 65.', 'en'],
+    ['Usted es elegible para Medicare a los 65 años.', 'es'],
+    ['You are eligible for Part B during your Initial Enrollment Period.', 'en'],
+  ]) {
+    const r = run(text, lang);
+    check('SCOPE generic Medicare education survives: ' + text, r.text === text && r.violations.length === 0, 'MUTATED to: "' + r.text + '" v=' + r.violations.join(','));
+  }
+  // Hedged possibility and questions are not determinations (RT3-CF-K).
+  for (const [text, lang] of [
+    ['You may qualify for Extra Help — a licensed advisor can check.', 'en'],
+    ['Usted puede calificar para Ayuda Adicional; un asesor licenciado puede revisarlo.', 'es'],
+    ['Do you qualify for Extra Help?', 'en'],
+    ['Many people like you who qualify for Extra Help never apply.', 'en'],
+  ]) {
+    const r = run(text, lang);
+    check('SCOPE hedge/question/generalisation survives: ' + text, r.text === text && r.violations.length === 0, 'MUTATED to: "' + r.text + '" v=' + r.violations.join(','));
+  }
+  // Conditional rule statements survive; the determination inside a colon pair does not.
+  for (const [text, lang] of [
+    ['If your income is below the limit, you qualify for Extra Help.', 'en'],
+    ['If you qualify for Medicaid, you automatically qualify for Extra Help.', 'en'],
+    ['Si usted tiene Medicaid, usted califica automáticamente para Ayuda Adicional.', 'es'],
+  ]) {
+    const r = run(text, lang);
+    check('SCOPE conditional rule survives: ' + text, r.text === text && r.violations.length === 0, 'MUTATED to: "' + r.text + '" v=' + r.violations.join(','));
+  }
+  const j = run('Whether you qualify: yes, you do.', 'en');
+  check('RT3-CF-J colon + affirmation removed', j.violations.length > 0 && !/yes, you do/i.test(j.text), j.text + ' v=' + j.violations.join(','));
+  const q = run('¿Usted califica? Sí, califica.', 'es');
+  check('RT3-CF-J/K question kept, affirmation removed', /¿Usted califica\?/.test(q.text) && !/Sí, califica\./.test(q.text) && q.violations.length > 0, q.text + ' v=' + q.violations.join(','));
+}
+
+// ── RT3-CF-H — unspaced em dash opens a new clause (SSN advice rule 11) ──
+{
+  const r = run("Don't share your Medicare number—you can give your Social Security number at the pharmacy.", 'en', { latestUserText: 'do they need my social at the pharmacy?' });
+  check('RT3-CF-H unspaced em dash caught by the SSN net', r.violations.length > 0 && !/give your Social Security number/i.test(r.text), r.text + ' v=' + r.violations.join(','));
+}
+
+// ── RT3-CF-L — a removed sentence must not glue its neighbours together ──
+{
+  const r = run('Extra Help lowers costs. You qualify.\nCall 1-800-772-1213.', 'en');
+  check('RT3-CF-L newline preserved after removal', /costs\.\s*\n\s*Call 1-800-772-1213/.test(r.text), JSON.stringify(r.text));
 }
 
 // ── RT3-CF-07 — labels and bullets never orphaned ──

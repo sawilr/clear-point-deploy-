@@ -26,48 +26,139 @@ import { turnstileMode, verifyTurnstile } from './_lib/turnstile.js';
 // AUDIT 2026-09-12 (FORMS-04) — remove the lead's own identifiers from free text
 // before it is sent to the enrichment LLM. Exact-value replacement (case-insensitive)
 // plus a generic phone/email sweep; the CRM note keeps the original text.
+// Official reference numbers a story may legitimately quote (never redacted).
+// Red-team round 3 (R3-SL-11): the Medicare TTY line belongs here too.
+var OFFICIAL_NUMBERS_RE = /^(1?8006334227|1?8774862048|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/;
+var SEP_CLASS = '[\\s.\\u2010-\\u2015\\u2212/\\\\()-]';
+// Accent- and case-insensitive matcher for one name token (red-team R3-SL-01):
+// "JOSE", "jose", "Jose" and "Jose" with any accent are the same person.
+var ACCENT_SETS = { a: 'aàáâäãåā', e: 'eèéêëē', i: 'iìíîïī', o: 'oòóôöõō', u: 'uùúûüū', n: 'nñ', c: 'cç', y: 'yýÿ' };
+function foldToken(tok) {
+  return String(tok).normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+function tokenPattern(tok) {
+  var folded = foldToken(tok);
+  var pat = '';
+  for (var i = 0; i < folded.length; i++) {
+    var ch = folded[i];
+    var set = ACCENT_SETS[ch.toLowerCase()];
+    if (set) pat += '[' + set + set.toUpperCase() + ']';
+    else pat += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return pat;
+}
 function scrubIdentityForIntel(text, values, dob) {
   var out = String(text || '');
-  // Red-team FORMS-04-B1: the story only — never the TCPA receipt / verbatim consent blocks.
-  var cut = out.search(/\u2014 (?:TCPA Receipt|Consent Text)/);
+  // Red-team FORMS-04-B1 / round 3 R3-SL-07: the story only - never the TCPA
+  // receipt or verbatim consent blocks. The cut is taken at the LAST marker so a
+  // look-alike block pasted by the client cannot truncate the real story.
+  var markerRe = /—\s*(?:TCPA Receipt|Consent Text)/g;
+  var cut = -1, mk;
+  while ((mk = markerRe.exec(out)) !== null) { cut = mk.index; if (markerRe.lastIndex === mk.index) markerRe.lastIndex++; }
   if (cut >= 0) out = out.slice(0, cut);
-  // Red-team FORMS-04-N3: numbers spelled out in words (EN/ES) become digits first.
-  var WORD_DIGITS = { zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', cero: '0', uno: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9' };
-  out = out.replace(/\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)[\s,-]+){6,}(?:zero|one|two|three|four|five|six|seven|eight|nine|cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)\b/gi, function (m) { return m.toLowerCase().split(/[\s,-]+/).map(function (w) { return WORD_DIGITS[w] || ''; }).join(''); });
-  // Generic sweeps FIRST (phone / email), keeping official reference numbers.
-  out = out.replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, function (m) {
+  // Red-team FORMS-04-N3 / round 3 R3-SL-08: numbers spelled out in words (EN/ES,
+  // including "oh") become digits, with any separator and mixed with digits.
+  var WORD_DIGITS = { zero: '0', oh: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', cero: '0', uno: '1', una: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9' };
+  var WORD = '(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)';
+  var WORD_SEP = '[\\s,.\\u2010-\\u2015\\u2212/-]';
+  var RUN = new RegExp('(?<![\\p{L}\\p{N}])(?:(?:' + WORD + '|\\d)' + WORD_SEP + '*){6,}(?:' + WORD + '|\\d)(?![\\p{L}\\p{N}])', 'giu');
+  out = out.replace(RUN, function (m) {
+    var parts = m.toLowerCase().split(new RegExp(WORD_SEP + '+')).filter(Boolean);
+    var digits = '', anyWord = false;
+    for (var k = 0; k < parts.length; k++) {
+      if (/^\d+$/.test(parts[k])) digits += parts[k];
+      else if (WORD_DIGITS[parts[k]] !== undefined) { digits += WORD_DIGITS[parts[k]]; anyWord = true; }
+      else return m;  // not a pure number run - leave the prose alone
+    }
+    // A run of plain digit groups is a phone number / date already written as
+    // digits: leave its formatting to the sweeps below, which know the official
+    // numbers and the date shapes.
+    return anyWord ? digits : m;
+  });
+  // Generic sweeps (phone / long digit runs / email), keeping official numbers.
+  var PHONE_RE = new RegExp('(?:\\+?1' + SEP_CLASS + '?)?\\(?\\d{3}\\)?' + SEP_CLASS + '?\\d{3}' + SEP_CLASS + '?\\d{4}', 'g');
+  out = out.replace(PHONE_RE, function (m) {
     var d = m.replace(/\D/g, '');
-    return /^(1?8006334227|1?8007721213|1?8778392675|1?8557208555|1?8005412831|1?8007929745|1?8556266632|1?8009949422)$/.test(d) ? m : '[phone]';
+    return OFFICIAL_NUMBERS_RE.test(d) ? m : '[phone]';
+  });
+  // Digit groups split by single separators ("917 555 01 23", "9 1 7 5 5 5 0 1 2 3").
+  var SPACED_RE = new RegExp('(?<![\\p{L}\\p{N}])(?:\\d' + SEP_CLASS + '?){9,14}\\d(?![\\p{L}\\p{N}])', 'gu');
+  out = out.replace(SPACED_RE, function (m) {
+    var d = m.replace(/\D/g, '');
+    if (OFFICIAL_NUMBERS_RE.test(d)) return m;
+    return d.length === 10 || d.length === 11 ? '[phone]' : '[number]';
+  });
+  // Red-team round 3 (R3-SL-14): a spelled-out SSN/MBI/card arrives here as a
+  // bare digit run AFTER scrubPHI has already run upstream - mask it now.
+  out = out.replace(/(?<![\p{L}\p{N}])\d{9,19}(?![\p{L}\p{N}])/gu, function (m) {
+    return OFFICIAL_NUMBERS_RE.test(m) ? m : '[number]';
   });
   out = out.replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu, '[email]');
-  // Red-team FORMS-04-FP2: dates are redacted only when a DOB was supplied AND the
-  // year is a plausible birth year (enrollment dates like 12/31/2026 stay visible).
-  if (typeof dob === 'string' && /\d{4}/.test(dob)) {
+  // Dates. Red-team round 3 (R3-SL-06/15): the SUPPLIED date of birth is redacted
+  // in every rendering whatever the year (disability leads are under 65); the
+  // plausible-birth-year window only governs OTHER dates in the story.
+  var dobStr = dob == null ? '' : String(dob);
+  if (/\d{4}/.test(dobStr)) {
+    var MONTHS_EN = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+    var MONTHS_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+    var parsed = null;
+    var iso = dobStr.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+    var mdy = dobStr.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/);
+    if (iso) parsed = { y: +iso[1], m: +iso[2], d: +iso[3] };
+    else if (mdy) parsed = { y: +mdy[3], m: +mdy[1], d: +mdy[2] };
+    if (parsed && parsed.m >= 1 && parsed.m <= 12 && parsed.d >= 1 && parsed.d <= 31) {
+      var mm = String(parsed.m), dd = String(parsed.d), yy = String(parsed.y);
+      var n2 = function (s) { return '0?' + s; };
+      var mName = '(?:' + MONTHS_EN[parsed.m - 1] + '|' + MONTHS_EN[parsed.m - 1].slice(0, 3) + '\\.?|' + MONTHS_ES[parsed.m - 1] + '|' + MONTHS_ES[parsed.m - 1].slice(0, 3) + '\\.?)';
+      var yBoth = '(?:' + yy + '|' + yy.slice(2) + ')';
+      var pats = [
+        '(?<![\\p{L}\\p{N}])' + n2(mm) + '[-/.]' + n2(dd) + '[-/.]' + yBoth + '(?![\\p{L}\\p{N}])',
+        '(?<![\\p{L}\\p{N}])' + n2(dd) + '[-/.]' + n2(mm) + '[-/.]' + yBoth + '(?![\\p{L}\\p{N}])',
+        '(?<![\\p{L}\\p{N}])' + yy + '[-/.]' + n2(mm) + '[-/.]' + n2(dd) + '(?![\\p{L}\\p{N}])',
+        mName + '\\s+' + n2(dd) + '(?:st|nd|rd|th)?,?\\s+' + yy,
+        n2(dd) + '[\\s-]+(?:de\\s+)?' + mName + '[\\s-]+(?:de\\s+)?' + yy,
+      ];
+      for (var p = 0; p < pats.length; p++) {
+        try { out = out.replace(new RegExp(pats[p], 'giu'), '[date]'); } catch (_e) { /* keep going */ }
+      }
+    }
     var maxBirth = new Date().getFullYear() - 50;
     var yearOk = function (y) { y = Number(y); return y >= 1900 && y <= maxBirth; };
-    out = out.replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
-             .replace(/\b((?:19|20)\d{2})[\/.-]\d{1,2}[\/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
-             .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
-             .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
+    out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
+      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
+      .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
+      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; });
   }
-  // Exact values: longest first. Names are matched per token, CASE-SENSITIVE and
-  // skipping common-word tokens (red-team FORMS-04-FP1/FP3: "Le", "Al", "Bill",
-  // "May" mid-sentence are prose, not the lead). Emails / phones / DOB: whole value.
-  var STOP = /^(le|al|la|el|de|del|los|las|un|una|y|o|si|no|mi|su|se|me|te|lo|will|bill|may|mark|rich|rose|art|guy|pat|sue|june|april|grace|hope|joy|ray|sol|luz|mar|paz|cruz|rosa|ana|eva|pia|amor|don|dr|sr|sra|mrs|mr|ms)$/i;
+  // Exact values, longest first. Red-team round 3 (R3-SL-01/02/03): names match
+  // case- AND accent-insensitively; the full "First Last" bigram is redacted
+  // unconditionally; a value whose tokens are all shorter than 3 characters
+  // (Ng, Li, Xu...) falls back to the whole value. STOP now holds only function
+  // words and titles - a token that IS the lead's name is redacted even when it
+  // doubles as a common word, because the CRM note keeps the original text and
+  // only the LLM input is scrubbed.
+  var STOP = /^(le|al|la|el|de|del|los|las|un|una|y|o|si|no|mi|su|se|me|te|lo|and|the|for|dr|sr|sra|srta|mrs|mr|ms|jr|ii|iii)$/i;
   var tokens = [];
+  var nameParts = [];
   for (var i = 0; i < values.length; i++) {
     var v = values[i];
     if (typeof v !== 'string') continue;
     var t = v.trim();
     if (t.length < 2) continue;
-    if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push({ v: t, ci: true }); continue; }
-    var parts = t.split(/[\s()"'\u201c\u201d,]+/).filter(function (x) { return x.length >= 3 && !STOP.test(x); });
-    for (var q = 0; q < parts.length; q++) tokens.push({ v: parts[q], ci: false });
+    if (/@/.test(t) || /\d{4,}/.test(t)) { tokens.push(t); continue; }
+    nameParts.push(t);
+    var parts = t.split(/[\s()"'‘’“”,._-]+/).filter(Boolean);
+    tokens.push(t);                                       // the value exactly as given
+    var kept = parts.filter(function (x) { return x.length >= 3 && !STOP.test(x); });
+    if (kept.length) { for (var q = 0; q < kept.length; q++) tokens.push(kept[q]); }
+    else for (var q2 = 0; q2 < parts.length; q2++) tokens.push(parts[q2]);  // Ng, Li, Xu…
+    if (parts.length > 1) tokens.push(parts.join(''));    // "O'Brien-Smith" joined
   }
-  tokens.sort(function (a, b) { return b.v.length - a.v.length; });
+  if (nameParts.length > 1) tokens.push(nameParts.join(' '));   // the full name
+  tokens = tokens.filter(function (x, idx, arr) { return x && arr.indexOf(x) === idx; });
+  tokens.sort(function (a, b) { return b.length - a.length; });
   for (var j = 0; j < tokens.length; j++) {
-    var esc = tokens[j].v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + esc + '(?![\\p{L}\\p{N}])', tokens[j].ci ? 'giu' : 'gu'), '[redacted]'); } catch (_e) { /* keep going */ }
+    var pat = tokens[j].split(/\s+/).map(tokenPattern).join('\\s+');
+    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', 'giu'), '[redacted]'); } catch (_e) { /* keep going */ }
   }
   return out;
 }
@@ -258,8 +349,23 @@ export default async function handler(req, res) {
     var email = body.email; var age = body.age || body.calculated_age; var date_of_birth = body.date_of_birth;
     var calculated_age = body.calculated_age; var zip = body.zip; var city = body.city;
     var county = body.county; var derived_state = body.derived_state || body.state;
-    var preferred_language = body.preferred_language; var medicare_status = body.medicare_status;
-    var lead_source = body.lead_source; var utm_source = body.utm_source;
+    // Red-team round 3 (R3-SL-05/09) — these three values become SERVER-OWNED CRM
+    // tags (Lang-*, Source-*, LeadType-*) and a custom field, so they are
+    // allow-listed here, not sanitised downstream: an unexpected value is
+    // replaced by the default instead of minting a spoofed tag, and a non-string
+    // can no longer crash the handler after the contact has been written.
+    var preferred_language = (function (v) {
+      var s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+      if (s === 'es' || s === 'spanish' || s === 'español' || s === 'espanol') return 'es';
+      return 'en';
+    })(body.preferred_language);
+    var LEAD_SOURCES = ['web', 'chatbot', 'zara', 'form', 'smartreview', 'smart_review', 'customer_service', 'customer_service_bot', 'clara_outer_flow', 'contact', 'free_review', 'referral', 'google', 'facebook', 'qa'];
+    var lead_source = (function (v) {
+      var s = typeof v === 'string' ? v.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') : '';
+      return LEAD_SOURCES.indexOf(s) !== -1 ? s : (s ? 'other' : '');
+    })(body.lead_source);
+    var medicare_status = body.medicare_status;
+    var utm_source = body.utm_source;
     var utm_medium = body.utm_medium; var utm_campaign = body.utm_campaign;
     var lead_notes = body.lead_notes; var conversation_summary = body.conversation_summary;
     var lead_quality_flags = body.lead_quality_flags;
@@ -298,7 +404,9 @@ export default async function handler(req, res) {
     lead_quality_flags = _scrubFlags.text;
     // Red-team FORMS-01-B3: the field also carries the server's AI verdict later; client
     // text is labelled and cannot carry verdict-shaped tokens.
-    lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/(?<![A-Za-z0-9_])(AI:|SOA[- ]?\w*|DNC|DND|Temp[-\u2010\u2011\u2013]\w+|Urg[-\u2010\u2011\u2013]\w+|Intent[-\u2010\u2011\u2013]\w+)/gi, '[x]') : '';
+    // Red-team round 3 (R3-SL-10): every dash variant and the underscore, and
+    // "SOA" only as the tag family (never "soap"/"soar" in prose).
+    lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/(?<![A-Za-z0-9_])(AI:|\bSOA(?:[\s_\p{Pd}]?(?:recorded|signed|pending|status|captured|\d+))?\b|DNC|DND|Temp[\s_\p{Pd}]\w+|Urg[\s_\p{Pd}]\w+|Intent[\s_\p{Pd}]\w+)/giu, '[x]') : '';
     var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected);
     if (_phiCats.length > 0) {
       console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
@@ -350,7 +458,13 @@ export default async function handler(req, res) {
     var _bestTimeTag = _tagify('CallTime', best_time_to_contact);
     var _interestTag = _tagify('Interest', interest_type);
 
-    var lead_type = typeof body.lead_type === 'string' ? body.lead_type.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '') : '';
+    // Red-team round 3 (R3-SL-05): LeadType-* is a server-owned family — only the
+    // lead types Clara and the forms actually produce may mint one.
+    var LEAD_TYPES = ['existing_client_inquiry', 'existing_client_unverified', 'qualified_prospect', 'out_of_scope_optin_callback', 'out_of_service_area_interest', 'smart_review', 'contact_form', 'zara_education'];
+    var lead_type = (function (v) {
+      var s = typeof v === 'string' ? v.slice(0, 64).replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() : '';
+      return LEAD_TYPES.indexOf(s) !== -1 ? s : '';
+    })(body.lead_type);
     // ── AUDIT 2026-08-15 (authorization gap — independent red-team F1) ─────────
     // FINDING: the handler trusted a client-supplied ghl_contact_id to PUT-
     // OVERWRITE that CRM contact (name/phone/email/DOB) AND flip its
@@ -409,10 +523,25 @@ export default async function handler(req, res) {
       // client-reported path (sanitized to a plain path, no query string).
       receiptBits.push('at=' + new Date().toISOString());
       receiptBits.push('ip=' + (/^[0-9a-f:.]{3,45}$/i.test(String(ip || '')) ? String(ip) : 'unavailable'));
+      // Red-team round 3 (R3-SL-13): decode FIRST, then re-parse so percent-encoded
+      // traversal normalises, and REJECT anything that is not a plain in-site path
+      // (a mangled path is worse evidence than none).
       var page_url = '';
-      try { if (typeof body.page_url === 'string' && body.page_url.trim()) { var _pu = new URL(body.page_url.slice(0, 400), 'https://clearpointsenioradvisors.com'); if (_pu.origin === 'https://clearpointsenioradvisors.com') { var _path = _pu.pathname; try { _path = decodeURIComponent(_path); } catch (_d) { /* keep raw */ } page_url = _path.replace(/\/{2,}/g, '/').replace(/[^A-Za-z0-9/_\-.]/g, '').slice(0, 120); } } } catch (_e) { page_url = ''; }
-      if (page_url && !/^\/[^/]/.test(page_url) && page_url !== '/') page_url = '';
+      try {
+        if (typeof body.page_url === 'string' && body.page_url.trim()) {
+          var _raw = body.page_url.slice(0, 400);
+          try { _raw = decodeURIComponent(_raw); } catch (_d) { /* keep raw */ }
+          var _pu = new URL(_raw, 'https://clearpointsenioradvisors.com');
+          var _path = _pu.pathname;
+          try { _path = decodeURIComponent(_path); } catch (_d2) { /* keep raw */ }
+          _path = _path.replace(/\/{2,}/g, '/');
+          if (_pu.origin === 'https://clearpointsenioradvisors.com' && /^\/[A-Za-z0-9/_.-]{0,119}$/.test(_path) && _path.indexOf('..') === -1 && _raw.indexOf('..') === -1) page_url = _path;
+        }
+      } catch (_e) { page_url = ''; }
       if (page_url) receiptBits.push('page=' + page_url);
+      // Red-team round 3 (R3-SL-07): a story may contain a look-alike receipt
+      // header. Neutralise it so only the server's block reads as the receipt.
+      if (lead_notes) lead_notes = String(lead_notes).replace(/—\s*(TCPA Receipt|Consent Text)\s*—?/gi, '- $1 -');
       lead_notes = (lead_notes ? lead_notes + '\n\n' : '') + '— TCPA Receipt — ' + receiptBits.join(' · ');
       // AUDIT 2026-07-03 (compliance) — persist the VERBATIM consent language per
       // lead so the 10-year TCPA record is self-contained in the CRM (previously
@@ -426,6 +555,16 @@ export default async function handler(req, res) {
 
     var frontendTags = [];
     var _rejectedTags = 0;
+    var _malformedTags = 0;
+    // Red-team round 3 (R3-SL-04): the deny check runs on a SEPARATOR-FREE key, so
+    // "ConsentCaptured", "Status–NewLead" (en dash), "consent_captured-" and
+    // "STATUS NEW LEAD" all collapse to the same family name.
+    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|consent|dnc[a-z0-9]*|dnd|soa[a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead)$/;
+    // Family prefixes are matched on the DASH key, so the family has to be a real
+    // token: "urg-high" is denied, the support bot's "urgency_elevated" is not.
+    // "status-*" is deliberately absent — only its exact values above are owned,
+    // so status_existing_client_claimed keeps flowing.
+    var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|consent|temp|urg|intent|utm|lang|language|source|leadtype|outcome|compliance)-/;
     if (Array.isArray(body.tags)) {
       for (var i = 0; i < body.tags.length && frontendTags.length < 20; i++) {
         var tag = body.tags[i];
@@ -440,13 +579,16 @@ export default async function handler(req, res) {
           // Red-team FORMS-01-FP1: exact server-owned / compliance families only, so the
           // support bot's descriptive vocabulary (status_existing_client_claimed,
           // urgency_elevated, confidence_high, category_billing, …) keeps flowing.
-          var _denied = /^(status-(?:newlead|contacted|dnc|noshow|appointmentbooked|soa-[a-z-]+)|cp-[a-z0-9-]+|soa(?:-[a-z-]+)?|dnc(?:-[a-z-]+)?|dnd|consent-(?:captured|revoked|yes|pending)|consent|temp-(?:hot|warm|cold)|urg-[a-z-]+|ai-flagged|intent-\d+|utm-[a-z0-9-]+|lang-(?:en|es)|language-(?:en|es)|source-(?:web|chatbot|form|smartreview|google|facebook|referral|customer-service-bot)|leadtype-[a-z-]+|high-priority|warm-lead|outcome-[a-z-]+|compliance-[a-z-]+)$/.test(_norm);
+          var _dashKey = foldToken(tag).toLowerCase().replace(/[\s_‐-―−-]+/g, '-').replace(/^-+|-+$/g, '');
+          var _flatKey = _dashKey.replace(/-/g, '');
+          var _denied = _denyKeys.test(_flatKey) || _denyFamilyPrefix.test(_dashKey);
           if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag) && !_denied) frontendTags.push(tag);
           else if (_denied) _rejectedTags++;
-        }
+          else if (tag) _malformedTags++;   // charset / length / newline gate (R3-SL-12)
+        } else if (body.tags[i] != null) { _malformedTags++; }
       }
     }
-    if (_rejectedTags) leadAudit('tags_rejected', null, { n: _rejectedTags });
+    if (_rejectedTags || _malformedTags) leadAudit('tags_rejected', null, { n: _rejectedTags + _malformedTags, denied: _rejectedTags, malformed: _malformedTags });
     var allTags = ['Status-NewLead'];
     for (var j = 0; j < frontendTags.length; j++) { if (allTags.indexOf(frontendTags[j]) === -1) allTags.push(frontendTags[j]); }
 
@@ -717,7 +859,7 @@ export default async function handler(req, res) {
         .concat(allTags.filter(function(t){return t!=='Status-NewLead'&&t.indexOf('Lang-')!==0&&t!=='Source-Web';}))
         // PHASE A16 — SOA status tags so advisor pipelines can filter on them.
         // Red-team FORMS-01-B1: SOA-* tags come only from a server-verified SOA record (SOA is disabled; client booleans are ignored).
-        .concat(body.lead_source ? ['Source-' + String(body.lead_source).replace(/[^a-z0-9_]/gi,'')] : [])
+        .concat(lead_source ? ['Source-' + lead_source] : [])
         // PHASE A17 — Lead-intel tags. Empty arrays if intel unavailable.
         .concat(intel ? ['Temp-' + intel.lead_temperature, 'Urg-' + intel.urgency, 'Intent-' + intel.intent_strength] : [])
         .concat(intel && intel.compliance_flags && intel.compliance_flags.length ? ['AI-Flagged'] : []),
@@ -911,7 +1053,7 @@ export default async function handler(req, res) {
     // ChatBot sends 'Website Chatbot - Medicare Plan Review Request'
     // SmartMedicareReview sends 'Smart Medicare Review'
     // LeadForm sends '{source} Form' (e.g. 'contact-page Form', 'homepage-hero Form')
-    var rawFormName = (body.form_name || body.lead_source || '').toLowerCase();
+    var rawFormName = String(typeof body.form_name === 'string' ? body.form_name : (lead_source || '')).toLowerCase();
     var sourceLabel;
     if (rawFormName.indexOf('chatbot') !== -1 || rawFormName.indexOf('zara') !== -1) {
       sourceLabel = 'Zara ChatBot';

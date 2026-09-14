@@ -117,7 +117,7 @@ function sepClauseIsVerificationFramed(sentence) {
   // (super-linear). Collapse whitespace runs first (the clause test is
   // insensitive to spacing) and bound the input so the split stays linear.
   const normalized = String(sentence).replace(/\s{2,}/g, ' ').slice(0, 20000);
-  const clauses = normalized.split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
+  const clauses = normalized.split(/(?:,|;|—|–|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
   for (let i = 0; i < clauses.length; i++) {
     if (!SEP_TOKEN_RE.test(clauses[i])) continue;
     // Include the preceding clause: "Whether you have a SEP available" splits at no
@@ -158,7 +158,25 @@ function sepClauseIsVerificationFramed(sentence) {
 //    byte-bounded so a claim-dense reply stays linear.
 const DEFERRAL_GOVERNOR_EN = /\b(whether|if)\b(\s*(?:,?[^,]{0,80},){0,4}\s*(?:[\wáéíóúñü'’%]+\s+){0,10})$/i;
 const DEFERRAL_GOVERNOR_ES = /\b(si)\b(\s*(?:,?[^,]{0,60},){0,4}\s*(?:[\wáéíóúñü'’%]+\s+){0,10})$/i;
-const GOVERNOR_VETO_RE = /\b(i|me|we|us|you|usted|ustedes|t[uú]|told|tell|mentioned|said|say|ask(?:ed)?|think|believe|pregunta|pregunt[oó]|dije|digo|decir|mencion[eéo]\w*|creo|pienso)\b/i;
+// Red-team round 3 (RT3-CF-E): the veto targets RHETORICAL if-clauses ("if you
+// ask me", "if I told you that", "whether you like it or not"), never a genuine
+// conditional rule ("if your income is below the limit, you qualify"). Second-
+// person pronouns are therefore NOT vetoed — a speech/knowledge verb, a
+// first-person pronoun or a concessive idiom is.
+const GOVERNOR_VETO_RE = /\b(i|me|my|we|us|told|tell|mentioned|said|say|ask(?:ed|s)?|think|believe|doubt|guess|honest|sincerely|pregunta|pregunt[oó]|dije|digo|decir|mencion[eéo]\w*|creo|pienso|dude|sincera\w*)\b|\b(like\s+it\s+or\s+not|guste\s+o\s+no|quiera\s+o\s+no)\b/i;
+// A governed span counts as a real deferral when it is adjacent to the claim
+// (≤2 words), punctuated as a conditional ("If X, you qualify"), or names an
+// eligibility factor the condition actually turns on.
+const ELIGIBILITY_FACTOR_RE = /\b(income|ingresos?|resources?|recursos|limits?|l[ií]mites?|medicaid|qmb|slmb|\bqi\b|savings|ahorros?|assets?|bienes|household|hogar|state|estado|ssa|social\s+security|seguro\s+social|decid\w*|verific\w*|determin\w*|apply|solicit\w*|enroll\w*|inscri\w*|age|edad|65)\b/i;
+function governorSpanIsConditional(span) {
+  if (/,/.test(span)) return true;
+  if (ELIGIBILITY_FACTOR_RE.test(span)) return true;
+  // "If you qualify you qualify" — the condition is the claim itself, which is
+  // not a rule statement; those need real punctuation or a named factor.
+  if (/\b(qualif\w*|elegible|califica\w*|entitled)\b/i.test(span)) return false;
+  const words = span.trim().split(/\s+/).filter(Boolean);
+  return words.length <= 2;
+}
 const INABILITY_CORE = "(?:can(?:no|')t|cannot|unable to|not able to|no way to (?:confirm|tell|say|know)|not possible (?:for (?:me|us) )?to (?:confirm|say|tell|know)|not in a position to|don'?t (?:want to )?assume|won'?t assume|not (?:going to|gonna) assume|no (?:le |les |se lo )?(?:puedo|podemos|podr[ií]a|podr[ií]amos) (?:confirmar|asegurar|garantizar|decir|saber)(?:le|les|lo)?|no (?:tengo|tenemos) (?:forma|manera) de (?:confirmar|saber|decir)(?:le|lo)?|no es posible (?:confirmar|decirle|saber)|no quiero asumir|no (?:s[eé]|sabemos) (?:si|todav[ií]a))";
 const DEFERRAL_INABILITY_RE = new RegExp('\\b' + INABILITY_CORE + '\\b(?:\\s+[\\wáéíóúñü\'’]+){0,3}\\s*(?:\\b(?:that|whether|if|que|si)\\b)?\\s*$', 'i');
 const CLAUSE_BREAK_RE = /(?:;|—|--|\bso\b|\bbut\b|\bpero\b|\bbecause\b|\bsince\b|\bporque\b|\bya que\b|\bentonces\b|\bas[ií] que\b|\bhowever\b|\balthough\b|\bthough\b|\byet\b|\baunque\b|\bsin embargo\b|,\s*(?:and|y|e)\s+(?=(?:you|usted|ustedes|we|i|it|he|she|they|nosotros|[eé]l|ella|ellos|ellas)\b))/gi;
@@ -180,7 +198,7 @@ function eligibilityClaimIsDeferred(normalizedSentence, claimIdx, breaks) {
   const prefix = normalizedSentence.slice(Math.max(start, claimIdx - 400), claimIdx);
   if (AFFIRMATION_SI_RE.test(prefix)) return false;
   const gov = DEFERRAL_GOVERNOR_EN.exec(prefix) || DEFERRAL_GOVERNOR_ES.exec(prefix);
-  if (gov && !GOVERNOR_VETO_RE.test(gov[2] || '')) return true;
+  if (gov && !GOVERNOR_VETO_RE.test(gov[2] || '') && governorSpanIsConditional(gov[2] || '')) return true;
   return DEFERRAL_INABILITY_RE.test(prefix);
 }
 // Position of the claim's SUBJECT inside an ELIGIBILITY_CLAIM_RE match — the
@@ -206,7 +224,29 @@ function claimSubjectOffset(matchText) {
 // requirements", "you are entitled to", "you are 100% eligible"; subjectless
 // Spanish ("Es elegible…", "Sí, califica…", "Califica para…", "calificaría") and
 // "your income qualifies you" carry their own patterns below.
-const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+// Red-team round 3 (RT3-CF-K): "may/might/could qualify" is the hedge CMS and
+// SSA themselves use — it states a possibility, not a determination, so those
+// fillers are excluded here rather than rewritten into a non-answer.
+const ELIGIBILITY_CLAIM_RE = /\b(you|usted|ustedes)(?:'re|'d|'ll|'ve|’re|’d|’ll|’ve|\s+(?:are|is|do|don'?t|will|would|have))?\s+(?:(?!(?:may|might|could|possibly|perhaps|maybe|puede|podr[ií]an?|quiz[aá]s?|tal\s+vez)\b)[\wáéíóúñü%]+,?\s+){0,3}(qualify|qualified|qualifies|(?:are|is)\s+(?:\w+\s+){0,2}eligible|eligible|entitled\s+to|(?:meet|meets|satisfy|satisfies)\s+(?:all\s+)?(?:the\s+|los?\s+)?(?:requirements|criteria|income\s+limits?)|califica(?:s|n|r[ií]a|r[ií]an)?|es\s+elegible|son\s+elegibles|est[aá]\s+calificad[oa]|cumple[ns]?\s+(?:con\s+)?los?\s+requisitos)\b(?![^.!?]*\b(?:special\s+enrollment|per[ií]odo\s+especial|SEP)\b)/gi;
+// Red-team round 3 (RT3-CF-A, P1): the rule exists for MEANS-TESTED
+// determinations ("you qualify for Extra Help") and bare ones ("you qualify") —
+// never for the statutory education every Medicare page carries ("you're
+// eligible for Medicare at 65"). The claim's OBJECT decides which it is.
+const MEANS_TESTED_RE = /\b(extra\s+help|ayuda\s+adicional|ayuda\s+extra|lis|low[-\s]?income\s+subsidy|subsidio|qmb|slmb|qi|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegibilidad|help\s+paying|ayuda\s+para\s+pagar|assistance\s+program|programa\s+de\s+asistencia|snap|food\s+stamps|cupones)\b/i;
+const GENERIC_MEDICARE_OBJECT_RE = /^[\s,]*(?:for|to|para|a|en|of|de)?\s*(?:enroll(?:ment)?\s+in\s+|inscribirse\s+en\s+|sign\s+up\s+for\s+)?(?:the|a|an|el|la|un|una|su|your)?\s*(?:original\s+|traditional\s+|medicare\s+)?(?:medicare|parte?\s+[abd]\b|medigap|supplement|suplemento|advantage|coverage|cobertura)/i;
+// A generalisation about other people ("many people like you who qualify…") is
+// not a determination about the caller.
+const GENERALISATION_RE = /\b(people|persons|folks|gente|personas|those|anyone|someone|alguien|many|muchos|muchas|quienes|los\s+que|las\s+que|others?|otros)\b[^.!?¿]{0,24}$/i;
+const QUESTION_OPENER_RE = /^\s*[¿]|^\s*(?:do|does|did|are|is|was|were|will|would|can|could|should|have|has|how|when|what|which|why)\b/i;
+function eligibilityClaimIsScoped(normalized, matchStart, matchEnd) {
+  // A statement about other people ("many people like you who qualify…") is not
+  // a determination about the caller, whatever its object.
+  if (GENERALISATION_RE.test(normalized.slice(Math.max(0, matchStart - 30), matchStart))) return false;
+  const tail = normalized.slice(matchEnd, matchEnd + 70);
+  if (MEANS_TESTED_RE.test(tail)) return true;               // determination → rule applies
+  if (GENERIC_MEDICARE_OBJECT_RE.test(tail)) return false;   // statutory education → out of scope
+  return true;                                               // bare or benefit-specific → rule applies
+}
 // Group 1 = anchor (sentence/clause start or "sí,"), group 2 = the claim. The
 // claim position for the deferral test is the END of the anchor.
 // The filler may not swallow the conjunction or a subject pronoun — "Si usted
@@ -324,8 +364,9 @@ const EMERGENCY_USER_RES = [
   /\b(me\s+desmay\w*|se\s+desmay\w*|esta\s+inconsciente|estoy\s+inconsciente|perdio\s+el\s+conocimiento)\b/,
   /\bsobredosis\b/,
 ];
-// Red-team round 3 (RT3-CF-11): "9-1-1" / "9 1 1" is the emergency number too.
-const EMERGENCY_NUMBER_RE = /\b9[\s-]?1[\s-]?1\b/;
+// Red-team round 3 (RT3-CF-11 / RT3-CF-I): "9-1-1", "9 1 1" and "nine one one"
+// are the emergency number too — a reply that carries any of them is compliant.
+const EMERGENCY_NUMBER_RE = /\b9[\s.-]?1[\s.-]?1\b|\bnine[-\s]?one[-\s]?one\b/i;
 const EMERGENCY_911_REPLY = {
   en: "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.",
   es: 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.',
@@ -659,8 +700,8 @@ export function complianceFilter(text, lang, opts) {
   // truncation); EVERY eligibility match must be deferred or the sentence goes;
   // each rule tags the violation once.
   var fpParts = out.split(FP_SPLIT_RE);
-  var fpTags = {}; var fpKeep = []; var fpChanged = false;
-  var fpDropBullets = false;
+  var fpTags = {}; var fpKeep = []; var fpSeps = []; var fpChanged = false;
+  var fpDropBullets = false; var fpDropAffirmation = false;
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
   var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
@@ -671,18 +712,36 @@ export function complianceFilter(text, lang, opts) {
       if (/^\s*(?:[-•*·]|\d+[.)])\s/.test(fpSentence)) { fpChanged = true; continue; }
       fpDropBullets = false;
     }
+    // Red-team round 3 (RT3-CF-J): "Whether you qualify: yes, you do." — the
+    // affirmation that answers a governed eligibility clause IS the claim.
+    if (fpDropAffirmation) {
+      fpDropAffirmation = false;
+      if (/^\s*(?:yes|yep|yeah|s[ií])\b[^.!?]{0,24}[.!]?\s*$/i.test(fpSentence)) {
+        fpChanged = true; fpTags[ELIGIBILITY_TAG] = true;
+        if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) { fpKeep.pop(); fpSeps.pop(); }
+        continue;
+      }
+    }
     // Detection copy only (the kept sentence stays byte-identical): collapse
     // whitespace and normalise curly apostrophes (red-team D4).
     var normalized = String(fpSentence).replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
     var remove = false;
     var breaks = null;
-    for (var ci = 0; ci < claimRes.length && !remove; ci++) {
+    // A question ("Do you qualify for Extra Help?") asks, it does not determine.
+    var isQuestion = /\?\s*$/.test(normalized) && QUESTION_OPENER_RE.test(normalized);
+    for (var ci = 0; ci < claimRes.length && !remove && !isQuestion; ci++) {
       var eligRe = new RegExp(claimRes[ci].source, 'gi'); var em;
       while ((em = eligRe.exec(normalized)) !== null) {
         if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
         if (breaks === null) breaks = clauseBreaks(normalized);
         var claimAt = ci === 1 ? em.index + (em[1] || '').length : em.index + claimSubjectOffset(em[0]);
-        if (!eligibilityClaimIsDeferred(normalized, claimAt, breaks)) { remove = true; fpTags[ELIGIBILITY_TAG] = true; break; }
+        var deferred = eligibilityClaimIsDeferred(normalized, claimAt, breaks);
+        // A governed clause that ENDS in ':' hands the determination to the next
+        // fragment ("Whether you qualify: yes, you do.") — watch for it.
+        if (deferred && /:\s*$/.test(fpSentence)) fpDropAffirmation = true;
+        if (deferred) continue;
+        if (!eligibilityClaimIsScoped(normalized, em.index, em.index + em[0].length)) continue;
+        remove = true; fpTags[ELIGIBILITY_TAG] = true; break;
       }
     }
     if (!remove) {
@@ -697,15 +756,18 @@ export function complianceFilter(text, lang, opts) {
       // Red-team D7 / round 3 RT3-CF-07: a label kept just before the removed
       // sentence ("Note:", "Here's the thing:") goes with it, and bullets under
       // a removed label are dropped in the next iterations.
-      if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) fpKeep.pop();
+      if (fpKeep.length && /:\s*$/.test(fpKeep[fpKeep.length - 1])) { fpKeep.pop(); fpSeps.pop(); }
       if (/:\s*$/.test(fpSentence)) fpDropBullets = true;
+      // Red-team round 3 (RT3-CF-L): the removed part's separator may be the line
+      // break that kept the neighbours apart — carry it to the previous part.
+      if (/\n/.test(fpSep) && fpSeps.length) fpSeps[fpSeps.length - 1] = fpSep;
       continue;
     }
-    fpKeep.push(fpSentence + fpSep);
+    fpKeep.push(fpSentence); fpSeps.push(fpSep);
   }
   if (fpChanged) {
     Object.keys(fpTags).forEach(function (t) { violations.push(t); });
-    out = fpKeep.join('').trim();
+    out = fpKeep.map(function (s, i) { return s + (fpSeps[i] || ''); }).join('').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;
     if (!out) out = safe;
     else if (!fpSafeAlready && !/[.!?]\s*$/.test(out)) out += '. ' + safe;
@@ -993,7 +1055,10 @@ export function complianceFilter(text, lang, opts) {
   // cubic on padded replies (8 s / 18 s / 145 s at 3k / 4k / 8k spaces). Every
   // alternative now begins on a non-space anchor; whitespace runs are collapsed
   // first (measured 0.1 ms at 8,000 spaces, 0.4 ms at 50 KB; identical clauses).
-  var CLAUSE_SPLIT_RE = /(?<=[.!?])\s+|\n+|,\s*(?:but|pero|however|although|though|aunque)\s+|;\s*|(?<!\s)\s+[—-]\s+/;
+  // Red-team round 3 (RT3-CF-H): an UNSPACED em/en dash is the form LLM output
+  // most often uses ("…your Medicare number—you can give your SSN…"); without it
+  // the clause rode along under the preceding warning.
+  var CLAUSE_SPLIT_RE = /(?<=[.!?])\s+|\n+|,\s*(?:but|pero|however|although|though|aunque)\s+|;\s*|\s*[—–]\s*|(?<!\s)\s+-\s+/;
   function splitClauses(text) {
     return String(text).replace(/[ \t]{2,}/g, ' ').split(CLAUSE_SPLIT_RE).filter(function (x) { return x && x.trim(); });
   }

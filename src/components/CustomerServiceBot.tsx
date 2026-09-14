@@ -35,7 +35,7 @@ import { getOfficeStatus } from '../lib/afterHours';
 import { tpmoDisclaimerText } from '../lib/tpmoConfig';
 import { readVisitorMemory, writeVisitorMemory, clearVisitorMemory, returningVisitorGreeting } from '../lib/persistentMemory';
 import { claraEvent, isIdentityDenial } from '../lib/claraObservability';
-import { buildConsentReceipt } from '../lib/disclaimerVersion';
+import { buildConsentReceipt, TCPA_CONSENT_TEXT_EN, TCPA_CONSENT_TEXT_ES } from '../lib/disclaimerVersion';
 import {
   type ClaraOuterState,
   createOuterState,
@@ -1070,8 +1070,25 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             : 'Apologies — I need a valid 10-digit U.S. phone number so an advisor can call you back. For example: "(917) 432-1098 — my bill went up".');
           return;
         }
-        const okAunmatched = await submitOuterLead({ phone, summary });
-        setOuterState((s) => ({ ...s, phone, problemSummary: summary, ...(okAunmatched ? { step: 'A_done' as const } : {}) }));
+        // AUDIT 2026-09-13 (TCPA-03, P2) — typing a phone number is NOT consent.
+        // Hold the capture and ask for an explicit "Yes, I agree" first.
+        setOuterState((s) => ({ ...s, phone, pendingSummary: summary, step: 'A_unmatched_consent' }));
+        askOuterConsent(outerState.language === 'es');
+        return;
+      }
+      // TCPA-03 — consent turn: typed answers are accepted only when unambiguous;
+      // anything else re-prompts (the chips remain available).
+      if (outerState.step === 'A_unmatched_consent' || outerState.step === 'C_optin_consent') {
+        pushUserMessageDirect(trimmed);
+        setInputValue('');
+        const answer = classifyConsentAnswer(trimmed);
+        if (answer === 'unclear') {
+          pushBotMessageDirect(outerState.language === 'es'
+            ? 'Para continuar necesito su respuesta: toque "Sí, acepto" si autoriza que le contactemos, o "Ahora no" si prefiere no ser contactado.'
+            : 'To continue I need your answer: tap "Yes, I agree" if you authorize us to contact you, or "Not now" if you would rather not be contacted.');
+          return;
+        }
+        await handleOuterConsent(answer === 'agree', true);
         return;
       }
       // Path C opt-in capture — name + phone + summary
@@ -1099,9 +1116,9 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // text is still preserved in problemSummary for the advisor.
         const nameCheck = validateFullName(candidateName);
         const fullName = nameCheck.ok ? nameCheck.cleaned! : '';
-        setOuterState((s) => ({ ...s, fullName, phone, problemSummary: nameAndSummary }));
-        const okCoptin = await submitOuterLead({ phone, summary: nameAndSummary });
-        if (okCoptin) setOuterState((s) => ({ ...s, step: 'C_done' }));
+        // TCPA-03 — hold the capture until the explicit consent chip.
+        setOuterState((s) => ({ ...s, fullName, phone, pendingSummary: nameAndSummary, step: 'C_optin_consent' }));
+        askOuterConsent(outerState.language === 'es');
         return;
       }
       // For other outer-flow steps, ignore free-text (chips drive these).
@@ -1465,6 +1482,37 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
   }
 
+  // AUDIT 2026-09-13 (TCPA-03) — the consent turn. The canonical TCPA text is
+  // shown ALONE, followed by a plain question; the chips (and an unambiguous
+  // typed yes/no) are the affirmative act that submitOuterLead records.
+  function askOuterConsent(isEs: boolean) {
+    pushBotMessageDirect(isEs
+      ? 'Gracias. Antes de enviar su información, necesito su autorización.\n\n' + TCPA_CONSENT_TEXT_ES + '\n\n¿Autoriza que un asesor licenciado le contacte? Toque "Sí, acepto" o "Ahora no".'
+      : 'Thank you. Before I send your information, I need your authorization.\n\n' + TCPA_CONSENT_TEXT_EN + '\n\nDo you authorize a licensed advisor to contact you? Tap "Yes, I agree" or "Not now".');
+  }
+  function classifyConsentAnswer(text: string): 'agree' | 'decline' | 'unclear' {
+    const t = text.trim().toLowerCase().replace(/[¡!¿?.]+$/g, '');
+    const AGREE = /^(s[ií]|yes|yeah|yep|ok|okay|acepto|s[ií],?\s*acepto|de acuerdo|i agree|agree|agreed|claro|por supuesto|correcto|autorizo|yes,?\s*i agree)$/;
+    const DECLINE = /^(no|nope|ahora no|not now|no,?\s*gracias|no,?\s*thanks|no thank you|no quiero|i do not agree|don'?t agree|no acepto|no autorizo)$/;
+    if (AGREE.test(t)) return 'agree';
+    if (DECLINE.test(t)) return 'decline';
+    return 'unclear';
+  }
+  async function handleOuterConsent(agree: boolean, typed = false) {
+    const isEs = outerState.language === 'es';
+    if (!typed) pushUserMessageDirect(agree ? (isEs ? 'Sí, acepto' : 'Yes, I agree') : (isEs ? 'Ahora no' : 'Not now'));
+    const doneStep = outerState.path === 'A' ? ('A_done' as const) : ('C_done' as const);
+    if (!agree) {
+      setOuterState((s) => ({ ...s, pendingSummary: undefined, step: doneStep }));
+      setTimeout(() => pushBotTyped(isEs
+        ? 'Entendido — no enviaré su información y no le contactaremos. Si en algún momento prefiere hablar con un asesor licenciado, puede llamarnos usted al 1-855-720-8555 (TTY 711), de lunes a viernes de 9am a 6pm ET.'
+        : "Understood — I won't send your information and we won't contact you. If you ever prefer to speak with a licensed advisor, you can call us at 1-855-720-8555 (TTY 711), Monday–Friday 9am–6pm ET."), 300);
+      return;
+    }
+    const ok = await submitOuterLead({ phone: outerState.phone, summary: outerState.pendingSummary });
+    if (ok) setOuterState((s) => ({ ...s, problemSummary: s.pendingSummary || s.problemSummary, pendingSummary: undefined, step: doneStep }));
+  }
+
   // Path A/C final capture submit.
   async function submitOuterLead(extras: { phone?: string; summary?: string } = {}): Promise<boolean> {
     const isEs = outerState.language === 'es';
@@ -1488,10 +1536,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         return false;
       }
       const payload = buildGhlPayload(merged, {
-        // FASE 2 audit J — the caller reached lead submission by EXPLICITLY
-        // providing their phone for an advisor callback, AFTER the TCPA consent
-        // disclosure was shown in the phone-ask message. That affirmative act is
-        // the consent, and the receipt (text + hash + version + UA) documents it.
+        // AUDIT 2026-09-13 (TCPA-03) — on Paths A-unmatched and C the caller
+        // reaches this call only through the explicit consent turn ("Yes, I
+        // agree" chip or an unambiguous typed yes) shown with the canonical TCPA
+        // text; the receipt (text + hash + version + UA) documents that act.
+        // Path A-matched is a verified existing client asking about their own
+        // account (existing_client_inquiry).
         consentGiven: true,
         consentText: receipt.consentText,
         consentReceiptHash: receipt.consentTextHash,
@@ -1847,6 +1897,20 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
               <button onClick={() => handleCOptin(false)}
                 className="px-5 py-3 bg-cream-100 text-earth-700 border border-cream-300 rounded-full text-[15px] font-semibold hover:bg-cream-200 transition min-h-[44px]">
                 {outerState.language === 'es' ? 'No, gracias' : 'No, thanks'}
+              </button>
+            </div>
+          )}
+
+          {/* TCPA-03 — explicit consent turn (Paths A-unmatched and C) */}
+          {outerInProgress && (outerState.step === 'A_unmatched_consent' || outerState.step === 'C_optin_consent') && !isTyping && (
+            <div className="flex flex-wrap gap-2 pt-1" role="group" aria-label={outerState.language === 'es' ? 'Autorización de contacto' : 'Contact authorization'}>
+              <button type="button" onClick={() => { void handleOuterConsent(true); }}
+                className="px-5 py-3 bg-earth-800 text-cream-50 rounded-full text-[15px] font-semibold hover:bg-earth-900 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'Sí, acepto' : 'Yes, I agree'}
+              </button>
+              <button type="button" onClick={() => { void handleOuterConsent(false); }}
+                className="px-5 py-3 bg-cream-100 text-earth-700 border border-cream-300 rounded-full text-[15px] font-semibold hover:bg-cream-200 transition min-h-[44px]">
+                {outerState.language === 'es' ? 'Ahora no' : 'Not now'}
               </button>
             </div>
           )}

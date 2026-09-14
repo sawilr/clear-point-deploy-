@@ -6151,7 +6151,7 @@ function _handleDualEligible(
     const src = _dualBillSource(m);
     if (src === 'pharmacy') {
       const out = isEs
-        ? 'Gracias. Como es de la farmacia y usted tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra, así que sus medicinas deberían costar muy poco. ¿La farmacia le dijo que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió? Un asesor licenciado puede revisarlo sin costo.'
+        ? 'Gracias. Como es de la farmacia y usted tiene Medicare y Medicaid, normalmente ya tiene Ayuda Adicional, así que sus medicinas deberían costar muy poco. ¿La farmacia le dijo que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió? Un asesor licenciado puede revisarlo sin costo.'
         : 'Thanks. Since it is from the pharmacy and you have both Medicare and Medicaid, you usually already have Extra Help, so your medicines should cost very little. Did the pharmacy say the drug is not covered, that it needs prior authorization, or that the price went up? A licensed advisor can review it at no cost.';
       return emit(out, { dualFlowStage: 'offered_advisor', serviceCategory: 'bill_pharmacy', lastBotOfferedAdvisor: true, lastBotIntent: 'dual_pharmacy_followup' });
     }
@@ -6182,7 +6182,7 @@ function _handleDualEligible(
   // ── Dual + a medical/cost-sharing bill (the primary failure scenario). ──
   if (billNow || (billish && (dualNow || medicaidWithMedicare || bothNow))) {
     const out = isEs
-      ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Extra automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, antes de pagarla conviene revisarla primero — sin ignorar la fecha de vencimiento. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
+      ? 'Entiendo, y gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente eso significa que ya tiene Ayuda Adicional automática para sus medicamentos, y además puede tener protecciones importantes (como QMB) que reducen o eliminan ciertos copagos o facturas de servicios cubiertos por Medicare.\n\nPor eso, antes de pagarla conviene revisarla primero — sin ignorar la fecha de vencimiento. Primero veamos de dónde viene: ¿la factura es de un doctor, hospital, farmacia, laboratorio, ambulancia, o de su plan?'
       : 'I understand, and thank you for telling me. Since you have both Medicare and Medicaid, that usually means you already have Extra Help automatically for your medications, and you may also have important protections (like QMB) that reduce or remove certain copays or bills for Medicare-covered services.\n\nBecause of that, before paying it, have it reviewed first — and don\'t ignore any due date on it. First, let\'s see where it is from: did the bill come from a doctor, hospital, pharmacy, lab, ambulance, or your plan?';
     return emit(out, { dualFlowStage: 'ask_source', possibleQMB: true, serviceCategory: 'bill', lastBotIntent: 'dual_bill_triage' });
   }
@@ -6190,7 +6190,7 @@ function _handleDualEligible(
   // ── Dual + a pharmacy / medication issue (Extra Help applies, not QMB). ──
   if (pharmNow) {
     const out = isEs
-      ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra (Extra Help) automática, así que sus medicamentos deberían costar muy poco. Si la farmacia le cobró de más, ¿le dijeron que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió?'
+      ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Adicional (Extra Help) automática, así que sus medicamentos deberían costar muy poco. Si la farmacia le cobró de más, ¿le dijeron que el medicamento no está cubierto, que necesita autorización previa, o que el precio subió?'
       : 'Thank you for telling me. Since you have both Medicare and Medicaid, you usually already have Extra Help automatically, so your medications should cost very little. If the pharmacy charged you more, did they say the drug is not covered, that it needs prior authorization, or that the price went up?';
     return emit(out, { serviceCategory: 'bill_pharmacy', lastBotIntent: 'dual_pharmacy_triage' });
   }
@@ -6200,12 +6200,12 @@ function _handleDualEligible(
   //    re-ask it, and ask one open routing question. ──
   if (_statesExtraHelpNow(m)) {
     const out = isEs
-      ? 'Correcto. Si tiene Medicaid y Medicare, normalmente ya califica automáticamente para Ayuda Extra para sus medicamentos — así que no le pregunto eso otra vez. ¿En qué le puedo ayudar — una factura, un copago, una medicina, un doctor, o algo de su plan?'
+      ? 'Correcto. Si tiene Medicaid y Medicare, normalmente ya califica automáticamente para Ayuda Adicional para sus medicamentos — así que no le pregunto eso otra vez. ¿En qué le puedo ayudar — una factura, un copago, una medicina, un doctor, o algo de su plan?'
       : 'Correct. If you have both Medicaid and Medicare, you usually qualify automatically for Extra Help for your medications — so I won\'t ask you that again. How can I help — a bill, a copay, a medication, a doctor, or something about your plan?';
     return emit(out, { lastBotIntent: 'dual_extrahelp_ack' });
   }
   const out = isEs
-    ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Extra automática para medicamentos y puede tener otras protecciones de costos. ¿En qué le puedo ayudar hoy — una factura, un copago, una medicina, un doctor, una carta, o algo de su plan?'
+    ? 'Gracias por decírmelo. Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Adicional automática para medicamentos y puede tener otras protecciones de costos. ¿En qué le puedo ayudar hoy — una factura, un copago, una medicina, un doctor, una carta, o algo de su plan?'
     : 'Thank you for telling me. Since you have both Medicare and Medicaid, you usually already have Extra Help automatically for medications and may have other cost protections. How can I help you today — a bill, a copay, a medication, a doctor, a letter, or something about your plan?';
   return emit(out, { lastBotIntent: 'dual_ack_open' });
 }

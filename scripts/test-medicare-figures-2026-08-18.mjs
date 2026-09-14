@@ -65,11 +65,50 @@ const SURVIVE = [
   // Red-team round 2 (MED02-RT2-01/05) — decimals inside amounts and spelled-out years.
   ['Decimal + IRMAA marker after the amount', 'The standard Part B premium is $259.00 if your income is higher.'],
   ['ES decimal + IRMAA', 'La prima estándar de la Parte B es $259.00 si su ingreso es más alto.'],
-  ['Decimal + up to', 'The Part D out-of-pocket cap is $2,000.00, up to which you pay coinsurance.'],
+  // ("$2,000.00, up to which…" moved to CAPTURE_RT in round 3: the marker follows
+  //  the amount, so it qualifies the clause after it, not the cap itself.)
   ['Two sentences, 2026 then 2027 decimal', 'For 2026 the standard Part B premium is $202.90. The standard Part B premium is $215.00 for most people in 2027.'],
   ['Spelled-out year EN', 'For twenty twenty-seven, the Part B deductible will be $300.'],
   ['Spelled-out year ES', 'En dos mil veintisiete el deducible de la Parte B será $300.'],
   ['come January', 'Come January the Part B deductible goes to $300.'],
+  // ── Red-team round 3 (MED02-RT3-01..16) ──────────────────────────────────────
+  // Next-year lists inherit the heading's year, whatever their line shape.
+  ['RT3 heading + blank line + single bullet', '2027 figures (published today):\n\n- Part B deductible: $300'],
+  ['RT3 heading + bullet ending in a period', '2027 figures:\n- Part B deductible: $300.'],
+  ['RT3 heading + numbered list', '2027 figures:\n1. Part B deductible: $300\n2. Part D cap: $2,400'],
+  ['RT3 comparison table (2026 | 2027)', '| Item | 2026 | 2027 |\n|---|---|---|\n| Part B deductible | $283 | $300 |\n| Part D cap | $2,100 | $2,400 |'],
+  // Prose that states a FUTURE change inherits the paragraph's year.
+  ['RT3 prose future after a 2027 sentence', 'CMS announced the 2027 figures today. The Part B deductible will be $300 and the Part D cap will be $2,400.'],
+  ['RT3 prose future ES', 'CMS publicó las cifras de 2027. El deducible de la Parte B será $300.'],
+  // January constructions with ordinary change verbs.
+  ['RT3 as of January + will', 'As of January 1 the Part B deductible will be $300.'],
+  ['RT3 on January + will rise', 'On January 1 the Part B deductible will rise to $300.'],
+  ['RT3 in January + becomes', 'In January the Part B deductible becomes $300.'],
+  ['RT3 in January + changes to', 'In January the Part B deductible changes to $300.'],
+  ['RT3 in the new year', 'In the new year the Part B deductible will be $300.'],
+  ['RT3 ES en enero cambiará', 'En enero el deducible de la Parte B cambiará a $300.'],
+  ['RT3 ES plural subirán/quedará', 'En enero subirán los costos y el deducible de la Parte B quedará en $300.'],
+  // Spanish thousands-dot amounts are CORRECT figures — never mangled.
+  ['RT3 ES thousands-dot Part A', 'El deducible del hospital de la Parte A es $1.736 por período de beneficios.'],
+  ['RT3 ES thousands-dot Part D cap', 'El tope de gastos de bolsillo de la Parte D es $2.100.'],
+  // Spanish past tense is history.
+  ['RT3 ES último año fue', 'El último año el deducible de la Parte B fue $257.'],
+  ['RT3 ES año anterior fue', 'El año anterior el deducible de la Parte B fue $257.'],
+  // Ranges and comparisons: the sentence already carries the right figure.
+  ['RT3 from → to range', 'The Part B deductible increased from $257 to $283 this year.'],
+  ['RT3 en-dash range', 'The Part B deductible went from $257–$283 this year.'],
+  // Per-day coinsurance beside the hospital deductible.
+  ['RT3 Part A deductible + daily coinsurance', 'The Part A hospital deductible is $1,736 per benefit period, then $434 per day for days 61–90.'],
+  // IRMAA context anywhere in the sentence.
+  ['RT3 IRMAA context at the start of a long sentence', 'Because your income two years ago was above the threshold that Social Security uses, the standard Part B premium in your case is $259.00 a month.'],
+  // Other year forms.
+  ['RT3 typographic ’27', 'In ’27 the Part B deductible is $300.'],
+  ['RT3 twenty-twenty-seven hyphenated', 'For twenty-twenty-seven, the Part B deductible is $300.'],
+  ['RT3 PY27 two-digit', 'PY27 Part B deductible: $300.'],
+  // Caller-stated amount.
+  ['RT3 caller-stated amount', 'You told me your Part B deductible came to $300 on that bill.'],
+  // Next-year half of a mixed sentence survives.
+  ['RT3 mixed sentence — next-year half', 'This year the Part B deductible is $283 but in 2027 it will be $300.'],
 ];
 // Red-team 2026-09-13 (MED02-RT-01/04/05) — the guard must NOT silence genuine corrections.
 const CAPTURE_RT = [
@@ -87,6 +126,19 @@ const CAPTURE_RT = [
   ['RT2-04 from January through December', 'The Part B deductible is $257 from January through December.', '$283', 'part_b_deductible'],
   ['RT2-04 ES se renueva en enero', 'El deducible de la Parte B es $257 y se renueva en enero.', '$283', 'part_b_deductible'],
   ['RT2-06 long lead-in, next sentence has a marker', 'As we discussed a moment ago when you asked about your doctor-visit costs under Original Medicare, the Part B deductible is $257. Next year it may change.', '$283', 'part_b_deductible'],
+  // ── Red-team round 3 — markers that must NOT silence a genuine correction ────
+  ['RT3-09 lead-in "About the … deductible:"', 'About the Part B deductible: it is $257 this year.', '$283', 'part_b_deductible'],
+  ['RT3-09 ES lead-in "Antes de continuar:"', 'Antes de continuar: el deducible de la Parte B es $257.', '$283', 'part_b_deductible'],
+  ['RT3-09 "You asked about … :"', 'You asked about the Part B deductible: it is $257.', '$283', 'part_b_deductible'],
+  ['RT3-09 regardless of income', 'The Part B deductible is $257 for everyone regardless of income.', '$283', 'part_b_deductible'],
+  ['RT3-09 ES desde el 1 de enero de 2026', 'Desde el 1 de enero de 2026, el deducible de la Parte B es $257.', '$283', 'part_b_deductible'],
+  ['RT3-09 ES "como le dije antes"', 'Como le dije antes, el deducible de la Parte B es $257.', '$283', 'part_b_deductible'],
+  ['RT3-09 ES "hasta que pague … de $257"', 'Hasta que pague el deducible de la Parte B de $257, usted paga los servicios.', '$283', 'part_b_deductible'],
+  ['RT3-10 premium and deductible in one sentence', 'Your Part B premium is $202.90 and the Part B deductible is $257.', '$283', 'part_b_deductible'],
+  ['RT3-08 this-year half of a mixed sentence', 'The Part B deductible is $257 this year and next year it will be $300.', '$283', 'part_b_deductible'],
+  ['RT3-08 this-year half with "but in 2027"', 'This year the Part B deductible is $257 but in 2027 it will be $300.', '$283', 'part_b_deductible'],
+  ['RT3-16 ES amount written in words-unit', 'El deducible de la Parte B es de 257 dólares.', '283 dólares', 'part_b_deductible'],
+  ['RT3 "up to" AFTER the amount still corrects', 'The Part D out-of-pocket cap is $2,000.00, up to which you pay coinsurance.', '$2,100', 'part_d_oop_cap'],
 ];
 for (const [id, input, expectContains, concept] of CAPTURE_RT) {
   const r = verifyMedicareFigures(input);
@@ -114,6 +166,16 @@ check('RT empty stays empty', verifyMedicareFigures('').text === '', 'empty brok
   const r = verifyMedicareFigures('The Part D deductible on your plan is $257.');
   check('RT Part D deductible not corrected to Part B value', r.text === 'The Part D deductible on your plan is $257.' && r.corrections.length === 0, 'wrongly touched: ' + JSON.stringify(r.corrections));
 }
+// Red-team round 3 — no digit spill in any writing style, and linear time.
+{
+  const spill = verifyMedicareFigures('El deducible del hospital de la Parte A es $1.736. El tope de la Parte D es $2.100. The Part D cap is $2000.');
+  check('RT3 no digit spill in any separator style', !/\$2,1000|\$1,7366|\$2830|\$1\.7366|\$2\.1000/.test(spill.text), spill.text);
+  const t0 = Date.now();
+  verifyMedicareFigures('The Part B deductible is $257. '.repeat(1600));
+  const ms = Date.now() - t0;
+  check('RT3 50 KB reply under 200 ms', ms < 200, ms + ' ms');
+}
+
 // Source of truth sanity.
 check('SOT Part B premium = 202.90', MEDICARE_FIGURES_2026.part_b_standard_premium.value === 202.90);
 check('SOT Part B deductible = 283', MEDICARE_FIGURES_2026.part_b_deductible.value === 283);

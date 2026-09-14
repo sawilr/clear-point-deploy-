@@ -103,10 +103,10 @@ export default function HelpPayingCosts() {
                 <p className="text-earth-700 text-sm leading-relaxed">
                   {t(
                     'Extra Help / LIS is covered separately because it specifically relates to Medicare Part D prescription drug costs.',
-                    'Ayuda Extra / LIS se explica por separado porque se enfoca específicamente en costos de medicamentos de Medicare Parte D.'
+                    'Ayuda Adicional / LIS se explica por separado porque se enfoca específicamente en costos de medicamentos de Medicare Parte D.'
                   )}{' '}
                   <Link to={lp('/extra-help')} className="font-semibold text-gold-600 hover:text-gold-700 underline">
-                    {t('Learn about Extra Help / LIS', 'Más información sobre Ayuda Extra / LIS')}
+                    {t('Learn about Extra Help / LIS', 'Más información sobre Ayuda Adicional / LIS')}
                   </Link>
                 </p>
               </div>

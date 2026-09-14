@@ -160,7 +160,7 @@ export const INTENTS: IntentDefinition[] = [
     require_privacy_warning: false,
     default_urgency: 'normal',
     next_question_en: 'Extra Help / LIS is a federal program through Social Security that may reduce Medicare Part D costs for people who qualify. Would you like a licensed advisor to help you understand if it could apply to your situation? If so, could you share your first name and the state you live in?',
-    next_question_es: 'Ayuda Extra / LIS es un programa federal del Seguro Social que puede reducir los costos de Medicare Parte D para personas que califican. ¿Le gustaría que un asesor licenciado le ayude a entender si podría aplicar a su situación? Si es así, ¿podría decirme su nombre y el estado donde vive?',
+    next_question_es: 'Ayuda Adicional / LIS es un programa federal del Seguro Social que puede reducir los costos de Medicare Parte D para personas que califican. ¿Le gustaría que un asesor licenciado le ayude a entender si podría aplicar a su situación? Si es así, ¿podría decirme su nombre y el estado donde vive?',
     ghl_tag: 'extra_help_lis',
   },
   {
@@ -186,7 +186,7 @@ export const INTENTS: IntentDefinition[] = [
     require_privacy_warning: false,
     default_urgency: 'normal',
     next_question_en: 'There are several federal and state programs that may help with Medicare costs — Medicare Savings Programs, Medicaid, Extra Help / LIS, and others. A licensed advisor can help you understand which ones may apply. Could you share your first name and the state you live in?',
-    next_question_es: 'Hay varios programas federales y estatales que pueden ayudar con los costos de Medicare — Programas de Ahorro de Medicare, Medicaid, Ayuda Extra / LIS, y otros. Un asesor licenciado puede ayudarle a entender cuáles pueden aplicar. ¿Podría decirme su nombre y el estado donde vive?',
+    next_question_es: 'Hay varios programas federales y estatales que pueden ayudar con los costos de Medicare — Programas de Ahorro de Medicare, Medicaid, Ayuda Adicional / LIS, y otros. Un asesor licenciado puede ayudarle a entender cuáles pueden aplicar. ¿Podría decirme su nombre y el estado donde vive?',
     ghl_tag: 'cost_help',
   },
   {

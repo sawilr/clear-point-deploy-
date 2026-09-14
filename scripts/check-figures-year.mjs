@@ -40,6 +40,9 @@ if (apiYear !== chatYear || apiYear !== tsYear) {
   const ts = read('src/data/medicare-figures-2026.ts');
   const problems = [];
   for (const [key, f] of Object.entries(figs)) {
+    // Red-team MED02-RT3-17 — value and display must agree with each other first:
+    // a display that disagrees with the value is what the backstop writes out.
+    if (Number(String(f.display).replace(/,/g, '')) !== f.value) problems.push(`api/_lib/medicare-figures.js ${key}: display '${f.display}' != value ${f.value}`);
     if (!chat.includes('$' + f.display)) problems.push(`api/chat.js does not contain $${f.display} (${key})`);
     // TS literals may be spelled 202.90 or 202.9 — accept either, never a digit-glued match.
     const plain = String(f.value).replace('.', '\\.');

@@ -45,7 +45,7 @@ const services = [
   // {
   //   image: '/service-extrahelp.jpg',
   //   title: 'Extra Help / LIS',
-  //   titleEs: 'Ayuda Extra / LIS',
+  //   titleEs: 'Ayuda Adicional / LIS',
   //   description: 'You may qualify for federal assistance that lowers your drug plan premiums and copays. We check your eligibility at no charge.',
   //   descriptionEs: 'Puede calificar para asistencia federal que reduce sus primas y copagos. Verificamos su elegibilidad sin cargo.',
   //   link: '/extra-help',
@@ -203,7 +203,7 @@ export default function Home() {
           <ul className="grid sm:grid-cols-2 gap-x-6 gap-y-2.5 text-earth-700 text-base leading-relaxed sm:pl-9">
             <li className="flex items-start gap-2">
               <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
-              <span>{t('Medicaid, Medicare Savings Programs (MSP), Extra Help / LIS', 'Medicaid, Programas de Ahorro de Medicare (MSP), Ayuda Extra / LIS')}</span>
+              <span>{t('Medicaid, Medicare Savings Programs (MSP), Extra Help / LIS', 'Medicaid, Programas de Ahorro de Medicare (MSP), Ayuda Adicional / LIS')}</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-amber-700 flex-shrink-0 mt-1">•</span>
@@ -292,7 +292,7 @@ export default function Home() {
                   { title: 'Annual Enrollment Period', titleEs: 'Período de Inscripción Anual', en: 'From October 15 to December 7, people with Medicare can review or change certain Medicare Advantage and Part D prescription drug coverage for the following year.', es: 'Del 15 de octubre al 7 de diciembre, las personas con Medicare pueden revisar o cambiar ciertos planes Medicare Advantage y cobertura de medicamentos Parte D para el año siguiente.' },
                   { title: 'Medicare Advantage Open Enrollment', titleEs: 'Inscripción Abierta de Medicare Advantage', en: 'From January 1 to March 31, people already enrolled in a Medicare Advantage plan may be able to switch to another Medicare Advantage plan or return to Original Medicare.', es: 'Del 1 de enero al 31 de marzo, las personas ya inscritas en un plan Medicare Advantage pueden cambiarse a otro plan Medicare Advantage o regresar a Medicare Original.' },
                   { title: 'General Enrollment Period', titleEs: 'Período de Inscripción General', en: 'From January 1 to March 31, this period may apply if someone missed their first chance to sign up for Medicare Part A or Part B and does not qualify for a Special Enrollment Period. Penalties may apply.', es: 'Del 1 de enero al 31 de marzo, este período puede aplicar si alguien perdió su primera oportunidad de inscribirse en la Parte A o B de Medicare y no califica para un Período de Inscripción Especial. Pueden aplicar penalidades.' },
-                  { title: 'Special Enrollment Period', titleEs: 'Período de Inscripción Especial', en: 'Certain life events may allow you to enroll or make changes outside the usual enrollment periods. Examples may include moving, losing coverage, qualifying for Medicaid, or getting Extra Help. Timing depends on the situation.', es: 'Ciertos eventos de vida pueden permitirle inscribirse o hacer cambios fuera de los períodos de inscripción habituales. Ejemplos pueden incluir mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Extra. El tiempo depende de la situación.' },
+                  { title: 'Special Enrollment Period', titleEs: 'Período de Inscripción Especial', en: 'Certain life events may allow you to enroll or make changes outside the usual enrollment periods. Examples may include moving, losing coverage, qualifying for Medicaid, or getting Extra Help. Timing depends on the situation.', es: 'Ciertos eventos de vida pueden permitirle inscribirse o hacer cambios fuera de los períodos de inscripción habituales. Ejemplos pueden incluir mudarse, perder cobertura, calificar para Medicaid u obtener Ayuda Adicional. El tiempo depende de la situación.' },
                 ].map((p, i) => (
                   <div key={i} className="bg-white rounded-xl p-5 border border-cream-200 shadow-xs">
                     <h3 className="font-serif text-base font-semibold text-earth-900 mb-1.5">{t(p.title, p.titleEs)}</h3>

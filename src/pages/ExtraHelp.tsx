@@ -27,9 +27,9 @@ export default function ExtraHelp() {
         eyebrow="Medicare Part D · Federal Program"
         eyebrowEs="Medicare Parte D · Programa Federal"
         headline="Extra Help / LIS for Prescription Drug Costs"
-        headlineEs="Ayuda Extra / LIS para Costos de Medicamentos"
+        headlineEs="Ayuda Adicional / LIS para Costos de Medicamentos"
         subheadline="Extra Help may reduce Medicare Part D prescription drug costs for people who qualify. A licensed advisor can help you review whether you may be eligible."
-        subheadlineEs="Ayuda Extra puede reducir los costos de medicamentos recetados de Medicare Parte D para personas que califican. Un asesor licenciado puede ayudarle a revisar si podría ser elegible."
+        subheadlineEs="Ayuda Adicional puede reducir los costos de medicamentos recetados de Medicare Parte D para personas que califican. Un asesor licenciado puede ayudarle a revisar si podría ser elegible."
         variant="page"
         compact
         tighter
@@ -49,23 +49,23 @@ export default function ExtraHelp() {
               <div>
                 <span className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-500 mb-4 block">{t('Federal Program', 'Programa Federal')}</span>
                 <h2 className="font-serif text-3xl sm:text-4xl font-normal text-earth-900 leading-snug mb-4">
-                  {t('Extra Help / LIS — Medicare Part D Cost Help', 'Ayuda Extra / LIS — Ayuda para Costos de Parte D')}
+                  {t('Extra Help / LIS — Medicare Part D Cost Help', 'Ayuda Adicional / LIS — Ayuda para Costos de Parte D')}
                 </h2>
                 <p className="text-earth-600 text-base leading-relaxed">
                   {t(
                     'Extra Help (also called Low-Income Subsidy or LIS) is a federal program that may help reduce Medicare Part D prescription drug costs — premiums, deductibles, and copays — for people who qualify. Eligibility is determined by the Social Security Administration.',
-                    'Ayuda Extra (también llamada Subsidio de Bajo Ingreso o LIS) es un programa federal que puede ayudar a reducir los costos de medicamentos recetados de Medicare Parte D — primas, deducibles y copagos — para personas que califican. La elegibilidad la determina la Administración del Seguro Social.'
+                    'Ayuda Adicional (también llamada Subsidio de Bajo Ingreso o LIS) es un programa federal que puede ayudar a reducir los costos de medicamentos recetados de Medicare Parte D — primas, deducibles y copagos — para personas que califican. La elegibilidad la determina la Administración del Seguro Social.'
                   )}
                 </p>
               </div>
 
               {/* Extra Help / LIS */}
               <div className="bg-cream-50 rounded-xl p-6 border-l-4 border-gold-300">
-                <h3 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('What Extra Help / LIS May Cover', 'Qué Puede Cubrir Ayuda Extra / LIS')}</h3>
+                <h3 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('What Extra Help / LIS May Cover', 'Qué Puede Cubrir Ayuda Adicional / LIS')}</h3>
                 <p className="text-earth-600 text-sm leading-relaxed mb-4">
                   {t(
                     'For people who qualify, Extra Help may reduce or eliminate Medicare Part D prescription drug plan premiums, lower the deductible, and reduce copays for generic and brand-name medications.',
-                    'Para personas que califican, Ayuda Extra puede reducir o eliminar las primas del plan de medicamentos Medicare Parte D, bajar el deducible y reducir los copagos de medicamentos genéricos y de marca.'
+                    'Para personas que califican, Ayuda Adicional puede reducir o eliminar las primas del plan de medicamentos Medicare Parte D, bajar el deducible y reducir los copagos de medicamentos genéricos y de marca.'
                   )}
                 </p>
                 <div className="bg-white rounded-lg p-4 mb-4">
@@ -86,7 +86,7 @@ export default function ExtraHelp() {
                 <p className="text-cream-100/80 text-sm leading-relaxed mb-4">
                   {t(
                     'The Extra Help application is filed through the Social Security Administration. A licensed advisor can walk you through what documents you may need and answer questions about Medicare Part D coverage.',
-                    'La solicitud de Ayuda Extra se presenta a través de la Administración del Seguro Social. Un asesor licenciado puede explicarle qué documentos podría necesitar y responder preguntas sobre la cobertura de Medicare Parte D.'
+                    'La solicitud de Ayuda Adicional se presenta a través de la Administración del Seguro Social. Un asesor licenciado puede explicarle qué documentos podría necesitar y responder preguntas sobre la cobertura de Medicare Parte D.'
                   )}
                 </p>
                 <a href="tel:+18557208555" className="cp-btn-sm bg-gold-400 text-earth-900 hover:bg-gold-300 transition-all">
@@ -144,9 +144,9 @@ export default function ExtraHelp() {
 
       <CTASection
         headline="Questions About Extra Help / LIS?"
-        headlineEs="¿Preguntas Sobre Ayuda Extra / LIS?"
+        headlineEs="¿Preguntas Sobre Ayuda Adicional / LIS?"
         subheadline="A licensed advisor can help you review whether Extra Help may apply to your Medicare Part D situation. Final eligibility is determined by the Social Security Administration."
-        subheadlineEs="Un asesor licenciado puede ayudarle a revisar si Ayuda Extra podría aplicar a su situación de Medicare Parte D. La elegibilidad final la determina la Administración del Seguro Social."
+        subheadlineEs="Un asesor licenciado puede ayudarle a revisar si Ayuda Adicional podría aplicar a su situación de Medicare Parte D. La elegibilidad final la determina la Administración del Seguro Social."
       />
     </div>
   );

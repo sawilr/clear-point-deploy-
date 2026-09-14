@@ -49,9 +49,9 @@ const resources = [
   },
   {
     title: 'Extra Help / LIS: Could You Be Eligible?',
-    titleEs: 'Ayuda Extra / LIS: ¿Podría Ser Elegible?',
+    titleEs: 'Ayuda Adicional / LIS: ¿Podría Ser Elegible?',
     desc: 'Learn how Extra Help / LIS may help with certain prescription drug costs, based on income, resources, and program rules.',
-    descEs: 'Conozca cómo Ayuda Extra / LIS puede ayudar con ciertos costos de medicamentos recetados, según ingresos, recursos y reglas del programa.',
+    descEs: 'Conozca cómo Ayuda Adicional / LIS puede ayudar con ciertos costos de medicamentos recetados, según ingresos, recursos y reglas del programa.',
     tag: 'SAVINGS',
     tagEs: 'AHORROS',
   },
@@ -417,7 +417,7 @@ const guideContent = [
 
 const externalLinks = [
   { title: 'Medicare.gov', url: 'https://www.medicare.gov', desc: 'Official U.S. government site for Medicare', descEs: 'Sitio oficial del gobierno de EE. UU. para Medicare' },
-  { title: 'SSA.gov', url: 'https://www.ssa.gov', desc: 'Social Security Administration — apply for Extra Help', descEs: 'Administración del Seguro Social — solicite Ayuda Extra' },
+  { title: 'SSA.gov', url: 'https://www.ssa.gov', desc: 'Social Security Administration — apply for Extra Help', descEs: 'Administración del Seguro Social — solicite Ayuda Adicional' },
   { title: 'CMS.gov', url: 'https://www.cms.gov', desc: 'Centers for Medicare & Medicaid Services', descEs: 'Centros de Servicios de Medicare y Medicaid' },
   { title: 'SHIP Help', url: 'https://www.shiphelp.org/', desc: 'State Health Insurance Assistance Programs', descEs: 'Programas Estatales de Asistencia de Seguros de Salud' },
 ];

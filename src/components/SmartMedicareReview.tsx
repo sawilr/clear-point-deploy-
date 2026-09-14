@@ -801,7 +801,7 @@ export function SmartMedicareReview() {
                 {lastName.length > 1 && !validatePersonName(lastName).valid && <p role="alert" className="text-xs text-red-700">{t('Please enter a valid name without numbers, symbols, or inappropriate words.', 'Por favor ingrese un nombre válido sin números, símbolos ni palabras inapropiadas.')}</p>}
                 <label className="block">
                   <span className="block text-sm font-medium text-earth-700 mb-1">{t('Phone Number', 'Teléfono')} *</span>
-                  <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono')} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={10} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
+                  <input type="tel" value={phone} onChange={(e) => handlePhone(e.target.value)} placeholder={t('Phone Number', 'Teléfono')} inputMode="tel" pattern="[0-9]*" autoComplete="tel-national" maxLength={24} className="w-full px-4 py-4 sm:py-3 bg-cream-50 border border-cream-300 rounded-xl text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400" />
                 </label>
                 {phone.length > 0 && phone.length < 10 && <p role="alert" className="text-xs text-red-700">{t('Must be 10 digits.', 'Debe tener 10 dígitos.')}</p>}
                 {phone.length === 10 && !validatePhone(phone).valid && (() => {
@@ -942,7 +942,7 @@ export function SmartMedicareReview() {
                     only; compliance-safe). Lets the advisor flag D-SNP options. */}
                 <label className="block">
                   <span className="block text-sm text-earth-700 mb-1.5">
-                    {t('Do you have Medicaid or Extra Help (LIS)?', '¿Tiene Medicaid o Extra Help (Ayuda Extra)?')}
+                    {t('Do you have Medicaid or Extra Help (LIS)?', '¿Tiene Medicaid o Extra Help (Ayuda Adicional)?')}
                   </span>
                   <select
                     value={medicaidExtraHelp}

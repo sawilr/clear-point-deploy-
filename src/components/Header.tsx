@@ -247,7 +247,7 @@ export function Header() {
                   <div role="menu" className="absolute top-full left-0 mt-2 w-72 bg-white rounded-xl shadow-card border border-cream-200 py-2 z-50">
                     <Link to={lp('/resources')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
                     <button onClick={() => { handleScrollNav('/#annual-review'); }} className="block w-full text-left px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
-                    <Link to={lp('/extra-help')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
+                    <Link to={lp('/extra-help')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Adicional / LIS')}</Link>
                     <Link to={lp('/help-paying-costs')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
                     <Link to={lp('/otc-benefits')} className="block px-4 py-2 text-sm text-earth-700 hover:bg-cream-50 hover:text-earth-900" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
                   </div>
@@ -319,7 +319,7 @@ export function Header() {
               <p className="text-[10px] font-bold tracking-[0.15em] uppercase text-gold-500 pb-1">{t('Education', 'Educación')}</p>
               <Link to={lp('/resources')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Medicare Basics', 'Conceptos Básicos de Medicare')}</Link>
               <button onClick={() => handleScrollNav('/#annual-review')} className="block py-2.5 text-base font-medium text-earth-800 w-full text-left">{t('Enrollment Periods', 'Períodos de Inscripción')}</button>
-              <Link to={lp('/extra-help')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Extra / LIS')}</Link>
+              <Link to={lp('/extra-help')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Extra Help / LIS', 'Ayuda Adicional / LIS')}</Link>
               <Link to={lp('/help-paying-costs')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('Help Paying Costs', 'Ayuda con Costos')}</Link>
               <Link to={lp('/otc-benefits')} className="block py-2.5 text-base font-medium text-earth-800" onClick={closeNav}>{t('OTC Benefits', 'Beneficios OTC')}</Link>
             </div>

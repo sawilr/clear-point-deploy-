@@ -13,7 +13,7 @@ const PAGE_META: Record<string, Meta> = {
     title: 'Bilingual Medicare Help in NY, NJ & CT | Clear Point Senior Advisors',
     titleEs: 'Ayuda Bilingüe de Medicare en NY, NJ y CT | Clear Point Senior Advisors',
     description: 'Independent, licensed Medicare agency serving New York, New Jersey and Connecticut. Free bilingual guidance on Medicare Advantage, Supplement, Part D and Extra Help.',
-    descriptionEs: 'Agencia de Medicare independiente y licenciada que sirve New York, New Jersey y Connecticut. Orientación bilingüe gratis sobre Medicare Advantage, Suplemento, Parte D y Ayuda Extra.',
+    descriptionEs: 'Agencia de Medicare independiente y licenciada que sirve New York, New Jersey y Connecticut. Orientación bilingüe gratis sobre Medicare Advantage, Suplemento, Parte D y Ayuda Adicional.',
   },
   '/about': {
     title: 'About Us — Independent, Licensed Medicare Brokers | Clear Point Senior Advisors',
@@ -38,15 +38,15 @@ const PAGE_META: Record<string, Meta> = {
   },
   '/extra-help': {
     title: 'Extra Help / LIS for Medicare Drug Costs | Clear Point Senior Advisors',
-    titleEs: 'Ayuda Extra / LIS para Costos de Medicamentos | Clear Point Senior Advisors',
+    titleEs: 'Ayuda Adicional / LIS para Costos de Medicamentos | Clear Point Senior Advisors',
     description: 'Extra Help (LIS) may lower Medicare prescription drug costs for people with limited income and resources. Learn how it works — free bilingual guidance.',
-    descriptionEs: 'Ayuda Extra (LIS) puede bajar los costos de medicamentos de Medicare para personas con ingresos y recursos limitados. Aprenda cómo funciona — orientación bilingüe gratis.',
+    descriptionEs: 'Ayuda Adicional (LIS) puede bajar los costos de medicamentos de Medicare para personas con ingresos y recursos limitados. Aprenda cómo funciona — orientación bilingüe gratis.',
   },
   '/help-paying-costs': {
     title: 'Help Paying Medicare Costs — MSP & Medicaid | Clear Point Senior Advisors',
     titleEs: 'Ayuda con Costos de Medicare — MSP y Medicaid | Clear Point Senior Advisors',
     description: 'Programs that may help pay Medicare costs: Medicare Savings Programs (QMB, SLMB, QI), Medicaid and Extra Help. Free bilingual guidance for NY, NJ and CT.',
-    descriptionEs: 'Programas que pueden ayudar a pagar costos de Medicare: Programas de Ahorros (QMB, SLMB, QI), Medicaid y Ayuda Extra. Orientación bilingüe gratis para NY, NJ y CT.',
+    descriptionEs: 'Programas que pueden ayudar a pagar costos de Medicare: Programas de Ahorros (QMB, SLMB, QI), Medicaid y Ayuda Adicional. Orientación bilingüe gratis para NY, NJ y CT.',
   },
   '/otc-benefits': {
     title: 'Medicare OTC Benefits Explained | Clear Point Senior Advisors',

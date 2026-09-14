@@ -56,6 +56,9 @@ export type ClaraOuterStep =
   | 'A_verifying'
   | 'A_matched_collect_topic'
   | 'A_unmatched_collect_topic'
+  // AUDIT 2026-09-13 (TCPA-03, P2) — explicit consent turn: the phone was
+  // captured, the caller must now say "Yes, I agree" before anything is sent.
+  | 'A_unmatched_consent'
   | 'A_done'
   // Path B — Prospect qualification
   | 'B_q_medicare'
@@ -67,6 +70,7 @@ export type ClaraOuterStep =
   // Path C — Out of scope
   | 'C_resources_shown'
   | 'C_optin_capture'
+  | 'C_optin_consent' // TCPA-03 — same explicit consent turn on Path C
   | 'C_done';
 
 export type MedicareStatus = 'AB_active' | 'near_65' | 'none';
@@ -107,6 +111,8 @@ export interface ClaraOuterState {
   outOfScopeCategory?: OutOfScopeCategory;
   // Summary (collected at end of A or before submit)
   problemSummary?: string;
+  // TCPA-03 — captured but NOT yet submitted: held until the consent chip.
+  pendingSummary?: string;
   // Final lead type for GHL
   finalLeadType?:
     | 'existing_client_inquiry'
