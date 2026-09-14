@@ -124,6 +124,20 @@ check(
   'en'
 );
 
+// ── RT5-CF-18: naming the number is instructing too. ─────────────────────
+const IDENTIFICATIONS_EN = [
+  ['the emergency number to use', 'Please stop and get help right now. In the United States the emergency number to use is 911.'],
+  ['that number is',             'Call emergency services immediately — in the U.S. that number is 911.'],
+  ['the number is',              'Hang up and get emergency help now. The number is 911.'],
+];
+for (const [label, reply] of IDENTIFICATIONS_EN) check(`RT5-CF-18 ${label}`, reply, true, 'en');
+check('RT5-CF-18 ES el numero de emergencia',
+  'Busque ayuda de emergencia ahora mismo. El numero de emergencia es el 911.', true, 'es');
+
+// …and naming an OFFICE number is still not an emergency instruction.
+check('RT5-CF-18 control: our office number is not 911',
+  'Our office number is 1-855-720-8555 and someone will help you with the billing question.', false, 'en');
+
 // ── The net must still fire when the reply is empty or unusable. ──────────
 check('empty reply is replaced', '', false, 'en');
 check('whitespace reply is replaced', '   \n  ', false, 'en');

@@ -455,8 +455,18 @@ export default function Resources() {
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', onKey);
+    // AUDIT 2026-09-14 (CPR5-CLIENT-03, P1) — the round-4 trap kept Tab inside the
+    // dialog but nothing stopped the PAGE behind it from scrolling: measured, five
+    // key presses (PageDown ×2, ArrowDown ×2, End) left the guide body at
+    // scrollTop 0 while window.scrollY ran 0 → 6577. Lock the document while the
+    // guide is open, using the body-class pattern CookieConsent already uses
+    // (index.css: body.cp-consent-open …). This cleanup runs on EVERY close path —
+    // Escape, backdrop click, the two Close buttons, and unmount — because the
+    // effect is keyed on activeGuide and bails out when it is null.
+    document.body.classList.add('cp-guide-open');
     return () => {
       document.removeEventListener('keydown', onKey);
+      document.body.classList.remove('cp-guide-open');
       openerRef.current?.focus?.();
     };
   }, [activeGuide]);
@@ -556,7 +566,21 @@ export default function Resources() {
             </div>
 
             {/* Scrollable content */}
-            <div className="overflow-y-auto flex-1 px-6 py-5" style={{ WebkitOverflowScrolling: 'touch' }}>
+            {/* AUDIT 2026-09-14 (CPR5-CLIENT-03, P1) — axe-core 4.13 reported exactly
+                one violation with this modal open (scrollable-region-focusable,
+                serious, target .overflow-y-auto): the dialog's only two focusables
+                are both "Close guide", so Tab never reached the prose and a keyboard
+                or switch user could not scroll a body with scrollHeight 592 /
+                clientHeight 546. Same remedy already applied to Clara's transcript
+                (ChatBot.tsx role="log" tabIndex={0}); overscroll-contain stops the
+                scroll from chaining to the locked page behind. */}
+            <div
+              className="overflow-y-auto overscroll-contain flex-1 px-6 py-5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-500"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+              tabIndex={0}
+              role="region"
+              aria-label={t('Guide content', 'Contenido de la guía')}
+            >
               <h2 id="guide-modal-title" className="font-serif text-2xl sm:text-3xl font-normal text-earth-900 leading-snug mb-5">
                 {t(resources[activeGuide].title, resources[activeGuide].titleEs)}
               </h2>

@@ -360,6 +360,20 @@
   body.cp-consent-open .cp-zara-fab { opacity: 0; pointer-events: none; }
 }
 
+/* AUDIT 2026-09-14 (CPR5-CLIENT-03, P1) — background scroll lock for the
+   /resources guide dialog (Resources.tsx toggles body.cp-guide-open, same
+   body-class pattern as CookieConsent's cp-consent-open above). Measured before
+   this rule: with the modal open, PageDown ×2 / ArrowDown ×2 / End scrolled the
+   window from y=0 to y=6577 while the guide body stayed at scrollTop 0 — the
+   reader was locked in a box and the page ran away behind it.
+   `overflow: hidden` only (never position: fixed) — the same choice Support.tsx
+   documents for /support: the scroll offset is preserved, so closing the guide
+   puts the visitor back exactly where they were. */
+body.cp-guide-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 /* ── UNIFIED CTA BUTTON SYSTEM (Sawil 2026-06-19) ──
    Root cause of "buttons change size weirdly across the site / look choppy":
    the SAME CTA was hand-sized differently on every page (header px-4 py-2,

@@ -387,7 +387,7 @@ const FORBIDDEN_PHRASES = [
 // abbreviations ("Dr. Smith says…"); the separator is captured so it survives.
 // Red-team round 4 (RT4-CF-10): a list marker ("1.") must not terminate a part,
 // or removing the item leaves a naked number behind.
-const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|Ing|e\.g|i\.e|vs|etc)\.)(?<!(?:^|\n)[ \t]{0,4}\d{1,2}\.)(?<=[.!?:])\s+|\n+)/i;
+const FP_SPLIT_RE = /((?<!\b(?:Dr|Dra|Mr|Mrs|Ms|St|Sr|Sra|Srta|No|N[uú]m|Lic|Ing|e\.g|i\.e|vs|etc)\.)(?<!\b\d{1,2}\.)(?<=[.!?:])\s+|\n+)/i;
 // Red-team round 4 (RT4-CF-14): default-ignorable characters (soft hyphen, word
 // joiner, combining grapheme joiner, bidi marks) are invisible to a reader and
 // used to break a pattern. They are stripped from the DETECTION copy only — the
@@ -536,6 +536,13 @@ const EMERGENCY_INSTRUCTION_BEFORE_RE =
 // is an instruction no matter how the sentence opened.
 const EMERGENCY_URGENCY_AFTER_RE =
   /^[\s,]*(?:right\s+(?:now|away)|now|immediately|at\s+once|ahora\s+mismo|ahora|de\s+inmediato|inmediatamente|ya)\b/i;
+// RED TEAM ROUND 5 (RT5-CF-18, P3): naming the number is instructing too. "In
+// the United States the emergency number to use is 911" and "El número de
+// emergencia es el 911" were both being thrown away and replaced, which is safe
+// but loses a better-tailored reply and files a false emergency_no_911 tag
+// against correct output.
+const EMERGENCY_IDENTIFICATION_BEFORE_RE =
+  /\b(?:emergency\s+(?:number|line|services|help)|n[uú]mero\s+de\s+emergencias?|servicios?\s+de\s+emergencia|(?:that|the|this)\s+number|ese\s+n[uú]mero|el\s+n[uú]mero)\b[^.!?\n]{0,32}(?:\bis\b|\bes\b)\s*(?:el\s+|the\s+)?$/i;
 // Reference numbering ("rule 9.1.1", "page 9-1-1") and unit/time tails
 // ("9-1-1-ext 4", "9 1 1 de la tarde") mean the digits are not a phone number.
 const EMERGENCY_TOKEN_REFERENCE_RE =
@@ -556,6 +563,7 @@ function carriesEmergencyInstruction(text) {
     if (EMERGENCY_TOKEN_REFERENCE_RE.test(before)) continue;
     if (EMERGENCY_TOKEN_TAIL_RE.test(after)) continue;
     if (EMERGENCY_INSTRUCTION_BEFORE_RE.test(before)) return true;
+    if (EMERGENCY_IDENTIFICATION_BEFORE_RE.test(before)) return true;
     if (EMERGENCY_URGENCY_AFTER_RE.test(after)) return true;
   }
   return false;
@@ -916,6 +924,10 @@ export function complianceFilter(text, lang, opts) {
   // A result with no object of its own — harmless alone, a determination when
   // the very next fragment names the program (RT5-CF-12).
   var fpWeakResultPending = false;
+  // A part that is nothing but a subject pronoun, stranded by a line break
+  // (RT5-CF-15). Carried into the NEXT part for detection only.
+  var fpSubjectOnly = '';
+  var SUBJECT_ONLY_RE = /^\s*(?:you|usted|ustedes)\s*$/i;
   var WEAK_RESULT_RE = /\b(?:you(?:'|’)?re|you\s+are)\s+(?:now\s+|already\s+|officially\s+|finally\s+)?(?:all\s+set|in)\b|\b(?:ya\s+)?est[aá]\s+(?:todo\s+)?list[oa]\b/i;
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
   var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE];
@@ -945,6 +957,16 @@ export function complianceFilter(text, lang, opts) {
     // Detection copy only (the kept sentence stays byte-identical): collapse
     // whitespace and normalise curly apostrophes (red-team D4).
     var normalized = String(fpSentence).replace(INVISIBLE_RE, '').replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
+    //
+    // RED TEAM ROUND 5 (RT5-CF-15, P3). The splitter breaks on newlines, so a
+    // wrapped or bulleted rendering split the subject from its verb: "You\
+    // nqualify for Extra Help." became the parts "You" and "qualify for Extra
+    // Help.", the English pattern needs the pronoun, the Spanish subjectless
+    // pattern is Spanish-only, and neither half matched. The claim reached the
+    // caller intact. A part that is NOTHING but a subject pronoun is rejoined
+    // for DETECTION, and if the joined claim is removed the stranded pronoun
+    // goes with it.
+    var scanText = fpSubjectOnly ? (fpSubjectOnly + ' ' + normalized) : normalized;
     // RT5-CF-11: the result word that answers a program named one fragment ago.
     if (fpProgramNamed && BARE_RESULT_RE.test(normalized)) {
       fpProgramNamed = false;
@@ -967,14 +989,14 @@ export function complianceFilter(text, lang, opts) {
     // A question ("Do you qualify for Extra Help?") asks, it does not determine —
     // but only when the interrogative subject is the claim's own subject and no
     // speech verb smuggles a determination into a complement clause (RT4-CF-01).
-    var isQuestion = /\?\s*$/.test(normalized) && QUESTION_OPENER_RE.test(normalized) && !RHETORICAL_QUESTION_RE.test(normalized);
+    var isQuestion = /\?\s*$/.test(scanText) && QUESTION_OPENER_RE.test(scanText) && !RHETORICAL_QUESTION_RE.test(scanText);
     for (var ci = 0; ci < claimRes.length && !remove; ci++) {
       var eligRe = new RegExp(claimRes[ci].source, 'gi'); var em;
-      while ((em = eligRe.exec(normalized)) !== null) {
+      while ((em = eligRe.exec(scanText)) !== null) {
         if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
-        if (breaks === null) breaks = clauseBreaks(normalized);
+        if (breaks === null) breaks = clauseBreaks(scanText);
         var claimAt = ci === 1 ? em.index + (em[1] || '').length : em.index + claimSubjectOffset(em[0]);
-        var deferred = eligibilityClaimIsDeferred(normalized, claimAt, breaks);
+        var deferred = eligibilityClaimIsDeferred(scanText, claimAt, breaks);
         // A governed or interrogative clause hands the determination to the next
         // fragment ("Whether you qualify: yes, you do." / "Do you qualify? Yes.")
         // — red-team round 4 (RT4-CF-06) added the question form.
@@ -988,8 +1010,16 @@ export function complianceFilter(text, lang, opts) {
         // Help?" — Clara's most natural and most compliant offer-to-check turn.
         // Deferral wins: only an UNDEFERRED claim inside a question is suspect.
         if (deferred) continue;
-        if (isQuestion && claimAt <= 14) continue;
-        if (!eligibilityClaimIsScoped(normalized, em.index, em.index + em[0].length)) continue;
+        // RED TEAM ROUND 5 (RT5-CF-14, P3): the surviving edge was the byte
+        // offset of the claim, so any question longer than a four-word opener
+        // was destroyed — "What happens after you qualify for Extra Help?" and
+        // "Would you like me to explain how you qualify for Extra Help?" both
+        // became the generic non-answer, and neither determines anything. The
+        // structural test already exists: isQuestion is false when a speech or
+        // knowledge verb governs the sentence, which is the only way a
+        // determination hides inside a question.
+        if (isQuestion) continue;
+        if (!eligibilityClaimIsScoped(scanText, em.index, em.index + em[0].length)) continue;
         remove = true; fpTags[ELIGIBILITY_TAG] = true; break;
       }
     }
@@ -997,10 +1027,13 @@ export function complianceFilter(text, lang, opts) {
       for (var k = 0; k < FORBIDDEN_PHRASES.length; k++) {
         var fpSrc = FORBIDDEN_PHRASES[k];
         var fpRe = new RegExp(fpSrc.source, fpSrc.flags.replace('g', ''));
-        if (fpRe.test(normalized)) { remove = true; fpTags['forbidden_phrase:' + fpSrc.source.slice(0, 40)] = true; break; }
+        if (fpRe.test(scanText)) { remove = true; fpTags['forbidden_phrase:' + fpSrc.source.slice(0, 40)] = true; break; }
       }
     }
     if (remove) {
+      // RT5-CF-15: the pronoun that only existed to start this claim.
+      if (fpSubjectOnly && fpKeep.length && SUBJECT_ONLY_RE.test(fpKeep[fpKeep.length - 1])) { fpKeep.pop(); fpSeps.pop(); }
+      fpSubjectOnly = '';
       fpChanged = true;
       // Red-team D7 / round 3 RT3-CF-07 / round 4 RT4-CF-08: a label kept just
       // before the removed sentence ("Note:", "Here's the thing:") goes with it —
@@ -1013,21 +1046,56 @@ export function complianceFilter(text, lang, opts) {
       if (/\n/.test(fpSep) && fpSeps.length) fpSeps[fpSeps.length - 1] = fpSep;
       continue;
     }
+    fpSubjectOnly = SUBJECT_ONLY_RE.test(fpSentence) ? fpSentence.trim() : '';
     fpKeep.push(fpSentence); fpSeps.push(fpSep);
   }
   if (fpChanged) {
     Object.keys(fpTags).forEach(function (t) { violations.push(t); });
     // Drop a label only when nothing is left under it (RT4-CF-08).
+    //
+    // RED TEAM ROUND 5 (RT5-CF-17, P4). Two failures, pulling opposite ways.
+    // Counting only BULLETS as content deleted "What we can do for you:" out
+    // from under the advisor-hours sentence that still belonged to it. Counting
+    // ANY survivor as content left "Here's the thing:" introducing an unrelated
+    // phone number — which round 3 pinned as a defect, correctly.
+    //
+    // What separates them is length, and that is not arbitrary: a short lead-in
+    // is punctuation for the sentence it introduces and has no meaning once that
+    // sentence is gone, while a longer phrase names a section that outlives any
+    // one child. So a survivor keeps a real heading alive, and a short lead-in
+    // goes with its sentence either way.
+    //
+    // The sweep also iterates now: dropping a label can strand the label above
+    // it ("Note:" over "Important:" over the claim), and one pass left the outer
+    // one introducing whatever came next.
     var fpDropped = {};
-    for (var li = 0; li < fpLabelIdx.length; li++) {
-      var idx = fpLabelIdx[li];
+    var labelQueue = fpLabelIdx.slice();
+    var labelGuard = 0;
+    while (labelQueue.length && labelGuard++ < 50) {
+      var idx = labelQueue.shift();
+      if (fpDropped[idx] || !/:\s*$/.test(String(fpKeep[idx] || ''))) continue;
       var survivorBelow = false;
+      var listSurvivorBelow = false;
       for (var ni = idx + 1; ni < fpKeep.length; ni++) {
         if (fpDropped[ni]) continue;
-        if (/^\s*(?:[-•*·]|\d+[.)])\s/.test(fpKeep[ni])) { survivorBelow = true; }
+        if (/:\s*$/.test(fpKeep[ni])) continue;   // another label is not content
+        survivorBelow = true;
+        listSurvivorBelow = /^\s*(?:[-•*·]|\d+[.)])\s/.test(fpKeep[ni]);
         break;
       }
-      if (!survivorBelow) fpDropped[idx] = true;
+      var labelWords = String(fpKeep[idx]).trim().replace(/:\s*$/, '').split(/\s+/).filter(Boolean).length;
+      // A surviving LIST ITEM proves the label is a section heading whatever its
+      // length ("Two things:" over a numbered list), so length only decides for
+      // prose survivors.
+      if (!survivorBelow || (!listSurvivorBelow && labelWords <= 4)) {
+        fpDropped[idx] = true;
+        // The nearest kept part above is now a label with nothing under it.
+        for (var pi = idx - 1; pi >= 0; pi--) {
+          if (fpDropped[pi]) continue;
+          if (/:\s*$/.test(fpKeep[pi])) labelQueue.push(pi);
+          break;
+        }
+      }
     }
     out = fpKeep.map(function (s, i) { return fpDropped[i] ? '' : s + (fpSeps[i] || ''); }).join('').trim();
     var fpSafeAlready = out.indexOf(safe.slice(0, 40)) !== -1;

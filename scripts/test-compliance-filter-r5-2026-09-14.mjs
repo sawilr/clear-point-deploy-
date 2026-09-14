@@ -25,6 +25,18 @@ function keeps(label, reply, lang = 'en') {
   failures.push(`${label}\n    in:   ${JSON.stringify(reply)}\n    out:  ${JSON.stringify(r.text)}\n    viol: ${JSON.stringify(r.violations)}`);
 }
 
+function ok(label, cond, detail) {
+  if (cond) { passed++; return; }
+  failures.push(label + (detail ? '\n    ' + detail : ''));
+}
+
+/** A removed list item must not leave its marker stranded on the page. */
+function ok_no_orphan(label, text) {
+  const orphan = /(?:^|[.!?]\s+)\d{1,2}\.\s+(?=\d{1,2}\.|$)/.test(text);
+  if (!orphan) { passed++; return; }
+  failures.push(`${label}\n    out: ${JSON.stringify(text)}`);
+}
+
 function removes(label, reply, lang = 'en') {
   const r = run(reply, lang);
   if (r.text !== reply) { passed++; return; }
@@ -162,6 +174,55 @@ removes('CF-13 control: the object names the program',
   'You qualify for Extra Help and the paperwork is simple.');
 removes('CF-13 control: the object names a savings program',
   'You are eligible for the Medicare Savings Program, so your premium is covered.');
+
+// ── RT5-CF-14: a question about the RULES is not a determination ─────────
+keeps('CF-14 what happens after',      'What happens after you qualify for Extra Help?');
+keeps('CF-14 would you like me to explain', 'Would you like me to explain how you qualify for Extra Help?');
+// This one stays REMOVED, and deliberately. The red team filed it with the two
+// above, but its own recommended test — a speech or knowledge verb between the
+// opener and the claim — keeps it removed too, because "know" is exactly that
+// verb. Loosening the rule far enough to keep it would also let "Do you know
+// that you qualify for Extra Help?" through, which is a determination wearing a
+// question mark. The cost of being wrong here is a compliant non-answer; the
+// cost of being wrong the other way is an eligibility determination.
+removes('CF-14 accepted residual: a knowledge verb governs the sentence',
+  'Do you want to know what it takes before you qualify for Extra Help?');
+keeps('CF-14 control: the short form already worked', 'Do you qualify for Extra Help?');
+// …a speech verb still smuggles nothing past it.
+removes('CF-14 control: speech verb governs the claim', 'Did I mention you qualify for Extra Help?');
+removes('CF-14 control: knowledge verb governs the claim', 'Do you know that you qualify for Extra Help?');
+
+// ── RT5-CF-15: a line break must not split a claim out of existence ──────
+removes('CF-15 subject stranded by a line break', 'You\nqualify for Extra Help.');
+removes('CF-15 ES subject stranded', 'Usted\ncalifica para Ayuda Adicional.', 'es');
+keeps('CF-15 control: a stranded pronoun with nothing after it',
+  'You\nare in good hands with a licensed advisor.');
+
+// ── RT5-CF-16: an inline list must not leave an orphan marker ────────────
+{
+  const r = run('Steps: 1. Gather your income. 2. You qualify for Extra Help. 3. Apply online.', 'en');
+  ok_no_orphan('CF-16 inline numbered list leaves no naked marker', r.text);
+}
+
+// ── RT5-CF-17: a heading and its content must live or die together ───────
+{
+  const r = run('What we can do for you:\nYou qualify for Extra Help.\nOur licensed advisors are available Monday through Friday, 9am to 6pm.', 'en');
+  ok('CF-17 a heading with surviving prose under it stays',
+    /What we can do for you:/.test(r.text) && /Monday through Friday/.test(r.text) && !/you qualify/i.test(r.text),
+    JSON.stringify(r.text));
+}
+{
+  const r = run('Note:\nImportant:\nYou qualify for Extra Help.\nCall 1-855-720-8555.', 'en');
+  ok('CF-17 stacked lead-ins both go when their sentence goes',
+    !/Note:/.test(r.text) && !/Important:/.test(r.text) && /1-855-720-8555/.test(r.text),
+    JSON.stringify(r.text));
+}
+{
+  const r = run('Two things:\n1. You qualify for Extra Help\n2. Bring your Medicare card\nThat is all.', 'en');
+  ok('CF-17 control: a heading over a surviving list item stays',
+    /Two things:/.test(r.text) && /Bring your Medicare card/.test(r.text),
+    JSON.stringify(r.text));
+}
 
 if (failures.length) {
   console.error(`COMPLIANCE FILTER R5: ${passed} passed, ${failures.length} FAILED\n`);

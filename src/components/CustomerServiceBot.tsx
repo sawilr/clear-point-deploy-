@@ -205,7 +205,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
   // plus the persistent TPMO line left ~175 px for the conversation; start
   // collapsed there (the one-line summary keeps the disclosure visible and a tap
   // expands it).
-  const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(() => typeof window !== 'undefined' && window.innerHeight < 600);
+  // AUDIT 2026-09-14 (CPR5-CLIENT-01, P1) — the height-only rule was not enough.
+  // Measured at 320-430 × 667 (a viewport the <600 rule leaves EXPANDED), the
+  // expanded notice was 291 px (EN) / 327 px (ES) inside a 258 px / 241 px log, so
+  // Clara's greeting started at y=474 and the language chips at y=616 — both
+  // entirely below the visible log, in 12 of 12 route × width combinations, on a
+  // screen whose only controls ARE those chips. Phones (<768 px) now start
+  // collapsed regardless of height; the mandatory recording/commission sentence no
+  // longer lives in here at all (see the persistent strip below the header).
+  const [disclosureCollapsed, setDisclosureCollapsed] = useState<boolean>(
+    () => typeof window !== 'undefined' && (window.innerHeight < 600 || window.innerWidth < 768)
+  );
   // Debounce scroll-pin detection so transient typing-indicator
   // appear/disappear doesn't flip the pin state.
   const scrollPinDebounceRef = useRef<number | null>(null);
@@ -245,8 +255,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         // share sensitive data, TPMO). Anchoring the greeting's top scrolled that
         // notice out of view on a phone, so the page opened on the word
         // "records." Stay at the top until the conversation actually starts.
-        const hasUserTurn = Array.from(msgs).some((el) => (el as HTMLElement).className.includes('justify-end'));
-        if (!hasUserTurn) { cc.scrollTo({ top: 0, behavior: 'auto' }); return; }
+        //
+        // AUDIT 2026-09-14 (CPR5-CLIENT-01, P1) — R4F-04's unconditional
+        // scrollTo(0) is REMOVED. It pinned the transcript to a notice that is
+        // taller than the whole log on every phone width, so /support opened on a
+        // dead end: greeting at y=474 and the only clickable controls (the language
+        // chips) at y=616, against a log that ends at y=465. The notice it was
+        // protecting is no longer the first scrolling child — the mandatory
+        // recording/commission sentence is now a persistent strip OUTSIDE this
+        // scroller, so nothing is lost by letting the transcript sit at its
+        // natural position.
         const lastMsg = msgs[msgs.length - 1] as HTMLElement | undefined;
         // Sawil 2026-07-15 MOBILE SCROLL PATCH (mirrors Zara) — treat the
         // trailing consecutive BOT messages as ONE block; anchor the block's
@@ -1803,6 +1821,27 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         </div>
       </header>
 
+      {/* AUDIT 2026-09-14 (REC-03 / FTC-02 / CPR5-CLIENT-02, P1) — PERSISTENT
+          compliance strip. /support and /es/support are the only two routes on the
+          site with no <footer>, so this sentence is the sole carrier of the 42 CFR
+          422.2274(g)(2)(ii) call-recording disclosure and the FTC material-connection
+          (commission) statement. Inside the scrolling notice it was CLIPPED by the
+          log's own overflow at load — 34 px cut at /support 320, 86 px at
+          /es/support 320, 32 px at /es/support 375 and 390 (the Spanish text is
+          ~13 % longer, so it failed at three more widths); re-measured here as
+          26 / 79 / 25 / 25 px on the same widths, the delta being the band padding
+          the first measurement included — and it then vanished for good the moment
+          the notice collapsed after the first user turn. A
+          disclosure that is cut mid-word was never made. It now renders OUTSIDE the
+          scroller as a flex-shrink-0 strip under Clara's header: no scroll position
+          and no collapse state can hide it. Typography matches the persistent TPMO
+          line under the composer (cp-legal, 12 px, leading-snug). */}
+      <p className="cp-legal flex-shrink-0 bg-gold-100 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-snug text-earth-800">
+        {isSpanish
+          ? 'Las llamadas con Clear Point pueden ser grabadas por calidad y cumplimiento; una asistente automatizada puede contestar primero. Nuestro servicio no tiene costo para usted: si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora, y el costo de su plan no aumenta.'
+          : 'Calls with Clear Point may be recorded for quality and compliance, and an automated assistant may answer first. Our service is no cost to you: if you enroll in a plan through us, Clear Point may be compensated by the insurance carrier, and your plan cost is not increased.'}
+      </p>
+
       {/* Body */}
       <div
         ref={bodyRef}
@@ -1848,12 +1887,10 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             </p>
             {/* AUDIT 2026-09-13 (REC-03 / FTC-02, P1) — /support is the one route
                 with no footer, so the recording, automated-answer and commission
-                disclosures have to travel with this notice. */}
-            <p className="mt-1">
-              {isSpanish
-                ? 'Las llamadas con Clear Point pueden ser grabadas por calidad y cumplimiento; una asistente automatizada puede contestar primero. Nuestro servicio no tiene costo para usted: si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora, y el costo de su plan no aumenta.'
-                : 'Calls with Clear Point may be recorded for quality and compliance, and an automated assistant may answer first. Our service is no cost to you: if you enroll in a plan through us, Clear Point may be compensated by the insurance carrier, and your plan cost is not increased.'}
-            </p>
+                disclosures have to travel with this notice.
+                AUDIT 2026-09-14 (CPR5-CLIENT-02, P1) — that sentence MOVED to the
+                persistent strip above this scroller; leaving a copy here would just
+                be the clipped one again. Do not re-add it. */}
             {/* Red-team RT-CLIENT-06 (WCAG 2.5.3): the accessible name is the visible
                 text plus this hidden suffix instead of a non-matching aria-label. */}
             <span className="sr-only">{isSpanish ? ' (toque para ocultar este aviso)' : ' (tap to hide this notice)'}</span>
@@ -1865,16 +1902,29 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             className="block w-full text-left bg-gold-50 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-[1.4] text-earth-600 hover:bg-gold-100 transition"
             aria-expanded={false}
           >
+            {/* AUDIT 2026-09-14 (CPR5-CLIENT-01, P1) — phones now open with this
+                notice COLLAPSED, so the one-line summary also has to carry the
+                substance of the non-affiliation statement (the full CMS sentence is
+                one tap away, and on every other route it lives in the site footer,
+                which is likewise reached by scrolling). */}
             {isSpanish
-              ? 'Asistente virtual · No envíe información sensible'
-              : 'Virtual assistant · Do not send sensitive info'}
+              ? 'Asistente virtual · Agencia independiente, no es Medicare · No envíe información sensible'
+              : 'Virtual assistant · Independent agency, not Medicare · Do not send sensitive info'}
             <span className="sr-only">{isSpanish ? ' (toque para ver el aviso completo)' : ' (tap to show the full notice)'}</span>
           </button>
         )}
 
+        {/* AUDIT 2026-09-14 (CPR5-CLIENT-01, P1) — 24 px of wrapper padding trimmed
+            to 16. At /es/support 320×667 the entry screen (notice + greeting +
+            language chips) measured 244 px against a 238 px log, so it overflowed by
+            6 px: the log scrolled just far enough to cut the collapsed notice
+            through the middle of a line, which reads as a rendering fault. With 16
+            px the whole entry screen fits with no scroll at all and nothing is cut.
+            Spanish at 320 is the tightest of the 12 combinations; every other one
+            already had slack. */}
         <div
-          className="px-3 py-3 space-y-2.5"
-          style={{ paddingBottom: '12px' }}
+          className="px-3 pt-2 space-y-2.5"
+          style={{ paddingBottom: '8px' }}
         >
           {messages.map((m) => (
             <div key={m.id} data-msg-id={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -2032,7 +2082,17 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           9am ET" mixed-language) and the call link truncates instead of
           wrapping the row into a choppy two-line mess. min-w-0 lets the link
           shrink; the status stays pinned (flex-shrink-0). */}
-      <div className="px-3 py-2 border-t border-cream-200 flex-shrink-0 flex items-center gap-2 bg-white min-w-0">
+      {/* AUDIT 2026-09-14 (CPR5-CLIENT-01/-02, P1) — hidden on phones. Making the
+          recording/commission disclosure persistent (the strip under Clara's
+          header) costs the panel ~112-129 px of fixed height, and at 320×667 the
+          transcript had only 112 px left — the greeting and the language chips, the
+          only controls on the entry screen, both fell outside the log. This row is
+          the one element in the column that is a DUPLICATE: /support renders the
+          site top bar above Clara with the same 1-855-720-8555 link persistently
+          visible (measured at y=16-52 at 320 px), and Clara repeats the call CTA
+          in-flow on escalation and on submit failure. Desktop, which has the height
+          to spare, keeps it. */}
+      <div className="hidden md:flex px-3 py-2 border-t border-cream-200 flex-shrink-0 items-center gap-2 bg-white min-w-0">
         <a
           href="tel:+18557208555"
           className="text-[13px] text-earth-700 hover:text-earth-900 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-cream-100 transition-colors min-w-0"
@@ -2135,6 +2195,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       )}
 
       {/* Input row */}
+      {/* AUDIT 2026-09-14 (CPR5-CLIENT-01, P1) — the composer is not rendered on the
+          language step. It is inert there by definition (inputDisabled is
+          `state.step === 'asking_language' || …`), so it was 73 px of dead control
+          sitting between the visitor and the only two buttons that do anything. The
+          red team's own finding names it: "The composer is disabled until a language
+          chip is clicked, and those chips are the off-screen elements." Reclaiming
+          that height is what lets the greeting AND both chips land inside the log at
+          320 px in Spanish, the tightest of the 12 measured combinations. It comes
+          back the moment a language is chosen. */}
+      {state.step !== 'asking_language' && (
       <form
         method="post"
         action="#"
@@ -2257,6 +2327,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           </button>
         </div>
       </form>
+      )}
       {/* AUDIT 2026-09-12 (CMS-02, P1) — /support is the only route without the
           site footer, so the 42 CFR 422.2267(e)(41) TPMO statement and the
           non-affiliation statement never appeared on Clara's page. They now
