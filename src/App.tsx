@@ -91,15 +91,32 @@ class ChatBoundary extends Component<{ children: ReactNode; es: boolean }, { fai
 // Route-level boundary (RT2-CLIENT-04): a page chunk that still fails after the
 // retry/reload rescue is reported INSIDE the layout — header, footer and the
 // visitor's half-filled form stay mounted — with a plain "try again" control.
-class RouteBoundary extends Component<{ children: ReactNode; es: boolean; pathname: string }, { failed: boolean; at: string }> {
-  state = { failed: false, at: '' }
+class RouteBoundary extends Component<{ children: ReactNode; es: boolean; pathname: string }, { failed: boolean; at: string; confirming: boolean }> {
+  state = { failed: false, at: '', confirming: false }
   static getDerivedStateFromError() { return { failed: true } }
   componentDidUpdate(prev: { pathname: string }) {
-    if (prev.pathname !== this.props.pathname && this.state.failed) this.setState({ failed: false })
+    if (prev.pathname !== this.props.pathname && this.state.failed) this.setState({ failed: false, confirming: false })
+  }
+  // AUDIT 2026-09-14 (CPR5-CLIENT-07, P2) — the round-3 formInProgress() guard
+  // correctly suppressed the AUTOMATIC rescue reload so a visitor mid-message
+  // did not lose their draft. The boundary's own primary button walked straight
+  // past it: one tap of "Try again" cleared the draft, closed the chat and left
+  // the visitor on the same error screen. The protection was only one click
+  // deep. It now asks first, in the same words the consequence deserves.
+  //
+  // CPR5-CLIENT-10 (P3) rides along: clearing the rescue marker before reloading
+  // re-armed the automatic retry, which then fired immediately on the new
+  // document. Every tap cost two full page loads. The marker stays SET — this
+  // reload IS the retry.
+  reload = () => {
+    try { history.replaceState({ ...(history.state || {}), [RELOAD_MARK]: 1 }, '') } catch { /* ignore */ }
+    storageSet('session', 'cp_chunk_reload', '1')
+    window.location.reload()
   }
   render() {
     if (!this.state.failed) return this.props.children
     const es = this.props.es
+    const confirming = this.state.confirming
     return (
       <section className="max-w-2xl mx-auto px-5 py-16 text-center" aria-live="polite">
         <h1 className="font-serif text-2xl text-earth-900 mb-3">{es ? 'No pudimos cargar esta página' : "We couldn't load this page"}</h1>
@@ -107,15 +124,28 @@ class RouteBoundary extends Component<{ children: ReactNode; es: boolean; pathna
         {/* Red-team round 4 (CPR4-CLIENT-01): clearing the boundary state alone
             was inert — React caches the rejected module promise, so the same
             lazy() import fails again with no new request. A user-initiated
-            reload is the only thing that really re-fetches the chunk; the rescue
-            marker is cleared first so the automatic retry can run again. */}
+            reload is the only thing that really re-fetches the chunk. */}
+        {confirming && (
+          <p role="alert" className="text-earth-800 bg-cream-100 border border-cream-300 rounded-lg px-4 py-3 mb-4 text-left">
+            {es
+              ? 'Ha escrito algo en esta página. Si recarga, ese texto se perderá. Puede llamarnos y un asesor lo atiende ahora mismo.'
+              : "You have typed something on this page. Reloading will lose it. You can also call us and an advisor will help you right now."}
+          </p>
+        )}
         <button type="button" onClick={() => {
-          try { history.replaceState({ ...(history.state || {}), [RELOAD_MARK]: 0 }, '') } catch { /* ignore */ }
-          storageSet('session', 'cp_chunk_reload', '')
-          window.location.reload()
+          if (!confirming && formInProgress()) { this.setState({ confirming: true }); return }
+          this.reload()
         }} className="cp-btn inline-flex items-center justify-center min-h-[48px] px-6 rounded-lg bg-earth-800 text-cream-50 font-semibold">
-          {es ? 'Intentar de nuevo' : 'Try again'}
+          {confirming
+            ? (es ? 'Recargar de todos modos' : 'Reload anyway')
+            : (es ? 'Intentar de nuevo' : 'Try again')}
         </button>
+        {confirming && (
+          <button type="button" onClick={() => this.setState({ confirming: false })}
+            className="block mx-auto mt-3 min-h-[44px] px-4 text-earth-800 underline font-semibold">
+            {es ? 'Conservar lo que escribí' : 'Keep what I typed'}
+          </button>
+        )}
       </section>
     )
   }

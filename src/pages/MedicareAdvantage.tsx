@@ -13,14 +13,21 @@ export default function MedicareAdvantage() {
 
   return (
     <div className="min-h-screen bg-cream-50">
+      {/* AUDIT 2026-09-14 (CPR5-CLIENT-11) — the FTC-04 qualifier landed on Home
+          and not here, so the very page Home's fixed card links to still led
+          with an unqualified "$0 premium". The qualifier did appear further down
+          this page, but a net-impression claim has to travel WITH the claim, not
+          arrive two screens later. Same wording as Home.
+          scripts/check-zero-cost-claims.mjs now fails the build if they drift
+          apart again on any route. */}
       <Hero
         image="/service-advisor.jpg"
         eyebrow="Medicare Advantage"
         eyebrowEs="Medicare Advantage"
         headline="All-in-One Medicare Coverage"
         headlineEs="Cobertura Medicare Todo en Uno"
-        subheadline="Learn how Medicare Advantage plans combine hospital, medical, and often prescription drug coverage into one simple plan — sometimes with $0 premium."
-        subheadlineEs="Aprenda cómo los planes Medicare Advantage combinan cobertura hospitalaria, médica y frecuentemente de medicamentos en un solo plan simple — a veces con prima de $0."
+        subheadline="Learn how Medicare Advantage plans combine hospital, medical, and often prescription drug coverage into one simple plan — sometimes at a $0 monthly plan premium. You generally still pay your Part B premium, and plan deductibles, copays and network rules still apply."
+        subheadlineEs="Aprenda cómo los planes Medicare Advantage combinan cobertura hospitalaria, médica y frecuentemente de medicamentos en un solo plan simple — a veces con una prima mensual del plan de $0. Por lo general usted sigue pagando su prima de la Parte B, y aplican los deducibles, copagos y reglas de red del plan."
         variant="page"
         compact
       />

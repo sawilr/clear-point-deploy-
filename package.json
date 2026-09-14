@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-source-hygiene.mjs && node scripts/check-figures-year.mjs && node scripts/check-allowlist-drift.mjs && tsc -b && vite build && node scripts/prerender-meta.mjs && node scripts/build-sitemap.mjs",
+    "build": "node scripts/check-source-hygiene.mjs && node scripts/check-figures-year.mjs && node scripts/check-allowlist-drift.mjs && node scripts/check-zero-cost-claims.mjs && tsc -b && vite build && node scripts/prerender-meta.mjs && node scripts/build-sitemap.mjs",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "node scripts/run-battery.mjs",

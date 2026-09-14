@@ -5761,6 +5761,15 @@ export function ChatBot() {
                 as conversation progresses; does not permanently consume chat height */}
             <div className="bg-gold-100 px-3 py-2 text-[12px] text-earth-700 leading-[1.45] border-b border-gold-200 space-y-1">
               <p>{displayLanguage === 'es' ? DISCLAIMERS.es.privacy : DISCLAIMERS.en.privacy}</p>
+              {/* AUDIT 2026-09-14 (CPR5-CLIENT-05, P2) — the round-4 CMS-02 work
+                  put the 42 CFR 422.2267(e)(41) sentence into Zara's "who are
+                  you" education reply only, so a visitor who opened the chat and
+                  stayed in it never saw it: a red team read the whole dialog
+                  after the opening turns and found no "We do not offer every
+                  plan available in your area". It belongs with the privacy note,
+                  where it renders without anyone having to ask. Clara's
+                  equivalent band already carries it. */}
+              <p>{tpmoDisclaimerText(displayLanguage === 'es' ? 'es' : 'en')}</p>
               <p>{displayLanguage === 'es' ? DISCLAIMERS.es.general : DISCLAIMERS.en.general}</p>
             </div>
             <div

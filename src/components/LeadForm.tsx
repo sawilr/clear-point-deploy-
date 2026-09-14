@@ -135,6 +135,23 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     }
   };
 
+  // AUDIT 2026-09-14 (CPR5-CLIENT-08, P2) — the field kept bare digits while the
+  // placeholder and the title still instructed "(XXX) XXX-XXXX". With nine
+  // digits entered, Chrome's own validation bubble read "Please match the
+  // requested format. (XXX) XXX-XXXX" — telling a senior to type parentheses, a
+  // space and a hyphen that the field strips on every keystroke and the pattern
+  // would reject anyway. WCAG 3.3.2 and 3.3.3.
+  //
+  // The instruction wins: the VALUE is now grouped the way the placeholder shows
+  // it, which is also far easier for an elderly visitor to proof-read than
+  // 9174321098. `formData.phone` stays bare digits, so validation and the
+  // submitted E.164 number are untouched.
+  const formatPhoneDisplay = (digits: string): string => {
+    if (digits.length <= 3) return digits;
+    if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+  };
+
   // Phone: strip to digits, normalize +1/1 prefix, cap at 10 digits
   const handlePhone = (e: React.ChangeEvent<HTMLInputElement>) => {
     const digits = e.target.value.replace(/\D/g, '');
@@ -370,7 +387,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
           </div>
           <div>
             <label htmlFor={fid('phone')} className="block text-sm font-semibold text-earth-800 mb-1.5 uppercase tracking-wide">{t('Phone Number', 'Teléfono')} *</label>
-            <input id={fid('phone')} aria-invalid={errors.phone ? true : undefined} aria-describedby={errors.phone ? fid('phone-err') : undefined} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="[0-9]{10}" title="(XXX) XXX-XXXX" value={formData.phone} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
+            <input id={fid('phone')} aria-invalid={errors.phone ? true : undefined} aria-describedby={errors.phone ? fid('phone-err') : undefined} type="tel" name="phone" required autoComplete="tel-national" inputMode="tel" pattern="\(\d{3}\) \d{3}-\d{4}" title={t('Ten digits, for example (917) 432-1098', 'Diez dígitos, por ejemplo (917) 432-1098')} value={formatPhoneDisplay(formData.phone)} onChange={handlePhone} className="w-full px-3.5 py-2.5 bg-white border border-cream-300 rounded-lg text-base text-earth-900 focus:outline-none focus:ring-2 focus:ring-gold-400/40 focus:border-gold-400 transition-all" placeholder="(XXX) XXX-XXXX" />
             {errors.phone && <p id={fid('phone-err')} role="alert" className="text-xs text-red-700 mt-1">{errors.phone}</p>}
           </div>
           <div>
