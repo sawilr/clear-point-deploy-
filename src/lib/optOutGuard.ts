@@ -320,13 +320,20 @@ export function __resetSessionOptOutForTests(): void {
  * Only an identifier the user themselves provided earlier in the session is
  * sent — never the raw message text.
  */
+// AUDITORÍA INDEPENDIENTE 2026-09-15 — TCPA-01, CRITICAL.
+// Devuelve si la supresión se llegó a INTENTAR. Antes devolvía void y el caso
+// "no hay identificador" era indistinguible del éxito, así que una promesa de
+// no contactar podía convivir con un lead recién enviado con consentimiento de
+// llamadas. Sigue siendo fire-and-forget: el acuse que la persona ya vio no
+// depende del viaje de ida y vuelta, y un fallo del CRM nunca puede reactivar
+// el contacto. Lo que cambia es que el caso sin identificador es visible.
 export function propagateOptOutToCrm(input: {
   phone?: string;
   email?: string;
   permission: ContactPermission;
-}): void {
+}): boolean {
   const { phone, email, permission } = input;
-  if (!phone && !email) return; // nothing to match on; session flag still holds
+  if (!phone && !email) return false; // nothing to match on; session flag still holds
   try {
     void fetch('/api/opt-out', {
       method: 'POST',
@@ -339,7 +346,9 @@ export function propagateOptOutToCrm(input: {
       }),
       keepalive: true, // survive a tab close right after the user says STOP
     }).catch(() => { /* suppression is best-effort; never surface an error here */ });
+    return true;
   } catch {
     /* fetch unavailable — session flag still governs this tab */
+    return false;
   }
 }

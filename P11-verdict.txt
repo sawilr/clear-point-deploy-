@@ -1,0 +1,10 @@
+
+=== grep -ci 'aep|annual enrollment|deadline|current date' api/_lib/lead-intel.js ===
+0
+=== documented design intent ===
+// AUDIT 2026-09-12 (FORMS-04) — remove the lead's own identifiers from free text
+// before it is sent to the enrichment LLM. Exact-value replacement (case-insensitive)
+// plus a generic phone/email sweep; the CRM note keeps the original text.
+// substitution. Only the copy sent to the enrichment model is folded; the CRM
+// note keeps the original text.
+var CONFUSABLES = {

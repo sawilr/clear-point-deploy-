@@ -199,7 +199,6 @@
           "value": "max-age=63072000; includeSubDomains; preload"
         },
         {
-          "_comment": "AUDIT 2026-09-14 (SEC-09, P3) — X-XSS-Protection is removed. Every browser the site supports ignores it, and the legacy auditor it satisfied is not worth the header: '1; mode=block' has known XSS-introducing behaviour in old Chrome, and the CSP below is the real control.",
           "key": "X-Permitted-Cross-Domain-Policies",
           "value": "none"
         },

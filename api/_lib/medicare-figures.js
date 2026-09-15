@@ -98,6 +98,47 @@ const APPROX_BEFORE_AMOUNT = /(around|about|approx\w*|aproximad\w*|roughly|unos|
 function isRoundAmount(val) { return isFinite(val) && val > 0 && val % 10 === 0; }
 // The programmes under which a beneficiary's own share really is $0.
 const SUBSIDY_CONTEXT_RE = /\b(qmb|slmb|\bqi\b|qdwi|medicare\s+savings|programas?\s+de\s+ahorros?|medicaid|dual[-\s]?eligible|doble\s+elegib|extra\s+help|ayuda\s+adicional|ayuda\s+extra|low[-\s]?income\s+subsidy|\blis\b|subsidio)\b/i;
+
+//
+// AUDITORÍA INDEPENDIENTE 2026-09-15 — CMS-01, CRITICAL.
+//
+// El respaldo trataba TODO "$0" como una cifra mal dicha. En Medicare eso es
+// falso en un caso decisivo: lo que una persona paga después de alcanzar el tope
+// de gastos de bolsillo de la Parte D ES cero. Con la frase literal de
+// src/pages/PartD.tsx, el módulo producía:
+//
+//   ENTRA: "...reach $2,100 in 2026, you pay $0 for covered Part D drugs for the
+//           rest of the calendar year."
+//   SALÍA: "...you pay $2,100 for covered Part D drugs..."
+//
+// Reproducido en vivo en Clara EN, Clara ES y Zara: el sitio le decía a alguien
+// que ya gastó el tope que debía $2,100 más.
+//
+// La distinción que importa no es el valor sino QUÉ afirma la cláusula:
+//   "el deducible de la Parte B es $0"     -> falso, el deducible es $283 para
+//      todos; que Medicaid lo cubra no cambia la cifra. Se sigue corrigiendo.
+//   "usted paga $0 después del tope"       -> verdadero. No se toca.
+//   "un plan con prima mensual de $0"      -> verdadero, es un atributo del plan.
+//
+// Dos formas marcan "esto habla de lo que alguien paga":
+//   a) un verbo de pago antes del importe (pay / paga / owe / debe / cuesta);
+//   b) el importe usado como modificador de un sustantivo de costo
+//      ("$0 copay", "prima de $0"), que describe un producto, no una ley.
+const ZERO_PAYER_VERB_RE = /\b(?:pays?|paid|paying|owes?|cost(?:s|ing)?|charges?|paga(?:n|r[aá]|r[ií]a)?|pagu[eé]|deb[eé]|cuesta|cobra)\b[^.;!?]{0,40}$/i;
+const ZERO_COST_NOUN_AFTER_RE = /^\s*(?:monthly\s+|plan\s+|drug\s+|annual\s+|mensual\s+|del\s+plan\s+)*(?:premium|copay|copayment|coinsurance|deductible|cost|charge|prima|copago|coseguro|deducible|costo|recargo)\b/i;
+const ZERO_SHARE_PHRASE_RE = /\b(?:your\s+(?:share|cost|portion|responsibility)|su\s+(?:parte|costo|responsabilidad)|out[-\s]of[-\s]pocket\s+(?:cost|spending)|no\s+paga\s+nada|nothing\s+out\s+of\s+pocket)\b/i;
+
+/**
+ * ¿El "$0" de esta cláusula dice lo que alguien PAGA, en vez de afirmar cuál es
+ * el valor de la cifra reglamentaria? `antes` es el texto de la cláusula hasta
+ * el importe; `despues` es lo que le sigue.
+ */
+function zeroIsCostShare(antes, despues) {
+  if (ZERO_SHARE_PHRASE_RE.test(antes)) return true;
+  if (ZERO_PAYER_VERB_RE.test(antes)) return true;
+  if (ZERO_COST_NOUN_AFTER_RE.test(despues)) return true;
+  return false;
+}
 function isPlausibleRoundingOf(val, fig) {
   if (!isRoundAmount(val)) return false;
   const ratio = val > fig.value ? val / fig.value : fig.value / val;
@@ -633,7 +674,34 @@ function classifyAt(text, offset) {
 // this figure at all. $0 is always corrected.
 function magnitudePlausible(val, fig) {
   if (!isFinite(val) || val < 0) return false;
-  if (val === 0) return true;          // a $0 deductible, premium or cap is never right
+  //
+  // AUDITORÍA INDEPENDIENTE 2026-09-15 — CMS-01, CRITICAL.
+  //
+  // Aquí decía `if (val === 0) return true;  // un $0 nunca es correcto`. Esa
+  // premisa es falsa en Medicare, donde $0 es una de las cifras MÁS correctas y
+  // más importantes que existen, y corregirla convierte al respaldo numérico en
+  // una fuente de desinformación.
+  //
+  // Medido sobre este módulo, con la frase literal de src/pages/PartD.tsx:
+  //   ENTRA: "...reaches $2,100, you pay $0 for covered Part D drugs for the
+  //           rest of the year."
+  //   SALE : "...reaches $2,100, you pay $2,100 for covered Part D drugs..."
+  // El sitio le decía a un beneficiario que debe $2,100 cuando no debe nada.
+  // Reproducido en vivo en Clara EN, Clara ES y Zara.
+  //
+  // El mismo defecto alcanzaba a los demás $0 legítimos: la prima de $0 de
+  // muchos planes Medicare Advantage, el copago de $0, y lo que paga alguien con
+  // QMB o con Ayuda Adicional completa.
+  //
+  // La distinción correcta no es "$0 siempre bien" ni "$0 siempre mal", sino
+  // QUÉ afirma la frase:
+  //   "el deducible de la Parte B es $0"  -> falso. El deducible es $283 para
+  //      todo el mundo; que Medicaid lo pague no lo vuelve cero. Se corrige.
+  //   "usted paga $0 tras alcanzar el tope" -> verdadero. Se deja en paz.
+  // Esa separación se hace en el sitio donde sí hay contexto de cláusula, justo
+  // antes de llamar aquí (ver ZERO_IS_COST_SHARE_RE). Este umbral conserva su
+  // conducta original para el caso que sí es un error de cifra.
+  if (val === 0) return true;
   const ratio = val > fig.value ? val / fig.value : fig.value / val;
   return ratio <= 20;
 }
@@ -724,6 +792,17 @@ export function verifyMedicareFigures(text) {
       // Read across the SENTENCE: "If you have QMB, your share … would be $0"
       // names the programme in the conditional clause, not beside the amount.
       if (val === 0 && SUBSIDY_CONTEXT_RE.test(sentInfo.text)) return match;
+      // CMS-01 — un "$0" que habla de lo que la persona PAGA es correcto y no se
+      // toca; uno que afirma el valor de la cifra reglamentaria sí se corrige.
+      // Se mira solo la cláusula del importe, no la frase entera, para que un
+      // verbo de pago lejano no proteja una afirmación falsa.
+      if (val === 0) {
+        const rel0 = amountAt - sentInfo.start;
+        const cb0 = clauseAround(sentInfo.text, rel0);
+        const antes = sentInfo.text.slice(cb0.start, rel0);
+        const despues = sentInfo.text.slice(rel0 + match.length, cb0.end);
+        if (zeroIsCostShare(antes, despues)) return match;
+      }
       if (aboutOtherYear(text, amountAt, fig.year)) return match; // another contract year — not ours to rewrite
       // Red-team round 3 (MED02-RT3-03): a sentence that ALREADY carries the
       // right figure is a comparison ("increased from $257 to $283") — rewriting

@@ -1,0 +1,164 @@
+[
+  {
+    "category": "wrong_topic",
+    "id": "drug_too_expensive/es/32",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "mi medicina es muy cara",
+    "lang": "es",
+    "resp": "Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. No pue"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_too_expensive/es/33",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "mi receta cuesta mucho",
+    "lang": "es",
+    "resp": "Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. No pue"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_too_expensive/es/35",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "mi mdicna es cara",
+    "lang": "es",
+    "resp": "Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_too_expensive/en/36",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "my medication is expensive",
+    "lang": "en",
+    "resp": "For drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy. I can't confirm eligibi"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_too_expensive/en/37",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "my drug costs too much",
+    "lang": "en",
+    "resp": "For drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy. I can't confirm eligibi"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_pharmacy_problem/es/51",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "la farmacia me cobra mucho",
+    "lang": "es",
+    "resp": "Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. No pue"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "drug_pharmacy_problem/en/54",
+    "expected": "drug",
+    "got": "unknown",
+    "phrase": "pharmacy charges too much",
+    "lang": "en",
+    "resp": "For drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy. I can't confirm eligibi"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_doctor/es/67",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "me cobraron en el consultorio",
+    "lang": "es",
+    "resp": "Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_doctor/en/70",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "doctor charged me",
+    "lang": "en",
+    "resp": "I understand, and I want to help with that. Before we talk about any assistance, let me make sure I understand what happ"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_hospital/es/72",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "el hospital me cobra $2000",
+    "lang": "es",
+    "resp": "Entiendo, y quiero ayudarle con eso. Antes de hablar de posibles ayudas, déjeme entender bien qué pasó: ¿lo que necesita"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_hospital/en/74",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "hospital charged me",
+    "lang": "en",
+    "resp": "I understand, and I want to help with that. Before we talk about any assistance, let me make sure I understand what happ"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_pharmacy/es/75",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "me cobraron en la farmacia",
+    "lang": "es",
+    "resp": "Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. No pue"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_pharmacy/es/76",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "la farmacia me cobro extra",
+    "lang": "es",
+    "resp": "Para los costos de medicamentos, el programa federal **Extra Help (LIS)** puede bajar lo que paga en la farmacia. No pue"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_pharmacy/en/77",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "pharmacy charged me extra",
+    "lang": "en",
+    "resp": "For drug costs, the federal **Extra Help (LIS)** program can lower what you pay at the pharmacy. I can't confirm eligibi"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_from_plan/es/79",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "el plan me esta cobrando",
+    "lang": "es",
+    "resp": "Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_surprise/es/82",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "no esperaba este cobro",
+    "lang": "es",
+    "resp": "Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_surprise/en/84",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "didnt expect this charge",
+    "lang": "en",
+    "resp": "I understand. When you say Medicare is charging you, it could be the Part B premium, medications, doctor copays, or a bi"
+  },
+  {
+    "category": "wrong_topic",
+    "id": "bill_with_amount/es/94",
+    "expected": "bill",
+    "got": "unknown",
+    "phrase": "el plan me cobra $300 al mes",
+    "lang": "es",
+    "resp": "Entiendo. Cuando dice que le están cobrando de Medicare, puede ser la prima de la Parte B, los medicamentos, los copagos"
+  }
+]

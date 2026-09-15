@@ -24,7 +24,13 @@ export type ClaraEventName =
   | 'crm_submit_ok'          // submit-lead confirmed by backend
   | 'crm_submit_failed'      // submit-lead failed / not confirmed
   | 'human_fallback'         // bot stopped guessing, escalated to human review
-  | 'flag_evaluated';        // CLARA_HARDENED_FLOW resolved
+  | 'flag_evaluated'         // CLARA_HARDENED_FLOW resolved
+  // AUDITORÍA INDEPENDIENTE 2026-09-15 — TCPA-01. Alguien dijo STOP y se le
+  // acusó recibo, pero no había teléfono ni correo con el que casarlo en el CRM,
+  // así que la supresión no se intentó. La marca de sesión sigue valiendo en
+  // esta pestaña. Esto existe para que ese caso deje rastro: el silencio fue lo
+  // que dejó que la promesa y la acción se separaran sin que nadie lo viera.
+  | 'optout_not_propagated';
 
 /** Emit a PII-free Clara event. `detail` must contain only booleans/numbers. */
 export function claraEvent(name: ClaraEventName, detail?: Record<string, boolean | number | string>): void {

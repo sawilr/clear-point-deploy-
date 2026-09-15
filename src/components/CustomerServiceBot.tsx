@@ -753,11 +753,38 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
         if (optOut.permission) {
           persistContactPermission(optOut.permission);
           // AUDIT 2026-08-13 (O-01) — propagate to the CRM as well.
-          propagateOptOutToCrm({
-            phone: outerState.phone || '',
-            email: outerState.email || '',
+          //
+          // AUDITORÍA INDEPENDIENTE 2026-09-15 — TCPA-01, CRITICAL.
+          //
+          // Esto leía SOLO `outerState`, y el teléfono vive en dos sitios según
+          // por dónde entró la persona: el flujo externo lo guarda en
+          // `outerState.phone`, pero la ruta del motor —la que produjo el lead
+          // en el caso observado— lo guarda en `state.phoneNumber`. Con el
+          // teléfono en el segundo, esto mandaba cadenas vacías,
+          // propagateOptOutToCrm hacía early return en silencio, y Clara
+          // respondía igualmente "no recibirá llamadas ni mensajes".
+          //
+          // Medido en vivo: se envió el lead al CRM con consent_calls=true y
+          // consent_sms=true, la persona escribió STOP, Clara prometió no
+          // contactarla, y la traza de red de toda la sesión fue tres POST a
+          // /api/chat y uno a /api/submit-lead. Cero llamadas a /api/opt-out.
+          // La pantalla mostraba a la vez "no le contactaremos" y "un asesor se
+          // comunicará con usted en breve".
+          //
+          // Se leen los dos orígenes para que la supresión no dependa de por
+          // dónde entró la persona.
+          const enviado = propagateOptOutToCrm({
+            phone: outerState.phone || state.phoneNumber || '',
+            email: outerState.email || state.email || '',
             permission: optOut.permission,
           });
+          if (!enviado) {
+            // No había identificador con el que casar en el CRM. La marca de
+            // sesión sigue valiendo, pero conviene que esto deje rastro en vez
+            // de desaparecer: el silencio es justamente lo que permitió que el
+            // defecto anterior pasara inadvertido.
+            claraEvent('optout_not_propagated', { step: String(outerState.step || 'unknown') });
+          }
         }
         // AUDIT 2026-08-13 (F-04, P1) — acknowledgment alone was not enough:
         // the outer flow stayed parked on its collection step, so the caller's
