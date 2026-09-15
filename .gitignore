@@ -50,3 +50,12 @@ deploy-*.log
 prod*.log
 
 .vercel
+
+# Salida generada por las suites, nunca leída por el código (auditoría 2026-09-15).
+# Se regenera al correr la suite correspondiente; versionarla solo produce ruido
+# en los diffs y confunde sobre qué es fuente.
+scripts/corpus-failures.json
+
+# Borradores que los agentes de auditoría dejaron en la raíz del repositorio.
+P11-verdict.txt
+geo-onpage.txt
