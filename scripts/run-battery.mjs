@@ -45,6 +45,7 @@ const SUITES = [
   'test-lead-intel-metadata-r5-2026-09-14.mjs',
   'test-submit-lead-r5-2026-09-14.mjs',
   'test-consent-classifier-r5-2026-09-14.mjs',
+  'test-safety-parity-client-server-2026-09-15.mjs',
 ];
 
 const only = process.argv.slice(2);

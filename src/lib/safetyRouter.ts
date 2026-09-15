@@ -189,12 +189,40 @@ const CONCERN_VETO = [
   'extra help', 'ayuda extra', 'switch plans', 'cambiar de plan',
 ];
 
-function lowercased(s: string): string {
-  return (s || '').toString().toLowerCase().normalize('NFKD');
+//
+// AUDIT 2026-09-15 (CODE-01, CRITICAL, seguridad de vida). Este normalizador
+// DESCOMPONÍA los acentos con NFKD y luego comparaba contra literales que en el
+// archivo están compuestos (NFC). Las dos formas nunca son iguales, así que
+// `'visión'.normalize('NFKD').includes('visión')` es false, y con él lo eran
+// todos los literales acentuados de las listas en español.
+//
+// Medido sobre el módulo real, antes de este cambio:
+//   'Quiero hacerme daño'                    cliente=none  servidor=crisis_988
+//   'Tomo warfarina y tengo visión borrosa'  cliente=none  servidor=clinical_concern
+// Las mismas frases sin acento sí se detectaban. Es decir: escribir el español
+// correctamente desactivaba la red. Y este router corre PRIMERO en el navegador;
+// cuando devuelve 'none' el turno lo consume el flujo normal y nunca llega a
+// /api/chat, así que la red del servidor tampoco lo ve.
+//
+// La corrección es plegar los DOS lados a la misma forma sin acentos. Pasar solo
+// la copia sin acentos del texto no bastaba: los literales siguen acentuados, así
+// que 'vision borrosa'.includes('visión') también es false. Se pliega el texto
+// aquí y las listas en anyMatch, una sola vez por lista.
+function foldAccents(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
+function lowercased(s: string): string {
+  return foldAccents((s || '').toString().toLowerCase());
+}
+
+// Las listas son constantes de módulo, así que el plegado se hace una vez por
+// lista y se reutiliza durante toda la vida de la página.
+const _foldedLists = new WeakMap<string[], string[]>();
 function anyMatch(text: string, list: string[]): boolean {
-  for (const k of list) if (text.includes(k)) return true;
+  let folded = _foldedLists.get(list);
+  if (!folded) { folded = list.map(foldAccents); _foldedLists.set(list, folded); }
+  for (const k of folded) if (text.includes(k)) return true;
   return false;
 }
 
