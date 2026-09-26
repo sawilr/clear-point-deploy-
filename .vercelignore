@@ -2,14 +2,25 @@
 .env.local
 .env.prod
 # AUDIT 2026-09-12 (CODE-14) — test corpora, audits and docs are not part of the
-# deployed artefact. The build itself only needs scripts/prerender-meta.mjs,
-# scripts/build-sitemap.mjs, scripts/check-figures-year.mjs and
-# scripts/check-source-hygiene.mjs.
+# deployed artefact. Only the scripts the build itself runs are shipped.
+#
+# AUDITORÍA INDEPENDIENTE 2026-09-26 — esta lista blanca está ACOPLADA al script
+# "build" de package.json y nada local lo comprobaba: .vercelignore solo aplica
+# en Vercel, así que un `npm run build` local pasa aunque falte una entrada. Cada
+# puerta nueva que añadí desde el 13 de septiembre rompió el despliegue en
+# silencio: ocho builds consecutivos en ERROR, todos con
+# "Cannot find module /vercel/path0/scripts/check-…". La puerta
+# scripts/check-vercel-config.mjs ahora verifica que cada script que invoca el
+# build tenga aquí su excepción, y falla la compilación local si falta una.
 scripts/*
 !scripts/prerender-meta.mjs
 !scripts/build-sitemap.mjs
-!scripts/check-figures-year.mjs
 !scripts/check-source-hygiene.mjs
+!scripts/check-vercel-config.mjs
+!scripts/check-figures-year.mjs
+!scripts/check-allowlist-drift.mjs
+!scripts/check-zero-cost-claims.mjs
+!scripts/check-contact-consistency.mjs
 docs/
 compliance/
 info.md

@@ -88,5 +88,38 @@ if (problemas.length) {
   process.exit(1);
 }
 
-const nCab = (cfg.headers || []).reduce((n, g) => n + (g.headers || []).length, 0);
-console.log(`[vercel-config] OK — ${(cfg.headers || []).length} grupo(s) de cabeceras con ${nCab} cabeceras, ${(cfg.redirects || []).length} redirecciones y ${(cfg.rewrites || []).length} reescrituras, todas con claves válidas.`);
+// ── Segunda comprobación: los scripts del build tienen que LLEGAR a Vercel ──
+//
+// AUDITORÍA INDEPENDIENTE 2026-09-26. Encontrado al leer los logs de Vercel, no
+// al leer el código: ocho despliegues consecutivos en ERROR con
+//
+//     Error: Cannot find module '/vercel/path0/scripts/check-vercel-config.mjs'
+//
+// .vercelignore excluye scripts/* y permite cada script del build con una
+// excepción "!scripts/…". Esa lista se escribió el 12 de septiembre con las
+// cuatro puertas que existían entonces, y package.json fue sumando puertas sin
+// que nada la actualizara. Localmente es invisible: .vercelignore solo se aplica
+// en Vercel, así que `npm run build` pasa en la máquina y falla en el
+// despliegue. El acoplamiento entre los dos archivos es real y ahora se
+// comprueba aquí, en el mismo sitio donde se comprueba lo demás que Vercel
+// rechazaría.
+{
+  let buildCmd = '';
+  try { buildCmd = JSON.parse(readFileSync('package.json', 'utf8')).scripts?.build || ''; } catch { /* sin package.json: nada que cruzar */ }
+  const invocados = [...buildCmd.matchAll(/\bnode\s+(scripts\/[\w.-]+\.mjs)\b/g)].map((m) => m[1]);
+  let vi = [];
+  try { vi = readFileSync('.vercelignore', 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#')); } catch { /* sin .vercelignore: todo se despliega */ }
+  const excluyeScripts = vi.some((l) => l === 'scripts/*' || l === 'scripts/' || l === 'scripts');
+  if (excluyeScripts && invocados.length) {
+    const permitidos = new Set(vi.filter((l) => l.startsWith('!')).map((l) => l.slice(1)));
+    const faltan = invocados.filter((s) => !permitidos.has(s));
+    if (faltan.length) {
+      console.error('[vercel-config] FALLO — .vercelignore excluye scripts/* pero el build invoca scripts sin excepción; en Vercel fallará con "Cannot find module":\n');
+      for (const s of faltan) console.error(`  falta la línea:  !${s}`);
+      console.error('\n  Esto no se ve en un build local porque .vercelignore solo aplica en Vercel.');
+      process.exit(1);
+    }
+  }
+  const nCab = (cfg.headers || []).reduce((n, g) => n + (g.headers || []).length, 0);
+  console.log(`[vercel-config] OK — ${(cfg.headers || []).length} grupo(s) de cabeceras con ${nCab} cabeceras, ${(cfg.redirects || []).length} redirecciones y ${(cfg.rewrites || []).length} reescrituras, claves válidas; ${invocados.length} scripts del build${excluyeScripts ? ' con su excepción en .vercelignore' : ''}.`);
+}
