@@ -226,6 +226,26 @@ function anyMatch(text: string, list: string[]): boolean {
   return false;
 }
 
+// AUDITORÍA INDEPENDIENTE 2026-09-26 — AI-04, HIGH.
+// El veto de costo se comparaba por SUBSTRING, igual que las listas de síntomas.
+// Para síntomas eso ayuda ("dizziness" contiene "dizzy"); para el veto es un
+// agujero: "primary" contiene "prima", así que "I take warfarin and I am very
+// dizzy since seeing my primary doctor" quedaba vetado como si fuera una
+// pregunta de precio, y la persona recibía un aviso de privacidad en lugar de
+// la derivación clínica. Medido: cliente=none, servidor=clinical_concern.
+// El veto exige ahora palabra completa. Las listas de síntomas y medicamentos
+// siguen por substring a propósito: ahí la anchura protege.
+const _wordRes = new WeakMap<string[], RegExp>();
+function anyMatchWord(text: string, list: string[]): boolean {
+  let re = _wordRes.get(list);
+  if (!re) {
+    const alts = list.map((k) => foldAccents(k).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    re = new RegExp('(?<![\\p{L}\\p{N}])(?:' + alts.join('|') + ')(?![\\p{L}\\p{N}])', 'iu');
+    _wordRes.set(list, re);
+  }
+  return re.test(text);
+}
+
 // AUDIT 2026-08-27 (mega-corpus) — PROXIMITY REGEX NETS. The substring lists miss
 // real phrasings where adverbs / morphology sit between the words: "me duele
 // MUCHO el pecho", "chest HAS BEEN hurtin", "ENDING it all", stroke described as
@@ -345,7 +365,7 @@ export function detectSafetyTrigger(userMessage: string): SafetyResult {
   // CP-03 — clinical concern: a high-risk medication AND a new symptom, and NOT a
   // cost/coverage question. Runs last of the three tiers, so anything genuinely acute
   // has already been routed to 988 or 911 above and cannot be downgraded to this.
-  if (!anyMatch(t, CONCERN_VETO)
+  if (!anyMatchWord(t, CONCERN_VETO)
     && anyMatch(t, HIGH_RISK_MEDS)
     && (anyMatch(t, CONCERN_SYMPTOMS_EN) || anyMatch(t, CONCERN_SYMPTOMS_ES))) {
     return {

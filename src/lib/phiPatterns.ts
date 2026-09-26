@@ -132,6 +132,11 @@ export function scrubSensitiveText(text: string): string {
     out = out.replace(new RegExp('(?:' + NUM_WORD_TOKEN + '){4,}', 'gi'), '[REDACTED-SSN] ');
     out = out.replace(/(?:\d[\s.\-_/,]*){7,}/g, '[REDACTED-SSN]');
   }
+  // AUDITORÍA INDEPENDIENTE 2026-09-26 — P-01, HIGH. Espejo del servidor: un
+  // MBI dictado letra a letra ("1 E G 4 T E 5 M K 7 3") pasaba intacto. Once
+  // caracteres sueltos que, juntos, tienen la forma estricta del MBI de CMS.
+  out = out.replace(/(?:(?<![A-Za-z0-9])[A-Za-z0-9](?![A-Za-z0-9])[\s.\-_/]*){11}/g, (run) =>
+    /^[1-9][A-Z][A-Z0-9]\d[A-Z][A-Z0-9]\d[A-Z]{2}\d{2}$/i.test(run.replace(/[\s.\-_/]/g, '')) ? '[REDACTED-MBI]' : run);
   // MBI first (alphanumeric — must run before generic digit rules).
   out = out.replace(/\b[1-9][A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z0-9]\d[-\s]?[A-Z][A-Z]\d{2}\b/gi, '[REDACTED-MBI]');
   // Cards (16-digit, then Amex 15-digit).

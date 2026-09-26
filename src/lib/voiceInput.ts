@@ -53,7 +53,20 @@ export function isVoiceSupported(): boolean {
     SpeechRecognition?: new () => SpeechRecognitionInstance;
     webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
   };
-  return !!(w.SpeechRecognition || w.webkitSpeechRecognition);
+  if (!(w.SpeechRecognition || w.webkitSpeechRecognition)) return false;
+  // AUDITORÍA INDEPENDIENTE 2026-09-26 — HV-03, HIGH. El botón se mostraba
+  // aunque la plataforma prohibiera el micrófono: la propia cabecera
+  // Permissions-Policy del sitio lo bloqueaba y el reconocimiento moría con
+  // "not-allowed" sin que la persona viera nada. Si el documento sabe que la
+  // función está denegada, el botón no aparece. La cabecera permite ahora
+  // microphone=(self); esta comprobación cubre cualquier otro entorno que lo
+  // niegue (un iframe ajeno, una política de empresa).
+  const d = document as unknown as { featurePolicy?: { allowsFeature?: (f: string) => boolean }; permissionsPolicy?: { allowsFeature?: (f: string) => boolean } };
+  const pol = d.permissionsPolicy || d.featurePolicy;
+  try {
+    if (pol && typeof pol.allowsFeature === 'function' && pol.allowsFeature('microphone') === false) return false;
+  } catch { /* la API no está: no se puede saber, se deja mostrar */ }
+  return true;
 }
 
 export function createVoiceRecognizer(

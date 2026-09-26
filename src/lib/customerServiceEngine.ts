@@ -4005,7 +4005,16 @@ export function processMessage(
 
         // (A) We asked "is everything correct?" → interpret yes / no.
         if (state.lastBotIntent === 'handoff_asking_confirm') {
-          const _yes = /^(si+|s\b|yes+|yeah|yep|claro|correcto|exacto|asi es|todo (bien|correcto|ok)|esta bien|perfecto|de acuerdo|confirmo|ok|okay|all (good|correct|right)|that'?s (right|correct)|looks good|perfect|confirm)\b/.test(_ans);
+          // AUDITORÍA INDEPENDIENTE 2026-09-26 — TCPA-03, HIGH. Esta respuesta
+          // es el ÚNICO acto de consentimiento de Clara: el resumen lleva el
+          // texto TCPA canónico y un "sí" aquí produce consent_to_contact=true
+          // con recibo firmado. "ok", "okay", "claro", "perfecto", "de acuerdo",
+          // "está bien" son acuses de recibo, no autorizaciones. Medido en vivo:
+          // la palabra "ok" generó un lead con hash de consentimiento válido y
+          // la nota del CRM decía "What the user said: ok". Se aceptan solo
+          // afirmativas explícitas; el resto vuelve a preguntar. Misma regla
+          // que ya rige en el flujo externo (classifyConsentAnswer).
+          const _yes = /^(si+|s\b|yes+|yeah|yep|correcto|exacto|asi es|todo correcto|confirmo|confirm|confirmed|autorizo|acepto|i agree|agreed|i authorize|all correct|that('?s| is) (right|correct)|it('?s| is) correct|looks good|es correcto|est[aá] correcto)\b/.test(_ans);
           const _no = /^(no|nop|nope|negativo|incorrect|esta mal|mal\b|equivocad|hay un error|cambiar|cambie|corrij|correg|fix|wrong|change|edit)\b/.test(_ans);
           if (_no) {
             return _emitHandoff(

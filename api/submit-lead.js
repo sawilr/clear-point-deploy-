@@ -1443,9 +1443,22 @@ export default async function handler(req, res) {
             // AUDIT 2026-08-13 (O-05) — flag a repeat submission at the TOP of
             // the note so the advisor immediately sees this person asked again
             // and was not reached the first time.
+            //
+            // AUDITORÍA INDEPENDIENTE 2026-09-26 — API-01, HIGH. En esa rama el
+            // texto del remitente se escribía en la ficha de OTRA persona: un
+            // POST sin autenticar con un teléfono ya presente en el CRM ponía
+            // "URGENT FROM COMPLIANCE: … confirm the routing number" en la nota
+            // que lee el asesor de ese cliente. Nadie probó ser dueño de ese
+            // teléfono. En una repetición no verificada se escribe SOLO texto
+            // de autoría del servidor más el identificador de envío; el asesor
+            // ve que la persona volvió a pedir contacto, que es la acción que
+            // toca, y la prosa del remitente no llega a la ficha. Reactivar eso
+            // exige el token firmado que ya prescribe el comentario de arriba.
             body:JSON.stringify({body:(_repeatRequest
-              ? '*** REPEAT REQUEST — this person already had a record and submitted again. They are still waiting for contact. ***\n\n'
-              : '') + noteBody})
+              ? '*** REPEAT REQUEST — this person already had a record and submitted again. They are still waiting for contact. ***\n'
+                + 'Message text withheld: this was an unverified web submission and anyone who knows a phone number can send one. '
+                + 'Submission ID: ' + (submission_id || 'n/a') + '. Form: ' + String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40) + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.'
+              : noteBody)})
           });
         } catch(e) {
           console.error('[GHL] Note creation exception: ' + (e && e.message ? e.message : String(e)));
@@ -1500,6 +1513,12 @@ export default async function handler(req, res) {
       sourceLabel = 'Website Lead';
     }
     var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' — ' + sourceLabel;
+    // API-01 (2026-09-26) — decisión conciliada con LEAD-02 (2026-08-18): la
+    // oportunidad SÍ se crea en una repetición. Es un objeto de autoría del
+    // servidor, la idempotencia de abajo evita duplicarla si ya hay una
+    // abierta, y para el asesor es la tarea de seguimiento que evita que una
+    // persona que volvió a pedir contacto se pierda. El vector de inyección
+    // era la prosa libre en la nota, y ésa es la que se retiene arriba.
     if (contactId) {
       try {
         // FASE 15 — opportunity idempotency. The contact upsert already dedupes by

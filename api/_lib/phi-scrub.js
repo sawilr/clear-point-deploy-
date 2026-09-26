@@ -68,6 +68,27 @@ const NUM_WORDS = {
 };
 const NUM_WORD_TOKEN = '\\b(?:' + Object.keys(NUM_WORDS).join('|') + ')\\b[\\s\\-,]*';
 
+// AUDITORÍA INDEPENDIENTE 2026-09-26 — P-01, HIGH. Un número de Medicare
+// DICTADO letra a letra ("1 E G 4 T E 5 M K 7 3", o con guiones entre grupos)
+// pasaba las dos redes y llegaba literal a la nota del CRM y al modelo. La
+// forma impresa (1EG4-TE5-MK73) sí se detectaba; el hueco era exactamente la
+// forma hablada, que es como lo dice una persona mayor por chat. Se buscan once
+// caracteres SUELTOS (cada uno rodeado de separadores), se juntan y se exige
+// la forma estricta del MBI de CMS antes de redactar: primer carácter 1-9 y
+// las posiciones letra/dígito en su sitio. Once tokens de un solo carácter con
+// esa forma no aparecen en prosa normal.
+const DICTATED_MBI_RUN_RE = /(?:(?<![A-Za-z0-9])[A-Za-z0-9](?![A-Za-z0-9])[\s.\-_/]*){11}/g;
+const MBI_STRICT_RE = /^[1-9][A-Z][A-Z0-9]\d[A-Z][A-Z0-9]\d[A-Z]{2}\d{2}$/i;
+function redactDictatedMbi(s) {
+  var hits = 0;
+  var out = s.replace(DICTATED_MBI_RUN_RE, function (run) {
+    var joined = run.replace(/[\s.\-_/]/g, '');
+    if (MBI_STRICT_RE.test(joined)) { hits++; return '[REDACTED_MBI]'; }
+    return run;
+  });
+  return { text: out, hits: hits };
+}
+
 function collapseInterDigit(s) {
   let out = s;
   for (let i = 0; i < 12; i++) {
@@ -129,6 +150,14 @@ export function scrubPHI(text, opts) {
     PHONE_CONTIG_RE.lastIndex = 0;
     var inner = scrubPHI(pre);
     return { text: inner.text, detected: inner.detected.concat(detectedContact) };
+  }
+  // P-01 — la forma dictada del MBI se resuelve antes que todo lo demás, con
+  // su propio marcador de detección, para que el resto del filtro vea ya el
+  // texto redactado.
+  var dictated = redactDictatedMbi(text);
+  if (dictated.hits) {
+    var rest = scrubPHI(dictated.text);
+    return { text: rest.text, detected: ['MBI_DICTATED'].concat(rest.detected) };
   }
   // Detect on the normalized copy; if it trips a rule the original did not,
   // the whole numeric span is replaced (we cannot map offsets back reliably).

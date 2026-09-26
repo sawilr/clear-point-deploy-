@@ -15,8 +15,15 @@ const FREE_REVIEW_ERROR_EN = 'We could not send your request right now. Please t
 const FREE_REVIEW_ERROR_ES = 'No pudimos enviar su solicitud en este momento. Intente nuevamente o llame al 1-855-720-8555.';
 // Sawil 2026-07-09 — distinct, generic copy for the server rate limit (429).
 // Reveals no internal logic; gives the caller a working path (phone).
-const FREE_REVIEW_LIMIT_EN = 'We already received your request. If you need to reach us sooner, please call 1-855-720-8555.';
-const FREE_REVIEW_LIMIT_ES = 'Ya recibimos su solicitud. Si necesita comunicarse antes, por favor llame al 1-855-720-8555.';
+// AUDITORÍA INDEPENDIENTE 2026-09-26 — LL-01, HIGH. Este texto afirmaba un
+// hecho que el cliente no puede saber. Un 429 NUNCA significa "ya lo tenemos":
+// un duplicado real vuelve como 200 con repeat=true; el 429 solo dice que el
+// limitador se agotó. Medido con el CRM caído: tres intentos fallan con 502 y el
+// cuarto recibe 429, y la persona leía "Ya recibimos su solicitud" con cero
+// contactos creados. El texto nuevo no afirma recepción y da la vía que sí
+// funciona.
+const FREE_REVIEW_LIMIT_EN = 'We could not accept another submission right now. Please call 1-855-720-8555 so we can help you today.';
+const FREE_REVIEW_LIMIT_ES = 'No pudimos aceptar otro envío en este momento. Por favor llame al 1-855-720-8555 para ayudarle hoy mismo.';
 
 // Fake ZIP patterns (mirrors ChatBot.tsx lead_zip handler)
 const FAKE_ZIPS = new Set(['00000','11111','22222','33333','44444','55555',
@@ -75,6 +82,17 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
     if (!error) return;
     submitErrorRef.current?.focus();
   }, [error]);
+
+  // AUDITORÍA INDEPENDIENTE 2026-09-26 — TCPA-06, HIGH. El idioma preferido
+  // nacía fijo en 'en', también en /es: un consentimiento en español se
+  // archivaba en el CRM con la etiqueta Lang-EN encima de una nota cuyo texto
+  // sellado está en español. Medido en /es/contact: el radio "English" venía
+  // marcado. Ahora sigue al idioma mostrado mientras el visitante no haya
+  // tocado el formulario; en cuanto empieza a escribir, su elección manda.
+  useEffect(() => {
+    if (formStartedRef.current) return;
+    setFormData((d) => ({ ...d, preferred_language: lang === 'es' ? 'es' : 'en' }));
+  }, [lang]);
   const [formData, setFormData] = useState({
     first_name: '',
     last_name: '',
