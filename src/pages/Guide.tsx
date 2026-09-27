@@ -2,7 +2,7 @@ import { useParams, Link } from 'react-router';
 import { useLanguage, useLocalizedPath } from '../hooks/useLanguage';
 import { CTASection } from '../components/CTASection';
 import { ExternalLinkIcon } from '../components/icons';
-import { findGuide, GUIDE_SOURCES } from '../data/guides';
+import { findGuide, GUIDES, GUIDE_SOURCES } from '../data/guides';
 import NotFound from './NotFound';
 
 // SEO 2026-09-27 (CA-SEO-03 / SEO-T3 / SEO-LIVE-05). Página propia para cada
@@ -87,6 +87,21 @@ export default function Guide() {
                   <a href={s.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 text-sm font-semibold text-gold-600 hover:text-gold-700 min-h-[44px]">
                     {s.name} <ExternalLinkIcon className="w-4 h-4" />
                   </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {/* RONDA 8 (F2): cada guía era un callejón sin salida — sin enlaces a las
+              demás. Las hermanas van aquí con su título real como texto del enlace. */}
+          <section aria-labelledby="guide-siblings" className="mt-10">
+            <h2 id="guide-siblings" className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('Other guides', 'Otras guías')}</h2>
+            <ul className="grid sm:grid-cols-2 gap-2">
+              {GUIDES.filter((g) => g.slug !== guide.slug).map((g) => (
+                <li key={g.slug}>
+                  <Link to={lp('/resources/' + g.slug)} className="block bg-white border border-cream-200 rounded-lg px-4 py-3 text-sm font-semibold text-earth-800 hover:text-gold-600 hover:shadow-soft transition-all min-h-[44px]">
+                    {t(g.title, g.titleEs)}
+                  </Link>
                 </li>
               ))}
             </ul>

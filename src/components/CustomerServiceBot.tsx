@@ -1895,7 +1895,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           scroller as a flex-shrink-0 strip under Clara's header: no scroll position
           and no collapse state can hide it. Typography matches the persistent TPMO
           line under the composer (cp-legal, 12 px, leading-snug). */}
-      <p className="cp-legal flex-shrink-0 bg-gold-100 border-b border-gold-200 px-4 py-1.5 text-[12px] leading-snug text-earth-800">
+      <p className="cp-legal flex-shrink-0 bg-gold-100 border-b border-gold-200 px-4 py-1.5 text-[13px] leading-snug text-earth-800">
         {isSpanish
           ? 'Las llamadas con Clear Point pueden ser grabadas por calidad y cumplimiento; una asistente automatizada puede contestar primero. Nuestro servicio no tiene costo para usted: si se inscribe en un plan a través de nosotros, Clear Point puede recibir una comisión de la aseguradora, y el costo de su plan no aumenta.'
           : 'Calls with Clear Point may be recorded for quality and compliance, and an automated assistant may answer first. Our service is no cost to you: if you enroll in a plan through us, Clear Point may be compensated by the insurance carrier, and your plan cost is not increased.'}
@@ -2402,7 +2402,7 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       {/* Red-team RT-CLIENT-04: keep ONLY the (e)(41) sentence persistent (one to
           two lines); the non-affiliation sentence lives in the collapsible notice
           band above, so short phones keep a usable conversation log. */}
-      <p className="cp-legal px-4 pb-1.5 pt-1 text-[12px] sm:text-[13px] leading-snug text-earth-700 bg-cream-50 border-t border-cream-200">
+      <p className="cp-legal px-4 pb-1.5 pt-1 text-[13px] leading-snug text-earth-700 bg-cream-50 border-t border-cream-200">
         {tpmoDisclaimerText(isSpanish ? 'es' : 'en')}
       </p>
     </>

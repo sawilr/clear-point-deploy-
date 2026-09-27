@@ -81,7 +81,10 @@ export default function About() {
           <div className="text-center max-w-2xl mx-auto mb-14">
             <span className="text-xs font-bold tracking-[0.2em] uppercase text-gold-600 mb-4 block">{t('Credentials', 'Credenciales')}</span>
             <h2 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-normal text-earth-900 leading-snug mb-4">
-              {t('Licensed. Experienced. Trusted.', 'Licenciado. Experimentado. De Confianza.')}
+              {/* RONDA 8 (R8-09 / EEAT-06): "Experienced" y "Trusted" no tenían sustento
+                  visible. Los tres adjetivos actuales sí: licencia en NY·NJ·CT con NPN
+                  publicado, agencia independiente, atención en dos idiomas. */}
+              {t('Licensed. Independent. Bilingual.', 'Licenciado. Independiente. Bilingüe.')}
             </h2>
             <p className="text-earth-700 text-sm font-medium">{t('Final plan availability and carrier participation vary by area and appointment status.', 'La disponibilidad final de planes y la participación de aseguradoras varían por área y estado de cita.')}</p>
           </div>

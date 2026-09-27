@@ -1,0 +1,17 @@
+{
+  "__shared": "2026-09-27",
+  "src/pages/Home.tsx": "2026-09-27",
+  "src/pages/About.tsx": "2026-09-27",
+  "src/pages/MedicareAdvantage.tsx": "2026-09-14",
+  "src/pages/PartD.tsx": "2026-09-13",
+  "src/pages/ExtraHelp.tsx": "2026-09-13",
+  "src/pages/HelpPayingCosts.tsx": "2026-09-13",
+  "src/pages/OtcBenefits.tsx": "2026-09-13",
+  "src/pages/Support.tsx": "2026-09-14",
+  "src/pages/Resources.tsx": "2026-09-27",
+  "src/pages/Contact.tsx": "2026-09-13",
+  "src/pages/PrivacyPolicy.tsx": "2026-09-13",
+  "src/pages/Accessibility.tsx": "2026-09-13",
+  "src/pages/Terms.tsx": "2026-09-13",
+  "src/data/guides.ts": "2026-09-27"
+}

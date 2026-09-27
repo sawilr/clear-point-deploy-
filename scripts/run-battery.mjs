@@ -48,6 +48,7 @@ const SUITES = [
   'test-safety-parity-client-server-2026-09-15.mjs',
   'test-zero-dollar-figures-2026-09-15.mjs',
   'test-open-highs-2026-09-26.mjs',
+  'test-round8-2026-09-27.mjs',
 ];
 
 const only = process.argv.slice(2);

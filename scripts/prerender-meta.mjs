@@ -115,12 +115,27 @@ function renderRoute(route, lang = 'en') {
   // SEO 2026-09-27 (SEO-LIVE-08). El JSON-LD era un solo bloque en inglés
   // copiado en las 46 shells; las gemelas /es llevan ahora su descripción en
   // español y cada shell declara inLanguage.
+  // RONDA 8 (F5): inLanguage no es una propiedad definida para InsuranceAgency en
+  // schema.org; se retira del nodo de agencia. El idioma del documento lo
+  // declaran <html lang>, hreflang y og:locale.
   if (isEs) {
     html = html.replace(
       '"description": "Independent, licensed Medicare insurance agency helping seniors review Medicare Advantage and Part D options. Free, no-pressure, bilingual (English/Español) guidance.",',
-      '"description": "Agencia independiente y licenciada de seguros de Medicare que ayuda a adultos mayores a revisar sus opciones de Medicare Advantage y Parte D. Orientación bilingüe (español/inglés), sin costo y sin presión.",\n  "inLanguage": "es",');
-  } else {
-    html = html.replace('"@type": "InsuranceAgency",', '"@type": "InsuranceAgency",\n  "inLanguage": "en",');
+      '"description": "Agencia independiente y licenciada de seguros de Medicare que ayuda a adultos mayores a revisar sus opciones de Medicare Advantage y Parte D. Orientación bilingüe (español/inglés), sin costo y sin presión.",');
+  }
+  // RONDA 8 (F8): og:locale por shell, para que una página en español no se
+  // previsualice como inglesa en redes y mensajería.
+  html = html.replace('</head>', `    <meta property="og:locale" content="${isEs ? 'es_US' : 'en_US'}" />\n  </head>`);
+  // RONDA 8 (F2): BreadcrumbList para las páginas de guía, que eran callejones
+  // sin salida para el rastreador.
+  if (route.path.startsWith('/resources/') && !route.noindex) {
+    const crumbs = [
+      { name: isEs ? 'Inicio' : 'Home', item: SITE + (isEs ? '/es' : '/') },
+      { name: isEs ? 'Recursos' : 'Resources', item: SITE + (isEs ? '/es/resources' : '/resources') },
+      { name: (isEs ? route.titleEs : route.title).replace(/\s*\|\s*Clear Point.*$/, ''), item: canonical },
+    ];
+    const ld = { '@context': 'https://schema.org', '@type': 'BreadcrumbList', itemListElement: crumbs.map((c, i) => ({ '@type': 'ListItem', position: i + 1, name: c.name, item: c.item })) };
+    html = html.replace('</head>', `    <script type="application/ld+json">${JSON.stringify(ld).replace(/</g, '\\u003c')}</script>\n  </head>`);
   }
   // Sawil 2026-07-27 ES ROUTES — Spanish pages declare their language pre-JS.
   if (isEs) html = html.replace('<html lang="en">', '<html lang="es">');

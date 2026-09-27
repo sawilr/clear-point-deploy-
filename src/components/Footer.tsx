@@ -129,7 +129,9 @@ export function Footer() {
               <li><Link to={lp('/resources')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Medicare Basics', 'Conceptos Básicos')}</Link></li>
               {/* Sawil 2026-07-28 AUDIT CPF-003 — path+hash anchors localize the
                   PATH half; the fragment is language-neutral. */}
-              <li><a href={lp('/') + '#annual-review'} onClick={handleHowItWorks} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Inscripción')}</a></li>
+              {/* RONDA 8 (F3): este enlace, presente en las 46 páginas, apuntaba a un ancla de
+                  la portada mientras ya existe la guía de períodos de inscripción. */}
+              <li><Link to={lp('/resources/enrollment-periods')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Enrollment Periods', 'Períodos de Inscripción')}</Link></li>
               <li><Link to={lp('/extra-help')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Extra Help / LIS', 'Ayuda Adicional / LIS')}</Link></li>
               <li><Link to={lp('/help-paying-costs')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Help Paying Costs', 'Ayuda con Costos')}</Link></li>
               <li><Link to={lp('/otc-benefits')} className="block py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('OTC Benefits', 'Beneficios OTC')}</Link></li>

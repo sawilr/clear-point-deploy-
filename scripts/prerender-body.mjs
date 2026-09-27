@@ -99,6 +99,23 @@ for (const t of targets) {
   const thin = THIN_OK.has(t.path.replace(/^\/es(?=\/|$)/, '') || '/');
   if (/\/src\//.test(html)) problems.push(`${t.path}: fuga de ruta de desarrollo (/src/) en el HTML prerenderizado`);
   if (/\bcode-path="/.test(html)) problems.push(`${t.path}: atributos code-path del plugin de inspección en el HTML prerenderizado (¿CP_PRERENDER no llegó a vite.config?)`);
+  // RONDA 8 (R8-01 / F1, ALTO). El contenido tiene que estar EN ORDEN y VISIBLE:
+  // ni segmentos de Suspense ocultos tras el pie, ni scripts de streaming que la
+  // CSP bloquea, ni un <main> con el esqueleto. Si una página suspende en el
+  // render definitivo, el build falla aquí en vez de publicar un cascarón con
+  // el cuerpo escondido.
+  if (/<div hidden id="S:/.test(html) || /<template id="B:/.test(html) || /\$RC\(|\$RB\(/.test(html)) problems.push(`${t.path}: el HTML prerenderizado contiene segmentos de Suspense fuera de orden o scripts de streaming ($RC) — una página suspendió en el render definitivo`);
+  {
+    const mainMatch = html.match(/<main[^>]*>([\s\S]*?)<\/main>/);
+    const mainText = mainMatch ? mainMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    const mainWords = mainText ? mainText.split(' ').length : 0;
+    // Umbral propio para <main>: un esqueleto de Suspense tiene menos de 20
+    // palabras; una página legítimamente breve (Accesibilidad, algunas guías)
+    // tiene 200–290. El mínimo de 300 del cuerpo completo sigue aplicando arriba.
+    const MIN_MAIN_WORDS = 120;
+    if (!thin && mainWords < MIN_MAIN_WORDS) problems.push(`${t.path}: <main> solo tiene ${mainWords} palabras en el HTML prerenderizado (mínimo ${MIN_MAIN_WORDS}) — el cuerpo no está dentro de main`);
+    if (/aria-busy="true"/.test(mainMatch ? mainMatch[1] : '')) problems.push(`${t.path}: <main> contiene un esqueleto de Suspense (aria-busy="true") en el HTML prerenderizado`);
+  }
   if (!thin && words < MIN_WORDS) problems.push(`${t.path}: solo ${words} palabras (mínimo ${MIN_WORDS}) — ¿una página quedó en su fallback de Suspense?`);
   if (!thin && !hasH1) problems.push(`${t.path}: sin <h1> en el HTML prerenderizado`);
   if (!thin && !TPMO_RE.test(text)) problems.push(`${t.path}: la declaración TPMO no aparece en el cuerpo prerenderizado`);
@@ -106,7 +123,12 @@ for (const t of targets) {
   const shell = readFileSync(t.file, 'utf8');
   const marker = '<div id="root"></div>';
   const count = shell.split(marker).length - 1;
-  if (count !== 1) { problems.push(`${t.path}: el marcador ${marker} aparece ${count} veces en el shell (se esperaba 1)`); continue; }
+  if (count !== 1) { problems.push(`${t.path}: el marcador ${marker} aparece ${count} veces en el shell (se esperaba 1)${/<div id="root">[^<]*</.test(shell) ? ' — el shell ya tiene cuerpo inyectado: este script solo debe correr una vez por build, justo después de prerender-meta' : ''}`); continue; }
+  // RONDA 8 — se escribe SOLO si esta ruta pasó todas las comprobaciones. Antes,
+  // una ruta con un problema no-marcador se inyectaba igual y un build fallido
+  // dejaba dist/ a medias: la mitad de los shells con cuerpo y la otra sin él.
+  const routeProblems = problems.filter((p) => p.startsWith(t.path + ':'));
+  if (routeProblems.length) continue;
   writeFileSync(t.file, shell.replace(marker, `<div id="root">${html}</div>`), 'utf8');
   done++; totalWords += words;
 }

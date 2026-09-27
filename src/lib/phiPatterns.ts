@@ -50,7 +50,13 @@ function collapseInterDigit(s: string): string {
 }
 
 /** Convert runs of 4+ consecutive bilingual number-words into digits. */
+// RONDA 8 (R8-06): "triple five" / "doble ocho" — espejo del servidor.
+const REPEAT_WORD_RE = new RegExp('\\b(double|doble|triple)\\s+(' + Object.keys(NUM_WORDS).join('|') + ')\\b', 'gi');
+function expandRepeatedNumberWords(s: string): string {
+  return s.replace(REPEAT_WORD_RE, (_m, mult: string, word: string) => Array(/^triple$/i.test(mult) ? 3 : 2).fill(word).join(' '));
+}
 function digitizeNumberWords(s: string, hasContext = false): string {
+  s = expandRepeatedNumberWords(s);
   // With an explicit SSN/social context word, 2 consecutive number-words are
   // already suspicious ("my social is one two three 45 6789"); without context
   // require 4+ so ordinary prose is untouched.
@@ -132,6 +138,8 @@ export function scrubSensitiveText(text: string): string {
     out = out.replace(new RegExp('(?:' + NUM_WORD_TOKEN + '){4,}', 'gi'), '[REDACTED-SSN] ');
     out = out.replace(/(?:\d[\s.\-_/,]*){7,}/g, '[REDACTED-SSN]');
   }
+  // RONDA 8 (R8-04): IDs de Medicaid / miembro con etiqueta — espejo del servidor.
+  out = out.replace(/\b(medicaid(?:\s+(?:id|number|no\.?|#|cin))?|cin|client\s+id|member\s+(?:id|number|no\.?|#)|subscriber\s+(?:id|number)|(?:n[uú]mero|id)\s+de\s+(?:medicaid|miembro|afiliado)|medicaid\s+n[uú]mero)\b\s*[:#]?\s*(?:is\s+|es\s+|:\s*)?([A-Z]{2}\d{5}[A-Z]\b|\d{8,14}\b|(?=[A-Z0-9-]{8,14}\b)(?=[A-Z0-9-]*\d)[A-Z0-9-]{8,14}\b)/gi, (_m, label: string) => label + ' [REDACTED-MEMBER-ID]');
   // AUDITORÍA INDEPENDIENTE 2026-09-26 — P-01, HIGH. Espejo del servidor: un
   // MBI dictado letra a letra ("1 E G 4 T E 5 M K 7 3") pasaba intacto. Once
   // caracteres sueltos que, juntos, tienen la forma estricta del MBI de CMS.

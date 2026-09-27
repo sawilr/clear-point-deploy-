@@ -14,7 +14,7 @@ export default function PrivacyPolicy() {
         </h1>
         {/* AUDIT 2026-09-13 (TRUST-02 / R4F-05) — §5 gained the AI-processor and
             call-recording disclosures on this date; the stamp has to move with it. */}
-        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: September 13, 2026', 'Última Actualización: 13 de septiembre de 2026')}</p>
+        <p className="text-earth-700 text-sm mb-8">{t('Last Updated: September 27, 2026', 'Última Actualización: 27 de septiembre de 2026')}</p>
 
         <div className="space-y-8 text-earth-700 text-sm leading-relaxed">
           <section>
@@ -31,7 +31,7 @@ export default function PrivacyPolicy() {
             <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('2. Information We Collect', '2. Información Que Recopilamos')}</h2>
             <p className="mb-2">{t('We may collect the following types of information:', 'Podemos recopilar los siguientes tipos de información:')}</p>
             <ul className="list-disc pl-5 space-y-1">
-              <li>{t('Personal identifiers: name, phone number, email address, ZIP code', 'Identificadores personales: nombre, número de teléfono, correo electrónico, código postal')}</li>
+              <li>{t('Personal identifiers: name, phone number, email address, ZIP code, and — in the Smart Medicare Review — your date of birth, used only to understand your Medicare enrollment timing', 'Identificadores personales: nombre, número de teléfono, correo electrónico, código postal y, en la Revisión Inteligente de Medicare, su fecha de nacimiento, usada únicamente para entender el momento de su inscripción en Medicare')}</li>
               <li>{t('Medicare-related information: current coverage, medications, doctors', 'Información relacionada con Medicare: cobertura actual, medicamentos, médicos')}</li>
               <li>{t('Usage data: pages visited, time spent, clicks, form interactions', 'Datos de uso: páginas visitadas, tiempo dedicado, clics, interacciones con formularios')}</li>
               <li>{t('Device data: IP address, browser type, operating system', 'Datos del dispositivo: dirección IP, tipo de navegador, sistema operativo')}</li>

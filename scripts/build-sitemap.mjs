@@ -23,7 +23,9 @@ const ROUTES = [
   { path: '/extra-help', page: 'src/pages/ExtraHelp.tsx', changefreq: 'monthly', priority: '0.7' },
   { path: '/help-paying-costs', page: 'src/pages/HelpPayingCosts.tsx', changefreq: 'monthly', priority: '0.7' },
   { path: '/otc-benefits', page: 'src/pages/OtcBenefits.tsx', changefreq: 'monthly', priority: '0.6' },
-  { path: '/support', page: 'src/pages/Support.tsx', changefreq: 'monthly', priority: '0.8' },
+  // RONDA 8 (F7): /support es la superficie del chat (~200 palabras); indexable
+  // pero no compite con las páginas de contenido.
+  { path: '/support', page: 'src/pages/Support.tsx', changefreq: 'monthly', priority: '0.4' },
   { path: '/resources', page: 'src/pages/Resources.tsx', changefreq: 'monthly', priority: '0.6' },
   { path: '/contact', page: 'src/pages/Contact.tsx', changefreq: 'monthly', priority: '0.9' },
   { path: '/privacy-policy', page: 'src/pages/PrivacyPolicy.tsx', changefreq: 'yearly', priority: '0.3' },
@@ -56,11 +58,35 @@ function lastCommitDate(paths) {
 }
 
 const today = new Date().toISOString().slice(0, 10);
-const sharedDate = lastCommitDate(SHARED) || today;
+
+// RONDA 8 (SEO-T7, confirmado en vivo: los 46 lastmod valían la fecha del
+// build). Vercel clona con profundidad 10, así que `git log` no ve las fechas
+// reales por página y todo colapsa al día del despliegue: un "lastmod veraz" que
+// miente. En un clon completo (local) las fechas se calculan con git y se
+// GUARDAN en scripts/sitemap-dates.json, que viaja en el commit; en un clon
+// superficial (Vercel) se LEEN de ese archivo. Si falta en Vercel, el build
+// aborta con la pista en vez de publicar fechas falsas.
+const SNAPSHOT = join(root, 'scripts/sitemap-dates.json');
+const shallow = existsSync(join(root, '.git', 'shallow'));
+let snapshot = {};
+if (shallow) {
+  if (!existsSync(SNAPSHOT)) {
+    console.error('[build-sitemap] FATAL: clon superficial sin scripts/sitemap-dates.json. Genere el snapshot con un build local (clon completo) y súbalo; compruebe también que .vercelignore lo permita.');
+    process.exit(1);
+  }
+  snapshot = JSON.parse(readFileSync(SNAPSHOT, 'utf8'));
+}
+const dateFor = (key, paths) => {
+  if (shallow) return snapshot[key] || today;
+  const d = lastCommitDate(paths) || today;
+  snapshot[key] = d;
+  return d;
+};
+const sharedDate = dateFor('__shared', SHARED);
 const esPath = (p) => (p === '/' ? '/es' : `/es${p}`);
 const entries = [];
 for (const r of ROUTES) {
-  const pageDate = lastCommitDate([r.page]) || today;
+  const pageDate = dateFor(r.page, [r.page]);
   const lastmod = pageDate > sharedDate ? pageDate : sharedDate;
   for (const loc of [r.path, esPath(r.path)]) {
     entries.push(`  <url>\n    <loc>${SITE}${loc === '/' ? '/' : loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${r.changefreq}</changefreq>\n    <priority>${r.priority}</priority>\n  </url>`);
@@ -70,5 +96,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.s
 const distDir = join(root, 'dist');
 if (!existsSync(distDir)) { console.error('[build-sitemap] dist/ missing — run after vite build'); process.exit(1); }
 writeFileSync(join(distDir, 'sitemap.xml'), xml);
+if (!shallow) writeFileSync(SNAPSHOT, JSON.stringify(snapshot, null, 2) + '\n');
+console.log(`[build-sitemap] lastmod desde ${shallow ? 'snapshot (clon superficial)' : 'git (snapshot actualizado)'}; fechas distintas: ${new Set(Object.values(snapshot)).size}`);
 writeFileSync(join(root, 'public', 'sitemap.xml'), xml);
 console.log(`[build-sitemap] wrote ${entries.length} URLs (shared-surface lastmod ${sharedDate}; per-page git dates applied)`);

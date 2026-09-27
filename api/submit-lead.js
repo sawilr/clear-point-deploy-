@@ -122,6 +122,15 @@ function scrubIdentityForIntel(text, values, dob) {
   var WORD = '(?:zero|oh|one|two|three|four|five|six|seven|eight|nine|cero|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)';
   var WORD_SEP = '[\\s,.\\u2010-\\u2015\\u2212/-]';
   var RUN = new RegExp('(?<![\\p{L}\\p{N}])(?:(?:' + WORD + '|\\d)' + WORD_SEP + '*){6,}(?:' + WORD + '|\\d)(?![\\p{L}\\p{N}])', 'giu');
+  // RONDA 8 (R8-06, medio). "seven one eight triple five oh one two three" y
+  // "siete uno ocho doble cinco…" pasaban la máscara: el multiplicador no es
+  // palabra-número, cortaba la secuencia en dos tramos y ninguno llegaba a los
+  // siete tokens. Se expande antes de buscar la secuencia.
+  out = out.replace(new RegExp('\\b(double|doble|triple)\\s+(' + WORD + ')(?![\\p{L}])', 'giu'), function (m, mult, w) {
+    var n = /^triple$/i.test(mult) ? 3 : 2, parts = [];
+    for (var q = 0; q < n; q++) parts.push(w);
+    return parts.join(' ');
+  });
   out = out.replace(RUN, function (m) {
     var parts = m.toLowerCase().split(new RegExp(WORD_SEP + '+')).filter(Boolean);
     var digits = '', anyWord = false;
@@ -246,22 +255,65 @@ function scrubIdentityForIntel(text, values, dob) {
     // that job only matters when nothing says the date IS a birth date. When the
     // note carries an explicit birth cue, a stated birth date is a birth date
     // whatever the year.
-    var BIRTH_CUE_RE = /\b(?:born|birth\s*date|birthday|b-?day|date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|naci|nacio|nacid[oa]|nacimiento|cumplea[nñ]os|cumplo\s+a[nñ]os|fecha\s+de\s+nacimiento)\b/i;
-    var birthCued = BIRTH_CUE_RE.test(out) || BIRTH_CUE_RE.test(foldToken(out));
+    // La terminación usa un lookahead en vez de \b: \b no delimita vocales
+    // acentuadas ("Nací" quedaba sin detectar y toda la nota caía al modo
+    // "cualquier año").
+    var BIRTH_CUE_RE = /\b(?:born|birth\s*date|birthday|b-?day|date\s+of\s+birth|d\.?\s?o\.?\s?b\.?|nac[ií]|naci[oó]|nacid[oa]|nacimiento|cumplea[nñ]os|cumplo\s+a[nñ]os|fecha\s+de\s+nacimiento)(?![a-záéíóúñ])/gi;
+    // RONDA 8 (R8-07, medio). La corrección de R6-SL-01 hacía que UNA señal de
+    // nacimiento en cualquier parte de la nota volviera redactable cualquier año
+    // en toda la nota: "nací en 1985 … mi plan termina el 12/31/2026 y tengo
+    // cita el 03/15/2026" perdía las tres fechas, y el asesor la información de
+    // la cita. La señal actúa ahora por PROXIMIDAD: una fecha a menos de 120
+    // caracteres de una señal de nacimiento es fecha de nacimiento sea cual sea
+    // el año; lejos de la señal vuelve a regir la ventana de plausibilidad.
+    var cueAt = [];
+    var _cm;
+    while ((_cm = BIRTH_CUE_RE.exec(out)) !== null) cueAt.push(_cm.index);
+    BIRTH_CUE_RE.lastIndex = 0;
+    var birthCued = cueAt.length > 0 || BIRTH_CUE_RE.test(foldToken(out));
+    BIRTH_CUE_RE.lastIndex = 0;
+    // "Cerca" = la misma oración: a menos de 120 caracteres y sin un punto,
+    // punto y coma, signo de cierre o salto de línea entre la señal y la fecha.
+    // "Nací el 03/15/1985 … . Mi plan termina el 12/31/2026" no convierte la
+    // fecha del plan en fecha de nacimiento.
+    var nearCue = function (offset) {
+      if (cueAt.length === 0) return birthCued; // señal solo visible tras plegar acentos: se aplica a toda la nota
+      for (var ci = 0; ci < cueAt.length; ci++) {
+        var c = cueAt[ci];
+        if (Math.abs(c - offset) > 120) continue;
+        var lo = Math.min(c, offset), hi = Math.max(c, offset);
+        if (!/[.;!?\n]/.test(out.slice(lo, hi))) return true;
+      }
+      return false;
+    };
     var maxBirth = new Date().getFullYear() - 50;
-    var yearOk = function (y) {
+    var yearOk = function (y, offset) {
       y = Number(y);
       if (!(y >= 1900)) return false;
-      if (birthCued) return y <= new Date().getFullYear();   // any stated birth year
+      if (nearCue(offset)) return y <= new Date().getFullYear();   // any stated birth year, near its cue
       return y <= maxBirth;
     };
-    out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
-      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y) { return yearOk(y) ? '[date]' : m; })
-      .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
-      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+((?:19|20)\d{2})\b/gi, function (m, y) { return yearOk(y) ? '[date]' : m; })
+    out = out.replace(/\b\d{1,2}[/.-]\d{1,2}[/.-]((?:19|20)\d{2})\b/g, function (m, y, off) { return yearOk(y, off) ? '[date]' : m; })
+      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}\b/g, function (m, y, off) { return yearOk(y, off) ? '[date]' : m; })
+      .replace(/\b(?:january|february|march|april|may|june|july|august|september|october|november|december|enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+\d{1,2}(?:st|nd|rd|th)?,?\s+((?:19|20)\d{2})\b/gi, function (m, y, off) { return yearOk(y, off) ? '[date]' : m; })
+      .replace(/\b\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)\s+del?\s+((?:19|20)\d{2})\b/gi, function (m, y, off) { return yearOk(y, off) ? '[date]' : m; })
       // R5-SL-12 (3), generic side: an ISO date carrying a time survived the
       // trailing \b because the 'T' is a word character.
-      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, function (m, y) { return yearOk(y) ? '[date]' : m; });
+      .replace(/\b((?:19|20)\d{2})[/.-]\d{1,2}[/.-]\d{1,2}[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, function (m, y, off) { return yearOk(y, off) ? '[date]' : m; });
+
+    // RONDA 8 (R8-03, alto). Una dirección postal completa y un ZIP de cinco
+    // dígitos suelto llegaban literales al modelo de enriquecimiento, mientras
+    // los metadatos ya iban coarsenados a Safe Harbor (ZIP de tres dígitos).
+    // La dirección se sustituye entera; el ZIP se deja en tres dígitos solo
+    // cuando tiene forma de ZIP de NY/NJ/CT (060–149), para no tocar cantidades.
+    // Inglés: número primero ("2345 Grand Concourse Apt 4B", "18 Maple Street").
+    out = out.replace(/\b\d{1,6}[A-Za-z]?\s+(?:[A-Za-z0-9.'-]+\s+){0,3}(?:street|st|avenue|ave|road|rd|boulevard|blvd|lane|ln|drive|dr|court|ct|place|pl|way|terrace|ter|parkway|pkwy|highway|hwy|concourse|plaza|square|sq|circle|cir|turnpike|pike|expressway|expy|loop|trail|row|walk|alley|broadway)\b\.?(?:\s*,?\s*(?:apt|apartment|unit|suite|ste|#|apto|depto|piso|fl|floor)\s*\.?\s*[A-Za-z0-9-]+)?/gi, '[address]');
+    // Español: vía primero ("calle 149 número 355, apto 2", "avenida Grand 1200").
+    out = out.replace(/\b(?:calle|avenida|av|carrera|paseo|camino|bulevar|boulevard|c\/)\.?\s+[A-Za-z0-9ºª.'-]+(?:\s+[A-Za-z0-9ºª.'-]+){0,2}?(?:\s*,?\s*(?:n[uú]mero|no\.?|n[uú]m\.?|#)\s*\d+[A-Za-z]?|\s+\d+[A-Za-z]?)(?:\s*,?\s*(?:apto|apt|depto|dpto|piso|interior|int)\s*\.?\s*[A-Za-z0-9-]+)?/gi, '[address]');
+    // ZIP de cinco dígitos → tres, SOLO cuando está escrito como ZIP: con
+    // etiqueta, junto a una ciudad o estado del área, o tras una dirección. Un
+    // "12500 dollars" o un "total de 11200" no es un ZIP y no se toca.
+    out = out.replace(/(\b(?:zip(?:\s*code)?|c[oó]digo\s+postal|c\.?p\.?|postal)\s*[:#]?\s*|\b(?:ny|nj|ct|new\s+york|nueva\s+york|new\s+jersey|nueva\s+jersey|connecticut|bronx|brooklyn|queens|manhattan|staten\s+island|yonkers|newark|jersey\s+city|paterson|elizabeth|hartford|bridgeport|stamford|new\s+haven|waterbury)\b[\s,.]*|\[address\][\s,]*)((?:0[6-8]|1[0-4])\d)\d{2}(?![\d%])(?:-\d{4})?\b/gi, function (m, pre, z3) { return pre + z3 + 'xx'; });
 
     // R5-SL-12 (1): SPELLED-OUT and YEAR-LESS birth dates. Safe Harbor requires
     // removing every element of a date smaller than the year, so the day and

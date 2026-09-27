@@ -79,6 +79,20 @@ const NUM_WORD_TOKEN = '\\b(?:' + Object.keys(NUM_WORDS).join('|') + ')\\b[\\s\\
 // esa forma no aparecen en prosa normal.
 const DICTATED_MBI_RUN_RE = /(?:(?<![A-Za-z0-9])[A-Za-z0-9](?![A-Za-z0-9])[\s.\-_/]*){11}/g;
 const MBI_STRICT_RE = /^[1-9][A-Z][A-Z0-9]\d[A-Z][A-Z0-9]\d[A-Z]{2}\d{2}$/i;
+// RONDA 8 (R8-04, alto). Los identificadores de Medicaid y de miembro que NO
+// tienen forma de MBI pasaban las dos redes y llegaban a la nota del CRM y al
+// modelo: el CIN de Medicaid de Nueva York (AB12345C), el ID de 12 dígitos de
+// Nueva Jersey, el de 9 de Connecticut y los IDs de miembro de los planes. Se
+// redactan cuando van precedidos de su etiqueta; sin etiqueta, un bloque
+// alfanumérico suelto no se toca para no comerse números de póliza o de caso
+// que el asesor necesita.
+const LABELED_ID_RE = /\b(medicaid(?:\s+(?:id|number|no\.?|#|cin))?|cin|client\s+id|member\s+(?:id|number|no\.?|#)|subscriber\s+(?:id|number)|(?:n[uú]mero|id)\s+de\s+(?:medicaid|miembro|afiliado)|medicaid\s+n[uú]mero)\b\s*[:#]?\s*(?:is\s+|es\s+|:\s*)?([A-Z]{2}\d{5}[A-Z]\b|\d{8,14}\b|(?=[A-Z0-9-]{8,14}\b)(?=[A-Z0-9-]*\d)[A-Z0-9-]{8,14}\b)/gi;
+function redactLabeledIds(s) {
+  var hits = 0;
+  var out = s.replace(LABELED_ID_RE, function (m, label) { hits++; return label + ' [REDACTED_MEMBER_ID]'; });
+  return { text: out, hits: hits };
+}
+
 function redactDictatedMbi(s) {
   var hits = 0;
   var out = s.replace(DICTATED_MBI_RUN_RE, function (run) {
@@ -98,7 +112,21 @@ function collapseInterDigit(s) {
   }
   return out;
 }
+// RONDA 8 (R8-06, medio). "triple five", "double oh", "doble ocho", "triple
+// cinco" pasaban todas las máscaras de teléfono: la lista de palabras-número no
+// conoce los multiplicadores, así que la secuencia dictada nunca alcanzaba la
+// longitud de un teléfono. Se expanden antes de digitalizar.
+var REPEAT_WORD_RE = new RegExp('\\b(double|doble|triple)\\s+(' + Object.keys(NUM_WORDS).join('|') + ')\\b', 'gi');
+function expandRepeatedNumberWords(s) {
+  return s.replace(REPEAT_WORD_RE, function (m, mult, word) {
+    var n = /^triple$/i.test(mult) ? 3 : 2;
+    var out = [];
+    for (var i = 0; i < n; i++) out.push(word);
+    return out.join(' ');
+  });
+}
 function digitizeNumberWords(s, hasContext) {
+  s = expandRepeatedNumberWords(s);
   var minRun = hasContext ? 2 : 4;
   return s.replace(new RegExp('(?:' + NUM_WORD_TOKEN + '){' + minRun + ',}', 'gi'), function (match) {
     return match.replace(new RegExp(NUM_WORD_TOKEN, 'gi'), function (w) {
@@ -158,6 +186,12 @@ export function scrubPHI(text, opts) {
   if (dictated.hits) {
     var rest = scrubPHI(dictated.text);
     return { text: rest.text, detected: ['MBI_DICTATED'].concat(rest.detected) };
+  }
+  // R8-04 — identificadores de Medicaid / miembro con etiqueta.
+  var labeled = redactLabeledIds(text);
+  if (labeled.hits) {
+    var rest2 = scrubPHI(labeled.text);
+    return { text: rest2.text, detected: ['MEMBER_ID'].concat(rest2.detected) };
   }
   // Detect on the normalized copy; if it trips a rule the original did not,
   // the whole numeric span is replaced (we cannot map offsets back reliably).

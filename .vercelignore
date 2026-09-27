@@ -26,6 +26,9 @@ scripts/*
 # ve en el script "build"; el propio prerender-body falla si falta.
 !scripts/prerender-body.mjs
 !scripts/ssr-entry.tsx
+# RONDA 8 (SEO-T7) — fechas reales por página para el sitemap; en el clon
+# superficial de Vercel build-sitemap.mjs las lee de aquí.
+!scripts/sitemap-dates.json
 docs/
 compliance/
 info.md
