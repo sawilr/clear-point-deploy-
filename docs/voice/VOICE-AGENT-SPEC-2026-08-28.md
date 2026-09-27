@@ -139,7 +139,32 @@ Where GHL workflow/Voice AI configuration allows, tag calls: `AI_VOICE_ENGLISH` 
 - `Wrong Number Minutes Saved` = (baseline avg − new avg) × wrong-number call count.
 - False-positive check: any call tagged wrong-number whose transcript mentions Medicare/health → review weekly.
 
-## 8. NOT VERIFIED — legal/compliance review required
+## 8. APPLIED 2026-09-27 — AI identity + recording disclosure + determinism rules (owner GO)
+
+**What changed in the live agents (verified by fresh read-back after save, `docs/voice/backups/2026-09-27-*-after.txt`):**
+
+- **Emely — Agent's Initial Message** (63 → 143 chars): `Clear Point Client Services, this is Emely, an automated assistant. This call is being recorded for quality and compliance. How can I help you?`
+- **Sofía — Agent's Initial Message** (109 → 171 chars): `Hola, le habla Sofía, la asistente automatizada de Clear Point. Esta llamada está siendo grabada con fines de calidad y cumplimiento. Cuénteme, ¿en qué puedo ayudarle hoy?`
+- **Both prompts** (`CLEARPOINT_CS_MASTER_V2` → `V2.1`): new block **DETERMINISM & DISCLOSURE RULES** / **REGLAS DE DETERMINISMO Y AVISO** inserted before the VERSION line (verbatim one-sentence answer when asked "are you human / is this recorded", fixed lines spoken word-for-word, PRIORITY 0 table is the only classifier, never invent, one question then act, no improvisation). `RECORDING_RETENTION_POLICY` rewritten: all calls on the line are recorded, disclosed in the opening line. Sofía's transfer-arrival greeting now also states automated assistant + recording.
+- The §3/§4 add-on blocks of this spec were **not** pasted: both prompts already carried the stronger `PRIORITY 0 — CALL SCOPE CONTROL` block since 2026-08-11.
+- **Sofía only:** the checkbox "Trigger Workflow when call is completed" was ON with no workflow selected; that dangling state made the Agent Goals form fail validation silently (Save sent no request). It was unchecked (functional no-op: nothing was bound; Emely already had it off). Re-enable it once a real post-call workflow exists.
+
+**Observed platform facts (read-only, 2026-09-27):** Call Recording is ON on all three numbers. Number-level recording message: 631 and 940 = "This call will be recorded for quality purposes" (English, also on the Spanish line); **855 (main line, Bilingual IVR) has NO recording message** — its greeting is an uploaded MP3 (`clearpoint-ivr-greeting-v2.mp3`, 19 s) whose content could not be read. LLM Temperature = 0 ("Stable") on both agents; Idle reminder ON (10 s, 1×); End Call After Silence = 15 s; Sofía voice speed 1.20x (Emely 0.75x). Workflow "CP- Voice Post-Call (Emely & Sofia)" is an empty Draft (trigger only, no actions) — nothing to publish.
+
+**Runtime evidence — 5 live web calls with synthesized caller audio injected as microphone (`scratchpad/ghl/16-*-transcript.txt`):**
+
+| Test | Result |
+|---|---|
+| Emely, "internet bill" wrong number + "look up their number" (run twice) | New greeting spoken verbatim; wrong-number close at ~0:21; insistence reply verbatim; identical wording across both runs |
+| Emely, "real person or computer? is this recorded?" then Part D letter (NJ) | Verbatim §1 sentence; Medicare question handled in scope (asked whether the letter is from Medicare, the Part D plan or SSA) |
+| Sofía, "factura de internet" + "¿no me puede buscar el número?" | Greeting verbatim; Spanish wrong-number close and insistence reply verbatim |
+| Sofía, "¿persona o máquina? ¿se graba?" then Parte D (NJ) | Verbatim §1 sentence in Spanish; Medicare question handled in scope |
+
+**Also observed:** the "New Action → During The Call" catalog offers only Call transfer, Trigger a workflow, Send SMS, Update contact field, Appointment Booking, Custom action and Agent Transfer — there is **no "End Call" action**, so the prompt's "→ END THE CALL" can only be honoured by the platform's own end-of-conversation logic / End Call After Silence. The five test web calls created no contacts or conversations (newest contact still Sep 19). Per the 2026-08-11 build notes, `clearpoint-ivr-greeting-v2.mp3` is the bilingual menu only (press 1 / press 2, repeated once) — inference, the file itself was not re-listened: the 855 line therefore had **no recording disclosure at all** before this change; now every path (855 → IVR → Emely/Sofía, 631 direct, 940 direct) hears it from the agent's opening line.
+
+**NOT VERIFIED:** automatic hang-up after the closing line. In the web-call harness no call ended on its own within 45–70 s of continuous silence despite "End Call After Silence = 15 s" (platform idle reminders did fire). Verify with a real phone call to 631/940: say the internet-bill script, stay silent after the close, time the hang-up. Also NOT VERIFIED: whether the 855 IVR MP3 mentions recording (owner knows the file's content).
+
+## 9. NOT VERIFIED — legal/compliance review required
 
 - Exact disclosure wording requirements for AI voice agents per state (NY/NJ/CT) beyond the current recording disclosure ("This call will be recorded for quality purposes", present on both lines since 2026-08-11). Marked NOT VERIFIED; current scripts do not remove or alter any existing disclosure.
 - Whether TPMO disclaimer must be read on INBOUND education-only calls that do not discuss plan specifics. NOT VERIFIED — do not change current behavior without compliance sign-off.
