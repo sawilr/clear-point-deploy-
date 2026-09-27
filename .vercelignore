@@ -21,6 +21,11 @@ scripts/*
 !scripts/check-allowlist-drift.mjs
 !scripts/check-zero-cost-claims.mjs
 !scripts/check-contact-consistency.mjs
+# SEO 2026-09-27 — prerender del cuerpo de cada ruta. La entrada .tsx la carga
+# prerender-body.mjs en tiempo de ejecución, así que check-vercel-config no la
+# ve en el script "build"; el propio prerender-body falla si falta.
+!scripts/prerender-body.mjs
+!scripts/ssr-entry.tsx
 docs/
 compliance/
 info.md
