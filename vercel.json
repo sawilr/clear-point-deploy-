@@ -28,17 +28,37 @@
     },
     {
       "source": "/enrollment-periods",
-      "destination": "/resources",
+      "destination": "/resources/enrollment-periods",
       "permanent": true
     },
     {
       "source": "/medicare-basics",
-      "destination": "/resources",
+      "destination": "/resources/medicare-101",
       "permanent": true
     },
     {
       "source": "/medicare-supplement",
-      "destination": "/resources",
+      "destination": "/resources/medicare-advantage-vs-medigap",
+      "permanent": true
+    },
+    {
+      "source": "/es/enrollment-periods",
+      "destination": "/es/resources/enrollment-periods",
+      "permanent": true
+    },
+    {
+      "source": "/es/medicare-basics",
+      "destination": "/es/resources/medicare-101",
+      "permanent": true
+    },
+    {
+      "source": "/es/medicare-supplement",
+      "destination": "/es/resources/medicare-advantage-vs-medigap",
+      "permanent": true
+    },
+    {
+      "source": "/es/education",
+      "destination": "/es/resources",
       "permanent": true
     },
     {

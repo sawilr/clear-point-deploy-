@@ -1,6 +1,7 @@
 import { useLanguage } from '../hooks/useLanguage';
 import { Hero } from '../components/Hero';
 import { CTASection } from '../components/CTASection';
+import { GuideLinks } from '../components/GuideLinks';
 import { useScrollReveal } from '../components/ScrollReveal';
 import { ShieldIcon, CheckIcon, UsersIcon, StarIcon } from '../components/icons';
 import { LogoSvg } from '../components/LogoSvg';
@@ -179,6 +180,8 @@ export default function About() {
           </div>
         </div>
       </section>
+
+      <GuideLinks compact />
 
       <CTASection
         headline="Ready to Meet Our Team?"

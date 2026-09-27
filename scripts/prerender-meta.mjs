@@ -104,6 +104,24 @@ function renderRoute(route, lang = 'en') {
   const title = isEs ? route.titleEs : route.title;
   const description = isEs ? route.descriptionEs : route.description;
   let html = baseHtml;
+  // SEO 2026-09-27 (CWV-02). index.html precargaba /hero-bg.webp con
+  // fetchpriority=high en las 46 shells, pero solo cuatro rutas lo pintan; en
+  // las demás era una descarga prioritaria que compite con el LCP real. La
+  // precarga se conserva únicamente donde el hero existe.
+  const HERO_ROUTES = new Set(['/', '/about', '/contact', '/resources']);
+  if (!HERO_ROUTES.has(route.path)) {
+    html = html.replace(/\s*<link rel="preload" as="image" href="\/hero-bg\.webp"[^>]*>/, '');
+  }
+  // SEO 2026-09-27 (SEO-LIVE-08). El JSON-LD era un solo bloque en inglés
+  // copiado en las 46 shells; las gemelas /es llevan ahora su descripción en
+  // español y cada shell declara inLanguage.
+  if (isEs) {
+    html = html.replace(
+      '"description": "Independent, licensed Medicare insurance agency helping seniors review Medicare Advantage and Part D options. Free, no-pressure, bilingual (English/Español) guidance.",',
+      '"description": "Agencia independiente y licenciada de seguros de Medicare que ayuda a adultos mayores a revisar sus opciones de Medicare Advantage y Parte D. Orientación bilingüe (español/inglés), sin costo y sin presión.",\n  "inLanguage": "es",');
+  } else {
+    html = html.replace('"@type": "InsuranceAgency",', '"@type": "InsuranceAgency",\n  "inLanguage": "en",');
+  }
   // Sawil 2026-07-27 ES ROUTES — Spanish pages declare their language pre-JS.
   if (isEs) html = html.replace('<html lang="en">', '<html lang="es">');
   html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);

@@ -4,6 +4,7 @@ import { Hero } from '../components/Hero';
 import { TrustBar } from '../components/TrustBar';
 import { ServiceCard } from '../components/ServiceCard';
 import { FAQ } from '../components/FAQ';
+import { GuideLinks } from '../components/GuideLinks';
 import { CTASection } from '../components/CTASection';
 import { DisclaimerBlock } from '../components/DisclaimerBlock';
 import { useScrollReveal } from '../components/ScrollReveal';
@@ -531,6 +532,8 @@ export default function Home() {
           </p>
         </div>
       </section>
+
+      <GuideLinks />
 
       {/* FAQ */}
       <section ref={ctaReveal.ref} id="faq" className="py-14 lg:py-28 bg-cream-50 scroll-mt-28">
