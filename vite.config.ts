@@ -19,7 +19,12 @@ export default defineConfig(({ command }) => ({
   // attributes on every DOM element; in production that publishes internal
   // source paths to any visitor. Dev-only from now on.
   plugins: [
-    ...(command === 'serve' ? [inspectAttr()] : []),
+    // SEO 2026-09-27 — el prerender (scripts/prerender-body.mjs) carga la app con
+    // createServer(), que es command === 'serve', y este plugin estampaba
+    // code-path="src\…" en cada elemento del HTML publicado: un 25 % del peso
+    // de cada shell y rutas de archivos fuente expuestas en producción. El
+    // prerender fija CP_PRERENDER=1 y aquí se respeta.
+    ...(command === 'serve' && !process.env.CP_PRERENDER ? [inspectAttr()] : []),
     react(),
     // AUDIT 2026-08-13 (IP-04) — index.html carried 4 engineering comments that
     // were replicated into all 28 prerendered shells (108 occurrences) and

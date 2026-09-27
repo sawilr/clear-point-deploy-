@@ -169,8 +169,8 @@ export default function Home() {
         eyebrowEs="Independiente · Licenciado · Sin Costo"
         headline="Navigate Medicare <span class='text-gold-400'>with Confidence</span>"
         headlineEs="Navega Medicare <span class='text-gold-400'>con Confianza</span>"
-        subheadline="We help seniors understand their Medicare options — clearly, honestly, and without pressure. We're an independent agency: not owned by any insurance carrier, and our guidance costs you nothing."
-        subheadlineEs="Ayudamos a los adultos mayores a entender sus opciones de Medicare — de forma clara, honesta y sin presión. Somos una agencia independiente: no pertenecemos a ninguna aseguradora, y nuestra orientación no le cuesta nada."
+        subheadline="We help seniors in New York, New Jersey and Connecticut understand their Medicare options — clearly, honestly, in English or Spanish, and without pressure. We're an independent agency: not owned by any insurance carrier, and our guidance costs you nothing."
+        subheadlineEs="Ayudamos a los adultos mayores de Nueva York, Nueva Jersey y Connecticut a entender sus opciones de Medicare — de forma clara, honesta, en español o inglés, y sin presión. Somos una agencia independiente: no pertenecemos a ninguna aseguradora, y nuestra orientación no le cuesta nada."
         showForm={true}
       />
 

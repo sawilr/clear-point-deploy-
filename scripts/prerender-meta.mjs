@@ -29,7 +29,10 @@ const baseHtml = readFileSync(distIndex, 'utf8');
 // Extract PAGE_META entries: '/route': { title: '...', titleEs: '...', description: '...', descriptionEs: '...' }
 // Sawil 2026-07-27 ES ROUTES — titleEs/descriptionEs are now captured too so the
 // /es/<route> twins get pre-JS Spanish metadata baked the same way.
-const entryRe = /'(\/[a-z-]*)':\s*\{\s*title:\s*'((?:[^'\\]|\\.)*)',\s*titleEs:\s*'((?:[^'\\]|\\.)*)',\s*description:\s*'((?:[^'\\]|\\.)*)',\s*descriptionEs:\s*'((?:[^'\\]|\\.)*)',/g;
+// SEO 2026-09-27 — las guías viven en /resources/<slug>: el patrón acepta ahora
+// dígitos y una segunda barra (antes solo [a-z-], que las habría ignorado en
+// silencio y dejado sin shell, sin canónica y fuera del sitemap).
+const entryRe = /'(\/[a-z0-9/-]*)':\s*\{\s*title:\s*'((?:[^'\\]|\\.)*)',\s*titleEs:\s*'((?:[^'\\]|\\.)*)',\s*description:\s*'((?:[^'\\]|\\.)*)',\s*descriptionEs:\s*'((?:[^'\\]|\\.)*)',/g;
 const unesc = (s) => s.replace(/\\'/g, "'").replace(/\\\\/g, '\\');
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const routes = [];
@@ -58,6 +61,39 @@ routes.push({
   noindex: true,
 });
 
+// SEO 2026-09-27 (SEO-T8). /soa/:token se reescribía a /index.html, que ahora
+// lleva el cuerpo prerenderizado de la portada: una URL con token por usuario
+// habría servido la portada entera con canónica a "/", indexable antes de JS.
+// Este shell propio va vacío, noindex,nofollow, sin canónica ni hreflang, y
+// vercel.json reescribe /soa/:token hacia él. prerender-body no lo toca porque
+// no está en PAGE_META.
+routes.push({
+  path: '/soa',
+  title: 'Scope of Appointment | Clear Point Senior Advisors',
+  description: 'Secure, time-limited Scope of Appointment link.',
+  titleEs: 'Alcance de la Cita | Clear Point Senior Advisors',
+  descriptionEs: 'Enlace seguro y temporal de Alcance de la Cita.',
+  noindex: true,
+  nofollow: true,
+});
+
+// SEO 2026-09-27 — puerta de longitud. Google recorta títulos por encima de
+// ~60 caracteres y descripciones por encima de ~160; un recorte esconde justo
+// el modificador geográfico que se acaba de restaurar. Aborta el build.
+{
+  const tooLong = [];
+  for (const r of routes) {
+    if (r.title.length > 60) tooLong.push(`${r.path} title (${r.title.length}): ${r.title}`);
+    if (r.titleEs.length > 60) tooLong.push(`${r.path} titleEs (${r.titleEs.length}): ${r.titleEs}`);
+    if (r.description.length > 160) tooLong.push(`${r.path} description (${r.description.length})`);
+    if (r.descriptionEs.length > 160) tooLong.push(`${r.path} descriptionEs (${r.descriptionEs.length})`);
+  }
+  if (tooLong.length) {
+    console.error('[prerender-meta] FATAL — título > 60 o descripción > 160 caracteres:\n  ' + tooLong.join('\n  '));
+    process.exit(1);
+  }
+}
+
 // Sawil 2026-07-27 ES ROUTES — '/' → '/es', '/about' → '/es/about'.
 const esPath = (p) => (p === '/' ? '/es' : `/es${p}`);
 
@@ -72,7 +108,7 @@ function renderRoute(route, lang = 'en') {
   if (isEs) html = html.replace('<html lang="en">', '<html lang="es">');
   html = html.replace(/<title>[^<]*<\/title>/, `<title>${esc(title)}</title>`);
   if (route.noindex && !/name="robots"/.test(html)) {
-    html = html.replace('</head>', `    <meta name="robots" content="noindex,follow" />\n  </head>`);
+    html = html.replace('</head>', `    <meta name="robots" content="${route.nofollow ? 'noindex,nofollow' : 'noindex,follow'}" />\n  </head>`);
   }
   html = html.replace(/(<meta name="description" content=")[^"]*(")/, `$1${esc(description)}$2`);
   html = html.replace(/(<meta property="og:title" content=")[^"]*(")/, `$1${esc(title)}$2`);

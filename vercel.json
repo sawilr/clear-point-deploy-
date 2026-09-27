@@ -7,6 +7,16 @@
       "permanent": true
     },
     {
+      "source": "/turning-65",
+      "destination": "/resources/turning-65",
+      "permanent": true
+    },
+    {
+      "source": "/es/turning-65",
+      "destination": "/es/resources/turning-65",
+      "permanent": true
+    },
+    {
       "source": "/annual-review",
       "destination": "/#annual-review",
       "permanent": true
@@ -106,7 +116,7 @@
     },
     {
       "source": "/soa/:token",
-      "destination": "/index.html"
+      "destination": "/soa/index.html"
     },
     {
       "source": "/es",

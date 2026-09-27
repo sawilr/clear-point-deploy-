@@ -8,7 +8,7 @@
 // (Header/Footer/Hero/DisclaimerBlock/RouteMeta/index.css) — whichever is newer —
 // so the value reflects the last visible change. Runs after prerender-meta.
 import { execSync } from 'node:child_process';
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +30,22 @@ const ROUTES = [
   { path: '/accessibility', page: 'src/pages/Accessibility.tsx', changefreq: 'yearly', priority: '0.3' },
   { path: '/terms', page: 'src/pages/Terms.tsx', changefreq: 'yearly', priority: '0.3' },
 ];
+
+// SEO 2026-09-27 (CA-SEO-03) — las diez guías educativas tienen URL propia.
+// Los slugs se leen de src/data/guides.ts para que esta lista no pueda
+// divergir de las rutas reales; si el módulo cambia de forma, el build aborta
+// en vez de publicar un sitemap incompleto en silencio.
+{
+  const guidesSrc = readFileSync(join(root, 'src/data/guides.ts'), 'utf8');
+  const m = guidesSrc.match(/const SLUGS = (\[[^\]]*\]);/);
+  let slugs = [];
+  try { slugs = m ? JSON.parse(m[1]) : []; } catch { slugs = []; }
+  if (!Array.isArray(slugs) || slugs.length < 10) {
+    console.error(`[build-sitemap] FATAL: no se pudieron leer los slugs de las guías de src/data/guides.ts (${slugs.length}).`);
+    process.exit(1);
+  }
+  for (const slug of slugs) ROUTES.push({ path: '/resources/' + slug, page: 'src/data/guides.ts', changefreq: 'monthly', priority: '0.6' });
+}
 const SHARED = ['src/components/Header.tsx', 'src/components/Footer.tsx', 'src/components/DisclaimerBlock.tsx', 'src/components/RouteMeta.tsx', 'src/lib/tpmoConfig.ts'];
 
 function lastCommitDate(paths) {

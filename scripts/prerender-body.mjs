@@ -50,7 +50,7 @@ if (!existsSync(join(root, 'scripts/ssr-entry.tsx'))) {
 // Las mismas rutas que prerender-meta.mjs: se leen de RouteMeta.tsx para que
 // las dos listas no puedan divergir.
 const metaSrc = readFileSync(join(root, 'src/components/RouteMeta.tsx'), 'utf8');
-const ROUTES = [...metaSrc.matchAll(/^\s*'(\/[a-z0-9-]*)':\s*\{/gm)].map((m) => m[1]);
+const ROUTES = [...metaSrc.matchAll(/^\s*'(\/[a-z0-9/-]*)':\s*\{/gm)].map((m) => m[1]);
 if (ROUTES.length < 13) {
   console.error(`[prerender-body] FATAL: solo ${ROUTES.length} rutas extraídas de RouteMeta.tsx (se esperaban >= 13).`);
   process.exit(1);
@@ -62,6 +62,11 @@ const THIN_OK = new Set(['/support']);
 const MIN_WORDS = 300;
 const TPMO_RE = /do not offer every plan|no ofrecemos todos los planes/i;
 
+// createServer() es command === 'serve' para vite.config.ts, y en ese modo el
+// plugin de inspección de desarrollo estampa code-path="src\…" en cada
+// elemento. Esta variable lo desactiva (vite.config.ts la respeta) y la guarda
+// de abajo aborta el build si aun así aparece.
+process.env.CP_PRERENDER = '1';
 const vite = await createServer({ root, server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 let render;
 try {
@@ -93,6 +98,7 @@ for (const t of targets) {
   const hasH1 = /<h1[\s>]/.test(html);
   const thin = THIN_OK.has(t.path.replace(/^\/es(?=\/|$)/, '') || '/');
   if (/\/src\//.test(html)) problems.push(`${t.path}: fuga de ruta de desarrollo (/src/) en el HTML prerenderizado`);
+  if (/\bcode-path="/.test(html)) problems.push(`${t.path}: atributos code-path del plugin de inspección en el HTML prerenderizado (¿CP_PRERENDER no llegó a vite.config?)`);
   if (!thin && words < MIN_WORDS) problems.push(`${t.path}: solo ${words} palabras (mínimo ${MIN_WORDS}) — ¿una página quedó en su fallback de Suspense?`);
   if (!thin && !hasH1) problems.push(`${t.path}: sin <h1> en el HTML prerenderizado`);
   if (!thin && !TPMO_RE.test(text)) problems.push(`${t.path}: la declaración TPMO no aparece en el cuerpo prerenderizado`);

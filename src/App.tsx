@@ -164,6 +164,8 @@ const PrivacyPolicy = lazy(lazyRetry(() => import('./pages/PrivacyPolicy')))
 const Accessibility = lazy(lazyRetry(() => import('./pages/Accessibility')))
 const Terms = lazy(lazyRetry(() => import('./pages/Terms')))
 const ThankYou = lazy(lazyRetry(() => import('./pages/ThankYou')))
+// SEO 2026-09-27 — página propia por guía educativa (/resources/:slug y su gemela /es).
+const Guide = lazy(lazyRetry(() => import('./pages/Guide')))
 const SignSOA = lazy(lazyRetry(() => import('./pages/SignSOA')))
 const NotFound = lazy(lazyRetry(() => import('./pages/NotFound')))
 
@@ -187,6 +189,7 @@ const CONTENT_ROUTES = [
   { path: '/otc-benefits', element: <OtcBenefits /> },
   { path: '/support', element: <Support /> },
   { path: '/resources', element: <Resources /> },
+  { path: '/resources/:slug', element: <Guide /> },
   { path: '/contact', element: <Contact /> },
   { path: '/privacy-policy', element: <PrivacyPolicy /> },
   { path: '/accessibility', element: <Accessibility /> },
