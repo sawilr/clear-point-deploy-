@@ -1,7 +1,11 @@
 {
   "$schema_note": "Temporal rule database — Clear Point Continuous Compliance Engine. Status: CURRENT | FUTURE | EXPIRED | SUPERSEDED | PENDING_VERIFICATION. Never activate FUTURE before effective_date; never leave SUPERSEDED active. Maintained by the monthly audit (compliance/ENGINE.md).",
-  "database_version": "2026-08-28.1",
-  "authorized_jurisdictions": ["NY", "NJ", "CT"],
+  "database_version": "2026-09-28.1",
+  "authorized_jurisdictions": [
+    "NY",
+    "NJ",
+    "CT"
+  ],
   "current_regulatory_year": 2026,
   "next_regulatory_year": 2027,
   "rules": [
@@ -14,9 +18,13 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js", "api/_lib/medicare-figures.js"],
-      "last_verified": "2026-08-28",
-      "verification_note": "Backstop suite 33/33; live probes return $202.90/$283 correctly."
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js",
+        "api/_lib/medicare-figures.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "2026-09-28: figures file, api/chat.js prompt and api/_lib/medicare-figures.js backstop agree ($202.90/$283). No 2027 Part B announcement yet (expected ~Nov, W2)."
     },
     {
       "rule_id": "FED-2026-PARTA",
@@ -27,8 +35,11 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js"],
-      "last_verified": "2026-08-28"
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28"
     },
     {
       "rule_id": "FED-2026-PARTD",
@@ -39,8 +50,13 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js", "api/_lib/medicare-figures.js"],
-      "last_verified": "2026-08-28"
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js",
+        "api/_lib/medicare-figures.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "2026-09-28: CY2027 Rate Announcement (2026-04-06) Table V-2 lists the 2026 column as $615 deductible / $2,100 OOP threshold — independent confirmation of the current values."
     },
     {
       "rule_id": "FED-2026-EXTRAHELP",
@@ -51,8 +67,12 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js"],
-      "last_verified": "2026-08 (prior audits; re-verify each January/March cycle)"
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "2026-09-28: 2026 LIS copays $5.10/$12.65 independently confirmed by CY2027 Rate Announcement Table V-2 (2026 column). Income/asset figures carried from prior audits; annual change lands Jan/Mar (W9)."
     },
     {
       "rule_id": "FED-TPMO-DISCLAIMER",
@@ -63,9 +83,12 @@
       "effective_date": "in force",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/components/DisclaimerBlock.tsx", "src/lib/tpmoConfig.ts"],
-      "last_verified": "2026-09-12",
-      "verification_note": "CORRECTED 2026-09-12 (master audit, verified against eCFR versioner XML 2026-09-08 + 91 FR 17384): the CY2027 final rule DID revise (e)(41) — introductory text and (e)(41)(ii): the SHIP reference is removed from the standardized sentence and the verbal disclaimer timing becomes 'prior to the discussion of any benefits'; applicable to CY2027 marketing beginning 2026-10-01. The COUNTS requirement is unchanged and the site's count-less fallback remains NON-COMPLIANT until the owner/FMO supplies organization/product counts (tpmoConfig.ts, status BLOCKED_COUNTS_REQUIRED). Variant switch is automatic (activeContractYearVariant)."
+      "implemented_in": [
+        "src/components/DisclaimerBlock.tsx",
+        "src/lib/tpmoConfig.ts"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "CORRECTED 2026-09-12 (master audit, verified against eCFR versioner XML 2026-09-08 + 91 FR 17384): the CY2027 final rule DID revise (e)(41) — introductory text and (e)(41)(ii): the SHIP reference is removed from the standardized sentence and the verbal disclaimer timing becomes 'prior to the discussion of any benefits'; applicable to CY2027 marketing beginning 2026-10-01. The COUNTS requirement is unchanged and the site's count-less fallback remains NON-COMPLIANT until the owner/FMO supplies organization/product counts (tpmoConfig.ts, status BLOCKED_COUNTS_REQUIRED). Variant switch is automatic (activeContractYearVariant). 2026-09-28: date switch EXECUTED against src/lib/tpmoConfig.ts via tsx — 2026-09-30T23:59-04:00 → CY2026, 2026-10-01T00:00-04:00 → CY2027. Counts still null (status BLOCKED_COUNTS_REQUIRED) — P1 remains OPEN and becomes more acute with PY2027 marketing (Oct 1) and AEP (Oct 15)."
     },
     {
       "rule_id": "FED-2027-TPMO-WORDING",
@@ -76,8 +99,12 @@
       "effective_date": "2026-10-01 (CY2027 marketing) / 2027-01-01",
       "regulatory_year": 2027,
       "status": "FUTURE",
-      "implemented_in": ["src/lib/tpmoConfig.ts (activeContractYearVariant, CY2027 text staged)", "src/components/DisclaimerBlock.tsx", "src/components/CustomerServiceBot.tsx"],
-      "last_verified": "2026-09-12",
+      "implemented_in": [
+        "src/lib/tpmoConfig.ts (activeContractYearVariant, CY2027 text staged)",
+        "src/components/DisclaimerBlock.tsx",
+        "src/components/CustomerServiceBot.tsx"
+      ],
+      "last_verified": "2026-09-28",
       "verification_note": "Wording staged and date-switched in code. Counts still owner-gated (see FED-TPMO-DISCLAIMER). Voice agents (GHL) must convey the statement before any benefit discussion — owner action."
     },
     {
@@ -89,9 +116,12 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js"],
-      "last_verified": "2026-08-28",
-      "verification_note": "VERIFIED VERBATIM against DOH page 2026-08-28: our figures equal DOH's own '+$20' column; helpline number matches."
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "RE-VERIFIED VERBATIM 2026-09-28 (DOH page Rev. 3/26, footer \"Revised: May 2026\"): QMB $1,836/$2,489 base, $1,856/$2,509 +$20; QI $2,474/$3,355 base, $2,494/$3,375 +$20; helpline 1-800-541-2831. No change."
     },
     {
       "rule_id": "NY-2026-EPIC",
@@ -102,8 +132,13 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "src/components/ChatBot.tsx", "api/chat.js"],
-      "last_verified": "2026-08-28"
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "src/components/ChatBot.tsx",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "RE-VERIFIED 2026-09-28 against program_highlights_2026.htm: up to $75,000 single / $100,000 married; Part D enrollment required."
     },
     {
       "rule_id": "NJ-2026-PAAD-SENIORGOLD",
@@ -114,22 +149,28 @@
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "src/components/ChatBot.tsx", "api/chat.js"],
-      "last_verified": "2026-08-28",
-      "verification_note": "VERIFIED 2026-08-28 against nj.gov: exact match on all four Senior Gold band figures."
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "src/components/ChatBot.tsx",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "RE-VERIFIED 2026-09-28 against nj.gov DoAS PAAD + Senior Gold pages: PAAD <$54,943/<$62,390, copays $5 generic / $7 brand, hotline 1-800-792-9745; Senior Gold $54,943–$64,943 / $62,390–$72,390. Exact match."
     },
     {
       "rule_id": "NJ-2026-MSP",
       "jurisdiction": "NEW_JERSEY",
       "rule": "MSP 2026 monthly: QMB $1,330/$1,803; SLMB $1,596/$2,164; QI $1,795/$2,434 (official NJ annual $21,546/$29,214; monthly floored so the ceiling is never overstated); assets $9,950/$14,910",
-      "source_url": "NJ DHS/federal 2026 standards (verified in prior 2026 audits)",
+      "source_url": "https://www.nj.gov/humanservices/doas/services/l-p/msp/",
       "publication_date": "2026",
       "effective_date": "2026-01-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts"],
-      "last_verified": "2026 prior audits",
-      "verification_note": "Re-verify against official NJ page in next audit (nj.gov MSP page not re-read this cycle)."
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "VERIFIED 2026-09-28 against the official NJ DoAS MSP page (closes the carried item): 2026 annual income QMB $15,960/$21,640, SLMB $19,152/$25,968, QI $21,546/$29,214; assets $9,950/$14,910 all three. Monthly equivalents in the figures file (1,330/1,803 · 1,596/2,164 · 1,795/2,434 floored) are exact twelfths or floors. Official application path on that page: NJSave or DoAS hotline 1-800-792-9745. Clara (api/chat.js lines 115/1305) refers MSP to the NJ Medicaid hotline 1-800-356-1561 — confirmed as the official Medicaid hotline on current nj.gov pages (DOH complaint page, DCF KLG page), so NOT wrong, but differs from the MSP page and from Zara (ChatBot.tsx uses 1-800-792-9745). LEVEL 2 consistency proposal P-2026-09-02."
     },
     {
       "rule_id": "CT-2026-MSP",
@@ -140,9 +181,12 @@
       "effective_date": "2026-03-01",
       "regulatory_year": 2026,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts", "api/chat.js"],
-      "last_verified": "2026-08-28",
-      "verification_note": "VERIFIED VERBATIM against portal.ct.gov 2026-08-28 — exact match all six figures. CAUTION: archived ct.gov pages still circulate 2021-era limits (~$2,196 QMB); always use the DSS eligibility page."
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts",
+        "api/chat.js"
+      ],
+      "last_verified": "2026-09-28",
+      "verification_note": "RE-VERIFIED VERBATIM 2026-09-28 against portal.ct.gov DSS eligibility page (\"effective March 1, 2026\"): QMB $2,807/$3,806, SLMB $3,073/$4,166, ALMB $3,272/$4,437; CHOICES 1-800-994-9422 on the same page; DSS Benefits Center 1-855-626-6632 confirmed on portal.ct.gov/dss/common-elements/dss-client-information-line-and-benefits-center. CAUTION: archived ct.gov pages still circulate 2021-era limits (~$2,196 QMB). Note: CT page text still mentions a \"coverage gap\" (state copy, not ours — Part D has no gap since 2025)."
     },
     {
       "rule_id": "CT-CONNPACE-SUNSET",
@@ -153,8 +197,10 @@
       "effective_date": "2014-01-01",
       "regulatory_year": 2014,
       "status": "CURRENT",
-      "implemented_in": ["src/data/medicare-figures-2026.ts"],
-      "last_verified": "2026-08-28"
+      "implemented_in": [
+        "src/data/medicare-figures-2026.ts"
+      ],
+      "last_verified": "2026-09-28"
     },
     {
       "rule_id": "FED-2027-PARTD-BASEPREMIUM",
@@ -166,7 +212,7 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-08-28",
+      "last_verified": "2026-09-28",
       "verification_note": "Read from official CMS fact sheet in browser 2026-08-28. Do NOT surface as current-year figure before 2027-01-01."
     },
     {
@@ -179,8 +225,47 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-08-28",
+      "last_verified": "2026-09-28",
       "verification_note": "Fact sheet read in full via browser. LEVEL 2 item: 'removing restrictions on time and manner of agent conversations' may allow relaxing the SOA waiting flow — OPTIONAL, current stricter flow remains compliant; verify §422.2264 amendments in rule text before any change. OWNER DECISION."
+    },
+    {
+      "rule_id": "FED-2027-PARTD-PARAMS",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "Part D defined standard benefit CY2027: deductible $700 (2026: $615); annual out-of-pocket threshold $2,400 (2026: $2,100); RDS cost threshold $700 / cost limit $14,000",
+      "source_url": "https://www.cms.gov/files/document/2027-announcement.pdf (CY2027 Rate Announcement, Table V-2, p.96)",
+      "publication_date": "2026-04-06",
+      "effective_date": "2027-01-01",
+      "regulatory_year": 2027,
+      "status": "FUTURE",
+      "implemented_in": [],
+      "last_verified": "2026-09-28",
+      "verification_note": "Read directly from the official PDF (139 pp., downloaded from cms.gov 2026-09-28). Resolves watchlist W3. Do NOT surface as the current-year figure before 2027-01-01; may be surfaced from 2026-10-01 ONLY if clearly labeled '2027' and only after owner approval (proposal P-2026-09-01)."
+    },
+    {
+      "rule_id": "FED-2027-LIS-COPAYS",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "Extra Help/LIS maximum copays CY2027: category 1 (100–150% FPL FBDE and full-subsidy non-FBDE) $5.80 generic / $14.40 other (2026: $5.10/$12.65); category 2 (≤100% FPL FBDE) $1.65 / $5.00 (2026: $1.60/$4.90); institutionalized/HCBS $0",
+      "source_url": "https://www.cms.gov/files/document/2027-announcement.pdf (Table V-2)",
+      "publication_date": "2026-04-06",
+      "effective_date": "2027-01-01",
+      "regulatory_year": 2027,
+      "status": "FUTURE",
+      "implemented_in": [],
+      "last_verified": "2026-09-28",
+      "verification_note": "2027 LIS resource limits NOT yet published — CMS says they come in the annual HPMS memo after the September 2026 CPI (expected mid-late October). Income standards follow the 2027 FPL (~Jan–Mar 2027). Status of those two pieces: PENDING (W9/W14)."
+    },
+    {
+      "rule_id": "FED-2027-APPEALS-AIC",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "Medicare appeals amount-in-controversy CY2027: $200 for ALJ hearings, $2,000 for judicial review (requests filed on/after 2027-01-01)",
+      "source_url": "https://www.federalregister.gov/documents/2026/09/16/2026-19016/",
+      "publication_date": "2026-09-16",
+      "effective_date": "2027-01-01",
+      "regulatory_year": 2027,
+      "status": "FUTURE",
+      "implemented_in": [],
+      "last_verified": "2026-09-28",
+      "verification_note": "Read via Federal Register API abstract. NO impact: no Clear Point surface cites AIC thresholds (grep of src/api/docs 2026-09-28). Informational only."
     }
   ]
 }
