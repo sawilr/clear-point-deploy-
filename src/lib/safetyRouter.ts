@@ -86,8 +86,15 @@ const EMERGENCY_EN = [
   'call 911', 'need 911', 'heart attack', 'having a heart attack',
   'stroke right now', 'chest pain right now', 'severe chest pain',
   "can't breathe", 'cant breathe', 'difficulty breathing',
-  'bleeding heavily', 'unconscious', 'passed out', 'collapsed',
-  'ambulance now', 'emergency right now', 'dying',
+  'bleeding heavily', 'unconscious', 'collapsed',
+  'ambulance now', 'emergency right now',
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 — R8-AI-05 / BOT-02 (HIGH).
+  // 'passed out' y 'dying' salieron de esta lista de SUBCADENAS porque atrapaban
+  // "my mother passed out of the service area when she moved" y "I'm dying to know
+  // the answer" / "I am dying to switch plans" — a esa persona se le respondía con
+  // la pared del 911. Las dos siguen cubiertas en EMERGENCY_RE con la forma
+  // calificada (ver PASSED_OUT / DYING abajo): una subcadena no puede distinguir
+  // el sentido, una regex con lookahead sí.
   // AUDIT 2026-08-27 (mega-corpus) — plain-language cardiac / breathing / STROKE
   // (FAST) / overdose descriptions a real senior types. These are acute-threat
   // phrasings, not the mild-symptom words the CP-03 clinical tier deliberately
@@ -109,7 +116,10 @@ const EMERGENCY_ES = [
   'infarto', 'me da un infarto', 'ataque al corazon', 'ataque al corazón',
   'derrame cerebral', 'dolor de pecho fuerte', 'me duele el pecho fuerte',
   'no puedo respirar', 'no respira', 'sangrando mucho', 'inconsciente',
-  'se desmayó', 'se desmayo', 'me estoy muriendo',
+  'se desmayó', 'se desmayo',
+  // R8-AI-05 (2026-09-28): 'me estoy muriendo' salió de la lista de subcadenas —
+  // "me estoy muriendo de hambre con esta pensión" es una queja de dinero, no una
+  // emergencia. Queda cubierto con forma calificada en EMERGENCY_RE.
   // AUDIT 2026-08-27 (mega-corpus) — descripciones comunes (ES): cardíaco,
   // respiración, ICTUS (boca torcida / no puede hablar / medio cuerpo), sobredosis.
   'me duele el pecho', 'dolor de pecho', 'dolor en el pecho', 'opresion en el pecho',
@@ -117,7 +127,12 @@ const EMERGENCY_ES = [
   'no puedo respirar bien', 'me estoy asfixiando', 'asfixiando', 'me ahogo', 'me estoy ahogando',
   'me falta el aire', 'no me llega el aire',
   // ICTUS / FAST
-  'se le tuerce la boca', 'se tuerce la boca', 'boca torcida', 'no puede hablar', 'no puede ablar',
+  'se le tuerce la boca', 'se tuerce la boca', 'boca torcida',
+  // R8-AI-05 (2026-09-28): 'no puede hablar' / 'no puede ablar' salieron de esta
+  // lista. "mi esposo no puede hablar inglés, ¿puedo hablar yo por él?" y "mi mamá
+  // tiene demencia y no puede hablar" son cuidadores gestionando Medicare, no un
+  // ictus, y recibían la pared del 911. La forma con contexto FAST o de inicio
+  // súbito sigue en EMERGENCY_RE, más el veto de idioma.
   'no puedo hablar bien', 'un brazo no lo mueve', 'no mueve el brazo', 'un lado de la cara',
   'medio cuerpo', 'se le durmio la cara', 'se le durmió la cara', 'brazo se me esta durmiendo',
   'brazo se me está durmiendo',
@@ -257,7 +272,11 @@ function anyRe(text: string, list: RegExp[]): boolean { for (const re of list) i
 const EMERGENCY_RE: RegExp[] = [
   // Cardiac (EN)
   /chest[^.]{0,20}(pain|hurt|hurtin|hurting|tight|pressure|crush)/i,
-  /(pain|hurt|tight|pressure|crushing)[^.]{0,16}(in (my|the) )?chest/i,
+  // 2026-09-28 (R8b): 'tight' pelado con hueco libre disparaba el 911 sobre "I have
+  // a tight budget for a chest x-ray, is it covered?" — una pregunta de precio. La
+  // forma preposicional ("tight in my chest") sigue cubierta y es inequívoca.
+  /(pain|hurt|pressure|crushing|tightness|heaviness)[^.]{0,16}(in (my|the) )?chest/i,
+  /(tight|heavy|pressure|crushing)\s+(in|across|on)\s+(my|the)\s+chest/i,
   /(left|right)?\s*arm[^.]{0,18}(numb|going numb|tingl|weak|dead)/i,
   // Stroke / FAST (EN)
   /(face|mouth)[^.]{0,18}(droop|numb|one side|to one side)/i,
@@ -293,7 +312,110 @@ const EMERGENCY_RE: RegExp[] = [
   /no[^.]{0,8}(despierta|reacciona)/i,
   /no me puedo (parar|levantar|mover)/i,
   /(tome|tome de|tomé|tome)[^.]{0,6}(mas|demasiad)/i,
+  // ── AUDITORÍA INDEPENDIENTE 2026-09-28 — R8b BOT-02 / R8-AI-05 ────────────────
+  // Formas CALIFICADAS de lo que antes eran subcadenas sueltas. El lookahead es el
+  // punto: separa el sentido agudo del idiomático, que es justo lo que una
+  // subcadena no puede hacer.
+  //   "my mother passed out of the service area"  → no dispara
+  //   "he passed out"                             → dispara
+  /\b(passed|blacked)\s+out\b(?!\s+of\b)/i,
+  /\b(i'?m|im|i am|he'?s|she'?s|he is|she is|is|are)\s+dying\b(?!\s+to\b)/i,
+  /\bme\s+estoy\s+muriendo\b(?!\s+de\s+(hambre|ganas|risa|sue|frio|calor|sed|aburri|nervios|vergu|pena))/i,
+  // ICTUS: "se le tuerce la boca y no puede hablar" — el orden inverso (verbo antes
+  // del sustantivo) no lo cubría ninguna regex, así que el servidor lo perdía.
+  /(tuerce|torcida|chueca|se\s+le\s+durmio)[^.]{0,14}(la\s+|su\s+)?(boca|cara)/i,
+  // "no puede hablar" SOLO con contexto FAST o de inicio súbito (la demencia y el
+  // idioma quedan fuera; ambos casos son de cuidadores reales).
+  /(boca|cara|brazo|derrame|ictus|embolia|tuerce|torcid\w*|torci\w*|droop)[^.]{0,40}(no\s+puede|no\s+puedo)\s*(hablar|ablar)/i,
+  /(no\s+puede|no\s+puedo)\s*(hablar|ablar)[^.]{0,40}(boca|cara|brazo|torcid\w*|tuerce|derrame|ictus|de\s+repente)/i,
+  // ── 2026-09-28 (R8b) — PARIDAD CON EL SERVIDOR. Estas frases agudas disparaban la
+  // red del servidor (api/_lib/compliance-filter.js) pero NO la del navegador, que es
+  // la que corre PRIMERO en los dos widgets: en el mejor caso el turno llegaba al
+  // servidor, y en el peor lo consumía el flujo normal del motor. El suite de la
+  // ronda 8b afirma que cliente y servidor coinciden frase por frase.
+  /emerg[ea]n[csz](y|ia|ie|ya)\b/i,
+  /(having|has|is having|had)\s+(a\s+)?(stroke|heart attack)/i,
+  /\bderrame\b|\bembolia\b|\bictus\b/i,
+  /\b(cannot|can not)\s+breath/i,
+  /bleeding[^.]{0,20}(wont stop|won'?t stop|a lot|heavily|badly|everywhere|non ?stop)/i,
+  /(estoy\s+)?sangrando[^.]{0,16}(no para|mucho|sin parar)/i,
+  /(me\s+)?sangra[^.]{0,24}(no para|sin parar|mucho)/i,
+  /\b(overdos\w*|od'?ed|sobredosis)\b/i,
+  /(me|se|nos)\s+desmay\w*/i,
+  /(tuerce|torci\w*|chueca)[^.]{0,14}(la\s+|su\s+)?(boca|cara)/i,
+  /no\s+(se|me|lo|la|te)\s+puede[n]?\s+(parar|levantar|mover)/i,
 ];
+// ── AUDITORÍA INDEPENDIENTE 2026-09-28 — R8b BOT-02 (HIGH) ─────────────────────
+// PARIDAD CON EL SERVIDOR: el veto de marco benigno que compliance-filter.js ya
+// tenía (R2-C11) no existía en el cliente, así que el router del navegador ponía la
+// pared del 911 sobre mensajes de cuidadores y de cobertura: "My husband had a
+// stroke last month and is in rehab. Does Medicare cover the nursing home?",
+// "I passed out at the store last year", "I have a bleeding disorder. Does Part D
+// cover my medication?", "It's an emergency, I lost my Medicare card".
+//
+// LA REGLA SIGUE SIENDO VIDA PRIMERO. El veto solo suprime la coincidencia cuando
+// (a) el texto trae un marco que PRUEBA que el evento no está ocurriendo ahora
+// —pasado fechado, tercera persona ya bajo cuidado, fallecimiento, condición
+// crónica nombrada como condición, tarjeta perdida, pregunta de cobertura sobre una
+// condición— y (b) NO hay ninguna señal aguda. Cualquier señal aguda gana siempre.
+// Estas mismas listas están en api/_lib/compliance-filter.js y en
+// customerServiceEngine.ts: copias literales a propósito (los tres módulos se
+// cargan en contextos distintos) y el suite de la ronda 8b afirma la paridad.
+const EMERGENCY_ACUTE_RE =
+  /(can'?t|cant|cannot|no puedo)\s+breath|no puedo respir|(trouble|difficulty|struggling|hard time)\s+breath|short(ness)? of breath|gasping|suffocating|me estoy ahogando|(me falta|no me llega)\s+(el )?aire|chest\s+(pain|pressure|tight)|chest[^.]{0,14}(tight|pressure|heav|crush)|me duele el pecho|dolor de pecho|opresion en el pecho|(having|have|is having|esta teniendo)\s+(a\s+)?(stroke|heart attack)|(teniendo|tiene)\s+un\s+(infarto|ataque|derrame)|(call|need|llamen?|llamar al?)\s+911|911\s+(now|right now|ahora)|passed\s+out|unconscious|unresponsive|fainted|inconsciente|(won'?t|wont|no)\s+wake|no despierta|no reacciona|(overdosing|overdosed|od'?ed|took\s+(too|to)\s+many|tome\s+demasiad|tomo\s+demasiad)|bleeding\s+(heavily|badly|a lot|everywhere|wont stop|won'?t stop)|hemorrhag|hemorragia|estoy sangrando|sangrando\s+mucho|right now|ahora mismo|se esta muriendo|is dying|can'?t move|arm\s+(is\s+)?numb|brazo[^.]{0,10}(entumec|adormec|no lo mueve)|collaps|colaps|not breathing|no respira\b|not responding|no responde|se desmayo|se cayo|choking|atragant|cardiac arrest|paro cardiaco/i;
+// Palabras de ESTADO: solas no prueban que el evento sea de ahora. Si el mensaje
+// trae un marco de pasado o de custodia hospitalaria y al quitarlas no queda
+// ninguna otra señal aguda, el evento ya pasó o ya está atendido.
+const EMERGENCY_STATE_WORDS_RE =
+  /(passed\s+out|blacked\s+out|unconscious|unresponsive|fainted|inconsciente|se\s+desmay\w*|me\s+desmay\w*|perdio\s+el\s+conocimiento)/gi;
+const EMERGENCY_PAST_FRAME_RE =
+  /last\s+(month|week|year|spring|summer|fall|winter)|el\s+(mes|ano|año)\s+pasad[oa]|la\s+semana\s+pasada|\b\d+\s+(days?|weeks?|months?|years?)\s+ago|\b(two|three|four|five|six|seven|eight|nine|ten|a few|several)\s+(days?|weeks?|months?|years?)\s+ago|hace\s+(\w+\s+){0,2}(dias|semanas|meses|anos|años)|back\s+in\s+(19|20)\d{2}|\bin\s+(19|20)\d{2}|\ben\s+(19|20)\d{2}|(died|passed\s+away)\s+(of|from|in)|murio\s+(de|por)|fallecio\s+(de|por)/i;
+const EMERGENCY_CUSTODY_RE =
+  /(is|was|has been|esta|estuvo|ha estado)\s+(in|en)\s+(the\s+|el\s+|un\s+|una\s+)?(rehab\w*|hospital|icu|nursing home|skilled nursing|asilo|rehabilitacion)|\bin\s+rehab\b|\ben\s+rehabilitacion\b|\bin\s+the\s+hospital\b|\ben\s+el\s+hospital\b|\bnursing\s+home\b|\bskilled\s+nursing\b/i;
+const EMERGENCY_SYSTEM_FRAME_RE = /(prescription|pharmac\w*|website|web\s?site|portal|computer|system|app|page|receta|farmacia|sistema|pagina|computadora)\b[^.?!]{0,28}\b(unresponsive|not\s+responding|no\s+responde|frozen)|(unresponsive|not\s+responding|no\s+responde)\b[^.?!]{0,28}\b(system|website|portal|computer|app|page|online|sistema|pagina|en\s+linea)/i;
+const EMERGENCY_COVERAGE_RE =
+  /\b(cover|covers|covered|coverage|cubre|cubierto|cobertura|copay|copago|deducible|deductible|bill|billed|factura|claim|reclamo|denied|nego|reimburs\w*|reembols\w*|benefit|beneficio|cost|costo|precio|price|part\s+[abcd]|parte\s+[abcd])\b/i;
+const EMERGENCY_CONDITION_RE =
+  /\b(stroke|heart attack|derrame|infarto|embolia|seizure|overdose|sobredosis)\b/i;
+const EMERGENCY_BENIGN_FRAME_RE = [
+  // Fallecimiento de un tercero / condición crónica nombrada como condición.
+  // El VERBO DE HISTORIA SOLO ("tuvo un derrame") NO es un marco benigno: sin fecha ni
+  // contexto de cuidado puede estar ocurriendo ahora. Los casos del cuidador entran por
+  // el marco de pasado, el de custodia o el de cobertura.
+  /(died|passed away)\s+(of|from)|murio\s+(de|por)|fallecio\s+(de|por)/i,
+  /(bleeding|blood|clotting)\s+disorder|trastorno\s+de\s+(la\s+)?sangre|problema\s+de\s+sangrado|hemofilia/i,
+  // Tarjeta perdida: la palabra "emergencia" ahí es administrativa
+  /(lost|perdi|perdio|perdido)\s+(my|mi|la|su)\s+(\w+\s+){0,2}(card|tarjeta)/i,
+  // 'unresponsive' aplicado a un SISTEMA, no a una persona: "the pharmacy said my
+  // prescription is unresponsive in their system", "el portal no responde".
+  /(prescription|pharmac\w*|website|web\s?site|portal|computer|system|app|page|receta|farmacia|sistema|pagina|computadora)\b[^.?!]{0,28}\b(unresponsive|not\s+responding|no\s+responde|frozen)/i,
+  /(unresponsive|not\s+responding|no\s+responde)\b[^.?!]{0,28}\b(system|website|portal|computer|app|page|online|sistema|pagina|en\s+linea)/i,
+  // Sangrado dental
+  /bleeding\s+gums|gums?\s+(are\s+)?bleeding|sangr\w*\s+(de\s+)?(las\s+)?encias/i,
+  // Veto de idioma: "no puede hablar inglés" no es un ictus
+  /\b(ingles|inglés|espanol|español|idioma|language|english|spanish|interprete|intérprete|traductor)\b/i,
+  // Pregunta de cobertura o facturación SOBRE la sala de emergencias / la ambulancia:
+  // preguntar no es una emergencia (paridad con el veto R2-C11 del servidor).
+  /(cover|covers|covered|coverage|cubre|cubierto|cobertura|copay|copago|deducible|deductible|bill|billed|factura|cobro|claim|reclamo|denied|nego|benefit|beneficio)\b[^.?!]{0,40}\b(emergency\s+room|emergency\s+visit|emergency\s+care|\ber\b|ambulance|ambulancia|urgent\s+care|sala\s+de\s+emergencia)/i,
+  /(emergency\s+room|emergency\s+visit|\ber\b|ambulance|ambulancia|urgent\s+care|sala\s+de\s+emergencia)\b[^.?!]{0,40}\b(cover|covers|covered|coverage|cubre|cubierto|cobertura|copay|copago|deducible|deductible|bill|billed|factura|claim|reclamo|denied|nego|benefit|beneficio)/i,
+];
+function emergencyVetoed(ta: string): boolean {
+  let acute = EMERGENCY_ACUTE_RE.test(ta);
+  // 'unresponsive' aplicado a un sistema (receta, portal, farmacia) no es una persona
+  // sin reaccionar. Se quita SOLO esa palabra y SOLO con el marco de sistema; 'not
+  // responding' / 'no responde' siguen siendo agudas siempre.
+  if (acute && EMERGENCY_SYSTEM_FRAME_RE.test(ta)
+    && !EMERGENCY_ACUTE_RE.test(ta.replace(/unresponsive/g, ' '))) acute = false;
+  if (acute && (EMERGENCY_PAST_FRAME_RE.test(ta) || EMERGENCY_CUSTODY_RE.test(ta))
+    && !EMERGENCY_ACUTE_RE.test(ta.replace(EMERGENCY_STATE_WORDS_RE, ' '))) acute = false;
+  if (acute) return false;
+  if (anyRe(ta, EMERGENCY_BENIGN_FRAME_RE)) return true;
+  if (EMERGENCY_PAST_FRAME_RE.test(ta) || EMERGENCY_CUSTODY_RE.test(ta)) return true;
+  // Pregunta de cobertura sobre una condición nombrada ("Is a stroke covered by
+  // Part A?", "My neighbor had a stroke. I want good coverage.")
+  if (EMERGENCY_CONDITION_RE.test(ta) && EMERGENCY_COVERAGE_RE.test(ta)) return true;
+  return false;
+}
 // Crisis patterns that ALWAYS trigger (unambiguous self-harm).
 const CRISIS_STRONG_RE: RegExp[] = [
   /end(ing|in)?\s+it\s+(all|tonight|today)/i,
@@ -311,6 +433,23 @@ const CRISIS_STRONG_RE: RegExp[] = [
   // engine, NOT /api/chat) can never consume them as a name/phone answer. Run
   // on the accent-stripped copy `ta`, so no accents needed in the pattern.
   /ojala\s+no\s+despert\w*/i,
+  // ── AUDITORÍA INDEPENDIENTE 2026-09-28 — R8b BOT-03 (HIGH, vida) ──────────────
+  // 10 de 14 formas REALES de sobredosis y suicidio pasaban las tres redes y la
+  // única cosa entre esas personas y una respuesta de Medicare era que el modelo
+  // decidiera portarse bien. Verificado en vivo: el modelo respondía con el 911 y
+  // el Poison Control — es decir, la red determinista no aportaba nada.
+  // Cada patrón lleva su discriminante para que el parecido benigno siga limpio:
+  //   "I took my pills this morning as usual" / "tomé mis pastillas"  → no dispara
+  //   "the bottle of water" / "the bridge toll"                       → no dispara
+  /took\s+(all|every|the\s+whole|a\s+whole|the\s+entire)\s+(of\s+)?(my|the|them|his|her)?\s*(pill|pills|bottle|meds|medicine|medication|prescription)/i,
+  /swallowed\s+(the|a|my)?\s*(whole|entire|all)\s*(the\s+)?(bottle|pack|box|pills|thing)/i,
+  /\bme\s+(tome|trague)\s+(todas?|todo|el\s+frasco|la\s+caja|el\s+bote|el\s+pomo)/i,
+  /\b(tome|trague)\s+(todas\s+(las|mis)\s+pastillas|el\s+frasco\s+(entero|completo))/i,
+  /\b(have|got|i\s+have|ive\s+got)\s+a\s+(gun|pistol|revolver|rifle|shotgun)\b[^.]{0,28}\b(done|ready|finished|over|end\s+it|kill|not\s+going\s+on)/i,
+  /\b(tengo|traigo)\s+(una\s+)?(pistola|arma|revolver|escopeta)\b[^.]{0,28}(ya\s+no\s+aguanto|no\s+aguanto|ya\s+no\s+puedo|terminar|acabar|me\s+voy|listo)/i,
+  /jump(ing)?\s+(off|from)\s+(the|a|that)\s+(bridge|roof|window|balcony|building|overpass)/i,
+  /\b(tirarme|tirar\s?me|saltar|lanzarme|aventarme|brincar)\s+(del|de\s+la|por\s+la|desde\s+el|desde\s+la)\s*(puente|ventana|techo|balcon|azotea|edificio|tren)/i,
+  /\bme\s+voy\s+a\s+(tirar|lanzar|aventar|saltar)\b[^.]{0,20}(puente|ventana|techo|balcon|azotea|tren)/i,
 ];
 // Crisis patterns that are ambiguous — trigger ONLY without a benign
 // (plan/payment/paperwork) context, so "no point paying for this plan" is safe.
@@ -349,16 +488,23 @@ export function detectSafetyTrigger(userMessage: string): SafetyResult {
     };
   }
 
-  // 911 medical emergency (substring lists OR proximity regex on accent-free copy)
-  if (anyMatch(t, EMERGENCY_EN) || anyMatch(t, EMERGENCY_ES) || anyRe(ta, EMERGENCY_RE)) {
+  // 911 medical emergency (substring lists OR proximity regex on accent-free copy),
+  // menos el veto de marco benigno de 2026-09-28 (pasado / cuidador / cobertura).
+  if ((anyMatch(t, EMERGENCY_EN) || anyMatch(t, EMERGENCY_ES) || anyRe(ta, EMERGENCY_RE))
+    && !emergencyVetoed(ta)) {
     return {
       action: 'emergency_911',
+      // 2026-09-28 (R8b BOT-02): la copia nombra la SALIDA, igual que la pared corta
+      // del motor. Sin ella, un cuidador que cae en un falso positivo no tiene forma
+      // de saber que la conversación se puede reabrir.
       responseEn:
         "Please call 911 right now. This sounds like a medical emergency and I cannot help with that — I am a Medicare information assistant. " +
-        "If you are alone, also ask someone nearby to help call 911. Call us back when you are safe — 1-855-720-8555.",
+        "If you are alone, also ask someone nearby to help call 911. Call us back when you are safe — 1-855-720-8555. " +
+        "If this is not an emergency, just tell me — for example \"it's not an emergency\" — and we can continue.",
       responseEs:
         'Por favor llame al 911 ahora mismo. Esto suena como una emergencia médica y no puedo ayudarle con eso — soy un asistente de información de Medicare. ' +
-        'Si está solo, también pídale a alguien cercano que llame al 911. Llámenos cuando esté seguro — 1-855-720-8555.',
+        'Si está solo, también pídale a alguien cercano que llame al 911. Llámenos cuando esté seguro — 1-855-720-8555. ' +
+        'Si no se trata de una emergencia, dígamelo — por ejemplo "no es emergencia" — y seguimos con su consulta.',
     };
   }
 
