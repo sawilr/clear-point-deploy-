@@ -462,6 +462,12 @@ export default function Home() {
                     width={130}
                     height={44}
                     decoding="async"
+                    /* RONDA 8B (2026-09-28, perf F1 — ALTO). React 19 en servidor emite
+                       <link rel="preload" as="image"> por cada <img> que no sea lazy, así
+                       que estas 15 marcas — que viven a más de 10.000 px del pliegue —
+                       entraban en la ventana crítica: 156 KB y 16 peticiones compitiendo
+                       con el CSS y el héroe. Medido al quitarlas: −1,0 s de FCP/LCP. */
+                    loading="lazy"
                     className={`block object-contain max-w-full max-h-full transition-transform${carrier.logoClass ? ' ' + carrier.logoClass : ''}`}
                   />
                 </div>

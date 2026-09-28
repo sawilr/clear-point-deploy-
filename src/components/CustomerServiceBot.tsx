@@ -1823,7 +1823,12 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
                 alt="Clara"
                 width="36"
                 height="36"
-                loading="eager"
+                /* RONDA 8B (2026-09-28, perf F1). "eager" hacía que React 19 emitiera
+                   <link rel="preload" as="image"> en el cascarón de /support, y esa
+                   precarga compite con el CSS que pinta la conversación. Es un avatar
+                   de 36 px dentro del viewport: con "lazy" el navegador lo pide igual
+                   nada más maquetar, solo desaparece la pista de precarga. */
+                loading="lazy"
                 decoding="async"
                 className="w-full h-full object-cover"
               />

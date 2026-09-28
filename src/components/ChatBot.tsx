@@ -5801,7 +5801,7 @@ export function ChatBot() {
                 fetchPriority="low", y esos preloads compiten con el CSS y el héroe
                 en la ventana crítica. La imagen sigue siendo eager en el lanzador;
                 solo deja de precargarse en el shell prerenderizado. */}
-            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
+            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" loading="lazy" className="w-full h-full object-cover" />
           </div>
           <div className="text-left leading-tight">
             <div className="text-[14px] sm:text-[15px] font-semibold">Zara</div>
@@ -5818,7 +5818,7 @@ export function ChatBot() {
           aria-label={t('Expand Zara chat', 'Expandir chat de Zara')}
         >
           <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
-            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
+            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" loading="lazy" className="w-full h-full object-cover" />
           </div>
           <div className="text-left leading-tight">
             <div className="text-[14px] font-semibold">Zara</div>
@@ -5898,7 +5898,7 @@ export function ChatBot() {
             <div className="flex items-center gap-2.5">
               <div className="relative flex-shrink-0">
                 <div className="w-9 h-9 rounded-full overflow-hidden bg-cream-100">
-                  <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
+                  <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" loading="lazy" className="w-full h-full object-cover" />
                 </div>
                 {/* PHASE 9C — online status dot */}
                 <span aria-hidden className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-earth-800 animate-pulse-online" />

@@ -116,6 +116,19 @@ for (const t of targets) {
     if (!thin && mainWords < MIN_MAIN_WORDS) problems.push(`${t.path}: <main> solo tiene ${mainWords} palabras en el HTML prerenderizado (mínimo ${MIN_MAIN_WORDS}) — el cuerpo no está dentro de main`);
     if (/aria-busy="true"/.test(mainMatch ? mainMatch[1] : '')) problems.push(`${t.path}: <main> contiene un esqueleto de Suspense (aria-busy="true") en el HTML prerenderizado`);
   }
+  // RONDA 8B (2026-09-28, perf F1 — ALTO). React 19 en servidor añade
+  // <link rel="preload" as="image"> por CADA <img> que no lleve loading="lazy"
+  // ni fetchPriority="low". Así entraron 15 logos de aseguradoras (a más de
+  // 10.000 px del pliegue) y el avatar del chat en la ventana crítica de la
+  // portada: 156 KB y 16 peticiones peleando con el CSS y el héroe, −1,0 s de
+  // FCP/LCP medidos al quitarlas. Es invisible en el código: aparece sola en
+  // cuanto alguien añade un <img> ansioso. La única precarga de imagen
+  // permitida es la del héroe, que está escrita a mano en index.html.
+  {
+    const imgPreloads = html.match(/<link rel="preload" as="image"[^>]*>/g) || [];
+    const noHero = imgPreloads.filter((l) => !/hero-bg/.test(l));
+    if (noHero.length) problems.push(`${t.path}: ${noHero.length} precarga(s) de imagen generadas por React en el cascarón (${noHero[0].slice(0, 90)}…) — añada loading="lazy" a esos <img>`);
+  }
   if (!thin && words < MIN_WORDS) problems.push(`${t.path}: solo ${words} palabras (mínimo ${MIN_WORDS}) — ¿una página quedó en su fallback de Suspense?`);
   if (!thin && !hasH1) problems.push(`${t.path}: sin <h1> en el HTML prerenderizado`);
   if (!thin && !TPMO_RE.test(text)) problems.push(`${t.path}: la declaración TPMO no aparece en el cuerpo prerenderizado`);
