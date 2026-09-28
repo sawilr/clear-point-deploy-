@@ -131,6 +131,25 @@ function scrubIdentityForIntel(text, values, dob) {
     for (var q = 0; q < n; q++) parts.push(w);
     return parts.join(' ');
   });
+  //
+  // RONDA 8B (cumplimiento F2, alto). Un ZIP DICTADO son CINCO tokens y la
+  // secuencia de arriba exige siete, así que "my zip is one zero four five
+  // eight" y "mi codigo postal es uno cero cuatro cinco ocho" llegaban literales
+  // al modelo de enriquecimiento mientras los metadatos de la misma petición ya
+  // iban coarsenados a tres dígitos (Safe Harbor). Con la etiqueta delante,
+  // cinco palabras-número son un ZIP y nada más: se digitalizan aquí y el
+  // barrido de ZIP etiquetado de más abajo las deja en tres dígitos. Sin
+  // etiqueta no se toca nada — cinco números sueltos son una cantidad.
+  var ZIP_CUE = '(?:zip(?:\\s*code)?|c[oó]digo\\s+postal|postal(?:\\s*code)?)';
+  out = out.replace(new RegExp('(' + ZIP_CUE + '\\s*(?:is|es|son)?\\s*[:#]?\\s*)((?:' + WORD + ')(?:' + WORD_SEP + '+' + WORD + '){4})(?![\\p{L}\\p{N}])', 'giu'), function (m, pre, run) {
+    var ws = run.toLowerCase().split(new RegExp(WORD_SEP + '+')).filter(Boolean);
+    var d = '';
+    for (var z = 0; z < ws.length; z++) {
+      if (WORD_DIGITS[ws[z]] === undefined) return m;
+      d += WORD_DIGITS[ws[z]];
+    }
+    return pre + d;
+  });
   out = out.replace(RUN, function (m) {
     var parts = m.toLowerCase().split(new RegExp(WORD_SEP + '+')).filter(Boolean);
     var digits = '', anyWord = false;
@@ -185,6 +204,22 @@ function scrubIdentityForIntel(text, values, dob) {
     return m.length === 7 || m.length === 10 || m.length === 11 ? '[phone]' : '[number]';
   });
   out = out.replace(/[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[\p{L}]{2,}/gu, '[email]');
+  //
+  // RONDA 8B (cumplimiento F2, alto). El barrido de arriba exige una '@', así
+  // que la dirección DESOFUSCADA — "rosa.delgado51 at gmail dot com", y su forma
+  // española "rosa.delgado51 arroba gmail punto com" — llegaba entera al modelo
+  // de enriquecimiento: un identificador con el que se puede contactar a la
+  // persona, en la misma petición que su diagnóstico. El patrón existía ya en
+  // api/_lib/phi-scrub.js, pero solo bajo { stripContact: true }, que este
+  // archivo no pasa (y no debe: el CRM necesita el teléfono literal). Se aplica
+  // aquí, sobre la copia que va al modelo, con las formas españolas añadidas.
+  var EMAIL_OBFUSCATED_RE = new RegExp(
+    '(?<![\\p{L}\\p{N}])[\\p{L}\\p{N}._%+-]+\\s*'
+    + '(?:\\[\\s*(?:at|arroba)\\s*\\]|\\(\\s*(?:at|arroba)\\s*\\)|(?<![\\p{L}])(?:at|arroba)(?![\\p{L}]))\\s*'
+    + '[\\p{L}\\p{N}-]+\\s*'
+    + '(?:\\[\\s*(?:dot|punto)\\s*\\]|\\(\\s*(?:dot|punto)\\s*\\)|(?<![\\p{L}])(?:dot|punto)(?![\\p{L}]))\\s*'
+    + '[\\p{L}]{2,}(?![\\p{L}\\p{N}])', 'giu');
+  out = out.replace(EMAIL_OBFUSCATED_RE, '[email]');
   // Dates. Red-team round 3 (R3-SL-06/15): the SUPPLIED date of birth is redacted
   // in every rendering whatever the year (disability leads are under 65); the
   // plausible-birth-year window only governs OTHER dates in the story.
@@ -440,7 +475,18 @@ function scrubIdentityForIntel(text, values, dob) {
     // dot, an underscore, a hyphen — or nothing at all.
     var pat = tokens[j].split(/\s+/).map(function (p) { return tokenPattern(p, caseSensitive); }).join('[\\s._-]*');
     var flags = caseSensitive ? 'gu' : 'giu';
-    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
+    //
+    // RONDA 8B (cumplimiento F2, alto). El cierre era (?![\p{L}\p{N}]), así que
+    // el nombre completo escrito como un HANDLE con dígitos al final —
+    // "rosadelgado51", "RosaDelgado1951", "rosa.delgado51", "rosa_delgado_51" —
+    // no coincidía con nada y viajaba intacto al modelo de enriquecimiento. Es
+    // la forma en que un usuario escribe su propio nombre en un usuario de
+    // portal o de red social, y sigue identificando a la persona. La cola de
+    // dígitos y guiones bajos se CONSUME en vez de romper la coincidencia; los
+    // separadores internos ([\s._-]*, ya presentes por R5-SL-09) cubren el
+    // "primero[._-]?apellido" del patrón de handle.
+    var TAIL = '[_\\d]*';
+    try { out = out.replace(new RegExp('(?<![\\p{L}\\p{N}])' + pat + TAIL + '(?![\\p{L}\\p{N}])', flags), '[redacted]'); } catch (_e) { /* keep going */ }
     //
     // RED TEAM ROUND 5 (R5-SL-04, P2). Case-sensitivity alone trades one leak
     // for another: a lead named Sol, Mar or Luz who writes it lowercase and not
@@ -456,7 +502,7 @@ function scrubIdentityForIntel(text, values, dob) {
         out = out.replace(new RegExp(
           '(\\b(?:soy|me\\s+llamo|mi\\s+nombre\\s+es|se\\s+llama|habla|le\\s+habla|aqu[ií]|atentamente|firmado|firma|saludos|sr\\.?|sra\\.?|srta\\.?|se[nñ]or|se[nñ]ora|se[nñ]orita|don|do[nñ]a|' +
           'my\\s+name\\s+is|i\\s+am|i\'?m|this\\s+is|signed|regards|sincerely|mr\\.?|mrs\\.?|ms\\.?|miss)[\\s,]+)' +
-          anyCase + '(?![\\p{L}\\p{N}])', 'giu'), '$1[redacted]');
+          anyCase + TAIL + '(?![\\p{L}\\p{N}])', 'giu'), '$1[redacted]');
       } catch (_e) { /* keep going */ }
     }
   }
@@ -483,13 +529,42 @@ function leadAudit(outcome, status, extra) {
 // backoff) so total time stays well under the serverless function timeout. Only the
 // CONTACT create/update is retried — notes/opportunities run once after, so a retry
 // cannot duplicate them. Never logs PII.
+//
+// RONDA 8B (R8-LEAD-09, medio). Ninguna llamada a GoHighLevel llevaba plazo:
+// con el CRM lento la función seguía esperando después de que el navegador
+// abortara a los 15 s (src/lib/ghl.ts:61 SUBMIT_TIMEOUT_MS), así que el remitente
+// leía "no pudimos enviarlo" mientras el servidor todavía escribía el contacto,
+// la nota y la oportunidad: una repetición, un asesor confundido y una llamada
+// perdida. Cada INTENTO lleva ahora su propio AbortSignal de 8 s. Con dos
+// reintentos el peor caso supera el aborto del cliente, y eso es deliberado: el
+// lead consentido se sigue intentando aunque el navegador ya no escuche (cero
+// pérdida de leads es la prioridad declarada), pero un CRM colgado ya no
+// bloquea la función entera y el agotamiento se distingue del resto — se marca
+// GHL_TIMEOUT y el llamador contesta 504 con copia honesta.
+var GHL_ATTEMPT_TIMEOUT_MS = 8000;
+function ghlAbortSignal(ms) {
+  try {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  } catch (_e) { /* runtime without AbortSignal.timeout — keep the call unbounded */ }
+  return null;
+}
+function ghlWithTimeout(options, ms) {
+  var sig = ghlAbortSignal(ms == null ? GHL_ATTEMPT_TIMEOUT_MS : ms);
+  if (!sig) return options || {};
+  return Object.assign({}, options || {}, { signal: sig });
+}
+function isAbortError(err) {
+  var n = err && err.name ? String(err.name) : '';
+  return n === 'TimeoutError' || n === 'AbortError';
+}
 async function ghlFetchRetry(url, options, opts) {
   var retries = (opts && opts.retries != null) ? opts.retries : 2;
   var baseDelayMs = (opts && opts.baseDelayMs != null) ? opts.baseDelayMs : 300;
+  var timeoutMs = (opts && opts.timeoutMs != null) ? opts.timeoutMs : GHL_ATTEMPT_TIMEOUT_MS;
   var lastErr = null;
   for (var attempt = 0; attempt <= retries; attempt++) {
     try {
-      var resp = await fetch(url, options);
+      var resp = await fetch(url, ghlWithTimeout(options, timeoutMs));
       if ((resp.status >= 500 || resp.status === 429) && attempt < retries) {
         console.warn('[GHL] transient ' + resp.status + ' — retry ' + (attempt + 1) + '/' + retries);
         await new Promise(function (r) { setTimeout(r, baseDelayMs * Math.pow(2, attempt)); });
@@ -499,9 +574,14 @@ async function ghlFetchRetry(url, options, opts) {
     } catch (err) {
       lastErr = err;
       if (attempt < retries) {
-        console.warn('[GHL] network error — retry ' + (attempt + 1) + '/' + retries);
+        console.warn('[GHL] ' + (isAbortError(err) ? 'attempt timed out after ' + timeoutMs + 'ms' : 'network error') + ' — retry ' + (attempt + 1) + '/' + retries);
         await new Promise(function (r) { setTimeout(r, baseDelayMs * Math.pow(2, attempt)); });
         continue;
+      }
+      if (isAbortError(err)) {
+        var te = new Error('ghl_timeout');
+        te.code = 'GHL_TIMEOUT';
+        throw te;
       }
       throw lastErr;
     }
@@ -993,7 +1073,17 @@ export default async function handler(req, res) {
     // R5-SL-07: `consent-` and `lang|language-` left this list; their exact
     // server spellings are in _denyKeys above, and the server-generated tags are
     // appended after this filter so a client cannot forge one either way.
-    var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|temp|urg|intent|utm|source|leadtype|outcome|compliance)-/;
+    //
+    // RONDA 8B (R8-LEAD-10, bajo). El único filtro de idioma era el prefijo
+    // EXACTO 'Lang-' (api/submit-lead.js:1446, sensible a mayúsculas), así que
+    // 'LANG-ES', 'Lang_ES' y 'lang-es' pasaban y aterrizaban junto al 'Lang-EN'
+    // que escribe el servidor: un asesor que filtra el pipeline por idioma ve
+    // fichas contradictorias y puede llamar en inglés a una persona que solo
+    // habla español. La familia se ancla al _dashKey, que ya normaliza
+    // mayúsculas y separadores, de modo que 'lang-' cubre las tres formas y el
+    // vocabulario del bot de soporte ('language_es' → 'language-es') no colisiona
+    // porque 'lang' tiene que ir seguido del guion (decisión R5-SL-07 intacta).
+    var _denyFamilyPrefix = /^(cp|soa|dnc|dnd|lang|temp|urg|intent|utm|source|leadtype|outcome|compliance)-/;
     if (Array.isArray(body.tags)) {
       // RED TEAM ROUND 5 (R5-SL-16, P4): the loop used to stop at the cap, so
       // tags past the twentieth vanished without being counted and the audit line
@@ -1195,13 +1285,58 @@ export default async function handler(req, res) {
     // (2) Per-phone rate limit (3/hour) + per phone+ZIP (5/hour): stops one actor
     //     rotating IPs to spam the same identity. Keyed on the VALIDATED national
     //     number — never logged raw; the limiter stores only prefixed keys.
+    //
+    // RONDA 8B (R8-LEAD-08, medio). Los dos contadores se cobraban ANTES de la
+    // escritura en el CRM, así que tres intentos durante una caída del CRM
+    // dejaban ese teléfono bloqueado una hora aunque el CRM ya estuviera bien:
+    // el señor que reintentó durante un bache de tres minutos quedaba rechazado
+    // justo en el sitio cuyo propósito es estar disponible, y se le pedía llamar
+    // por teléfono.
+    //
+    // api/_lib/rate-limit.js es compartido y su contador solo sabe incrementar,
+    // así que el reembolso se lleva con un tercer contador de CRÉDITOS sobre la
+    // misma ventana de una hora: los tres se cobran exactamente una vez por
+    // petición en esta puerta, y el de créditos recibe un +1 ADICIONAL por cada
+    // fallo TRANSITORIO del CRM (5xx, red, timeout). La diferencia entre el
+    // contador de créditos y el de teléfono es por tanto el número de intentos
+    // que el CRM perdió, y el techo efectivo se amplía en esa cantidad. El techo
+    // publicado (3/hora por teléfono, 5/hora por teléfono+ZIP) se conserva
+    // exacto para los intentos que el CRM SÍ recibió.
+    //
+    // Un 401/403 NO genera crédito, a propósito: si el token de GoHighLevel está
+    // caducado el fallo puede durar horas, y reembolsar en ese caso convertiría
+    // el límite por teléfono en ilimitado (con una llamada al modelo de
+    // enriquecimiento por intento) mientras el dueño arregla el token. Un 4xx de
+    // validación tampoco: ése sí es cosa del remitente.
+    var _phoneQuotaRefund = null;
     if (phone10) {
-      var rlPhone = await rateLimit(phone10, { max: 3, windowMs: 60 * 60 * 1000, prefix: 'lead-ph' });
-      var rlPhoneZip = await rateLimit(phone10 + ':' + (zip || 'nozip'), { max: 5, windowMs: 60 * 60 * 1000, prefix: 'lead-pz' });
-      if (!rlPhone.ok || !rlPhoneZip.ok) {
+      var _PH_MAX = 3, _PZ_MAX = 5, _RL_WINDOW = 60 * 60 * 1000, _RL_CEIL = 1000000;
+      // El techo que se pasa a rateLimit() es altísimo a propósito para que
+      // devuelva SIEMPRE el conteo exacto (en `remaining`) y la decisión se tome
+      // aquí abajo con el crédito descontado. Si aun así se rebasara — un millón
+      // de intentos sobre un mismo teléfono en una hora — no hay conteo que leer
+      // y se falla CERRADO, nunca abriendo la puerta.
+      var _rlUnreadable = false;
+      var _rlCount = async function (id, prefix) {
+        var r = await rateLimit(id, { max: _RL_CEIL, windowMs: _RL_WINDOW, prefix: prefix });
+        if (!r || r.remaining == null) { _rlUnreadable = true; return _RL_CEIL; }
+        return _RL_CEIL - r.remaining;
+      };
+      var _pzId = phone10 + ':' + (zip || 'nozip');
+      var _phCount = await _rlCount(phone10, 'lead-ph');
+      var _pzCount = await _rlCount(_pzId, 'lead-pz');
+      var _crCount = await _rlCount(phone10, 'lead-ph-cr');
+      var _crmLost = Math.max(0, _crCount - _phCount);
+      _phoneQuotaRefund = function () {
+        // Best-effort: a refund failure must never break the lead path.
+        return rateLimit(phone10, { max: _RL_CEIL, windowMs: _RL_WINDOW, prefix: 'lead-ph-cr' })
+          .then(function () { console.warn('[RATE-LIMIT] per-phone attempt refunded — the CRM lost it, not the caller'); })
+          .catch(function () { /* observability only */ });
+      };
+      if (_rlUnreadable || (_phCount - _crmLost) > _PH_MAX || (_pzCount - _crmLost) > _PZ_MAX) {
         // Generic response — reveal no internal logic. Retry-After lets legit
         // callers (and the UI) know it is temporary.
-        res.setHeader('Retry-After', String((rlPhone.retryAfter || rlPhoneZip.retryAfter || 3600)));
+        res.setHeader('Retry-After', String(Math.ceil(_RL_WINDOW / 1000)));
         console.warn('[RATE-LIMIT] per-phone window exceeded (key hashed, not logged)');
         leadAudit('rate_limited', 429, { tier: 'phone' });
         return res.status(429).json({ error: 'Too many submissions, try again later' });
@@ -1341,6 +1476,59 @@ export default async function handler(req, res) {
     if (ghl_assigned_user_id) {
       contact.assignedTo = ghl_assigned_user_id;
     }
+    // ── RONDA 8B — resolución de contacto por identidad, UNA sola vez ─────────
+    // La usaban dos ramas con dos copias distintas (la de duplicado, y ninguna
+    // en el 2xx sin id — ahí el lead se perdía, R8-LEAD-04). Devuelve el
+    // contacto COMPLETO, no solo el id, porque la rama de repetición necesita
+    // leer dnd / dndSettings / tags antes de escribir nada (R8-LEAD-02).
+    var _lookupContactByIdentity = async function () {
+      var _q = phone10 || email || '';
+      if (!_q) return null;
+      var _res = await ghlFetchRetry(
+        'https://services.leadconnectorhq.com/contacts/?locationId=' + encodeURIComponent(locationId)
+          + '&limit=5&query=' + encodeURIComponent(_q),
+        { headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Accept': 'application/json' } },
+      );
+      if (!_res.ok) return null;
+      var _json = await _res.json().catch(function () { return {}; });
+      var _cands = Array.isArray(_json.contacts) ? _json.contacts : [];
+      var _hit = _cands.find(function (c) {
+        var cDigits = String((c && c.phone) || '').replace(/\D/g, '').slice(-10);
+        if (phone10 && cDigits === phone10) return true;
+        if (email && String((c && c.email) || '').toLowerCase() === email.toLowerCase()) return true;
+        return false;
+      });
+      return (_hit && _hit.id) ? _hit : null;
+    };
+    //
+    // ── RONDA 8B (R8-LEAD-02, alto) — ¿el contacto encontrado está SUPRIMIDO? ──
+    // La rama de repetición no leía nada del contacto que acababa de encontrar,
+    // así que un contacto con dnd:true y las etiquetas 'cp-dnc' / 'Consent
+    // Revoked' recibía una oportunidad asignada al asesor y una nota diciendo
+    // que la persona "sigue esperando contacto": una tarea de marcación creada
+    // sobre una revocación de consentimiento vigente, que es exactamente lo que
+    // el TCPA sanciona. Se comprueba la bandera global, cada canal de
+    // dndSettings y la familia de etiquetas de supresión, normalizando espacios
+    // y guiones bajos para que 'Consent Revoked', 'consent_revoked' y
+    // 'CONSENT-REVOKED' cuenten igual.
+    var _isSuppressedContact = function (c) {
+      if (!c) return false;
+      if (c.dnd === true) return true;
+      var ds = (c.dndSettings && typeof c.dndSettings === 'object') ? c.dndSettings : null;
+      if (ds) {
+        for (var k in ds) {
+          var st = ds[k] && ds[k].status;
+          if (st && !/^inactive$/i.test(String(st))) return true;
+        }
+      }
+      var tags = Array.isArray(c.tags) ? c.tags : [];
+      for (var t = 0; t < tags.length; t++) {
+        var key = String(tags[t] || '').toLowerCase().replace(/[\s_]+/g, '-').replace(/^-+|-+$/g, '');
+        if (/^(consent-revoked|dnc|dnd|do-not-call|do-not-contact|do-not-mail|do-not-text|no-llamar|unsubscribed?)$/.test(key)) return true;
+        if (key.indexOf('cp-dnc') === 0 || key.indexOf('dnc-') === 0 || key.indexOf('dnd-') === 0) return true;
+      }
+      return false;
+    };
     // PHASE 11 — Path A matched flow: update existing GHL contact instead
     // of creating a duplicate. Falls back to POST create if PUT fails.
     var ghlRes;
@@ -1365,6 +1553,9 @@ export default async function handler(req, res) {
     // AUDIT 2026-08-13 (O-05) — true when this submission matched an EXISTING
     // contact and we refreshed it instead of dropping the request.
     var _repeatRequest = false;
+    // RONDA 8B (R8-LEAD-02) — líneas de autoría del servidor que se añaden a la
+    // nota de repetición (recibo nuevo + ventana de llamada nueva).
+    var _repeatNoteFacts = '';
     if (!ghlRes.ok) {
       // Sawil 2026-06-29 SECURITY HOTFIX (finding 19) — sanitize CRM errors and
       // handle duplicates. NEVER leak the upstream status/detail/body to the
@@ -1387,35 +1578,64 @@ export default async function handler(req, res) {
         // Resolve the existing contact so the note/opportunity logic below runs
         // against it. Fail-safe: if the id cannot be resolved we fall back to
         // the original 409 rather than guessing.
-        var _dupId = '';
+        var _dupContact = null;
         try {
-          var _q = phone10 || email || '';
-          if (_q) {
-            var _dupRes = await ghlFetchRetry(
-              'https://services.leadconnectorhq.com/contacts/?locationId=' + encodeURIComponent(locationId)
-                + '&limit=5&query=' + encodeURIComponent(_q),
-              { headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Accept': 'application/json' } },
-            );
-            if (_dupRes.ok) {
-              var _dupJson = await _dupRes.json().catch(function () { return {}; });
-              var _cands = Array.isArray(_dupJson.contacts) ? _dupJson.contacts : [];
-              var _hit = _cands.find(function (c) {
-                var cDigits = String((c && c.phone) || '').replace(/\D/g, '').slice(-10);
-                if (phone10 && cDigits === phone10) return true;
-                if (email && String((c && c.email) || '').toLowerCase() === email.toLowerCase()) return true;
-                return false;
-              });
-              if (_hit && _hit.id) _dupId = _hit.id;
-            }
-          }
+          _dupContact = await _lookupContactByIdentity();
         } catch (e) {
-          console.error('[GHL] duplicate resolution failed: ' + String(e).slice(0, 120));
+          console.error('[GHL] duplicate resolution failed: ' + String((e && e.code) || (e && e.message) || e).slice(0, 120));
         }
+        var _dupId = _dupContact ? _dupContact.id : '';
         if (!_dupId) {
+          // RONDA 8B (R8-LEAD-06, medio). El mensaje decía "we already have your
+          // request on file. A licensed advisor will follow up." y el cliente
+          // trata el 409 como éxito, así que el remitente leía "enviado
+          // correctamente" cuando en esta rama NO se escribió nada: ni nota ni
+          // oportunidad. Si su primera solicitud nunca se trabajó, nadie se
+          // enteró de que volvió a pedir contacto. El texto dice ahora lo que
+          // pasó y pide la acción que sí funciona.
           leadAudit('duplicate_unresolved', 409, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40) });
           return res.status(409).json({
             error: 'DUPLICATE_LEAD',
-            message: 'We already have your request on file. A licensed advisor will follow up.',
+            message: 'We already have a request from this number on file, and no new record was created for this one. To make sure an advisor reaches you today, please call 1-855-720-8555.',
+          });
+        }
+        //
+        // ── RONDA 8B (R8-LEAD-02, alto) — repetición sobre un contacto SUPRIMIDO ──
+        // Nada se escribe antes de leer el estado del contacto encontrado. Con
+        // DND o una etiqueta de revocación NO se crea oportunidad (que es la
+        // tarea de marcación del asesor) ni la nota de "sigue esperando
+        // contacto": se deja constancia de que la persona volvió a enviar el
+        // formulario y de que hace falta un consentimiento nuevo. El remitente
+        // recibe 200 — no perdemos el hecho — con el texto honesto y el teléfono
+        // por el que sí se puede revertir la supresión.
+        if (_isSuppressedContact(_dupContact)) {
+          console.warn('[GHL] repeat submission on a SUPPRESSED contact — no opportunity, no dialing task, re-consent required');
+          try {
+            await fetch('https://services.leadconnectorhq.com/contacts/' + _dupId + '/notes', ghlWithTimeout({
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify({ body:
+                '*** REPEAT REQUEST on a suppressed contact (DND / consent revoked) — no dialing task created; re-consent required ***\n'
+                + 'This web submission matched a contact whose record carries a do-not-contact state. '
+                + 'It is recorded for the file only: no opportunity was created and no message text from the submission is stored '
+                + '(an unverified web submission proves nothing about who sent it). '
+                + 'Do not call or text this contact until a new, documented consent exists.\n'
+                + 'Submission ID: ' + (submission_id || 'n/a')
+                + '. Form: ' + String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40)
+                + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.' }),
+            }));
+          } catch (e) {
+            console.error('[GHL] suppressed-repeat note exception: ' + (e && e.message ? e.message : String(e)));
+          }
+          leadAudit('existing_contact_suppressed', 200, {
+            lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40),
+            matched_by: phone10 ? 'phone' : 'email',
+          });
+          return res.status(200).json({
+            success: true,
+            suppressed: true,
+            message: 'We have a do-not-contact request on file for this number. To update it, please call 1-855-720-8555.',
+            submission_id: submission_id || undefined,
           });
         }
         console.warn('[GHL] duplicate contact — recording a repeat request WITHOUT overwriting the existing record');
@@ -1445,9 +1665,65 @@ export default async function handler(req, res) {
         // repeat request produces a visible, advisor-facing record — WITHOUT the
         // identity/consent PUT that created the vector.
         _repeatRequest = true;
+        //
+        // RONDA 8B (R8-LEAD-02, alto — segunda mitad). El recibo TCPA nuevo y la
+        // nueva ventana de llamada se DESCARTABAN: la nota decía sólo "volvió a
+        // enviar" y el asesor no sabía a qué hora llamar ni que había una prueba
+        // de consentimiento fechada hoy. Se persisten como líneas de AUTORÍA DEL
+        // SERVIDOR: el digest, la versión de la declaración, la hora del reloj
+        // del servidor, la ruta saneada y las etiquetas YA normalizadas por
+        // _tagify (sólo [A-Za-z0-9-]). No entra prosa del remitente, así que
+        // API-01 sigue cerrado.
+        var _repeatFacts = [];
+        var _rcpt = [];
+        if (consent_receipt_hash) _rcpt.push('sha256=' + consent_receipt_hash);
+        if (disclaimer_version) _rcpt.push('disclaimer=' + disclaimer_version);
+        _rcpt.push('at=' + new Date().toISOString());
+        if (typeof page_url === 'string' && page_url) _rcpt.push('page=' + page_url);
+        if (body.consent_to_contact === true && (consent_receipt_hash || disclaimer_version)) {
+          _repeatFacts.push('New consent receipt on this submission — ' + _rcpt.join(' · '));
+        }
+        if (_bestTimeTag || _interestTag) {
+          _repeatFacts.push('New request details (server-normalised tags): '
+            + [_bestTimeTag ? 'best time ' + _bestTimeTag : '', _interestTag ? 'interest ' + _interestTag : '']
+              .filter(Boolean).join(', ') + '.');
+        }
+        _repeatNoteFacts = _repeatFacts.length ? '\n' + _repeatFacts.join('\n') : '';
         ghlRes = { ok: true, status: 200, json: async function () { return { contact: { id: _dupId } }; } };
+      } else if (ghlRes.status === 401 || ghlRes.status === 403) {
+        //
+        // RONDA 8B (R8-LEAD-03, alto — la parte que no necesita infraestructura
+        // nueva). Un 401/403 no es "el CRM está ocupado": el token de
+        // GoHighLevel está caducado, revocado o sin el alcance necesario, y el
+        // fallo dura hasta que el dueño lo rota. Mezclarlo con los 5xx en el
+        // mismo código de salida escondía justo el caso en el que TODOS los
+        // leads se pierden hasta que alguien lea los registros. Se le da su
+        // propio código de auditoría y su propia línea de error para que un
+        // filtro por outcome='crm_auth' lo encuentre.
+        //
+        // PENDIENTE — DECISIÓN DEL DUEÑO (no se puede cerrar en código): un
+        // almacén de cartas muertas (dead-letter) para el lead consentido que
+        // este camino pierde necesita un proveedor con coste y credenciales
+        // (Vercel KV / Blob, o una cola externa) y un aviso fuera de banda que
+        // no dependa de GoHighLevel. Hasta que exista, el lead se pierde y este
+        // 502 es honesto al respecto; la línea [LEAD-AUDIT] outcome=crm_auth es
+        // el único rastro, y merece una alerta sobre el drenaje de registros.
+        console.error('[GHL] Contact creation REFUSED — HTTP ' + ghlRes.status + ' (token expired, revoked or missing scope). The consented lead was NOT recorded.');
+        leadAudit('crm_auth', 502, { upstream_status: ghlRes.status });
+        // Deliberately NO per-phone refund here (see the R8-LEAD-08 comment at
+        // the limiter): a dead token can last hours, and refunding every attempt
+        // would turn the per-phone ceiling into no ceiling — one paid enrichment
+        // call per attempt — for as long as the outage lasts.
+        return res.status(502).json({
+          error: 'CRM_AUTH',
+          message: 'We could not file your request automatically. Please call us at 1-855-720-8555 and a licensed advisor will take your information over the phone.',
+        });
       } else {
         leadAudit('crm_unavailable', 502, { upstream_status: ghlRes.status });
+        // R8-LEAD-08: a 5xx/429 is the CRM's failure, not the caller's — give the
+        // per-phone quota the attempt back so a three-minute outage cannot lock
+        // this number out for an hour.
+        if (_phoneQuotaRefund && (ghlRes.status >= 500 || ghlRes.status === 429)) await _phoneQuotaRefund();
         return res.status(502).json({
           error: 'CRM_UNAVAILABLE',
           message: 'We could not submit your request right now. Please call us at 1-855-720-8555.',
@@ -1463,7 +1739,25 @@ export default async function handler(req, res) {
     var ghlData = await ghlRes.json().catch(function () { return {}; });
     var contactId = ghlData && ghlData.contact && ghlData.contact.id;
     if (!contactId) {
-      console.warn('[GHL] 2xx with no contact id in body — treating as created, skipping note (no PII logged)');
+      //
+      // RONDA 8B (R8-LEAD-04, alto). "Skipping note" era en realidad "skipping
+      // note AND opportunity": el lead quedaba como un contacto sin nota y sin
+      // ficha en el pipeline — invisible para el asesor — y el remitente leía
+      // "enviado correctamente". El contacto SÍ existe, así que se busca por
+      // teléfono/correo con la misma consulta que usa la rama de duplicado antes
+      // de rendirse. Si aparece, la nota y la oportunidad siguen su curso normal.
+      console.warn('[GHL] 2xx with no contact id in body — resolving the contact by phone/email before giving up (no PII logged)');
+      try {
+        var _recovered = await _lookupContactByIdentity();
+        if (_recovered && _recovered.id) {
+          contactId = _recovered.id;
+          console.warn('[GHL] contact recovered by identity lookup after a 2xx with no id');
+        } else {
+          console.error('[GHL] 2xx with no contact id and no identity match — no note and no opportunity for this lead');
+        }
+      } catch (e) {
+        console.error('[GHL] identity lookup after a 2xx with no id failed: ' + String((e && e.code) || (e && e.message) || e).slice(0, 120));
+      }
     }
     // Privacy: log only contactId + source + language. Never log first_name,
     // last_name, phone, email, ZIP, DOB, or any other PII. Vercel runtime logs
@@ -1489,7 +1783,8 @@ export default async function handler(req, res) {
       }
       if (noteBody) {
         try {
-          await fetch('https://services.leadconnectorhq.com/contacts/'+contactId+'/notes',{
+          // R8-LEAD-09: cada llamada al CRM lleva plazo por intento.
+          await fetch('https://services.leadconnectorhq.com/contacts/'+contactId+'/notes',ghlWithTimeout({
             method:'POST',
             headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
             // AUDIT 2026-08-13 (O-05) — flag a repeat submission at the TOP of
@@ -1506,12 +1801,16 @@ export default async function handler(req, res) {
             // ve que la persona volvió a pedir contacto, que es la acción que
             // toca, y la prosa del remitente no llega a la ficha. Reactivar eso
             // exige el token firmado que ya prescribe el comentario de arriba.
+            // RONDA 8B (R8-LEAD-02) — _repeatNoteFacts añade el recibo TCPA
+            // nuevo y la ventana de llamada nueva, ya normalizados por el
+            // servidor. Sigue sin entrar una sola palabra del remitente.
             body:JSON.stringify({body:(_repeatRequest
               ? '*** REPEAT REQUEST — this person already had a record and submitted again. They are still waiting for contact. ***\n'
                 + 'Message text withheld: this was an unverified web submission and anyone who knows a phone number can send one. '
                 + 'Submission ID: ' + (submission_id || 'n/a') + '. Form: ' + String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40) + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.'
+                + _repeatNoteFacts
               : noteBody)})
-          });
+          }));
         } catch(e) {
           console.error('[GHL] Note creation exception: ' + (e && e.message ? e.message : String(e)));
         }
@@ -1571,6 +1870,48 @@ export default async function handler(req, res) {
     // abierta, y para el asesor es la tarea de seguimiento que evita que una
     // persona que volvió a pedir contacto se pierda. El vector de inyección
     // era la prosa libre en la nota, y ésa es la que se retiene arriba.
+    // RONDA 8B (R8-LEAD-04, alto) — 'created' | 'existing' | 'failed'. Lo que
+    // el asesor ve es la oportunidad, así que un contacto sin ella es un lead
+    // que nadie mira; el JSON lo dice ahora en vez de contestar "Contact
+    // created" sin más.
+    var _oppOutcome = 'skipped';
+    //
+    // RONDA 8B (R8-LEAD-04, alto) — cuando la oportunidad no se puede crear, el
+    // lead queda en el CRM pero fuera del pipeline, que es donde el asesor
+    // trabaja. Se marca con una etiqueta de la familia del SERVIDOR y con una
+    // nota accionable para que salga en un filtro.
+    //
+    // La etiqueta se añade por POST /contacts/{id}/tags, NUNCA por PUT
+    // /contacts/{id}: el PUT lleva el cuerpo de identidad/consentimiento y es
+    // exactamente el vector que cerró LEAD-02 (2026-08-18). El endpoint de
+    // etiquetas no toca ni identidad ni consentimiento ni DND.
+    var _flagMissingOpportunity = async function (cid, upstreamStatus) {
+      if (!cid) return;
+      try {
+        await fetch('https://services.leadconnectorhq.com/contacts/' + cid + '/tags', ghlWithTimeout({
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ tags: ['Status-NeedsOpportunity'] }),
+        }));
+      } catch (e) {
+        console.error('[GHL] Status-NeedsOpportunity tag failed: ' + (e && e.message ? e.message : String(e)));
+      }
+      try {
+        await fetch('https://services.leadconnectorhq.com/contacts/' + cid + '/notes', ghlWithTimeout({
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Version': '2021-07-28', 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ body:
+            '*** OPPORTUNITY NOT CREATED — add to pipeline manually ***\n'
+            + 'The contact was written but the pipeline card could not be created, so this lead is NOT in the advisor queue. '
+            + 'Add it to "ClearPoint Medicare Leads v2" / New Lead by hand.\n'
+            + 'Submission ID: ' + (submission_id || 'n/a')
+            + '. Upstream status: ' + (upstreamStatus ? String(upstreamStatus) : 'network/timeout')
+            + '. Pipeline: ' + pipelineId + '.' }),
+        }));
+      } catch (e) {
+        console.error('[GHL] Status-NeedsOpportunity note failed: ' + (e && e.message ? e.message : String(e)));
+      }
+    };
     if (contactId) {
       try {
         // FASE 15 — opportunity idempotency. The contact upsert already dedupes by
@@ -1582,9 +1923,9 @@ export default async function handler(req, res) {
         // create, matching the previous always-create behavior on error.
         var _dupOpp = false;
         try {
-          var _oppSearch = await fetch('https://services.leadconnectorhq.com/opportunities/search?location_id=' + encodeURIComponent(locationId) + '&contact_id=' + encodeURIComponent(contactId) + '&pipeline_id=' + encodeURIComponent(pipelineId) + '&status=open&limit=20', {
+          var _oppSearch = await fetch('https://services.leadconnectorhq.com/opportunities/search?location_id=' + encodeURIComponent(locationId) + '&contact_id=' + encodeURIComponent(contactId) + '&pipeline_id=' + encodeURIComponent(pipelineId) + '&status=open&limit=20', ghlWithTimeout({
             headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Accept':'application/json'}
-          });
+          }));
           if (_oppSearch.ok) {
             var _oppData = await _oppSearch.json();
             _dupOpp = Array.isArray(_oppData && _oppData.opportunities) && _oppData.opportunities.length > 0;
@@ -1595,7 +1936,12 @@ export default async function handler(req, res) {
           leadAudit('created', 200, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40), repeat: _repeatRequest === true, opportunity: 'existing' });
           return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined, opportunity: 'existing' });
         }
-        var oppRes = await fetch('https://services.leadconnectorhq.com/opportunities/',{
+        // RONDA 8B (R8-LEAD-04, alto). La oportunidad se creaba con UN solo
+        // intento y un console.error: un 500 o un 422 del CRM dejaba el lead
+        // fuera del pipeline y el remitente leía "enviado correctamente". Se
+        // reintenta con la MISMA política que el contacto (ghlFetchRetry:
+        // 5xx/429/red/timeout, 3 intentos, 300/600 ms).
+        var oppRes = await ghlFetchRetry('https://services.leadconnectorhq.com/opportunities/',{
           method:'POST',
           headers:{'Authorization':'Bearer '+token,'Version':'2021-07-28','Content-Type':'application/json','Accept':'application/json'},
           body:JSON.stringify(Object.assign({ locationId:locationId, pipelineId:pipelineId, pipelineStageId:pipelineStageId, contactId:contactId, name:oppName, status:'open' }, defaultOwnerId ? { assignedTo: defaultOwnerId } : {}))
@@ -1603,20 +1949,45 @@ export default async function handler(req, res) {
         if (!oppRes.ok) {
           // Privacy: log status + pipeline IDs only. The response body may echo
           // contact name / lead source / monetary value — keep PII out of logs.
-          console.error('[GHL] Opportunity creation failed: HTTP ' + oppRes.status + ' pipeline=' + pipelineId);
+          console.error('[GHL] Opportunity creation failed after retries: HTTP ' + oppRes.status + ' pipeline=' + pipelineId);
+          _oppOutcome = 'failed';
+          await _flagMissingOpportunity(contactId, oppRes.status);
         } else {
           console.log('[GHL] Opportunity created', { contactId: contactId, pipeline: pipelineId });
+          _oppOutcome = 'created';
         }
       } catch(e) {
-        console.error('[GHL] Opportunity creation exception: ' + (e && e.message ? e.message : String(e)));
+        console.error('[GHL] Opportunity creation exception: ' + String((e && e.code) || (e && e.message) || e).slice(0, 120));
+        _oppOutcome = 'failed';
+        await _flagMissingOpportunity(contactId, 0);
       }
+    }
+    if (_oppOutcome === 'failed') {
+      // El lead SÍ está en el CRM, así que success sigue siendo true — decirle
+      // que falló le haría reenviar y duplicar. Pero el audit y el JSON dicen la
+      // verdad: esta persona no está en el pipeline y hace falta una mano.
+      leadAudit('created_without_opportunity', 200, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40), repeat: _repeatRequest === true, opportunity: 'failed' });
+      return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined, opportunity: 'failed' });
     }
     leadAudit('created', 200, { lang: preferred_language || '', src: (lead_source || '').toString().slice(0, 40), repeat: _repeatRequest === true });
     return res.status(200).json({ success: true, message: 'Contact created', contact_id: contactId, submission_id: submission_id || undefined });
   } catch (err) {
+    // RONDA 8B (R8-LEAD-09) — un CRM colgado se distingue de un error nuestro:
+    // 504 con la copia honesta en vez de "Internal server error".
+    if (err && err.code === 'GHL_TIMEOUT') {
+      console.error('[GHL] upstream timed out after ' + GHL_ATTEMPT_TIMEOUT_MS + 'ms per attempt — the lead may or may not have been written');
+      leadAudit('crm_timeout', 504, {});
+      try { if (typeof _phoneQuotaRefund === 'function' && _phoneQuotaRefund) await _phoneQuotaRefund(); } catch (_r) { /* observability only */ }
+      return res.status(504).json({
+        error: 'CRM_TIMEOUT',
+        message: 'Our system did not answer in time. Please call us at 1-855-720-8555 so a licensed advisor can take your information now.',
+      });
+    }
     // Never leak internals to the client. Log the class of failure only.
     console.error('[submit-lead] unhandled exception: ' + (err && err.message ? String(err.message).slice(0, 200) : 'unknown'));
     leadAudit('internal_error', 500, {});
+    // R8-LEAD-08: a network-level CRM failure is not the caller's doing either.
+    try { if (typeof _phoneQuotaRefund === 'function' && _phoneQuotaRefund) await _phoneQuotaRefund(); } catch (_r) { /* observability only */ }
     return res.status(500).json({ error: 'Internal server error' });
   }
 }

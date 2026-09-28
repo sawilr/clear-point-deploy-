@@ -205,7 +205,13 @@ async function coreMatrix() {
     r = await httpReq(3101, { body: validLead({ lead_notes: 'A'.repeat(100 * 1024) }) });
     check('B13 100KB notes handled gracefully (capped, no 5xx crash)', r.status === 502 || r.status === 200, `status=${r.status} body=${r.text.slice(0, 120)}`);
     r = await httpReq(3101, { body: validLead({ phone: '7182013344' }) });
-    check('B14 valid lead + dummy CRM → sanitized 502, no internals', r.status === 502 && r.json && r.json.error === 'CRM_UNAVAILABLE' && !/stack|leadconnector|bearer|token/i.test(r.text), `status=${r.status} body=${r.text.slice(0, 160)}`);
+    // RONDA 8B (R8-LEAD-03) — el token de prueba hace que GoHighLevel responda
+    // 401, y un 401/403 lleva ahora su propio código saneado (CRM_AUTH) en vez de
+    // contarse como una caída genérica: el caso en el que TODOS los leads
+    // consentidos se pierden hasta que el dueño rota el token tiene que poder
+    // encontrarse solo. Se aceptan los dos códigos; lo que esta prueba vigila es
+    // que no se filtre nada interno.
+    check('B14 valid lead + dummy CRM → sanitized 502, no internals', r.status === 502 && r.json && (r.json.error === 'CRM_UNAVAILABLE' || r.json.error === 'CRM_AUTH') && !/stack|leadconnector|bearer|token/i.test(r.text), `status=${r.status} body=${r.text.slice(0, 160)}`);
     r = await httpReq(3101, { body: validLead({ phone: '9172013344', turnstile_token: DUMMY_TOKEN }) });
     check('B15 token sent while mode off → ignored, proceeds', r.status === 502, `status=${r.status}`);
     // F1 (red-team authorization gap): a client-supplied ghl_contact_id must be
@@ -222,7 +228,10 @@ async function coreMatrix() {
     check('B18 audit: honeypot_discarded logged', hasAudit(s, 'honeypot_discarded'), 'missing');
     check('B19 audit: minfill_discarded logged', hasAudit(s, 'minfill_discarded'), 'missing');
     check('B20 audit: validation_rejected logged', hasAudit(s, 'validation_rejected'), 'missing');
-    check('B21 audit: crm_unavailable logged', hasAudit(s, 'crm_unavailable'), 'missing');
+    // RONDA 8B (R8-LEAD-03): con el token de prueba el upstream contesta 401, así
+    // que la línea de auditoría es crm_auth. Se acepta cualquiera de las dos para
+    // que la prueba siga midiendo "el fallo del CRM deja rastro".
+    check('B21 audit: crm_unavailable / crm_auth logged', hasAudit(s, 'crm_unavailable') || hasAudit(s, 'crm_auth'), 'missing');
     check('B22 audit: body_rejected logged', hasAudit(s, 'body_rejected'), 'missing');
     const all = s.logs.join('');
     check('B23 logs contain no PII (name/phone/zip never logged)', !all.includes('6462013344') && !all.includes('Harness') && !all.includes('10468'), 'PII found in logs');
