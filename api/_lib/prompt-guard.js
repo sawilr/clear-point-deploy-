@@ -51,7 +51,9 @@ const INJECTION_PATTERNS = [
   // lo único que había que proteger es la pregunta real de un cliente sobre un
   // documento suyo ("should I ignore the instructions on this letter?"), así que el
   // veto es el complemento documental, no el determinante.
-  /\b(ignore|disregard|forget)\s+(?:all\s+|any\s+){0,2}(?:the|these|those)\s+(?:\w+\s+){0,2}(rules?|restrictions?|guidelines?|guardrails?|instructions?|limits?|filters?)\b(?!\s+(?:on|in|from|of|at)\s+(?:this|that|the|my|his|her|their)\s+(?:\w+\s+){0,2}(letter|form|notice|bill|statement|paper|packet|envelope|card|website|site|page|document|application|booklet|handbook))/i,
+  // Solo la forma IMPERATIVA: "I always forget the rules for the Part D deductible" es
+  // una frase de cliente, así que un sujeto delante del verbo veta la regla.
+  /(?<!\b(?:i|we|they|he|she|people|everyone|someone|nobody)\b[^.!?]{0,24})\b(ignore|disregard|forget)\s+(?:all\s+|any\s+){0,2}(?:the|these|those)\s+(?:\w+\s+){0,2}(rules?|restrictions?|guidelines?|guardrails?|instructions?|limits?|filters?)\b(?!\s+(?:on|in|from|of|at|about|for)\s+(?:this|that|the|my|his|her|their)\s+(?:\w+\s+){0,3}(letter|form|notice|bill|statement|paper|packet|envelope|card|website|site|page|document|application|booklet|handbook|deductible|premium|plan|coverage))/i,
   /\byou\s+are\s+(?:a|an)\s+(?:different|new|another|unrestricted|uncensored|jailbroken|evil)\s+(?:\w+\s+){0,2}(assistant|ai|bot|model|chatbot|persona|agent)\b/i,
   /\b(?:let'?s|lets)\s+play\s+a\s+game\s+where\s+you\s+(?:are|become|act|pretend)\b/i,
   // Direct override attempts (ES) — allow up to 3 fillers between verb and noun
