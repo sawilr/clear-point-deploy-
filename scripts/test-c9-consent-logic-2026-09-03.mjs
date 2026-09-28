@@ -1,9 +1,16 @@
 // Replicates the R2-C9 lead_consent decision block (kept in sync with
 // src/components/ChatBot.tsx). Classifies input as CONSENT | DECLINE | REPROMPT.
+//
+// AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-LEAD-01, HIGH) — esta réplica y sus
+// expectativas fijaban el DEFECTO: "ok", "sure" y "claro" figuraban como CONSENT,
+// o sea un recibo TCPA firmado a partir de un acuse de recibo. Sincronizada con
+// la lista de afirmativas nueva de ChatBot.tsx y con la regla correcta: un acuse
+// de recibo vuelve a preguntar. scripts/test-round8b-bots-2026-09-28.mjs extrae
+// las expresiones del propio archivo para que no vuelvan a divergir.
 function classify(text) {
   const norm = text.toLowerCase().trim().replace(/[.,!?;:]+$/, '');
   const TAIL = '(?:\\s|$|[.,;!?])';
-  const yes = new RegExp('^(?:yes|y|yeah|yep|sure|absolutely|of course|please|por favor|ok|okay|s[ií]|claro|por supuesto|adelante|acepto|estoy de acuerdo|i agree|i consent)' + TAIL).test(norm + ' ')
+  const yes = new RegExp('^(?:yes|yeah|yep|yup|absolutely|of course|s[ií]|por supuesto|acepto|autorizo|estoy de acuerdo|i agree|i consent|i accept)' + TAIL).test(norm + ' ')
     || /(?:^|\s)(i (?:agree|consent|accept)|yes please|yes i (?:do|will|agree|consent))(?:\s|$|[.,;!?])/.test(norm + ' ')
     || /(?:^|\s)(s[ií] acepto|s[ií] estoy de acuerdo|claro que s[ií])(?:\s|$|[.,;!?])/.test(norm + ' ');
   const negNorm = norm
@@ -27,8 +34,13 @@ const cases = [
   ['what does this mean?', 'REPROMPT'], ['ok but what does this mean?', 'REPROMPT'],
   ['okay what am i agreeing to exactly?', 'REPROMPT'], ['sure, whatever', 'REPROMPT'],
   ['yes', 'CONSENT'], ['sí', 'CONSENT'], ['si acepto', 'CONSENT'], ['i agree', 'CONSENT'], ['claro que sí', 'CONSENT'],
-  ['yes i agree', 'CONSENT'], ['ok', 'CONSENT'], ['sure', 'CONSENT'], ['claro', 'CONSENT'], ['acepto', 'CONSENT'],
+  ['yes i agree', 'CONSENT'], ['acepto', 'CONSENT'], ['autorizo', 'CONSENT'], ['yes please', 'CONSENT'],
   ['yes, no problem', 'CONSENT'],
+  // AUDITORÍA 2026-09-28 (R8-LEAD-01) — acuses de recibo: re-pregunta, NUNCA un
+  // recibo TCPA. Los seis primeros son los que el audit midió como consentimiento.
+  ['ok', 'REPROMPT'], ['okay', 'REPROMPT'], ['claro', 'REPROMPT'], ['sure', 'REPROMPT'],
+  ['please', 'REPROMPT'], ['por favor', 'REPROMPT'], ['y', 'REPROMPT'], ['ok.', 'REPROMPT'],
+  ['ok gracias', 'REPROMPT'], ['adelante', 'REPROMPT'], ['vale', 'REPROMPT'], ['de acuerdo', 'REPROMPT'],
 ];
 let pass = 0, fail = 0;
 for (const [t, exp] of cases) {
