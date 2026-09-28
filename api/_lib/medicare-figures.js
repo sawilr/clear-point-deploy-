@@ -646,10 +646,49 @@ function classifyAt(text, offset) {
   const premium = kind ? /premium|prima/.test(kind) : /premium|prima/.test(win);
   const oopCap = kind ? /out|pocket|catastr|bolsillo|tope/.test(kind) : /out[-\s.]?of[-\s.]?pocket|catastrophic|catastr[oó]f|tope (de|máximo)|m[aá]ximo de bolsillo|\bcap\b/.test(win);
 
+  //
+  // AUDIT 2026-09-28 (R8-AI-07 / BOT-04, P1). Part A and Part B each required a
+  // canonical adjective the model almost never writes, so the backstop corrected
+  // only the phrasings nobody uses and left the common ones standing:
+  //   "The Part B premium is $185 per month."        unchanged
+  //   "The Part B premium is $185."                  unchanged
+  //   "Part B costs $185 each month."                unchanged
+  //   "La prima de la Parte B es $164.90 al mes."    unchanged
+  //   "The Part A deductible is $1,676."             unchanged
+  // while "The STANDARD Part B premium is $185/month" was corrected — the exact
+  // inverse of what this module exists for.
+  //
+  // The adjective was standing in for a disambiguation, so do the disambiguation
+  // directly. Part A has ONE deductible, so the hospital qualifier only has to be
+  // absent of a competing per-day / SNF / premium noun. A Part B premium is the
+  // standard premium unless the span names a DIFFERENT product's premium; the
+  // IRMAA / income vetoes that protect a legitimately higher premium run in
+  // verifyMedicareFigures AFTER classification, and the plausibility band still
+  // rejects an amount that is not a version of this figure. Fail-open on
+  // ambiguity is preserved: a competing product in the span means no correction.
+  const PART_A_COMPETING_RE = /(skilled|snf|nursing\s+facility|enfermer[ií]a|premium|prima|coinsurance|coseguro|per\s+day|por\s+d[ií]a|al\s+d[ií]a|lifetime\s+reserve)/i;
+  // A monthly cadence on a Part B amount is a premium: the Part B deductible is
+  // annual, so "Part B costs $185 each month" can only be the premium.
+  const MONTHLY_CADENCE_RE = /\b(?:per|each|every)\s+month\b|\ba\s+month\b|\bmonthly\b|\/\s*month\b|\bal\s+mes\b|\bpor\s+mes\b|\bcada\s+mes\b|\bmensual\w*/i;
+  const PART_B_PREMIUM_VETO_RE = /\bpart\s*[cd]\b|\bparte\s*[cd]\b|\bpdp\b|\bmedigap\b|\bsupplement\w*|\bsuplement\w*|\badvantage\b|\bdrug\s+plan\b|\bplan\s+de\s+medicamentos\b|\bplan'?s\s+premium\b|\bprima\s+del\s+plan\b|\blate[-\s]enrollment\b|\bpenalty\b|\bpenalizaci[oó]n\b|\brecargo\b/i;
+
   if (letter === 'b' && deductible && !premium) return 'part_b_deductible';
-  if (letter === 'a' && deductible && /(hospital|inpatient|hospitalizaci|per benefit|per[ií]odo)/.test(win)) return 'part_a_hospital_deductible';
+  if (letter === 'a' && deductible &&
+      (/(hospital|inpatient|hospitalizaci|per benefit|per[ií]odo)/.test(win) || !PART_A_COMPETING_RE.test(win))) {
+    return 'part_a_hospital_deductible';
+  }
   if (letter === 'd' && oopCap && !deductible && !premium) return 'part_d_oop_cap';
-  if (letter === 'b' && premium && !deductible && /(standard|base|most people|est[aá]ndar|la mayor[ií]a)/.test(win)) return 'part_b_standard_premium';
+  if (letter === 'b' && premium && !deductible) {
+    if (/(standard|base|most people|est[aá]ndar|la mayor[ií]a)/.test(win)) return 'part_b_standard_premium';
+    return PART_B_PREMIUM_VETO_RE.test(seg) ? null : 'part_b_standard_premium';
+  }
+  // "Part B costs $185 each month" — the premium named by its cadence alone, with
+  // no cost noun for `kind` to resolve.
+  if (letter === 'b' && !kind && !deductible && !premium && !oopCap &&
+      MONTHLY_CADENCE_RE.test(seg) && !PART_B_PREMIUM_VETO_RE.test(seg) &&
+      !OTHER_COST_NOUN_RE.test(seg)) {
+    return 'part_b_standard_premium';
+  }
   return null;
 }
 
