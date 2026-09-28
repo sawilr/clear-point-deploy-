@@ -53,6 +53,7 @@ const SUITES = [
   'test-round8b-compliance-2026-09-28.mjs',
   'test-round8b-leads-2026-09-28.mjs',
   'test-round8b-safety-2026-09-28.mjs',
+  'test-round8b-bots-2026-09-28.mjs',
 ];
 
 const only = process.argv.slice(2);
