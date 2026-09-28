@@ -377,10 +377,17 @@ function midState(lang) {
   }
 
   // Exact audit-mandated copy, both languages.
+  // ACTUALIZADO 2026-09-28 (ronda 8b, BOT-02): el fixture fijaba la copia ANTIGUA, que
+  // decía "hang up" / "cuelgue". Es copia de teléfono — en el chat de la web no hay nada
+  // que colgar, y la instrucción confunde justo cuando tiene que ser clarísima. La copia
+  // nueva nombra la acción real ("stop typing and call 911" / "deje de escribir y llame
+  // al 911") y nombra la salida, para que un falso positivo no deje encerrado a un
+  // cuidador. Lo que este fixture protege de verdad — el 911 textual, sin preguntas de
+  // captación y con emergencyMode puesto — se sigue verificando frase por frase arriba.
   const en = await processMessageAsync('This is an emergency and I cannot breathe.', midState('en'));
-  check('CPF1 EN exact copy', en.response === "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first.", en.response);
+  check('CPF1 EN exact copy', en.response === "This sounds like a medical emergency. Please stop typing and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first. If this is not an emergency, just tell me — for example \"it's not an emergency\" — and we can continue.", en.response);
   const es = await processMessageAsync('Esto es una emergencia, no puedo respirar', midState('es'));
-  check('CPF1 ES exact copy', es.response === 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.', es.response);
+  check('CPF1 ES exact copy', es.response === 'Esto suena como una emergencia médica. Por favor deje de escribir y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero. Si no se trata de una emergencia, dígamelo — por ejemplo "no es emergencia" — y seguimos con su consulta.', es.response);
 
   // The guardrail outranks the escalation collector — the exact live failure.
   const midHandoff = { ...midState('en'), advisorHandoffStarted: true, lastBotIntent: 'handoff_asking_name' };

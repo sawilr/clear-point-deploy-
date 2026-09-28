@@ -614,9 +614,18 @@ export default async function handler(req, res) {
         ? "What you're feeling matters and you are not alone. Please contact the **988 Suicide and Crisis Lifeline** right now — call or text **988**. People are available 24 hours a day, in English and Spanish, free of charge. If you are in immediate danger, dial **911**. I'm not the right help for this — you deserve to talk to someone trained right now."
         : 'Lo que está sintiendo es importante y usted no está solo. Por favor llame ahora mismo a la **Línea 988 de Crisis y Suicidio** — llame o envíe un mensaje al **988**. Hay personas disponibles 24 horas que hablan español y le pueden ayudar gratis. Si está en peligro inmediato, marque **911**. Yo aquí no soy la persona adecuada para esto — usted merece hablar con alguien capacitado ahora.';
     } else {
+      // AUDITORÍA INDEPENDIENTE 2026-09-28 (R8b BOT-02) — dos correcciones en la copia:
+      //   (1) "hang up" / "cuelgue" no tiene sentido en un chat web; la acción real es
+      //       dejar de escribir y llamar.
+      //   (2) se nombra la salida. La pared corta del motor ya enseñaba la frase "it's
+      //       not an emergency", pero el SERVIDOR volvía a poner la pared porque
+      //       matchesEmergency no tenía la excepción — el cuidador quedaba atrapado.
+      //       La excepción vive ahora en matchesEmergency (misma lista que
+      //       detectNotAnEmergency en el motor), así que este guard ya libera; la copia
+      //       tiene que decirlo para que la salida sea descubrible.
       _emText = _emLang === 'en'
-        ? "This sounds like a medical emergency. Please hang up and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first."
-        : 'Esto suena como una emergencia médica. Por favor cuelgue y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero.';
+        ? "This sounds like a medical emergency. Please stop typing and call 911 right now, or go to your nearest emergency room. I'm not able to help with medical emergencies — your safety comes first. If this is not an emergency, just tell me — for example \"it's not an emergency\" — and we can continue."
+        : 'Esto suena como una emergencia médica. Por favor deje de escribir y llame al 911 ahora mismo, o vaya a la sala de emergencias más cercana. No puedo ayudar con emergencias médicas — su seguridad es lo primero. Si no se trata de una emergencia, dígamelo — por ejemplo "no es emergencia" — y seguimos con su consulta.';
     }
     console.warn('[CHAT] ' + (_isCrisis ? 'crisis (988)' : 'medical emergency') + ' guardrail fired, LLM skipped, ip=' + ip);
     return res.status(200).json({
