@@ -79,6 +79,34 @@ const NUM_WORD_TOKEN = '\\b(?:' + Object.keys(NUM_WORDS).join('|') + ')\\b[\\s\\
 // esa forma no aparecen en prosa normal.
 const DICTATED_MBI_RUN_RE = /(?:(?<![A-Za-z0-9])[A-Za-z0-9](?![A-Za-z0-9])[\s.\-_/]*){11}/g;
 const MBI_STRICT_RE = /^[1-9][A-Z][A-Z0-9]\d[A-Z][A-Z0-9]\d[A-Z]{2}\d{2}$/i;
+// RONDA 8B (BOT-10, medio). "medicare # 1EG4-TE5-MK7 3" y "1EG4TE5MK7 3" SÍ se
+// detectaban — la copia normalizada dispara MBI — y salían intactos: la rama
+// NORMALIZED_BYPASS solo sabe borrar secuencias de palabras-número o de 7+
+// dígitos, y un MBI es alfanumérico. "medicare 1EG4 TE5 MK 73" no se detectaba
+// siquiera, porque MBI_RE solo admite un separador entre los tres grupos
+// impresos y DICTATED_MBI_RUN_RE exige los once caracteres sueltos.
+//
+// Este matcher cubre las dos formas y todo lo intermedio: la forma del MBI de
+// CMS (C A AN N A AN N A A N N) tolerando espacios, tabuladores y guiones entre
+// CUALQUIERA de los once caracteres. Las letras excluyen S L O I B Z como manda
+// la especificación, que es lo que mantiene el falso positivo fuera: una
+// secuencia que empiece por dígito y siga esas once posiciones tipadas no
+// aparece en prosa. Se redacta antes que el resto del filtro y se marca 'MBI',
+// la misma etiqueta que ya usaban las pruebas de la forma impresa.
+const _MBI_A = '[ACDEFGHJKMNPQRTUVWXY]';
+const _MBI_AN = '[ACDEFGHJKMNPQRTUVWXY0-9]';
+const _MBI_S = '[ \\t-]{0,3}';
+const MBI_LOOSE_RE = new RegExp(
+  '(?<![A-Za-z0-9])[1-9]' + _MBI_S + _MBI_A + _MBI_S + _MBI_AN + _MBI_S + '\\d' + _MBI_S
+  + _MBI_A + _MBI_S + _MBI_AN + _MBI_S + '\\d' + _MBI_S
+  + _MBI_A + _MBI_S + _MBI_A + _MBI_S + '\\d' + _MBI_S + '\\d(?![A-Za-z0-9])', 'gi');
+function redactLooseMbi(s) {
+  var hits = 0;
+  MBI_LOOSE_RE.lastIndex = 0;
+  var out = s.replace(MBI_LOOSE_RE, function () { hits++; return '[REDACTED_MBI]'; });
+  MBI_LOOSE_RE.lastIndex = 0;
+  return { text: out, hits: hits };
+}
 // RONDA 8 (R8-04, alto). Los identificadores de Medicaid y de miembro que NO
 // tienen forma de MBI pasaban las dos redes y llegaban a la nota del CRM y al
 // modelo: el CIN de Medicaid de Nueva York (AB12345C), el ID de 12 dígitos de
@@ -186,6 +214,15 @@ export function scrubPHI(text, opts) {
   if (dictated.hits) {
     var rest = scrubPHI(dictated.text);
     return { text: rest.text, detected: ['MBI_DICTATED'].concat(rest.detected) };
+  }
+  // BOT-10 — el MBI partido por espacios/guiones en cualquier posición. Va
+  // DESPUÉS de la forma dictada (que conserva su propia etiqueta) y ANTES de
+  // todo lo demás, para que la rama NORMALIZED_BYPASS ya no pueda detectarlo y
+  // reenviarlo intacto.
+  var loose = redactLooseMbi(text);
+  if (loose.hits) {
+    var rest3 = scrubPHI(loose.text);
+    return { text: rest3.text, detected: ['MBI'].concat(rest3.detected.filter(function (d) { return d !== 'MBI'; })) };
   }
   // R8-04 — identificadores de Medicaid / miembro con etiqueta.
   var labeled = redactLabeledIds(text);
