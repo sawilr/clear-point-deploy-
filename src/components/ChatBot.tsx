@@ -86,6 +86,10 @@ type ZaraGlobalIntent =
   | 'CHANGE_STATE'
   | 'BACK'
   | 'MENU'
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06) — se evalúa ANTES de
+  // ADVISOR_REQUEST: "¿es usted una persona real?" es una pregunta, no una
+  // petición de asesor.
+  | 'IDENTITY'
   | 'ADVISOR_REQUEST'
   | 'CUSTOMER_SERVICE'
   | 'CLARIFICATION'
@@ -2038,11 +2042,17 @@ const ADVISOR_KEYWORDS = [
   'talk to someone','speak with advisor','speak with an advisor','i need an advisor',
   'call me','have someone call me','i want a call','representative','agent',
   'licensed advisor','contact me','speak to a person','human agent','human advisor',
-  'real person','live agent','live advisor','i want to speak with someone',
+  'live agent','live advisor','i want to speak with someone',
   'connect me','get me an agent','need help from a person',
   'talk to an advisor','talk to advisor','talk to a person','talk to a human',
   'connect me to','connect me with','connect me to a human','connect me with a human',
-  'i need a real person','a real person','actual person','actual human',
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06) — 'real person' y 'a real
+  // person' sueltos hacían que la PREGUNTA "are you a real person?" arrancara la
+  // intake sin ninguna divulgación. La PETICIÓN explícita se queda; la pregunta
+  // va a la intención IDENTITY, que se evalúa antes.
+  'i need a real person','i want a real person','get me a real person',
+  'give me a real person','speak to a real person','talk to a real person',
+  'actual person','actual human',
   'speak to an agent','speak to an advisor','get me a person','get me a human',
   'i prefer to talk','i prefer to speak','i want to talk to someone',
   'hablar con un asesor','hablar con asesor','hablar con un agente','hablar con alguien',
@@ -2351,6 +2361,14 @@ function classifyGlobalIntent(
 
   // Step 7: Menu
   if (wordMatch(MENU_KEYWORDS_GLOBAL)) return 'MENU';
+
+  // Step 7b: IDENTITY — AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06 / BOT-07).
+  // "are you a real person?" / "am I talking to a robot?" / "¿eres un robot?" /
+  // "¿hablo con una persona?" / "¿trabajan para Medicare?" son PREGUNTAS. Antes
+  // caían en ADVISOR_REQUEST ('real person' estaba en ADVISOR_KEYWORDS) y Zara
+  // arrancaba la intake: medido en vivo, pidió el nombre y guardó la respuesta
+  // siguiente como el nombre de la persona. Se resuelve ANTES del paso 8.
+  if (zaraIdentityQuestion(low)) return 'IDENTITY';
 
   // Step 8: Advisor request
   if (anyMatch(ADVISOR_KEYWORDS)) return 'ADVISOR_REQUEST';
@@ -2668,6 +2686,69 @@ function detectInterest(text: string): string {
   return 'General Medicare education';
 }
 
+// AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06 / BOT-07) — "¿es usted una persona
+// real?" / "am I talking to a robot?" / "¿trabajan para Medicare?" empezaban la
+// captura de contacto ('real person' estaba en ADVISOR_KEYWORDS y ADVISOR_REQUEST
+// se evalúa antes que la educación): Zara pedía el nombre sin decir nunca que es
+// un asistente virtual. La divulgación ya existía aquí, así que se extrae para que
+// la intención IDENTITY use EXACTAMENTE la misma copia (una sola fuente) más el
+// ofrecimiento de un humano licenciado.
+export function identityDisclosureMessages(language: ChatLanguage): QueuedBotMessage[] {
+  const advisorOffer = [
+    { label: language === 'es' ? 'Hacer una pregunta' : 'Ask a question', value: 'ask_question' },
+    { label: language === 'es' ? 'Hablar con un asesor' : 'Talk to an advisor', value: 'request_review' },
+  ];
+  return language === 'es'
+    ? [
+        { text: `Soy Zara, la asistente virtual de ${CHATBOT_CONTEXT.agencyName} — no soy una persona. Le doy información educativa general de Medicare; no reemplazo la orientación personalizada de un asesor licenciado, y no le pediré ni debe compartir datos sensibles por este chat.`, pace: 'short' as const },
+        // AUDIT 2026-09-13 (CMS-02, P1) — la declaración TPMO 42 CFR 422.2267(e)(41)
+        // también dentro del chat, no solo en el pie de página.
+        { text: 'Somos una agencia independiente — no somos Medicare, CMS ni el gobierno de los Estados Unidos. ' + tpmoDisclaimerText('es'), pace: 'long' as const },
+        { text: 'Si prefiere hablar con una persona, un asesor licenciado puede llamarle sin costo, o puede llamarnos al ' + CHATBOT_CONTEXT.phone + '. ¿Qué prefiere?', options: advisorOffer, pace: 'short' as const },
+      ]
+    : [
+        { text: `I'm Zara, the virtual assistant for ${CHATBOT_CONTEXT.agencyName} — I'm not a person. I share general Medicare education; I don't replace a licensed advisor's personalized guidance, and I won't ask for — and you shouldn't share — sensitive information in this chat.`, pace: 'short' as const },
+        // AUDIT 2026-09-13 (CMS-02, P1) — the 42 CFR 422.2267(e)(41) statement
+        // inside the chat too, not only in the page footer.
+        { text: "We're an independent agency — not Medicare, CMS, or the U.S. government. " + tpmoDisclaimerText('en'), pace: 'long' as const },
+        { text: 'If you would rather speak with a person, a licensed advisor can call you at no cost, or you can call us at ' + CHATBOT_CONTEXT.phone + '. What would you prefer?', options: advisorOffer, pace: 'short' as const },
+      ];
+}
+
+/** AUDITORÍA 2026-09-28 (R8-AI-06) — las formas PREGUNTA de la identidad del
+ *  asistente, con SUJETO explícito (persona real / humano / bot / robot /
+ *  máquina / computadora). "I need a real person" NO entra aquí: sigue siendo
+ *  escalamiento en ADVISOR_KEYWORDS. */
+const ZARA_ASSISTANT_IDENTITY_RE = /\b((are|is) (you|this|it|that) (an? )?(real )?(person|human|bot|robot|machine|computer|ai)|am i (talking|speaking|chatting) (to|with) (an? )?(real )?(person|human|bot|robot|machine|computer|ai)|eres (una? )?(persona|humano|humana|bot|robot|m[aá]quina|computadora|real)|es usted (una? )?(persona|humano|humana|bot|robot|m[aá]quina)|hablo con (una? )?(persona|humano|humana|bot|robot|m[aá]quina|computadora)|estoy hablando con (una? )?(persona|humano|humana|bot|robot|m[aá]quina))\b/i;
+/** Identidad de la AGENCIA, incluida la forma pro-drop del español
+ *  ("¿trabajan para Medicare?"), que no reconocía ningún patrón. */
+const ZARA_AGENCY_IDENTITY_RE = /\b(trabaja(n)? (para|con|en) (el )?(medicare|cms|gobierno|seguro social|social security)|son ustedes medicare|are you medicare|are you the government|(do you|you) work for medicare)\b/i;
+/** "¿Qué puedes hacer?" — se contesta con la misma divulgación, pero NO entra en
+ *  la intención global: "what can you do about my bill?" es un caso de servicio. */
+const ZARA_CAPABILITY_RE = /\b(what can you do|qu[eé] puede(s)? hacer|para qu[eé] sirve)\b/i;
+
+/** AUDITORÍA INDEPENDIENTE 2026-09-28 (BOT-07) — "sí" NO es un nombre.
+ *  validatePersonName solo rechaza los tokens en inglés (yes/ok/no/hola), así que
+ *  en vivo Zara guardó "sí" como el primer nombre, llamó "sí" a la señora el
+ *  resto de la sesión y también tras recargar, y ese nombre habría llegado al
+ *  CRM. Lista bilingüe de acuses de recibo y monosílabos que nunca son nombres.
+ *  Las cadenas de una sola letra ya las rechaza validatePersonName (mín. 2). */
+const NON_NAME_ANSWER_RE = /^(s[ií]+|si+|no+|nop|nope|ok+|okay|oki|vale|claro|gracias|thanks?|thank you|yes+|yeah|yep|yup|sure|please|por favor|bueno|buenas|buenos|dale|hola|hi|hey|hello|listo|ready|nada|nothing|ninguno|ninguna|quiz[aá]s?|maybe|tal vez|aja|ajá|mhm|hmm+|eh+|uh+|correcto|perfecto|exacto|adelante|espere|wait|help|ayuda|nose|no s[eé])$/i;
+function isNonNameAnswer(value: string): boolean {
+  const v = (value || '').trim().replace(/[.,!?;:¡¿]+/g, '');
+  if (!v) return true;
+  return NON_NAME_ANSWER_RE.test(v);
+}
+
+/** TRUE cuando el mensaje PREGUNTA quién contesta. La forma desnuda "who are
+ *  you" se exige completa para no capturar "who are you going to send?". */
+function zaraIdentityQuestion(low: string): boolean {
+  if (ZARA_ASSISTANT_IDENTITY_RE.test(low)) return true;
+  if (ZARA_AGENCY_IDENTITY_RE.test(low)) return true;
+  return /^[¿\s]*(who|what) are you\s*\??$/i.test(low.trim())
+    || /^[¿\s]*(qui[eé]n|qu[eé]) (eres|es usted)\s*\??$/i.test(low.trim());
+}
+
 function getEducationMessages(text: string, language: ChatLanguage): { topic: string; messages: QueuedBotMessage[] } {
   const low = text.toLowerCase();
   const reviewOptions = [
@@ -2771,26 +2852,12 @@ function getEducationMessages(text: string, language: ChatLanguage): { topic: st
   // in its common variants ("¿quién eres?", "¿eres un bot?", "¿qué puedes
   // hacer?"), not just English "who are you". Previously ES identity questions
   // fell to the generic menu (only reachable when the LLM was unavailable).
-  const identityRe = /\b(who are you|what are you|are you (a )?(real )?(person|human|bot|robot|machine)|what can you do|qui[eé]n eres|qu[eé] eres|eres (una? )?(persona|humano|bot|robot|m[aá]quina|real)|es usted (una? )?(persona|humano|bot|robot)|qu[eé] puede(s)? hacer|para qu[eé] sirve)\b/i;
-  if (identityRe.test(low) || low.includes('medicare.gov') || low.includes('cms') || low.includes('government') || low.includes('gobierno')) {
-    return {
-      topic: 'Agency identity',
-      messages: language === 'es'
-        ? [
-            { text: `Soy Zara, la asistente virtual de ${CHATBOT_CONTEXT.agencyName}. Le doy información educativa general de Medicare; no reemplazo la orientación personalizada de un asesor licenciado, y no le pediré ni debe compartir datos sensibles por este chat.`, pace: 'short' },
-            // AUDIT 2026-09-13 (CMS-02, P1) — la declaración TPMO 42 CFR 422.2267(e)(41)
-            // también dentro del chat, no solo en el pie de página.
-            { text: 'Somos una agencia independiente — no somos Medicare, CMS ni el gobierno de los Estados Unidos. ' + tpmoDisclaimerText('es'), pace: 'long' },
-            { text: '¿Quiere hacer una pregunta general de Medicare?', options: [{ label: 'Sí', value: 'ask_question' }, { label: 'Solicitar revisión', value: 'request_review' }], pace: 'short' },
-          ]
-        : [
-            { text: `I'm Zara, the virtual assistant for ${CHATBOT_CONTEXT.agencyName}. I share general Medicare education; I don't replace a licensed advisor's personalized guidance, and I won't ask for — and you shouldn't share — sensitive information in this chat.`, pace: 'short' },
-            // AUDIT 2026-09-13 (CMS-02, P1) — the 42 CFR 422.2267(e)(41) statement
-            // inside the chat too, not only in the page footer.
-            { text: "We're an independent agency — not Medicare, CMS, or the U.S. government. " + tpmoDisclaimerText('en'), pace: 'long' },
-            { text: 'Would you like to ask a general Medicare question?', options: [{ label: 'Yes', value: 'ask_question' }, { label: 'Request review', value: 'request_review' }], pace: 'short' },
-          ],
-    };
+  // AUDITORÍA 2026-09-28 (R8-AI-06) — la copia vive en identityDisclosureMessages
+  // para que la intención IDENTITY (que ahora gana antes de ADVISOR_REQUEST)
+  // conteste con este mismo texto.
+  if (zaraIdentityQuestion(low) || ZARA_CAPABILITY_RE.test(low)
+      || low.includes('medicare.gov') || low.includes('cms') || low.includes('government') || low.includes('gobierno')) {
+    return { topic: 'Agency identity', messages: identityDisclosureMessages(language) };
   }
 
   // Fallback with full topic menu so user is never stuck without options
@@ -2898,6 +2965,10 @@ export function ChatBot() {
   }, []);
   useEffect(() => {
     const handler = () => {
+      // AUDITORÍA 2026-09-28 (A11Y-03) — recordar el control que abrió Zara desde
+      // fuera (BotLauncher) para devolverle el foco al cerrar.
+      const active = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+      if (active && active !== document.body) zaraReturnFocusRef.current = active;
       setIsOpen(true);
       setIsMinimized(false);
     };
@@ -2928,15 +2999,44 @@ export function ChatBot() {
     const prevOverflow = document.body.style.overflow;
     if (lockBody) document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setIsOpen(false); setIsMinimized(false); resetChat(); }
+      // AUDITORÍA 2026-09-28 (A11Y-03) — Escape OCULTA el panel y devuelve el
+      // foco; ya NO borra la conversación (eso es "Empezar de nuevo").
+      if (e.key === 'Escape') closePanel();
     };
     document.addEventListener('keydown', onKey);
+    // AUDITORÍA 2026-09-28 (A11Y-03) — al abrir, el foco entra en el diálogo (el
+    // contenedor con role="dialog" y aria-labelledby, así que el lector anuncia
+    // el título). Nunca al textarea: levantaría el teclado del móvil.
+    const focusTimer = window.setTimeout(() => {
+      const el = zaraDialogRef.current;
+      if (!el || el.contains(document.activeElement)) return;
+      try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+    }, 0);
     return () => {
+      window.clearTimeout(focusTimer);
       if (lockBody) document.body.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKey);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isMinimized]);
+
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (A11Y-03) — devolver el foco al cerrar
+  // (WCAG 2.4.3). Corre DESPUÉS del render que oculta el panel, porque: (1) el
+  // control que abrió Zara suele venir del popover de BotLauncher, que ya se
+  // desmontó (verificado en el navegador: el foco caía al <body>), y (2) el
+  // lanzador propio solo se renderiza cuando el panel está cerrado. Orden: quien
+  // lo abrió, si sigue en el documento → el lanzador propio → el lanzador
+  // externo del sitio. Nunca se deja el foco en el <body>.
+  useEffect(() => {
+    if (isOpen || !zaraRestoreFocusPendingRef.current) return;
+    zaraRestoreFocusPendingRef.current = false;
+    const back = zaraReturnFocusRef.current;
+    const siteLauncher = typeof document !== 'undefined'
+      ? document.querySelector<HTMLElement>('button[aria-label*="help menu" i], button[aria-label*="menú de ayuda" i], button[aria-label*="menu de ayuda" i]')
+      : null;
+    const target = back && back.isConnected ? back : (zaraLauncherRef.current || siteLauncher);
+    if (!target || typeof target.focus !== 'function') return;
+    try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+  }, [isOpen]);
 
   // PHASE 9 fix — trigger welcome on first open, regardless of HOW chat
   // was opened (Zara's own button OR BotLauncher event). Before this fix,
@@ -3014,6 +3114,15 @@ export function ChatBot() {
   // it again → "seven eight seven seven eight seven").
   const zaraVoiceBaseRef = useRef('');
   const zaraTextareaRef = useRef<HTMLTextAreaElement>(null);
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (A11Y-03) — el elemento que abrió el panel
+  // (lanzador propio, BotLauncher o cualquier control) para devolverle el foco al
+  // cerrar (WCAG 2.4.3), y el contenedor del diálogo para recibir el foco al
+  // abrir. El foco va al CONTENEDOR, nunca al textarea: enfocar el textarea
+  // levanta el teclado del móvil sin que nadie lo pida.
+  const zaraReturnFocusRef = useRef<HTMLElement | null>(null);
+  const zaraDialogRef = useRef<HTMLDivElement>(null);
+  const zaraLauncherRef = useRef<HTMLButtonElement>(null);
+  const zaraRestoreFocusPendingRef = useRef(false);
   const zaraOfficeStatus = getOfficeStatus();
   // Tracks previous messages.length so we know when a brand-new message
   // arrived. New-message arrivals must always scroll (so the bot's next
@@ -3359,7 +3468,29 @@ export function ChatBot() {
     timersRef.current.push(window.setTimeout(() => startWelcome(true, newLang), 150));
   }
 
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 — A11Y-03, HIGH. Escape, la X y el fondo
+  // llamaban resetChat(): la conversación entera desaparecía (medido: 3 mensajes
+  // antes de Escape, 1 después de reabrir) y el foco caía al <body> — un lector
+  // de pantalla volvía al principio de la página y una persona que solo quería
+  // mirar la página detrás perdía todo lo que había contado, incluida una
+  // devolución de llamada a medio capturar. CERRAR ya no es EMPEZAR DE NUEVO:
+  // aquí solo se oculta el panel (los mensajes siguen en el estado, el
+  // componente no se desmonta) y se devuelve el foco a quien lo abrió.
+  // resetChat() queda SOLO en el botón explícito "Empezar de nuevo".
+  // El foco se devuelve en un efecto, no aquí: el control que abrió Zara suele
+  // ser un botón de un popover que ya se desmontó (BotLauncher), y el lanzador de
+  // repuesto solo existe DESPUÉS de que el panel se oculta.
+  function closePanel() {
+    setIsOpen(false);
+    setIsMinimized(false);
+    zaraRestoreFocusPendingRef.current = true;
+  }
+
   function openChat() {
+    if (typeof document !== 'undefined') {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== document.body) zaraReturnFocusRef.current = active;
+    }
     setIsOpen(true);
     if (!hasOpened && messages.length === 0) {
       setHasOpened(true);
@@ -4825,7 +4956,10 @@ export function ChatBot() {
     if (currentStep === 'lead_name') {
       const es = memory.language === 'es';
       const firstName = text.trim();
-      const nameCheck = validatePersonName(firstName);
+      // AUDITORÍA INDEPENDIENTE 2026-09-28 (BOT-07) — un "sí" / "gracias" / "ok"
+      // no es un nombre. Se vuelve a preguntar en vez de guardarlo y usarlo como
+      // el nombre de la persona en el chat y en el CRM.
+      const nameCheck = isNonNameAnswer(firstName) ? { valid: false } : validatePersonName(firstName);
       if (!nameCheck.valid) {
         nameAttemptsRef.current += 1;
         // After a second rejection, stop looping: accept a cleaned value (or a
@@ -4833,7 +4967,7 @@ export function ChatBot() {
         if (nameAttemptsRef.current >= 2) {
           nameAttemptsRef.current = 0;
           const cleaned = firstName.replace(/[^a-zA-ZÀ-ɏ\s'\-.]/g, '').trim();
-          const safe = validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
+          const safe = !isNonNameAnswer(cleaned) && validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
           updateMemory({ firstName: safe });
           enqueueBot([{ text: es
             ? 'Gracias. Un asesor licenciado confirmará su nombre cuando le llame.'
@@ -4854,13 +4988,14 @@ export function ChatBot() {
     if (currentStep === 'lead_last_name') {
       const es = memory.language === 'es';
       const lastName = text.trim();
-      const lastNameCheck = validatePersonName(lastName);
+      // AUDITORÍA 2026-09-28 (BOT-07) — mismo filtro que el primer nombre.
+      const lastNameCheck = isNonNameAnswer(lastName) ? { valid: false } : validatePersonName(lastName);
       if (!lastNameCheck.valid) {
         lastNameAttemptsRef.current += 1;
         if (lastNameAttemptsRef.current >= 2) {
           lastNameAttemptsRef.current = 0;
           const cleaned = lastName.replace(/[^a-zA-ZÀ-ɏ\s'\-.]/g, '').trim();
-          const safe = validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
+          const safe = !isNonNameAnswer(cleaned) && validatePersonName(cleaned).valid ? cleaned : (es ? 'Cliente' : 'Customer');
           updateMemory({ lastName: safe });
           enqueueBot([{ text: es
             ? 'Gracias. Un asesor licenciado confirmará su apellido cuando le llame.'
@@ -5073,7 +5208,18 @@ export function ChatBot() {
       // JS \b is ASCII-only and fails on "sí" (Unicode í).
       const norm = text.toLowerCase().trim().replace(/[.,!?;:]+$/, '');
       const TAIL = '(?:\\s|$|[.,;!?])';
-      const yes = new RegExp('^(?:yes|y|yeah|yep|sure|absolutely|of course|please|por favor|ok|okay|s[ií]|claro|por supuesto|adelante|acepto|estoy de acuerdo|i agree|i consent)' + TAIL).test(norm + ' ')
+      // AUDITORÍA INDEPENDIENTE 2026-09-28 — R8-LEAD-01, HIGH. Zara registraba
+      // consentimiento TCPA firmado (consentGiven → consent_to_contact + recibo
+      // SHA-256 + etiqueta 'Consent Captured' en el CRM) con un "ok", "okay",
+      // "claro", "sure", "please", "por favor" o una "y" sueltos. Un acuse de
+      // recibo NO es autorización para llamadas y textos autodiscados: esas
+      // formas salen de la lista y caen en la re-pregunta AMBIGUA con los dos
+      // chips, que ya existía. Es la misma regla que Clara ya aplica
+      // (classifyConsentAnswer en CustomerServiceBot.tsx y el paso de
+      // confirmación del motor, TCPA-03 del 26-sep): solo una afirmación
+      // explícita cuenta. "vale / está bien / de acuerdo / correcto / perfecto"
+      // siguen re-preguntando; "claro que no" y "no" siguen declinando.
+      const yes = new RegExp('^(?:yes|yeah|yep|yup|absolutely|of course|s[ií]|por supuesto|acepto|autorizo|estoy de acuerdo|i agree|i consent|i accept)' + TAIL).test(norm + ' ')
                || /(?:^|\s)(i (?:agree|consent|accept)|yes please|yes i (?:do|will|agree|consent))(?:\s|$|[.,;!?])/.test(norm + ' ')
                || /(?:^|\s)(s[ií] acepto|s[ií] estoy de acuerdo|claro que s[ií])(?:\s|$|[.,;!?])/.test(norm + ' ');
       // AUDIT 2026-09-03 (R2-C9, P1, TCPA) — the yes-test is start-anchored, so
@@ -5268,6 +5414,16 @@ export function ChatBot() {
     // Step 7: MENU
     if (intent === 'MENU') {
       handleMenuIntent();
+      return;
+    }
+
+    // Step 7b: IDENTITY — AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06 / BOT-07).
+    // Se contesta con la divulgación de asistente virtual (misma copia que la
+    // educación) y el ofrecimiento de un humano licenciado, SIN empezar ninguna
+    // captura. No cambia el paso actual: si estábamos en lead_* la persona sigue
+    // ahí y el siguiente mensaje continúa la captura.
+    if (intent === 'IDENTITY') {
+      enqueueBot(identityDisclosureMessages(memory.language === 'es' ? 'es' : 'en'));
       return;
     }
 
@@ -5633,12 +5789,19 @@ export function ChatBot() {
           launcher (PHASE A18 BotLauncher) is active. */}
       {!isOpen && !launcherActive && (
         <button
+          ref={zaraLauncherRef}
           onClick={openChat}
           className="fixed bottom-[max(76px,calc(env(safe-area-inset-bottom)+72px))] right-4 md:bottom-6 md:right-6 z-50 bg-earth-800 text-cream-50 rounded-2xl shadow-lifted flex items-center gap-2.5 sm:gap-3 px-3.5 py-2.5 sm:px-4 sm:py-3 hover:bg-earth-900 hover:scale-105 transition-all"
           aria-label={t('Open Zara, Clear Point virtual assistant', 'Abrir Zara, asistente virtual de Clear Point')}
         >
           <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
-            <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+            {/* AUDITORÍA INDEPENDIENTE 2026-09-28 (perf F1) — fetchPriority="low" en
+                los TRES avatares: React 19 en SSR emite un <link rel="preload"
+                as="image"> por cada <img> que no sea loading="lazy" ni
+                fetchPriority="low", y esos preloads compiten con el CSS y el héroe
+                en la ventana crítica. La imagen sigue siendo eager en el lanzador;
+                solo deja de precargarse en el shell prerenderizado. */}
+            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
           </div>
           <div className="text-left leading-tight">
             <div className="text-[14px] sm:text-[15px] font-semibold">Zara</div>
@@ -5655,7 +5818,7 @@ export function ChatBot() {
           aria-label={t('Expand Zara chat', 'Expandir chat de Zara')}
         >
           <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 bg-cream-100">
-            <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+            <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
           </div>
           <div className="text-left leading-tight">
             <div className="text-[14px] font-semibold">Zara</div>
@@ -5663,7 +5826,7 @@ export function ChatBot() {
           </div>
           <X
             className="w-4 h-4 ml-1 text-cream-300 hover:text-cream-50"
-            onClick={(e) => { e.stopPropagation(); setIsOpen(false); setIsMinimized(false); resetChat(); }}
+            onClick={(e) => { e.stopPropagation(); closePanel(); }}
             aria-label={closeLabel}
           />
         </button>
@@ -5678,7 +5841,8 @@ export function ChatBot() {
       {isOpen && !isMinimized && (
         <div
           aria-hidden="true"
-          onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }}
+          // AUDITORÍA 2026-09-28 (A11Y-03) — el fondo OCULTA el panel; no borra la conversación.
+          onClick={closePanel}
           // Sawil 2026-07-02 REGRESSION FIX — desktop-only backdrop. On mobile the
           // working prod (c63e7d5) had NO backdrop; its full-screen fixed inset-0 with
           // 8px side margins meant a stray tap next to the panel WHILE TYPING closed the
@@ -5692,9 +5856,14 @@ export function ChatBot() {
       {/* Full chat window */}
       {isOpen && !isMinimized && (
         <div
+          ref={zaraDialogRef}
           role="dialog"
           aria-modal="true"
           aria-labelledby="zara-chat-title"
+          // AUDITORÍA 2026-09-28 (A11Y-03) — enfocable por programa (no es parada
+          // de Tab, y la trampa de Tab de abajo ignora tabindex="-1"), para que al
+          // abrir el foco entre en el diálogo en vez de quedarse en el <body>.
+          tabIndex={-1}
           // AUDIT 2026-07-03 (a11y) — aria-modal promised a modal but Tab leaked to
           // the page behind. Cycle focus among the dialog's own controls (same
           // pattern as BotLauncher's popover trap). Deliberately NO auto-focus on
@@ -5729,7 +5898,7 @@ export function ChatBot() {
             <div className="flex items-center gap-2.5">
               <div className="relative flex-shrink-0">
                 <div className="w-9 h-9 rounded-full overflow-hidden bg-cream-100">
-                  <img src="/zara-avatar.jpg" alt="Zara" className="w-full h-full object-cover" />
+                  <img src="/zara-avatar.jpg" alt="Zara" fetchPriority="low" className="w-full h-full object-cover" />
                 </div>
                 {/* PHASE 9C — online status dot */}
                 <span aria-hidden className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-earth-800 animate-pulse-online" />
@@ -5750,7 +5919,7 @@ export function ChatBot() {
               <button onClick={() => setIsMinimized(true)} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={minimizeLabel} title={minimizeLabel}>
                 <Minus className="w-4 h-4" />
               </button>
-              <button onClick={() => { setIsOpen(false); setIsMinimized(false); resetChat(); }} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
+              <button onClick={closePanel} className="p-1.5 hover:bg-cream-50/10 rounded-lg transition-colors" aria-label={closeLabel}>
                 <X className="w-5 h-5" />
               </button>
             </div>

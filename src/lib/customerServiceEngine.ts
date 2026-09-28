@@ -2514,11 +2514,39 @@ function _applyLatestMessagePrecedence(
   return { handled: { response: out, newState, needsHuman: false }, state: cleared };
 }
 
+/** AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06 / BOT-07) — "¿es usted una
+ *  persona real?" / "am I talking to a robot?" / "¿eres un robot?" / "¿hablo con
+ *  una persona?" es una pregunta de IDENTIDAD DEL ASISTENTE, no una petición de
+ *  asesor. Antes la atrapaba detectHumanEscalation ('real person') y arrancaba
+ *  la captura de contacto sin decir nunca que es un asistente automatizado (en
+ *  vivo: la siguiente frase de la persona se guardó como su NOMBRE). Aquí solo
+ *  entran las formas PREGUNTA: "I need a real person" sigue siendo escalamiento. */
+export function detectAssistantIdentityQuestion(text: string): boolean {
+  const t = _emergencyNorm(text);
+  if (!t) return false;
+  const SUBJ = '(real\\s+person|real\\s+human|persona\\s+real|live\\s+person|human|humano|humana|bot|robot|machine|maquina|computer|computadora|automated|automatizad[oa]|\\bai\\b|\\bia\\b|person|persona)';
+  return new RegExp(`\\b(are|is)\\s+(you|this|it)\\s+(an?\\s+)?${SUBJ}\\b`).test(t)
+    || new RegExp(`\\bam\\s+i\\s+(talking|speaking|chatting)\\s+(to|with)\\s+(an?\\s+)?${SUBJ}\\b`).test(t)
+    || new RegExp(`\\beres\\s+(un[ao]?\\s+)?${SUBJ}\\b`).test(t)
+    || new RegExp(`\\bes\\s+usted\\s+(un[ao]?\\s+)?${SUBJ}\\b`).test(t)
+    || new RegExp(`\\b(hablo|estoy\\s+hablando)\\s+con\\s+(un[ao]?\\s+)?${SUBJ}\\b`).test(t)
+    || /\b(who|what)\s+are\s+you\b/.test(t)
+    || /\b(quien|que)\s+(eres|es\s+usted)\b/.test(t);
+}
+
 /** CPF-002 (4) — "Does Clear Point work for Medicare?" and friends. An IDENTITY
  *  question, never a transfer offer. */
 export function detectIdentityQuestion(text: string): boolean {
   const t = _emergencyNorm(text);
   if (!t) return false;
+  // AUDITORÍA 2026-09-28 (R8-AI-06) — la pregunta de identidad del asistente
+  // también es una pregunta de identidad contestable (la copia la elige
+  // _handleIdentityQuestion).
+  if (detectAssistantIdentityQuestion(t)) return true;
+  // Forma pro-drop del español ("¿trabajan para Medicare?"): el sujeto está
+  // elidido, así que el patrón de abajo, que exige "ustedes"/"Clear Point", no
+  // la reconocía.
+  if (/^[¿\s]*(y\s+)?trabaja(n)?\s+(para|con|en)\s+(el\s+)?(medicare|cms|gobierno|seguro\s+social|social\s+security)\b/.test(t)) return true;
   return /\b(clear\s?point|ustedes|you\s+(guys|people))\b[^?]{0,40}\b(work\s+(for|with|at)|part\s+of|affiliated|owned\s+by|trabaja[n]?\s+(para|con)|parte\s+de|del?\s+gobierno|son\s+medicare)\b/.test(t)
     || /\b(do(es)?\s+(clear\s?point|you)\s+work\s+(for|with)\s+(medicare|cms|the\s+government|social\s+security))\b/.test(t)
     || /\b(is\s+clear\s?point\s+(part\s+of|medicare|the\s+government))\b/.test(t)
@@ -2534,6 +2562,33 @@ export function _handleIdentityQuestion(
 ): { response: string; newState: ConversationState; needsHuman: boolean } | null {
   if (!detectIdentityQuestion(userMessage)) return null;
   const isEs = _turnLanguage(userMessage, state) === 'es';
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-06) — si la pregunta es sobre QUIÉN
+  // CONTESTA (persona real / robot / máquina), la respuesta es la divulgación de
+  // asistente automatizado más el ofrecimiento de un humano licenciado. Se
+  // resuelve ANTES de detectHumanEscalation, que trataba "are you a real
+  // person?" como una petición de asesor y abría la captura de contacto.
+  if (detectAssistantIdentityQuestion(userMessage)) {
+    const outA = isEs
+      ? 'Soy Clara, la asistente **automatizada** de ClearPoint Senior Advisors — no soy una persona. Le doy información general de Medicare y no reemplazo la orientación de un asesor licenciado. Si prefiere hablar con una persona, un asesor **licenciado** de ClearPoint puede llamarle sin costo, o puede llamar usted al **1-855-720-8555** (TTY 711). ¿Quiere que un asesor licenciado le contacte, o prefiere hacerme una pregunta?'
+      : "I'm Clara, the **automated** assistant for ClearPoint Senior Advisors — I'm not a person. I share general Medicare information and I don't replace a licensed advisor's guidance. If you'd rather speak with a person, a **licensed** ClearPoint advisor can call you at no cost, or you can call **1-855-720-8555** (TTY 711). Would you like a licensed advisor to contact you, or would you rather ask me a question?";
+    const stateA: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      serviceCategory: 'about_clearpoint',
+      lastBotIntent: 'about_clearpoint_identity',
+      lastBotEmittedMenu: false,
+      // NO se marca lastBotOfferedAdvisor: el ofrecimiento es informativo y un
+      // "ok" a esta frase no debe convertirse en el inicio de una captura.
+      lastBotOfferedAdvisor: false,
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: outA, timestamp: Date.now() },
+      ],
+    };
+    return { response: outA, newState: stateA, needsHuman: false };
+  }
   const out = isEs
     ? 'ClearPoint Senior Advisors es una agencia independiente — no somos Medicare ni el gobierno, y no trabajamos para Medicare. Nuestros asesores son **licenciados** y el servicio **no tiene costo para usted**. Trabajamos con varios planes pero no todos los disponibles en su área — para ver todas las opciones también puede llamar a **1-800-MEDICARE** o consultar el programa **SHIP** local gratis. ¿En qué le ayudo hoy?'
     : "ClearPoint Senior Advisors is an independent licensed agency — we are NOT Medicare or the government, and we do not work for Medicare. Our advisors are **licensed** and the service is **at no cost to you**. We work with several plans but not every plan in your area — to see all options you can also call **1-800-MEDICARE** or check your local **SHIP** program for free unbiased counseling. How can I help today?";
@@ -3486,6 +3541,143 @@ export function isClosingIntent(text: string): boolean {
   return false;
 }
 
+/** AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-03) — el resumen TCPA de
+ *  confirmación, extraído del colector para tener UNA sola fuente. El atajo de
+ *  "gracias / all good" en un paso OPCIONAL emite exactamente el mismo texto
+ *  (mismas líneas, mismo texto TCPA canónico) que el flujo normal, así que el
+ *  consentimiento sigue siendo un acto explícito con el recibo correcto. */
+function _buildContactConfirmSummary(opts: {
+  isEs: boolean; name: string; phoneFmt: string; email?: string;
+  bestTime?: string; topic?: string; loc?: string;
+}): string {
+  const { isEs, name, phoneFmt, email, bestTime, topic, loc } = opts;
+  const _line = (label: string, val: string): string => `• ${label}: ${val}`;
+  const _lines = isEs
+    ? [
+        _line('Nombre', name),
+        _line('Teléfono', phoneFmt),
+        _line('Correo', email || '(no proporcionado)'),
+        bestTime ? _line('Mejor horario', bestTime) : null,
+        topic ? _line('Tema', topic) : null,
+        loc ? _line('Ubicación', loc) : null,
+      ]
+    : [
+        _line('Name', name),
+        _line('Phone', phoneFmt),
+        _line('Email', email || '(not provided)'),
+        bestTime ? _line('Best time', bestTime) : null,
+        topic ? _line('Topic', topic) : null,
+        loc ? _line('Location', loc) : null,
+      ];
+  const _body = _lines.filter(Boolean).join('\n');
+  return isEs
+    ? `Antes de enviarlo, confirmemos sus datos:\n${_body}\n\n${_TCPA_ES}\n\n¿Está todo correcto?`
+    : `Before I send this, let's confirm your details:\n${_body}\n\n${_TCPA_EN}\n\nIs everything correct?`;
+}
+
+/** AUDITORÍA INDEPENDIENTE 2026-09-28 (R8-AI-03) — TRUE cuando ya hay un lead
+ *  con nombre y teléfono válidos esperando la confirmación TCPA. El POST a GHL
+ *  exige contactConfirmed (CustomerServiceBot.tsx:443), así que despedirse aquí
+ *  BOTA el lead en silencio. */
+function _hasPendingUnconfirmedLead(state: ConversationState): boolean {
+  return /^\d{10}$/.test(state.phoneNumber || '')
+    && !!(state.name || '').trim()
+    && !!(state.advisorHandoffStarted || state.schedulingCallback)
+    && !state.contactConfirmed;
+}
+
+/** AUDITORÍA INDEPENDIENTE 2026-09-28 (BOT-06) — una pregunta de MONTO sobre una
+ *  cifra federal de 2026 se contesta con la cifra, nunca con el glosario de
+ *  términos. Solo cubre los importes que el propio motor ya publica (los mismos
+ *  de DEFINITION_GLOSSARY, una sola fuente de verdad); una prima de PLAN sigue
+ *  siendo específica del plan y devuelve null para que el flujo normal siga. */
+function _answerCostAmountQuestion(text: string, isEs: boolean): string | null {
+  const t = (text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!t) return null;
+  const _asksAmount = /\b(how much|what does it cost|what is the cost|cuanto (es|cuesta|son|vale|pago|pagare|pagaria|hay que pagar)|que precio)\b/.test(t);
+  if (!_asksAmount) return null;
+  // Una prima de PLAN (Advantage / Part D / "prima del plan") depende del plan y
+  // del condado: no hay cifra federal que dar.
+  const _planPremium = /\b(advantage|\bma\b|part d plan|plan premium|prima del plan|prima de mi plan|my plan'?s premium)\b/.test(t);
+  const _partA = /\bpart(e)? a\b/.test(t);
+  const _partB = /\bpart(e)? b\b/.test(t);
+  const _partD = /\bpart(e)? d\b/.test(t);
+  const _deductible = /\b(deductible|deducible)\b/.test(t);
+  const _premium = /\b(premium|prima)\b/.test(t);
+  if (_partA && _deductible) {
+    return isEs
+      ? 'En 2026 el deducible de hospital de la Parte A es $1,736 por período de beneficios (no es anual: puede aplicar más de una vez en el año si hay hospitalizaciones separadas). Un asesor licenciado de ClearPoint puede revisar cómo le aplicaría a usted, sin costo.'
+      : 'In 2026 the Part A hospital deductible is $1,736 per benefit period (it is not annual — it can apply more than once in a year if there are separate admissions). A licensed ClearPoint advisor can review how it would apply to you, at no cost.';
+  }
+  if (_partB && _deductible) {
+    return isEs
+      ? 'En 2026 el deducible estándar de la Parte B es $283 al año. Después del deducible, la Parte B generalmente paga el 80% del monto aprobado y usted el 20%. Un asesor licenciado de ClearPoint puede revisar su caso sin costo.'
+      : 'In 2026 the standard Part B deductible is $283 a year. After the deductible, Part B generally pays 80% of the approved amount and you pay 20%. A licensed ClearPoint advisor can review your case at no cost.';
+  }
+  if (_partD && _deductible) {
+    return isEs
+      ? 'En 2026 un plan de la Parte D puede tener un deducible de hasta $615 al año; cada plan fija el suyo dentro de ese límite, y algunos no cobran deducible. Un asesor licenciado de ClearPoint puede revisar el de un plan específico, sin costo.'
+      : 'In 2026 a Part D plan can have a deductible of up to $615 a year; each plan sets its own within that limit and some charge none. A licensed ClearPoint advisor can review a specific plan with you, at no cost.';
+  }
+  if (_partD && _premium) return null; // la prima de un plan Parte D varía por plan
+  if (_partB && _premium && !_planPremium) {
+    return isEs
+      ? 'En 2026 la prima estándar de la Parte B es $202.90 al mes. Puede ser más alta si su ingreso pasa el umbral de IRMAA, y puede ser menor —o pagarla el estado— si califica para un Programa de Ahorros de Medicare. La prima de un plan Advantage o Parte D es aparte. Un asesor licenciado de ClearPoint puede revisar qué pagaría usted, sin costo.'
+      : 'In 2026 the standard Part B premium is $202.90 a month. It can be higher if your income is above the IRMAA threshold, and it can be lower — or paid by the state — if you qualify for a Medicare Savings Program. A Medicare Advantage or Part D plan premium is separate. A licensed ClearPoint advisor can review what you would pay, at no cost.';
+  }
+  return null;
+}
+
+// ── AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-06, HIGH ───────────────────────
+// Enfriamiento del cliente tras un 429 de /api/chat: el limitador del servidor
+// es por IP (30 peticiones / 5 min) y una IP compartida se agota entre varios
+// visitantes, así que seguir pidiendo turnos solo alarga el bloqueo.
+const _LLM_COOLDOWN_MS = 60_000;
+let _llmCooldownUntil = 0;
+
+/** Test-only: limpia el enfriamiento del 429 entre casos. */
+export function __resetLlmCooldownForTests(): void {
+  _llmCooldownUntil = 0;
+}
+
+/** La línea honesta para un fallo de /api/chat, en el idioma del turno.
+ *  Devuelve null cuando NO hay un visitante a quien avisar: `no_api` (clave no
+ *  configurada → la vía determinística es la de diseño) y los entornos sin
+ *  navegador (arnés offline y SSR, donde la URL relativa /api/chat no existe y
+ *  todo turno fallaría con reason 'network'). */
+function _llmDegradedNotice(
+  res: { reason: string; status?: number },
+  lang: 'en' | 'es',
+): string | null {
+  if (res.reason === 'no_api') return null;
+  if (typeof window === 'undefined') return null;
+  const isEs = lang === 'es';
+  if (res.reason === 'http' && res.status === 429) {
+    return isEs
+      ? 'Estoy recibiendo muchas preguntas en este momento y no puedo responder esta. Por favor inténtelo de nuevo en unos minutos, o llame a ClearPoint al **1-855-720-8555** (TTY 711).'
+      : "I'm getting a lot of questions right now and can't answer this one. Please try again in a few minutes, or call ClearPoint at **1-855-720-8555** (TTY 711).";
+  }
+  return isEs
+    ? 'Mi servicio de asistencia no está disponible en este momento, así que puedo ayudarle solo con lo básico. Para una respuesta completa, llame a ClearPoint al **1-855-720-8555** (TTY 711).'
+    : "My assistant service is temporarily unavailable, so I can only help with the basics right now. For a full answer, call ClearPoint at **1-855-720-8555** (TTY 711).";
+}
+
+/** TRUE cuando el motor determinístico realmente reconoció el tema de ESTE
+ *  turno. Un menú de temas o la línea genérica "¿es sobre factura, doctor…?"
+ *  significan que no lo reconoció: en una degradación se da la línea honesta
+ *  sola en vez de una respuesta de otro tema (el glosario de copagos que el
+ *  audit midió para "How much is the Part B premium?"). */
+function _isHighConfidenceDeterministic(
+  det: ConversationState,
+  prev: ConversationState,
+): boolean {
+  if (det.lastBotEmittedMenu) return false;
+  if (det.lastFallbackResponse && det.lastFallbackResponse !== prev.lastFallbackResponse) return false;
+  const cat = det.serviceCategory || '';
+  const GENERIC = ['', 'off_topic', 'personal_context', 'conversation_control', 'returning_customer'];
+  return !GENERIC.includes(cat);
+}
+
 function detectEmotion(text: string): string {
   const normalized = normalizeText(text);
   if (/\b(frustrated|frustraci[oó]n|enoja|enojado|angry|no entienden|mal servicio|furioso)\b/i.test(normalized)) return 'frustrated';
@@ -3553,6 +3745,64 @@ export function processMessage(
   // NOTE: processMessageInner also increments turnCount; we read the
   // incoming value here (pre-increment) just for offer-recency math.
   const _currentTurnIdx = (state.turnCount || 0) + 1;
+
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 — R8-AI-03, HIGH. "gracias" / "all good"
+  // / "that's all" / "im all set" / "ya está" contestado a la pregunta OPCIONAL
+  // (mejor horario, tema o correo) cerraba la conversación y BOTABA un lead con
+  // nombre y teléfono ya capturados: el POST a GHL exige contactConfirmed, que
+  // nunca se fijaba. Una despedida cortés ahí significa "sáltese lo opcional",
+  // no "olvídeme": NO se guarda "gracias" como horario ni como tema, se dan por
+  // hechas las preguntas opcionales y se emite el resumen TCPA (el mismo acto
+  // de consentimiento explícito del flujo normal). Una despedida real SIN lead
+  // pendiente sigue cerrando con el saludo cálido de abajo, sin cambios.
+  // El respaldo es deliberadamente más ancho que los cinco pasos opcionales
+  // (/^handoff_asking_(besttime|besttime_retry|topic|email|email_retry)$/): con
+  // nombre + teléfono capturados y sin confirmar, NINGÚN paso debe perder el lead.
+  // El resumen no se repite en bucle: si YA estábamos en la confirmación, la
+  // despedida recibe la re-pregunta corta una sola vez y, si vuelve a
+  // despedirse, se cierra cálidamente SIN enviar nada (no hubo consentimiento;
+  // el teléfono de ClearPoint va en el cierre de abajo). Un mayor nunca queda
+  // atrapado entre el resumen y su "gracias".
+  const _closingAtConfirm = state.lastBotIntent === 'handoff_asking_confirm';
+  const _lastBotText = [...(state.messages || [])].reverse().find((mm) => mm.role === 'bot')?.content || '';
+  const _alreadyReAsked = /Disculpe, ¿está todo correcto\?|Sorry — is everything correct\?/.test(_lastBotText);
+  if (isClosingIntent(userMessage) && !state.conversationClosed && _hasPendingUnconfirmedLead(state)
+      && !(_closingAtConfirm && _alreadyReAsked)) {
+    const isEs = (state.language || 'es') === 'es';
+    const _ph = state.phoneNumber as string;
+    const out = _closingAtConfirm
+      ? (isEs
+        ? 'Disculpe, ¿está todo correcto? Puede responder "sí", o decirme qué dato corregir.'
+        : 'Sorry — is everything correct? You can reply "yes", or tell me which detail to fix.')
+      : _buildContactConfirmSummary({
+        isEs,
+        name: state.name as string,
+        phoneFmt: `${_ph.slice(0, 3)}-${_ph.slice(3, 6)}-${_ph.slice(6)}`,
+        email: state.email,
+        // En un paso opcional la despedida SALTA ese campo; lo ya capturado
+        // antes se conserva tal cual.
+        bestTime: state.bestTimeToCall,
+        topic: state.advisorTopic,
+        loc: state.state || state.zipCode,
+      });
+    const newState: ConversationState = {
+      ...state,
+      turnCount: _currentTurnIdx,
+      advisorHandoffStarted: true,
+      conversationClosed: false,
+      bestTimeAsked: true,
+      topicAsked: true,
+      emailAsked: true,
+      lastBotIntent: 'handoff_asking_confirm',
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: out, timestamp: Date.now() },
+      ],
+    };
+    return { response: out, newState, needsHuman: false };
+  }
 
   // PHASE A5 — closing intent ALWAYS wins, even during handoff collection.
   // "gracias por la info" / "ya terminé" / "I'm done" must produce a warm
@@ -4093,7 +4343,6 @@ export function processMessage(
       // falls through to the close + submit below.
       if (!state.contactConfirmed) {
         const _ans = _msg.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
-        const _line = (label: string, val: string): string => `• ${label}: ${val}`;
 
         // (B) We asked WHICH field to fix → clear that ONE field and re-ask it.
         if (state.lastBotIntent === 'handoff_asking_correct_field') {
@@ -4175,22 +4424,6 @@ export function processMessage(
           // (C) First time we reach the close → show the SUMMARY + confirm.
           const _em = finalEmail || state.email || '';
           const _loc = state.state || state.zipCode || '';
-          const _linesEs = [
-            _line('Nombre', finalName),
-            _line('Teléfono', fmt),
-            _line('Correo', _em || '(no proporcionado)'),
-            state.bestTimeToCall ? _line('Mejor horario', state.bestTimeToCall) : null,
-            state.advisorTopic ? _line('Tema', state.advisorTopic) : null,
-            _loc ? _line('Ubicación', _loc) : null,
-          ].filter(Boolean).join('\n');
-          const _linesEn = [
-            _line('Name', finalName),
-            _line('Phone', fmt),
-            _line('Email', _em || '(not provided)'),
-            state.bestTimeToCall ? _line('Best time', state.bestTimeToCall) : null,
-            state.advisorTopic ? _line('Topic', state.advisorTopic) : null,
-            _loc ? _line('Location', _loc) : null,
-          ].filter(Boolean).join('\n');
           // Sawil 2026-06-29 SECURITY HOTFIX (Option A / finding 02) — the
           // confirmation carries the TCPA authorization, so the caller's explicit
           // "sí/yes" is affirmative consent. CustomerServiceBot then sends
@@ -4199,11 +4432,13 @@ export function processMessage(
           // Sawil 2026-06-30 AUDIT FIX (Phase 2 consent integrity) — display the EXACT
           // canonical TCPA text that CustomerServiceBot records + SHA-256 hashes, so the
           // shown confirmation == the receipted/hashed consent (was a shorter paraphrase).
-          const _tcpaEs = _TCPA_ES;
-          const _tcpaEn = _TCPA_EN;
-          const _outS = isEs
-            ? `Antes de enviarlo, confirmemos sus datos:\n${_linesEs}\n\n${_tcpaEs}\n\n¿Está todo correcto?`
-            : `Before I send this, let's confirm your details:\n${_linesEn}\n\n${_tcpaEn}\n\nIs everything correct?`;
+          // AUDITORÍA 2026-09-28 (R8-AI-03) — el texto se arma en
+          // _buildContactConfirmSummary para que el atajo de despedida emita
+          // exactamente este mismo resumen.
+          const _outS = _buildContactConfirmSummary({
+            isEs, name: finalName, phoneFmt: fmt, email: _em,
+            bestTime: state.bestTimeToCall, topic: state.advisorTopic, loc: _loc,
+          });
           // AUDIT 2026-07-03 (lead completeness / B3-F3) — persist the captured email
           // into state HERE (was omitted). Without this the email showed in the summary
           // but was recomputed from the empty "sí/yes" confirm turn and dropped from
@@ -5881,6 +6116,15 @@ function _handleCostFlow(
 // one question per turn. Runs in _runStructuralFirst, before the LLM.
 // ════════════════════════════════════════════════════════════════════════════
 function _statesDualEligible(m: string): boolean {
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-08, MEDIUM. "What is a D-SNP?" /
+  // "¿Qué es un plan D-SNP?" es una pregunta EDUCATIVA, y el token suelto
+  // "d-snp" la convertía en una AFIRMACIÓN sobre la persona: Clara contestaba
+  // "Como tiene Medicare y Medicaid, normalmente ya tiene Ayuda Adicional…",
+  // inventando su situación. La inferencia dual exige una afirmación en primera
+  // persona, no la mención del término. "Tengo un plan dual" sigue funcionando
+  // porque lleva la posesión explícita.
+  const _firstPerson = /\b(tengo|tiene|i have|i'?ve|i'?m|i am|soy|estoy|me dieron|mi plan|my plan)\b/i.test(m);
+  if (detectDefinitionalQuestion(m) && !_firstPerson) return false;
   return detectDualEligible(m)
     || /\b(soy dual|plan dual|tengo (un )?plan dual|d-?snp|doble elegib|dually eligible|i'?m dual|i am dual)\b/i.test(m);
 }
@@ -6275,6 +6519,15 @@ function _handleDualEligible(
   const frustratedDualBill = frustrated && knownDual && (billish || state.dualFlowStage === 'ask_source');
   const isDualContext = dualNow || medicaidWithMedicare || bothNow || reinforceDual || frustratedDualBill;
   if (!isDualContext) return null;
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-08, MEDIUM. Una NEGACIÓN explícita en
+  // ESTE turno ("I do not have Medicaid", "no tengo Medicaid") no puede reforzar el
+  // razonamiento dual. Medido: "I do not have Medicaid. What does Extra Help pay
+  // for?" respondía "Correct. If you have both Medicaid and Medicare…" — el motor
+  // ignoraba la corrección de la persona. Se cede el turno al flujo normal (la
+  // intención de Medicaid y el modelo sí saben contestarlo). El "estás asumiendo
+  // demasiado" de _handleAssumptionChallenge sigue siendo el que LIMPIA las
+  // banderas inferidas en sesión.
+  if (_deniesMedicaid(m)) return null;
 
   const baseFacts: Partial<ConversationState> = {
     dualEligible: true, hasMedicaid: true, extraHelpInferred: true,
@@ -6660,7 +6913,16 @@ export function _runStructuralFirst(
     const _lastBotPlain = _lastBotText.normalize('NFD').replace(/[̀-ͯ]/g, '');
     const _userPlain = userMessage.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     const _wasConsentAsk = /(autoriza|autorizar)\b[^.?!]{0,70}(asesor|advisor|clear ?point)[^.?!]{0,45}(contact|llam)|responda si para autorizar|reply yes to authorize|do you authorize a licensed/i.test(_lastBotPlain);
-    const _affirms = /^(si|sip|yes|yeah|yep|claro|ok|okay|dale|por favor|please|acepto|autorizo|de acuerdo|esta bien|adelante|correcto|seguro|hagalo|si por favor)\b[.!]*$/i.test(_userPlain);
+    // AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-09, MEDIUM. Esta era la SEGUNDA
+    // puerta de consentimiento: cuando el MODELO hace la pregunta TCPA, "ok",
+    // "claro", "de acuerdo", "seguro", "correcto", "dale", "por favor",
+    // "please", "esta bien" y "adelante" fijaban consent_to_contact=true. Son
+    // acuses de recibo, no autorizaciones — exactamente lo que la regla del
+    // 26-sep (TCPA-03) ya prohíbe en el paso de confirmación y en
+    // classifyConsentAnswer. Se aceptan SOLO afirmativas explícitas; un acuse
+    // de recibo no fija la bandera y la conversación sigue su curso normal
+    // (el modelo repregunta), sin lead consentido fabricado.
+    const _affirms = /^(si+|sip|yes+|yeah|yep|yup|acepto|autorizo|si,? (acepto|autorizo|por favor)|yes,? (i )?(agree|accept|authorize|please)|i (agree|accept|authorize)|agreed)\b[.!]*$/i.test(_userPlain);
     if (_wasConsentAsk && _affirms) {
       const isEs = (state.language || 'es') === 'es';
       const out = isEs
@@ -6855,6 +7117,27 @@ export async function processMessageAsync(
   // can never echo them. Birth dates stay: the server extracts them for
   // deterministic age grounding, then redacts them itself (BUG 1).
   const llmUserMessage = _scrubHealthDisclosures(userMessage, { includeBirthDates: false });
+  // AUDITORÍA INDEPENDIENTE 2026-09-28 (BOT-06) — enfriamiento tras un 429: no se
+  // vuelve a pedir turno durante un minuto (el limitador es por IP y una IP
+  // compartida se agota entre varios visitantes). Se responde con la misma línea
+  // honesta, sin gastar la cuota y sin inventar una respuesta de otro tema.
+  const _cooling = _llmCooldownUntil > Date.now()
+    ? _llmDegradedNotice({ reason: 'http', status: 429 }, turnLang)
+    : null;
+  if (_cooling) {
+    const _coolState: ConversationState = {
+      ...state,
+      turnCount: (state.turnCount || 0) + 1,
+      lastBotIntent: 'llm_unavailable',
+      quickReplies: [],
+      messages: [
+        ...(state.messages || []),
+        { role: 'user', content: userMessage, timestamp: Date.now() },
+        { role: 'bot', content: _cooling, timestamp: Date.now() },
+      ],
+    };
+    return { response: _cooling, newState: _coolState, needsHuman: false };
+  }
   const llmRes = await _callLLM(llmUserMessage, history, {
     language: turnLang,
     zipCode: state.zipCode,
@@ -6875,7 +7158,41 @@ export async function processMessageAsync(
   });
 
   if (!llmRes.ok) {
-    // 3) Fallback to regex engine.
+    // AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-06, HIGH. Antes se caía al motor
+    // de regex EN SILENCIO: con /api/chat en 429 (30 peticiones / 5 min por IP —
+    // un centro de mayores, una biblioteca o un WiFi familiar comparten una sola
+    // IP), 500, red o timeout, "How much is the Part B premium?" salía como el
+    // glosario de copago/deducible y nadie le decía al visitante que el
+    // asistente estaba degradado. Ahora la degradación se NOMBRA en el idioma
+    // del turno. Las redes de seguridad, el colector de contacto y los cierres
+    // corren ANTES de esta llamada, así que no cambian en nada.
+    const _notice = _llmDegradedNotice(llmRes, turnLang);
+    if (_notice) {
+      if (llmRes.reason === 'http' && llmRes.status === 429) _llmCooldownUntil = Date.now() + _LLM_COOLDOWN_MS;
+      const _det = _dobWrap(processMessage(userMessage, state, meta));
+      // En 429 nunca se sirve la respuesta determinística: el visitante debe
+      // esperar o llamar, no recibir una respuesta posiblemente de otro tema.
+      // En 500/red/timeout/parse se ofrece la determinística SOLO si el motor
+      // reconoció el tema con confianza (categoría resuelta y no un genérico).
+      const _highConfidence = llmRes.reason !== 'http' || llmRes.status !== 429
+        ? _isHighConfidenceDeterministic(_det.newState, state)
+        : false;
+      const out = _highConfidence ? `${_notice}\n\n${_det.response}` : _notice;
+      const newState: ConversationState = {
+        ...(_highConfidence ? _det.newState : state),
+        turnCount: (state.turnCount || 0) + 1,
+        lastBotIntent: 'llm_unavailable',
+        quickReplies: [],
+        messages: [
+          ...(state.messages || []),
+          { role: 'user', content: userMessage, timestamp: Date.now() },
+          { role: 'bot', content: out, timestamp: Date.now() },
+        ],
+      };
+      return { response: out, newState, needsHuman: false };
+    }
+    // 3) Fallback to regex engine (sin /api/chat en el entorno: arnés offline,
+    //    SSR o clave no configurada — no hay visitante a quien avisar).
     return _dobWrap(processMessage(userMessage, state, meta));
   }
 
@@ -10031,6 +10348,17 @@ function processMessageInner(
     if (problemType === 'cost_basics') {
       newState.routingLevel = 'A';
       newState.serviceCategory = 'cost_basics';
+      // AUDITORÍA INDEPENDIENTE 2026-09-28 — BOT-06, HIGH. "How much is the Part
+      // B premium?" / "¿Cuánto es la prima de la Parte B?" contestaba con el
+      // glosario de copago/deducible: la pregunta era por un MONTO y la
+      // respuesta ni lo mencionaba (y en la vía degradada del modelo era la
+      // única respuesta que veía el visitante). Una pregunta de monto sobre una
+      // cifra federal que el motor ya tiene se contesta con la cifra 2026.
+      const _amt = _answerCostAmountQuestion(userMessage, isSpanish);
+      if (_amt) {
+        newState.messages.push({ role: 'bot', content: _amt, timestamp: Date.now() });
+        return { response: _amt, newState, needsHuman: false };
+      }
       const out = isSpanish
         ? 'Rápido: deducible es lo que paga antes que el plan empiece. Copay es lo fijo por visita o medicamento. Coseguro es un porcentaje del costo. MOOP es el máximo de bolsillo del año. Los montos exactos varían por plan, condado, y nivel de medicina.\n\n¿Cuál término le está causando duda? Un asesor licenciado puede revisar los costos específicos de su plan.'
         : "Quick: deductible is what you pay before the plan kicks in. Copay is the fixed amount per visit or drug. Coinsurance is a percentage of the cost. MOOP is the yearly out-of-pocket maximum. Exact amounts vary by plan, county, and drug tier.\n\nWhich term is causing the question? A licensed advisor can review your plan's specific costs.";
