@@ -52,6 +52,7 @@ const SUITES = [
   // RONDA 8B (2026-09-28) — re-auditoría tras los despliegues del 26-27 sep.
   'test-round8b-compliance-2026-09-28.mjs',
   'test-round8b-leads-2026-09-28.mjs',
+  'test-round8b-safety-2026-09-28.mjs',
 ];
 
 const only = process.argv.slice(2);
