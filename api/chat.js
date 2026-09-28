@@ -1322,14 +1322,43 @@ function buildStatePrograms(state) {
 // guard got an English sentence injected mid-paragraph ("...Connecticut. I
 // can't recommend a specific plan from here..."). Now ES callers get the
 // Spanish disclaimer, so the reply stays in one language.
+//
+// AUDIT 2026-09-28 (R8-AI-01, P1). This legacy pass runs AFTER the v2
+// complianceFilter, which already owns carrier, eligibility and network with a
+// deferral test — and it was garbling the replies that filter had just approved.
+// Eleven measured, end-to-end through the real handler:
+//   "I recommend reviewing your Medicare Summary Notice before you pay that bill."
+//     → "I can't recommend a specific plan from here…"
+//   "I can't confirm whether you qualify for Extra Help — Social Security decides
+//     that." → "I can't confirm whether eligibility depends on your income…"
+//   "If you qualify for Medicaid, the state may also pay your Part B premium."
+//     → "If eligibility depends on your income, assets, and state…"
+//   "Le recomendaría guardar la carta para que un asesor la revise con usted."
+//     → "no puedo recomendar un plan específico desde aquí…"
+// The recommend guard fired on ANY object, and the eligibility guard had no idea
+// what a deferral was — it rewrote the compliance sentence into nonsense. Three
+// narrow changes, no new blocking: the recommend guard now needs a PLAN/CARRIER/
+// POLICY/PRODUCT object, the eligibility guard skips a deferral-framed sentence,
+// and the network guard is gone because rule 18 of the v2 filter owns it with the
+// verification veto this one never had.
 function compliancePostFilter(text, language) {
   if (!text) return text;
   var es = language === 'es';
   var out = text;
-  // Block "I recommend [plan name]" style — generic guard.
+  // Block "I recommend <a specific plan>" — never "I recommend reviewing /
+  // calling / keeping / that you talk with an advisor", which is the useful,
+  // compliant half of the same verb.
+  // A DETERMINED product: "the Elderplan Plus Advantage plan", "that plan",
+  // "el mejor plan". A bare plural with no determiner is the generic noun —
+  // "I recommend comparing plans on Medicare.gov" recommends an action, not a
+  // product, and that sentence is one of the eleven this pass was breaking.
+  var REC_PRODUCT_OBJECT_RE = /\b(?:the|that|this|those|these|a|an|su|el|la|los|las|este|ese|esos|un|una)\s+(?:[\w'’-]+\s+){0,4}(?:plans?|polic(?:y|ies)|carriers?|insurers?|p[oó]liza[s]?|aseguradora[s]?)\b/i;
   out = out.replace(
     /\b(i (highly )?recommend|le (recomiendo|recomendar[ií]a)|deber[ií]a (escoger|elegir|tomar)|the best plan (is|would be)|el mejor plan (es|ser[ií]a))\b[^.!?]+/gi,
     function (match) {
+      // R8-AI-01: the object decides. A recommendation with no plan/carrier/
+      // policy/product object is not a plan pitch and is left byte-identical.
+      if (!REC_PRODUCT_OBJECT_RE.test(match)) return match;
       // Sawil 2026-06 — do NOT mangle BENIGN recommendations (visit a website,
       // call a number, contact SHIP/SSA/Medicare.gov). This guard previously
       // ate "le recomiendo visitar Medicare.gov" and left a broken ".gov".
@@ -1347,19 +1376,51 @@ function compliancePostFilter(text, language) {
     }
   );
   // Block "you qualify / you are eligible" style — must be advisor-confirmed.
+  // R8-AI-01: SKIP a DEFERRAL — and ONLY the three deferral shapes, so this
+  // second net stays STRICTER than the v2 filter it backs up. "I can't confirm
+  // whether you qualify for Extra Help" and "If you qualify for Medicaid, the
+  // state may also pay your Part B premium" are the two most common compliant
+  // sentences the bot can produce, and this pass turned them into "I can't
+  // confirm whether eligibility depends on your income…" and "If eligibility
+  // depends on your income…".
+  // The three shapes: an inability phrase immediately before the claim, a
+  // whether/if/si governor sitting DIRECTLY on the claim, and a real conditional
+  // whose condition names an eligibility factor. An IRRELEVANT condition is not a
+  // deferral, so "If you want, you qualify for Extra Help." and "Si usted quiere,
+  // usted califica…" are still rewritten here — which is the point of keeping
+  // this net at all, because those two are exactly the shapes the v2 filter's own
+  // conditional test lets through (measured 2026-09-28).
+  var LEGACY_INABILITY_RE = /\b(?:can'?t|cannot|unable\s+to|not\s+able\s+to|no\s+(?:puedo|podemos|puede)|no\s+(?:tengo|tenemos)\s+(?:forma|manera)\s+de)\s+(?:[\w'’áéíóúñü]+\s+){0,3}?(?:confirm|verify|say|tell|know|confirmar|asegurar|garantizar|decir|saber)\w*\s*(?:\b(?:that|whether|if|que|si)\b\s*)?$/i;
+  var LEGACY_FACTOR_RE = /\b(?:income|ingresos?|resources?|recursos|limits?|l[ií]mites?|medicaid|qmb|slmb|\bqi\b|savings|ahorros?|assets?|bienes|household|hogar|state|estado|ssa|social\s+security|seguro\s+social|age|edad|65)\b/i;
+  var LEGACY_GOVERNOR_RE = /\b(?:whether|if|si)\b(\s*(?:[^,]{0,80},)?\s*(?:[\w'’áéíóúñü%-]+\s+){0,10})$/i;
+  function legacyClaimIsDeferred(before) {
+    if (LEGACY_INABILITY_RE.test(before)) return true;
+    var gov = LEGACY_GOVERNOR_RE.exec(before);
+    if (!gov) return false;
+    var span = gov[1] || '';
+    if (LEGACY_FACTOR_RE.test(span)) return true;
+    return span.trim() === '';       // governor sitting directly on the claim
+  }
   out = out.replace(
     /\b(you (qualify|are eligible)|usted (califica|es elegible|cumple))\b[^.!?]+/gi,
-    function () { return es
-      ? 'la elegibilidad depende de sus ingresos, recursos y estado — un asesor licenciado o la agencia puede confirmar si aplica en su caso'
-      : 'eligibility depends on your income, assets, and state — a licensed advisor or the agency can confirm whether it applies to you'; }
+    function (match, _g1, _g2, _g3, offset, whole) {
+      var sentStart = 0;
+      var before = String(whole).slice(0, offset);
+      var lastStop = Math.max(before.lastIndexOf('.'), before.lastIndexOf('!'), before.lastIndexOf('?'), before.lastIndexOf('\n'));
+      if (lastStop >= 0) sentStart = lastStop + 1;
+      if (legacyClaimIsDeferred(before.slice(sentStart))) return match;
+      return es
+        ? 'la elegibilidad depende de sus ingresos, recursos y estado — un asesor licenciado o la agencia puede confirmar si aplica en su caso'
+        : 'eligibility depends on your income, assets, and state — a licensed advisor or the agency can confirm whether it applies to you';
+    }
   );
-  // Block "your doctor is in network / is covered" / "está en la red"
-  out = out.replace(
-    /\b(your (doctor|provider|hospital) is (in|in[- ]network|covered)|su (doctor|m[eé]dico|hospital|proveedor) (est[aá] (en la red|cubierto)|si est[aá]))\b[^.!?]*/gi,
-    function () { return es
-      ? 'no puedo confirmar si un doctor específico está en la red — solo el directorio del plan o un asesor licenciado puede verificarlo'
-      : 'I can\'t confirm whether a specific doctor is in network — only the plan\'s directory or a licensed advisor can verify that'; }
-  );
+  // R8-AI-01: the legacy network regex is DELETED. It required the literal
+  // subject "your doctor" / "su médico", so it caught nothing the v2 filter does
+  // not already catch, and it destroyed the deferral that names the same noun
+  // phrase ("A licensed advisor can check whether your doctor is in network.",
+  // "Un asesor licenciado puede revisar si su doctor está en la red del plan.").
+  // Rule 18 of api/_lib/compliance-filter.js owns network and formulary now, with
+  // the verification veto this pass never had.
   return out;
 }
 
@@ -1422,8 +1483,27 @@ function ustedPostFilter(text) {
     // "para ti" → "para usted"
     [/\bpara ti\b/g, 'para usted'],
   ];
+  //
+  // AUDIT 2026-09-28 (R8-AI-01, P2). Most patterns above carried only the `g`
+  // flag, so a TÚ form in the position it appears in most — first word of a
+  // sentence — was never converted: "Tienes Medicare?", "Puedes llamarnos" and
+  // "Necesitas la tarjeta" all went out addressing a senior as tú. The `i` flag
+  // is applied to every pattern here, and the match's own capitalisation is
+  // restored afterwards so "Tienes" becomes "Tiene" and not "tiene".
+  function preserveCase(sample, replacement) {
+    if (!sample || !replacement) return replacement;
+    var first = String(sample).charAt(0);
+    if (first === first.toLowerCase()) return replacement;   // not capitalised
+    return String(replacement).charAt(0).toUpperCase() + String(replacement).slice(1);
+  }
   for (var i = 0; i < subs.length; i++) {
-    out = out.replace(subs[i][0], subs[i][1]);
+    var subRe = subs[i][0];
+    var subRep = subs[i][1];
+    var ciRe = subRe.flags.indexOf('i') >= 0 ? subRe : new RegExp(subRe.source, subRe.flags + 'i');
+    out = out.replace(ciRe, function (m) {
+      var value = typeof subRep === 'function' ? subRep.apply(null, arguments) : subRep;
+      return preserveCase(m, value);
+    });
   }
   return out;
 }

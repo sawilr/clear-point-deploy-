@@ -51,10 +51,41 @@ const CARRIER_NAMES = [
   'fidelis', 'emblemhealth', 'metroplus', 'healthfirst',
   'horizon', 'amerigroup', 'amerihealth',
   'devoted', 'clover', 'oscar', 'bright health',
+  // AUDIT 2026-09-28 (BOT-04, P1) — the list held the national brands and none
+  // of the REGIONAL Medicare Advantage brands that actually dominate the three
+  // states this agency is licensed in, so the adversarial set named six of them
+  // and every sentence shipped verbatim ("Many seniors in Brooklyn choose
+  // Elderplan or VNS Health…", "Braven Health is popular in Bergen County.").
+  // These are public NY/NJ/CT MA brands; the owner's own carrier roster is a
+  // separate, wider list only he can supply. Longest variants first.
+  'centers plan for healthy living', 'centers plan',
+  'mvp health care', 'mvp health', 'mvp',
+  'agewell new york', 'agewell',
+  'elderplan', 'vns health', 'vnsny',
+  'connecticare', 'braven health', 'braven',
+  'excellus', 'wellpoint',
 ].map(carrierRe);
 
 // A15.9 — Plan-letter recommendations are also CMS-regulated for Medigap.
-const PLAN_LETTER_RE = /\b(plan|plans?)\s+[A-N]\b/gi;
+//
+// AUDIT 2026-09-28 (BOT-05, P1). Two defects in one pattern. `[A-N]` under the
+// `i` flag matched the English pronoun in "Compare that with the plan I
+// described a moment ago", which the filter rewrote into "…with the a Medigap
+// plan described a moment ago" — ungrammatical text read out loud to a senior.
+// And the standardized Medigap letters are A, B, C, D, F, G, K, L, M and N:
+// there is no Plan E, H, I or J, so a class that includes them can only produce
+// false positives. The class is now the real letter set and case-sensitive,
+// because a lowercase "plan i" in prose is never a plan name.
+const PLAN_LETTER_RE = /\b(?:[Pp]lans?)\s+([ABCDFGKLMN])\b/g;
+// A sentence that only NAMES the letters as education is left intact. "Plan G
+// and Plan N are the two most common Medigap plans people ask about." became "a
+// Medigap plan and a Medigap plan are the two most common Medigap plans people
+// ask about." — a broken sentence in place of a true statement about a federal
+// standard. CMS regulates STEERING a beneficiary to a product, so the rewrite
+// now needs second-person or recommendation language in the same sentence;
+// PLAN_REC_SENTENCE_RES above still removes a recommendation outright, whatever
+// letter it names ("Plan F is your best Medigap option").
+const PLAN_LETTER_STEER_RE = /\b(?:you|your|yours|usted|ustedes|su|sus|le|les|tu|tus)\b|\brecommend|\brecomiend|\bsuggest|\bsugier|\bbest\b|\bmejor\b|\bshould\b|\bdeber[ií]a|\bchoose\b|\bpick\b|\bswitch\b|\benroll|\binscrib|\bsign\s+up\b|\bfor\s+you\b|\bpara\s+usted\b/i;
 
 // ── AUDIT 2026-08-13 — shared SEP vocabulary (rules 4 and 13) ────────────────
 // Hoisted to module scope for two reasons. First, correctness: rule 4 enumerates
@@ -90,6 +121,26 @@ const SEP_VERIFY_RE = new RegExp([
   '\\b(may\\s+apply|might\\s+apply|could\\s+apply|puede\\s+aplicar|podr[ií]a\\s+aplicar)\\b',
   '\\bwhich\\s+enrollment\\s+period\\b|\\bqu[eé]\\s+per[ií]odo\\s+de\\s+inscripci',
 ].join('|'), 'i');
+
+// ── AUDIT 2026-09-28 (BOT-05, P1) — statutory SEP RULE, shared by rules 4/13 ──
+// "If you move out of your plan's service area, you generally get a Special
+// Enrollment Period to choose a new plan." is the statute, and api/chat.js lists
+// moving as a SEP trigger in the prompt itself. Rule 13 replaced it with the
+// "I don't want to assume a Special Enrollment Period exists" non-answer, so the
+// bot refused to state the one thing it is allowed to state.
+// What separates the rule from a determination is not the SEP token but the
+// SHAPE of the sentence: a CONDITION the caller has not been asserted to meet,
+// a STATUTORY trigger as that condition, and a HEDGED quantifier. All three must
+// be present. "You moved, so you have a SEP" has the trigger and no condition;
+// "You might have a SEP" has neither; both still go. Modals are deliberately NOT
+// hedges here — rule 4 exists precisely to remove "podría tener un SEP".
+const SEP_CONDITIONAL_RE = /\b(?:if|when|whenever|as\s+long\s+as|si|cuando|siempre\s+que|en\s+caso\s+de\s+que)\b/i;
+const SEP_STATUTORY_TRIGGER_RE = /\b(?:moves?|moved|moving|relocat\w*|mudar\w*|se\s+muda|service\s+area|[aá]rea\s+de\s+servicio|lose[s]?|lost|losing|pierde[n]?|perder|p[eé]rdida|leaves?|leaving|left|ends?|ending|termina\w*|retire[s|d]?|retiring|jubil\w*|employer\s+coverage|cobertura\s+del\s+empleador|disaster|desastre|incarcerat\w*|encarcelad\w*)\b/i;
+const SEP_HEDGE_RE = /\b(?:generally|usually|typically|normally|ordinarily|in\s+most\s+cases|as\s+a\s+rule|generalmente|normalmente|ordinariamente|por\s+lo\s+general|en\s+general|por\s+regla\s+general|suele[n]?)\b/i;
+function sepSentenceIsStatutoryRule(sentence) {
+  var s = String(sentence);
+  return SEP_CONDITIONAL_RE.test(s) && SEP_STATUTORY_TRIGGER_RE.test(s) && SEP_HEDGE_RE.test(s);
+}
 
 // ── AUDIT 2026-08-13 — redundancy guard for the appended safe copy ───────────
 // Observed on the LIVE endpoint (probe 4, caregiver scenario): the model produced a
@@ -389,17 +440,87 @@ const ELIGIBILITY_APPROVED_RE = new RegExp([
   // "ya tiene Ayuda Adicional" — possession, Spanish.
   "\\b(?:ya\\s+)?(?:tiene|tienes|cuenta\\s+con)\\s+(?:la\\s+)?(?:ayuda\\s+adicional|ayuda\\s+extra|extra\\s+help|qmb|slmb|medicaid|subsidio)\\b",
 ].join('|'), 'gi');
+//
+// AUDIT 2026-09-28 (BOT-04, P1). Every pattern above keys on the
+// qualify / eligible / califica / approved family, so the PLAINEST determination
+// in each language walked through untouched: "With your income, Extra Help
+// applies to you.", "You have access to QMB with that income.", "Le corresponde
+// el programa QMB.", "Con sus ingresos, sí le toca Extra Help.", "Usted entra en
+// el programa QMB.", "Usted tiene derecho a Ayuda Adicional con esos ingresos."
+// These say exactly what "you qualify" says, in the words a caller is most
+// likely to hear. The program can sit on either side of the verb, so both
+// directions are written out.
+// Every alternative is ANCHORED on a means-tested program, which is what keeps
+// the true statements alive: "tiene derecho a apelar" is a real statutory right,
+// "entra en vigor el 1 de enero" is an effective date, and neither names a
+// program. The pattern joins the eligibility-claim list, so it inherits the
+// deferral, question and generalisation exemptions — "whether Extra Help applies
+// to you" is still a compliant deferral.
+const ELIGIBILITY_APPLIES_RE = new RegExp([
+  // program → caller: "Extra Help applies to you", "is available to you",
+  // "will cover your drug costs".
+  MEANS_TESTED_RE.source + '[^.!?]{0,40}?\\b(?:applies|apply|is\\s+available|are\\s+available|will\\s+cover|covers)\\s+(?:to\\s+)?(?:you|your)\\b',
+  // caller → program.
+  '\\byou\\s+(?:now\\s+|already\\s+)?(?:have|get|got)\\s+access\\s+to\\b[^.!?]{0,20}?' + MEANS_TESTED_RE.source,
+  '\\byou\\s+(?:are|were|\'re)\\s+covered\\s+under\\b[^.!?]{0,20}?' + MEANS_TESTED_RE.source,
+  '\\byou(?:\'|’)?d?\\s+(?:would\\s+)?be\\s+a\\s+shoo[-\\s]?in\\b[^.!?]{0,30}?' + MEANS_TESTED_RE.source,
+  // Spanish entitlement idioms — the subject is routinely dropped.
+  '\\b(?:le|les)\\s+(?:corresponde[n]?|toca[n]?)\\b[^.!?]{0,40}?' + MEANS_TESTED_RE.source,
+  '\\b(?:tiene[ns]?|tienen)\\s+derecho\\s+a\\b[^.!?]{0,30}?' + MEANS_TESTED_RE.source,
+  '\\b(?:entra|entran)\\s+en\\b[^.!?]{0,25}?' + MEANS_TESTED_RE.source,
+].join('|'), 'gi');
+//
+// AUDIT 2026-09-28 (BOT-05, P1) — a PREMISE that restates what the caller
+// already told us is not a determination. "Since you have Medicaid and Medicare,
+// you likely already have Extra Help automatically." was replaced by the generic
+// non-answer, although the prompt tells the model to reason exactly that way for
+// duals and the conditional twin ("If you have Medicaid, you usually get Extra
+// Help automatically") was already allowed. Medicaid/Medicare ENROLMENT is
+// something the beneficiary knows and reports; Extra Help, QMB or a subsidy is
+// an outcome an agency decides. So the carve is only for a possession of
+// Medicaid/Medicare inside a premise clause — "Since you qualify for Extra Help"
+// is still removed, whatever introduces it.
+const PREMISE_GOVERNOR_RE = /\b(?:since|because|as|given\s+that|now\s+that|if|when|porque|ya\s+que|dado\s+que|puesto\s+que|como|si|cuando)\s+$/i;
+const SELF_REPORTED_COVERAGE_CLAIM_RE = /^(?:you|usted|ustedes)\s+(?:both\s+)?(?:have|got|hold|tiene[ns]?|cuenta\s+con)\s+(?:the\s+)?(?:medicaid|medicare)\b/i;
 const FORBIDDEN_PHRASES = [
   /\b(you\s+will|you'?ll|usted)\s+(receive|save|get|recibir[aá]|ahorrar[aá]|obtendr[aá])\s+\$\d+/gi,
-  // Network / formulary confirmations
-  /\byour\s+(doctor|provider|specialist|hospital|drug|medication)\s+is\s+(in[- ]network|covered)/gi,
-  /\bsu\s+(doctor|m[eé]dico|hospital|medicamento|medicina)\s+(est[aá]\s+(cubierto|en\s+la\s+red|en\s+red))/gi,
+  // Network / formulary confirmations — AUDIT 2026-09-28 (R8-AI-02, P1): the two
+  // patterns that used to live here required the literal subject "your doctor" /
+  // "su médico" and carried no verification exemption, so every named subject
+  // passed ("Yes, Dr. Patel is in network with your plan.", "Mount Sinai is in
+  // network for that plan.") while the compliant deferral "A licensed advisor
+  // can check whether your doctor is in network." was destroyed. The rule is now
+  // subject-agnostic with a verification veto — see rule 18 below.
   /\b(your\s+application|su\s+solicitud)\s+(?:will\s+be|is\s+going\s+to\s+be|ser[aá])\s+(?:approved|aprobada)\b/gi,
   /\b(ssa|social\s+security|medicare|medicaid|el\s+estado|the\s+state)\s+will\s+approve\s+you\b|\b(?:le|lo|la)\s+van\s+a\s+aprobar\b/gi,
   // Affiliation claims (red-team round 3 RT3-CF-12: "we are Medicare advisors,
   // not Medicare itself" names a role, not an affiliation).
   /\b(we|i)\s+(are|am)\s+(medicare|cms|ssa|the\s+government|medicaid)\b(?!\s*(?:-|advisors?|agents?|brokers?|specialists?|experts?|consultants?|licensed|certified|insurance|plans?|advantage|supplement))/gi,
   /(?<!\bno\s)\bsomos\s+(medicare|cms|del\s+gobierno|medicaid)\b(?!\s*(?:-|asesores|agentes|corredores|especialistas|expertos|consultores|advantage))/gi,
+  //
+  // AUDIT 2026-09-28 (BOT-04, P1) — affiliation, the other three shapes. The
+  // patterns above only knew the copular form ("we are Medicare"), so the three
+  // claims the adversarial set produced all survived: "We work directly with
+  // Medicare and CMS on your behalf.", "ClearPoint is Medicare's official
+  // partner in New York." and "Somos parte del programa Medicare del gobierno."
+  // 42 CFR §422.2264 makes an implied government affiliation a marketing
+  // violation, and it is also the single most effective senior-fraud framing.
+  // Adjacency carries the negation: "we do not work directly with Medicare" does
+  // not match, and the required-disclaimer sentence names no partner or part.
+  /\b(?:we|i|clear\s*point)\s+(?:work|works|working|partner|partners|deal|deals)\s+(?:directly\s+)?with\s+(?:medicare|cms|ssa|social\s+security|the\s+government|medicaid)\b/gi,
+  /\b(?:we|i|clear\s*point)\s+(?:is|are|am)\s+(?:the\s+|an?\s+)?(?:official|authorized|approved|certified)\s+(?:medicare\s+|cms\s+|government\s+)?(?:partner|affiliate|agency|arm|contractor)\b/gi,
+  /(?<!\bnot\s)\bmedicare'?s\s+(?:official|authorized|approved)\s+(?:partner|affiliate|agency|arm|contractor)\b/gi,
+  /(?<!\bno\s)\b(?:somos|soy)\s+(?:parte|una\s+parte|agencia\s+oficial|socios?\s+oficial\w*|representantes?\s+oficial\w*)\b[^.!?]{0,30}?\b(?:medicare|cms|gobierno|seguro\s+social|medicaid)\b/gi,
+  /\btrabajamos\s+(?:directamente\s+)?con\s+(?:medicare|cms|el\s+gobierno|el\s+seguro\s+social)\b/gi,
+  //
+  // AUDIT 2026-09-28 (BOT-04, P1) — promised outcome. The first pattern in this
+  // list needs the literal subject "you will …  $N", so "Your premium will drop
+  // to $0 if you switch." and "Switching will save you around $80 a month." —
+  // both flat guarantees of a future price, which no TPMO may make — passed.
+  /\b(?:will|'?ll|is\s+going\s+to|are\s+going\s+to)\s+(?:drop|fall|go\s+down|decrease|be\s+reduced)\s+to\s+\$?\s?\d/gi,
+  /\bwill\s+save\s+(?:you|your|usted)\b/gi,
+  /\b(?:va\s+a|van\s+a)\s+(?:bajar|reducirse|quedar)\s+(?:a|en)\s+\$?\s?\d/gi,
+  /\b(?:le|les)\s+(?:va\s+a\s+ahorrar|ahorrar[aá])\b|\bahorrar[aá]\s+(?:usted|unos|alrededor|cerca|como|\$)/gi,
 ];
 // Red-team round 3 (RT3-CF-12): sentence split that does not break on common
 // abbreviations ("Dr. Smith says…"); the separator is captured so it survives.
@@ -948,7 +1069,10 @@ export function complianceFilter(text, lang, opts) {
   var SUBJECT_ONLY_RE = /^\s*(?:you|usted|ustedes)\s*$/i;
   var WEAK_RESULT_RE = /\b(?:you(?:'|’)?re|you\s+are)\s+(?:now\s+|already\s+|officially\s+|finally\s+)?(?:all\s+set|in)\b|\b(?:ya\s+)?est[aá]\s+(?:todo\s+)?list[oa]\b/i;
   var ELIGIBILITY_TAG = 'forbidden_phrase:' + ELIGIBILITY_CLAIM_RE.source.slice(0, 40);
-  var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE];
+  // AUDIT 2026-09-28 (BOT-04): ELIGIBILITY_APPLIES_RE is appended, not merged,
+  // so it inherits the deferral / question / scope exemptions the whole list
+  // shares. Index 1 keeps its anchor-group meaning below.
+  var claimRes = [ELIGIBILITY_CLAIM_RE, ELIGIBILITY_CLAIM_ES_IMPLICIT_RE, ELIGIBILITY_QUALIFIES_YOU_RE, ELIGIBILITY_APPROVED_RE, ELIGIBILITY_APPLIES_RE];
   for (var pi = 0; pi < fpParts.length; pi += 2) {
     var fpSentence = fpParts[pi] || ''; var fpSep = fpParts[pi + 1] || '';
     // Red-team round 3 (RT3-CF-07): bullets that hung off a removed label
@@ -1013,6 +1137,11 @@ export function complianceFilter(text, lang, opts) {
       while ((em = eligRe.exec(scanText)) !== null) {
         if (eligRe.lastIndex === em.index) eligRe.lastIndex++;
         if (breaks === null) breaks = clauseBreaks(scanText);
+        // AUDIT 2026-09-28 (BOT-05, P1) — a premise restating the caller's own
+        // coverage. The subordinating conjunction is a CLAUSE BREAK, so the
+        // deferral test below never sees it; it has to be read before the break.
+        if (SELF_REPORTED_COVERAGE_CLAIM_RE.test(em[0]) &&
+            PREMISE_GOVERNOR_RE.test(scanText.slice(Math.max(0, em.index - 24), em.index))) continue;
         var claimAt = ci === 1 ? em.index + (em[1] || '').length : em.index + claimSubjectOffset(em[0]);
         var deferred = eligibilityClaimIsDeferred(scanText, claimAt, breaks);
         // A governed or interrogative clause hands the determination to the next
@@ -1124,9 +1253,88 @@ export function complianceFilter(text, lang, opts) {
 
   // 3) A15.9 — Plan-letter naming ("Plan G", "Plan N") is regulated for
   //    Medigap recommendation. Replace with generic phrasing.
+  //    AUDIT 2026-09-28 (BOT-05, P1): per SENTENCE, and a sentence that only
+  //    names the letters as education is left intact — see PLAN_LETTER_RE and
+  //    PLAN_LETTER_STEER_RE at the top of this file.
+  PLAN_LETTER_RE.lastIndex = 0;
   if (PLAN_LETTER_RE.test(out)) {
-    violations.push('plan_letter_named');
-    out = out.replace(PLAN_LETTER_RE, lang === 'en' ? 'a Medigap plan' : 'un plan Medigap');
+    var plParts = out.split(/((?<=[.!?])\s+)/);
+    var plHit = false;
+    for (var pl = 0; pl < plParts.length; pl += 2) {
+      var plS = plParts[pl] || '';
+      PLAN_LETTER_RE.lastIndex = 0;
+      if (!PLAN_LETTER_RE.test(plS)) continue;
+      if (!PLAN_LETTER_STEER_RE.test(plS)) continue;   // education only — keep
+      plHit = true;
+      PLAN_LETTER_RE.lastIndex = 0;
+      plParts[pl] = plS.replace(PLAN_LETTER_RE, lang === 'en' ? 'a Medigap plan' : 'un plan Medigap');
+    }
+    if (plHit) {
+      violations.push('plan_letter_named');
+      out = plParts.join('');
+    }
+  }
+
+  // ── AUDIT 2026-09-28 (R8-AI-02 / BOT-04, P1) — network & formulary net (18) ──
+  // Rule 3 of this file's header has existed since A15, but it lived in
+  // FORBIDDEN_PHRASES as two patterns that required the literal subject "your
+  // doctor" / "su médico". So every NAMED subject confirmed a network or a
+  // formulary and reached the caller byte-identical — "Yes, Dr. Patel is in
+  // network with your plan.", "Mount Sinai is in network for that plan.", "Su
+  // medicamento sí está en el formulario de ese plan." — while the compliant
+  // deferral "A licensed advisor can check whether your doctor is in network."
+  // was rewritten into a non-answer, because the old pattern matched the noun
+  // phrase inside it and had no verification exemption.
+  // Subject-agnostic signal + a verification veto on the same sentence, the same
+  // shape rules 4 and 13 use. The "covered / on the formulary" branch also
+  // requires a plan-deictic object, so "you pay $0 for covered Part D drugs" and
+  // "preventive care is covered by Original Medicare" are untouched: what is
+  // forbidden is confirming coverage UNDER A SPECIFIC PLAN, not the word
+  // "covered".
+  var NETWORK_STATE_RES = [
+    /\b(?:is|are|was|were|remains?|stays?)\s+(?:(?:still|now|definitely|indeed|already|also)\s+){0,2}in[-\s]?(?:the\s+|their\s+|that\s+|this\s+|your\s+|his\s+|her\s+|a\s+)?network\b/i,
+    /\b(?:est[aá]|est[aá]n|estuvo|sigue|siguen)\s+(?:(?:s[ií]|ya|tambi[eé]n|efectivamente)\s+){0,2}(?:dentro\s+de|en)\s+(?:la\s+|su\s+|esa\s+|esta\s+|nuestra\s+)?red\b/i,
+    /\b(?:accepts?|takes?|acepta[n]?|toma[n]?|recibe[n]?)\s+(?:that|this|your|the|ese|este|esa|su|el|la)\s+(?:plan|seguro|cobertura|insurance)\b/i,
+    /\b(?:is|are|was|were)\s+(?:(?:still|now|definitely|indeed|already|also)\s+){0,2}covered\b[^.!?]{0,30}\b(?:on|under|by|with|through)\s+(?:that|this|your|the|his|her)\s+(?:plan|formulary|drug\s+list)\b/i,
+    /\b(?:est[aá]|est[aá]n|estuvo)\s+(?:(?:s[ií]|ya|tambi[eé]n|efectivamente)\s+){0,2}cubiert[oa]s?\b[^.!?]{0,30}\b(?:en|bajo|con|por)\s+(?:ese|este|esa|su|el|la)\s+(?:plan|formulario|lista)\b/i,
+    /\b(?:is|are)\s+on\s+(?:the|that|this|your)\s+formulary\b|\best[aá](?:n)?\s+(?:s[ií]\s+)?en\s+(?:el|ese|este|su)\s+formulario\b/i,
+  ];
+  // The veto is DEFERRAL framing, not the mere presence of a verify word: "Your
+  // doctor takes that plan, I checked." claims the verification was already done
+  // and is exactly what must not be said.
+  var NETWORK_VERIFY_RE = new RegExp([
+    '\\b(?:whether|if)\\b',
+    '\\bsi\\b',
+    '\\b(?:can|could|would|should|may|must|will|puede[ns]?|podr[ií]a[ns]?|debe[ns]?|hay\\s+que|habr[ií]a\\s+que|tendr[ií]a(?:mos)?\\s+que)\\s+(?:[\\wáéíóúñü\'’-]+\\s+){0,3}?(?:check|verify|confirm|review|look\\s+up|revisar|verificar|confirmar|comprobar|consultar)',
+    '\\b(?:directory|directorio)\\b',
+    "\\b(?:can'?t|cannot|no\\s+puedo|no\\s+podemos|unable\\s+to|not\\s+able\\s+to)\\s+(?:[\\wáéíóúñü'’-]+\\s+){0,3}?(?:confirm|verify|say|tell|know|confirmar|verificar|decir|saber)",
+  ].join('|'), 'i');
+  var NETWORK_SAFE = {
+    en: "I can't confirm whether a specific doctor, hospital or drug is covered by a plan — only the plan's own provider directory or formulary can. A licensed ClearPoint advisor can check it with you, at no cost.",
+    es: 'No puedo confirmar si un doctor, hospital o medicamento específico está cubierto por un plan — eso solo lo confirma el directorio o el formulario del propio plan. Un asesor licenciado de ClearPoint puede revisarlo con usted, sin costo.',
+  };
+  var net18Hit = false;
+  var net18Clean = out.split(/(?<=[.!?])\s+/).filter(function (s) {
+    var n = String(s).replace(INVISIBLE_RE, '').replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
+    for (var n18 = 0; n18 < NETWORK_STATE_RES.length; n18++) {
+      if (!NETWORK_STATE_RES[n18].test(n)) continue;
+      if (NETWORK_VERIFY_RE.test(n)) return true;      // deferral — compliant
+      net18Hit = true;
+      return false;
+    }
+    return true;
+  });
+  if (net18Hit) {
+    violations.push('network_formulary_confirmation');
+    out = net18Clean.join(' ').trim();
+    var net18Safe = NETWORK_SAFE[lang === 'en' ? 'en' : 'es'];
+    var NET18_COVERED = [
+      /(can'?t|cannot)\s+confirm[^.!?]{0,60}(in[-\s]?network|network|covered|formulary)|no\s+puedo\s+confirmar[^.!?]{0,60}(red|cubiert|formulario)/i,
+      /(provider\s+)?directory|directorio/i,
+    ];
+    if (!alreadyCovered(out, NET18_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + net18Safe : net18Safe;
+    }
   }
 
   // 4) AUDIT 2026-07-22 — SEP claims. The LLM must never state or hint that
@@ -1166,6 +1374,7 @@ export function complianceFilter(text, lang, opts) {
   for (var si = 0; si < SEP_CLAIM_RES.length; si++) {
     for (var sk = 0; sk < sepSentencesAll.length; sk++) {
       if (SEP_CLAIM_RES[si].test(sepSentencesAll[sk])
+        && !sepSentenceIsStatutoryRule(sepSentencesAll[sk])
         && !sepClauseIsVerificationFramed(sepSentencesAll[sk])) {
         sepHit = true;
         violations.push('sep_claim:' + SEP_CLAIM_RES[si].source.slice(0, 40));
@@ -1177,6 +1386,8 @@ export function complianceFilter(text, lang, opts) {
     var sepSafe = SEP_SAFE[lang === 'en' ? 'en' : 'es'];
     var sepSentences = sepSentencesAll;
     var sepClean = sepSentences.filter(function (s) {
+      // AUDIT 2026-09-28 (BOT-05): the statutory rule statement survives.
+      if (sepSentenceIsStatutoryRule(s)) return true;
       if (sepClauseIsVerificationFramed(s)) return true;
       for (var sj = 0; sj < SEP_CLAIM_RES.length; sj++) {
         if (SEP_CLAIM_RES[sj].test(s)) return false;
@@ -1241,11 +1452,29 @@ export function complianceFilter(text, lang, opts) {
     es: 'No quiero asumir el motivo sin conocerlo. ¿Le explicó el consultorio o el plan qué fue exactamente lo que cambió? Un asesor licenciado puede revisar su situación con usted, sin costo.',
     en: "I don't want to assume the reason without knowing it. Did the office or the plan explain exactly what changed? A licensed advisor can review your situation with you, at no cost.",
   };
-  if (INVENTED_CAUSE_RE.test(out)) {
+  //
+  // AUDIT 2026-09-28 (BOT-05, P1). The rule exists for a cause Clara CANNOT know
+  // — whether a particular provider is leaving a particular network. It was
+  // also eating the cause api/chat.js's own prompt ORDERS the model to name for a
+  // drug-cost increase: "This usually happens because the plan's deductible
+  // resets in January or the drug moved to a higher tier." became "I don't want
+  // to assume the reason without knowing it." The filter and the prompt cannot
+  // both be right, and here the prompt is: a January deductible reset, a tier or
+  // formulary change, a coverage phase and an Extra Help change are published
+  // plan MECHANICS, printed in every Evidence of Coverage, not a guess about one
+  // caller's provider. Naming them is the useful, correct answer.
+  var MANDATED_CAUSE_RE = /\b(?:deductible[^.!?]{0,20}resets?|resets?\s+in\s+january|deducible[^.!?]{0,20}se\s+rein\w*|se\s+reinicia\s+en\s+enero|(?:moved|moves|moving|cambi[oó]|pas[oó]|movi[oó])\s+(?:to\s+|a\s+)?(?:a\s+|un\s+|una\s+)?(?:higher\s+|nivel\s+|categor[ií]a\s+)?tier|higher\s+tier|tier\s+chang\w*|nivel\s+m[aá]s\s+alto|cambio\s+de\s+nivel|formulary\s+chang\w*|cambio\s+en\s+el\s+formulario|coverage\s+(?:gap|phase)|etapa\s+de\s+cobertura|catastrophic\s+(?:phase|coverage)|donut\s+hole|extra\s+help[^.!?]{0,20}(?:chang|end)\w*|ayuda\s+adicional[^.!?]{0,20}(?:cambi|termin)\w*)\b/i;
+  var icSentences = out.split(/(?<=[.!?])\s+/);
+  var icHit = false;
+  var icClean = icSentences.filter(function (s) {
+    if (!INVENTED_CAUSE_RE.test(s)) return true;
+    if (MANDATED_CAUSE_RE.test(s)) return true;      // documented plan mechanics
+    icHit = true;
+    return false;
+  });
+  if (icHit) {
     violations.push('invented_cause_generalization');
     var icSafe = INVENTED_CAUSE_SAFE[lang === 'en' ? 'en' : 'es'];
-    var icSentences = out.split(/(?<=[.!?])\s+/);
-    var icClean = icSentences.filter(function (s) { return !INVENTED_CAUSE_RE.test(s); });
     out = icClean.join(' ').trim();
     out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + icSafe : icSafe;
   }
@@ -1281,7 +1510,13 @@ export function complianceFilter(text, lang, opts) {
       {
         tag: 'part_d',
         assertRe: /\b(?:(su|your|tu)\s+plan\s+(de\s+la\s+)?parte?\s+d\b|your\s+part\s+d\s+plan\b|(su|your|tu)\s+parte?\s+d\b)/i,
-        userRe: /\b(part[e]?\s+d|pdp)\b/i,
+        // AUDIT 2026-09-28 (BOT-05, P1) — the whitelist required the caller to
+        // have said "Part D" or "PDP" by name, which almost nobody does. A caller
+        // who says "my medication copay went up at the pharmacy" has stated the
+        // coverage: Part D is the ONLY thing that can hold a retail drug, so
+        // naming it is not an invented assumption, and the rewrite replaced the
+        // correct explanation with "What exactly did the office tell you?".
+        userRe: /\b(part[e]?\s+d|pdp|drug|drugs|prescription\w*|medication\w*|medicine|pharmac\w*|medicament\w*|medicina|receta|recetas|farmacia|p[ií]ldora|pastilla)\b/i,
       },
       {
         tag: 'plan_letter',
@@ -1473,15 +1708,35 @@ export function complianceFilter(text, lang, opts) {
   // The bot must never PROMISE non-storage ("I won't store those details") —
   // retention is governed by the privacy policy, not the model. Rewrite any
   // such sentence to the accurate handled-securely wording. EN + ES.
-  var STORAGE_CLAIM_RE = /(won'?t|will not|don'?t|do not)\s+(store|keep|save|retain)|no\s+(lo\s+|la\s+|los\s+|las\s+)?(guardar|almacenar|retendr|conservar)/i;
-  if (STORAGE_CLAIM_RE.test(out)) {
+  //
+  // AUDIT 2026-09-28 (BOT-05, P1). The pattern was the verb alone, and "keep" is
+  // an ordinary English verb, so two correct replies were replaced by the privacy
+  // paragraph: "I won't keep you much longer — one last quick question." (the
+  // warm close a CSR uses) and "Please don't keep paying that bill without
+  // comparing it to your Medicare Summary Notice first." (the right advice on a
+  // suspicious bill — the filter answered a billing question with a retention
+  // notice). What the rule is about is a promise concerning DATA, so the verb now
+  // needs a data object within the same clause. "I won't store your information"
+  // and "No guardaré sus datos" are unchanged in behaviour.
+  var STORAGE_VERB_RE = /(?:won'?t|will\s+not|don'?t|do\s+not|never)\s+(?:store|keep|save|retain)\b|\bno\s+(?:lo\s+|la\s+|los\s+|las\s+)?(?:guardar|almacenar|retendr|conservar)\w*/gi;
+  var STORAGE_OBJECT_RE = /\b(?:information|info|data|details?|records?|notes?|numbers?|ssn|medicare\s+(?:number|card)|card|conversations?|chats?|messages?|history|answers?|responses?|files?|anything\s+you\s+(?:say|share|tell)|informaci[oó]n|datos?|detalles?|registros?|n[uú]mero|n[uú]meros|tarjeta|conversaci[oó]n|mensajes?|respuestas?|archivos?|nada\s+de\s+(?:esto|eso|lo\s+que))\b/i;
+  function isStorageClaim(s) {
+    var re = new RegExp(STORAGE_VERB_RE.source, 'gi'); var m;
+    while ((m = re.exec(s)) !== null) {
+      if (re.lastIndex === m.index) re.lastIndex++;
+      var after = s.slice(m.index + m[0].length, m.index + m[0].length + 60).split(/[.!?;]/)[0];
+      if (STORAGE_OBJECT_RE.test(after)) return true;
+    }
+    return false;
+  }
+  if (isStorageClaim(out)) {
     var scSentences = out.split(/(?<=[.!?])\s+/);
     var scHit = false;
     var scSafe = lang === 'en'
       ? 'Any details you share are handled under our Privacy Policy, and a licensed advisor reviews sensitive information securely by phone.'
       : 'Cualquier dato que comparta se maneja según nuestra Política de Privacidad, y un asesor licenciado revisa la información sensible de forma segura por teléfono.';
     var scClean = scSentences.filter(function (s) {
-      if (STORAGE_CLAIM_RE.test(s)) { scHit = true; return false; }
+      if (isStorageClaim(s)) { scHit = true; return false; }
       return true;
     });
     if (scHit) {
@@ -1520,6 +1775,11 @@ export function complianceFilter(text, lang, opts) {
   var sep13Sentences = out.split(/(?<=[.!?])\s+/);
   var sep13Clean = sep13Sentences.filter(function (s) {
     if (!SEP_TOKEN_RE.test(s)) return true;
+    // AUDIT 2026-09-28 (BOT-05, P1) — rules 4 and 13 must agree, so the
+    // statutory-rule exemption is applied in both. This is the sentence that
+    // sent the caller a non-answer: "If you move out of your plan's service
+    // area, you generally get a Special Enrollment Period to choose a new plan."
+    if (sepSentenceIsStatutoryRule(s)) return true;
     // Split into clauses so a verification clause cannot launder an assertive one.
     var clauses = String(s).replace(/\s{2,}/g, ' ').split(/(?:,|;|—|--|\bso\b|\bbut\b|\bpero\b|\bas[ií] que\b|\bentonces\b|\bporque\b|\bbecause\b|\bsince\b|\bya que\b)/i);
     // The SEP token and the assertion may sit in ADJACENT clauses ("…out of the
@@ -1676,6 +1936,24 @@ export function complianceFilter(text, lang, opts) {
     '\\bcobertura\\s+empieza\\s+(hoy|ma[nñ]ana|ahora)\\b',
   ].join('|'), 'i');
   var FALSE_WRITE_RE = /\bI\s+(updated|changed|corrected|cancelled|canceled|submitted|filed|enrolled|fixed)\b[^.!?]{0,40}\b(with|at|to)\s+(medicare|social\s+security|ssa|the\s+carrier|the\s+plan)\b|\byo\s+(actualic|cambi|corregi|cancel|envi|inscrib)\w*[^.!?]{0,40}\b(con|en)\s+(medicare|seguro\s+social|el\s+plan|la\s+aseguradora)\b|\bI\s+(updated|changed|corrected)\s+your\s+address\s+with\b/i;
+  //
+  // AUDIT 2026-09-28 (BOT-04, P1) — FALSE CAPABILITY in the tenses FALSE_WRITE_RE
+  // does not reach. That pattern needs a bare past-tense verb next to "I" plus a
+  // "with/at/to <agency>" tail, so the two claims the adversarial set produced
+  // both shipped: "I'll go ahead and enroll you in that plan today." and "I have
+  // submitted your application to Social Security." Neither surface can enroll
+  // anyone or write to SSA, so a first-person claim to have done it — or to be
+  // about to — is false by construction, and it is the claim most likely to make
+  // a caller stop taking the real steps. The sentence's own inability wording is
+  // the veto, so "I can't enroll you" is untouched.
+  var FALSE_CAPABILITY_RE = new RegExp([
+    "\\bi(?:\\s*(?:'|’)\\s*(?:ll|ve|m)|\\s+(?:will|have|had|can|could|already|just|am|was))?\\s+(?:go(?:ing)?\\s+ahead\\s+and\\s+)?(?:enroll(?:ed|ing)?|sign(?:ed)?\\s+you\\s+up|submit(?:ted)?|file[d]?|filing|register(?:ed)?|appl(?:y|ied)|switch(?:ed)?|disenroll(?:ed)?)\\b[^.!?]{0,40}\\byou(?:r)?\\b",
+    "\\bi\\s+(?:enrolled|signed|submitted|filed|registered|applied|sent)\\s+(?:you|your)\\b",
+    '\\b(?:ya\\s+)?(?:lo|le|la)\\s+(?:inscrib[ií]|inscribimos|registr[eé]|registramos|env[ií][eé]|enviamos)\\b',
+    '\\b(?:ya\\s+)?(?:he|hemos)\\s+(?:enviado|inscrito|registrado|presentado|tramitado)\\s+(?:su|la)\\b',
+    '\\b(?:voy\\s+a|vamos\\s+a)\\s+(?:inscribirl[oea]|registrarl[oa]|enviar\\s+su\\s+solicitud|tramitar\\s+su\\s+solicitud)\\b',
+  ].join('|'), 'i');
+  var FALSE_CAPABILITY_VETO_RE = /\b(?:can'?t|cannot|can\s+not|won'?t|will\s+not|do\s+not|don'?t|unable|not\s+able|no\s+puedo|no\s+podemos|no\s+puedo\s+inscribir)\b/i;
   var eff16Safe = {
     es: 'No puedo confirmar cuándo entra en vigor una cobertura, y no puedo hacer cambios ante Medicare, el Seguro Social ni el plan — eso solo lo confirma el plan o Medicare directamente. La fecha de vigencia depende del período de inscripción que aplique, no del día en que se firma. Si tiene algo médico programado, llame al 1-855-720-8555 y un asesor licenciado revisa su caso antes de que usted cuente con esa cobertura.',
     en: "I can't confirm when coverage takes effect, and I can't make changes with Medicare, Social Security or a plan — only the plan or Medicare confirms that directly. An effective date depends on which enrollment period applies, not on the day something is signed. If you have something medical scheduled, please call 1-855-720-8555 so a licensed advisor can review it before you rely on that coverage.",
@@ -1684,6 +1962,9 @@ export function complianceFilter(text, lang, opts) {
   var eff16Clean = out.split(/(?<=[.!?])\s+/).filter(function (s) {
     if (COVERAGE_NOW_RE.test(s)) { eff16Hit = true; violations.push('coverage_effective_now'); return false; }
     if (FALSE_WRITE_RE.test(s)) { eff16Hit = true; violations.push('false_write_claim'); return false; }
+    if (FALSE_CAPABILITY_RE.test(s) && !FALSE_CAPABILITY_VETO_RE.test(s)) {
+      eff16Hit = true; violations.push('false_capability_claim'); return false;
+    }
     return true;
   });
   if (eff16Hit) {
