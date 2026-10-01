@@ -181,6 +181,78 @@ Where GHL workflow/Voice AI configuration allows, tag calls: `AI_VOICE_ENGLISH` 
 
 **Spanish recording notice on 940.** The number-level "Call recording message" was English on the Spanish line. It is now `Esta llamada puede ser grabada para calidad y cumplimiento.` with **Call Recording still ON** (verified by reopening the modal). The message was NOT removed: the line keeps a platform-level disclosure and Sofía repeats it in her opening. 631 and 855 untouched.
 
+## 8.c APPLIED 2026-10-01 — recording notice moved into the greeting; no external voice
+
+Owner instruction (2026-10-01): remove the external recording announcement that played after the caller
+chooses a language, put the notice inside Sofía's and Emily's own greeting, say it once, and stop the
+agents from announcing on their own that they are AI — while changing **nothing else**.
+
+**Component that produced the external voice (identified before touching anything).** The 855 line is an
+IVR; digit 1 and digit 2 forward the call to the two local DIDs, and each DID had its own number-level
+"Call recording message", which Twilio speaks on the forwarded leg:
+
+| Number | Inbound service | "Call recording message" before | after |
+|---|---|---|---|
+| +1 855-720-8555 | `ivr` `2edc673b-a311-4fcb-a1a1-0b1fd82ade31` | *(empty)* | *(empty, untouched)* |
+| +1 631-658-3796 | `voice_ai` Emely `6a6375c8…` | `This call will be recorded for quality purposes` | *(empty)* |
+| +1 940-477-8518 | `voice_ai` Sofía `6a639514…` | `Esta llamada puede ser grabada para calidad y cumplimiento.` | *(empty)* |
+
+This supersedes the last paragraph of §8.b, which had set the Spanish message on 940 on 28 Sep.
+
+**Changes applied (only these).**
+1. 631 and 940: "Call recording message" emptied. The **Call Recording switch was not touched** and reads ON
+   on all three numbers. Server-side confirmation from `backend.leadconnectorhq.com/phone-system/twilio-accounts`
+   after the change: `"callRecording":{"+18557208555":true,"+16316583796":true,"+19404778518":true}` and
+   `"playWarningMessage":{"+18557208555":"","+16316583796":"","+19404778518":""}`; `incomingWhisperMessages` and
+   `whisperMessages` are `{}`.
+2. Greetings (Agent Details → Agent's Initial Message), each saved with toast "Updated voice agent successfully" + PUT 200:
+   - Emely: `Clear Point Client Services, this is Emely. This call will be recorded for quality and compliance purposes. How can I help you?`
+   - Sofía: `Hola, le habla Sofía, del equipo de Servicio al Cliente de Clear Point. Esta llamada será grabada por motivos de calidad y cumplimiento. ¿En qué puedo ayudarle hoy?`
+3. Prompts V2.2 → **V2.3 (2026-10-01)**, rule 1 only: the notice is given once in the opening line and never
+   repeated; the agent must not volunteer that it is an AI/bot/virtual assistant/automated system, but if asked
+   directly it answers truthfully in one short sentence and continues, and never claims to be human nor denies
+   the recording. Sofía's transfer-arrival line lost its AI self-introduction and its second recording notice.
+
+**Preserved and re-checked after every save:** IVR menu, digits 1 and 2, both voices and all voice settings,
+transfers, "After The Call" = 10 actions on each agent, "Trigger Workflow when call is completed" still ticked
+with `CP- Voice Post-Call (Emely & Sofia)` + the per-language workflow on each agent.
+
+**Nothing else in the path speaks.** The IVR is workflow `2edc673b-…` ("Bilingual IVR Call Routing", published,
+v21): one `ivr_gather` (`numDigits 1`, `timeout 5`, `loop 1`) whose message is *"Thank you for calling Clear Point
+Senior Advisors. For English, press 1. Para español, presione 2."*, then three `ivr_connect_call` steps —
+1 → Emely EN 631, 2 → Sofía ES 940, None → fallback Emely EN 631 — **all three with `isSayPlayOn: false`**, so
+GoHighLevel's default "This is an automated call from workflows" is not played. The gather plays
+`63ec4d3b-….mp3`; transcribed locally (faster-whisper + ffmpeg silence map, 19.78 s): greeting, "For English,
+press 1", "Para español, presione 2", 5.2 s gap, then the two options repeated — **no mention of recording**.
+This replaces the 2026-08-11 inference in §8 that the file's content was unknown.
+
+**Runtime tests (real PSTN calls from the GHL web dialer on 2026-10-01, DTMF sent from the in-call "Dial" keypad).**
+
+| Call | Digit | Who answered | Evidence |
+|---|---|---|---|
+| 16:01 | *(none — DTMF click failed)* | Emely | fallback branch behaved as configured |
+| 16:04 | 2 | **Sofía** | Sofía's call log, from (855) 720-8555, 00:38 |
+| 16:23 | 1 | **Emily/Emely** | Emely's call log, from (855) 720-8555, 00:39 |
+| 16:41 | 2 | **Sofía** (silent mic, to capture the full greeting) | 01:07, ended by the platform silence timer |
+
+Greetings as actually spoken, from `services.leadconnectorhq.com/voice-ai/dashboard/call-logs`:
+
+- 11:50 (before) — `bot:Clear Point Client Services, this is Emely, an automated assistant. This call is being recorded for quality and compliance. How can I help you?`
+- 16:01 (after) — `bot:Clear Point Client Services, this is Emely. This call will be recorded for quality and compliance purposes. How can I help you?`
+- 11:52 (before) — `bot:Hola, le habla Sofía, la asistente automatizada de Clear Point. Esta llamada está siendo grabada con fines de calidad y cumplimiento. …`
+- 16:41 (after) — `bot:Hola, le habla Sofía, del equipo de Servicio al Cliente de Clear Point. Esta llamada será grabada por motivos de calidad y cumplimiento. ¿En qué puedo ayudarle hoy?`
+
+Each full transcript contains the notice exactly once and no AI self-announcement. Recording still works: the
+contact's thread holds the new recordings (1:03 and 1:07 players alongside the older ones) and the post-call
+workflows still tag the contact `cp-ai-handled`, `cp-lang-en`, `cp-lang-es`.
+
+**NOT VERIFIED — the audio itself was not listened to.** The call recordings could not be downloaded through the
+UI (the agent-log row exposes no `<audio>` element and the Conversations player never issues a plain media
+request), so the absence of the external voice is established from configuration and from the fact that the only
+component that produced it is now empty — not from hearing the call. Note that the number-level message is
+spoken as the leg connects, so it would not necessarily appear in the recording even if it were still set. A
+30-second owner check closes this: dial 855-720-8555, press 1, and confirm Emily is the first voice after the menu.
+
 ## 9. NOT VERIFIED — legal/compliance review required
 
 - Exact disclosure wording requirements for AI voice agents per state (NY/NJ/CT) beyond the current recording disclosure ("This call will be recorded for quality purposes", present on both lines since 2026-08-11). Marked NOT VERIFIED; current scripts do not remove or alter any existing disclosure.
