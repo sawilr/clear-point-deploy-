@@ -132,11 +132,23 @@ export function storeKeyFor(token) {
  * safe restart."
  */
 export function checkLink(record, { now = new Date() } = {}) {
-  if (!record) return { ok: false, reason: 'LINK_NOT_FOUND' };
-  if (record.revokedAt) return { ok: false, reason: 'LINK_REVOKED' };
-  if (record.consumedAt) return { ok: false, reason: 'LINK_ALREADY_USED' };
-  if (Date.parse(record.expiresAt) <= now.getTime()) return { ok: false, reason: 'LINK_EXPIRED' };
-  if ((record.views || 0) >= MAX_VIEWS) return { ok: false, reason: 'LINK_VIEW_LIMIT' };
+  if (!record || typeof record !== 'object') return { ok: false, reason: 'LINK_NOT_FOUND' };
+  // RED TEAM 2026-10-02 (SL-03, HIGH) — this failed OPEN three ways: an
+  // unparseable or missing expiresAt made `Date.parse(...) <= now` false, so the
+  // link never expired; and `revokedAt`/`consumedAt` were tested for truthiness,
+  // so a present-but-falsy value ('' or 0, which is what some stores return for
+  // a cleared field) read as "not revoked" and "not used".
+  if ('revokedAt' in record && record.revokedAt !== null && record.revokedAt !== undefined) {
+    return { ok: false, reason: 'LINK_REVOKED' };
+  }
+  if ('consumedAt' in record && record.consumedAt !== null && record.consumedAt !== undefined) {
+    return { ok: false, reason: 'LINK_ALREADY_USED' };
+  }
+  const exp = Date.parse(record.expiresAt);
+  if (!Number.isFinite(exp)) return { ok: false, reason: 'LINK_EXPIRY_UNREADABLE' };
+  if (exp <= now.getTime()) return { ok: false, reason: 'LINK_EXPIRED' };
+  const views = Number(record.views || 0);
+  if (!Number.isFinite(views) || views >= MAX_VIEWS) return { ok: false, reason: 'LINK_VIEW_LIMIT' };
   return { ok: true };
 }
 
@@ -227,7 +239,15 @@ export function revokeLink(record, { now = new Date(), reason = 'UNSPECIFIED' } 
  * each call site to remember.
  */
 export function mayReissue(record, soaInstanceStatus) {
-  if (soaInstanceStatus === 'COMPLETED') return { allowed: false, reason: 'SOA_ALREADY_SIGNED_RESEND_EVIDENCE_INSTEAD' };
-  if (record?.revokedAt) return { allowed: false, reason: 'LINK_REVOKED' };
+  // RED TEAM 2026-10-02 (SL-02, HIGH) — this refused only the exact string
+  // 'COMPLETED', so a failed status lookup (undefined) or an already-replaced
+  // instance ('SUPERSEDED') minted a fresh signing link for an SOA that had
+  // already been signed. The safe default is to refuse what we cannot vouch for.
+  const ALLOWED_TO_REISSUE = ['DRAFT', 'PENDING_SIGNATURE', 'SOA_INCOMPLETE'];
+  if (typeof soaInstanceStatus !== 'string' || !ALLOWED_TO_REISSUE.includes(soaInstanceStatus)) {
+    return { allowed: false, reason: 'SOA_STATUS_DOES_NOT_PERMIT_REISSUE', status: soaInstanceStatus ?? null };
+  }
+  if (record?.revokedAt != null) return { allowed: false, reason: 'LINK_REVOKED' };
+  if (record?.consumedAt != null) return { allowed: false, reason: 'LINK_ALREADY_USED' };
   return { allowed: true };
 }

@@ -18,6 +18,8 @@
 // PROHIBITED_SIGNALS is enforced by a throw, not a lint rule.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { redactProhibitedForScoring } from './prohibited-signals.js';
+
 export const LEAD_TRUST_STATE = Object.freeze({
   VERIFIED_REQUEST: 'VERIFIED_REQUEST',
   PARTIALLY_VERIFIED: 'PARTIALLY_VERIFIED',
@@ -169,10 +171,20 @@ export function evaluateTrust({
  * CRM data exposure — but never blocks being served by a human.
  */
 export function trustCapabilities(state) {
-  const quarantined = state === LEAD_TRUST_STATE.SECURITY_QUARANTINE || state === LEAD_TRUST_STATE.HUMAN_REVIEW_REQUIRED;
+  // RED TEAM 2026-10-02 (CT-06, HIGH) — this failed OPEN for any value outside
+  // the two quarantine constants. Passing the whole result object from
+  // evaluateTrust() (rather than its .state), a lowercase string, or any typo
+  // produced quarantined=false AND mayExposeCrmData=false — but also
+  // mayCreateHomeVisit=true and requiresHumanReview=false, so an unrecognized
+  // state quietly skipped the human gate. An unknown trust state is now treated
+  // as quarantined.
+  const known = Object.values(LEAD_TRUST_STATE).includes(state);
+  const quarantined = !known
+    || state === LEAD_TRUST_STATE.SECURITY_QUARANTINE
+    || state === LEAD_TRUST_STATE.HUMAN_REVIEW_REQUIRED;
   return {
-    mayExposeCrmData: state === LEAD_TRUST_STATE.VERIFIED_REQUEST,
-    mayPrefillPrivateData: state === LEAD_TRUST_STATE.VERIFIED_REQUEST,
+    mayExposeCrmData: known && state === LEAD_TRUST_STATE.VERIFIED_REQUEST,
+    mayPrefillPrivateData: known && state === LEAD_TRUST_STATE.VERIFIED_REQUEST,
     mayStartAutomatedOutbound: false, // never, from any state (spec §24)
     mayCreateHomeVisit: !quarantined,
     mayCompleteSoa: !quarantined,
@@ -188,9 +200,21 @@ export function trustCapabilities(state) {
  * to the caller's discretion.
  */
 export function buildSecurityReviewTask(ctx = {}) {
+  // RED TEAM 2026-10-02 (CT-05, HIGH) — the allowlist filtered KEYS but not
+  // VALUES, so health, Medicaid and income detail reached the review task
+  // whenever a caller put it in an allowed field (a `signals` array carrying a
+  // free-text note, or a `channel` string with the reason in it). The task is
+  // meant to carry "only non-sensitive facts needed to validate the request"
+  // (spec §13), so every string value now goes through the same filter that
+  // protects the lead scorer.
   const allow = ['requestId', 'correlationId', 'state', 'zip', 'channel', 'language', 'signals', 'trustState', 'receivedAt'];
+  const clean = (v) => {
+    if (typeof v === 'string') return redactProhibitedForScoring(v).text;
+    if (Array.isArray(v)) return v.map(clean);
+    return v;
+  };
   const facts = {};
-  for (const k of allow) if (ctx[k] !== undefined) facts[k] = ctx[k];
+  for (const k of allow) if (ctx[k] !== undefined) facts[k] = clean(ctx[k]);
   return {
     kind: 'SECURITY_REVIEW',
     priority: 'HIGH',

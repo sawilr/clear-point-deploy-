@@ -100,6 +100,9 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     supersedesId: instance.supersedesId,
     signature,
     signedAt,
+    // Covered by the hash (EF-06): retention is measured from createdAt, so a
+    // backdated record would otherwise shorten its own retention undetected.
+    createdAt: signedAt,
     textSnapshot,
   };
 
@@ -108,7 +111,6 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     record: {
       ...core,
       recordClass: RECORD_CLASS.SOA_EVIDENCE,
-      createdAt: signedAt,
       holds: [],
       integrityHash: hash,
       // Context kept for the audit trail but excluded from the hash so that a
@@ -122,7 +124,13 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
 /** Recompute and compare. Use before relying on a stored evidence record. */
 export function verifyEvidence(record) {
   if (!record || !record.integrityHash) return { ok: false, reason: 'NO_HASH' };
-  const { recordClass, createdAt, holds, integrityHash: stored, context, releasedHolds, evidenceReference, ...core } = record;
+  // RED TEAM 2026-10-02 (EF-06, HIGH) — `createdAt` was excluded from the hash
+  // alongside the volatile context, so a record could be backdated (changing
+  // when retention expires) and still verify. It is part of the agreement's
+  // meaning and is covered again. `holds`/`releasedHolds` stay outside: they are
+  // operational state applied AFTER signature, and freezing them in the hash
+  // would make every legal hold look like tampering.
+  const { recordClass, holds, integrityHash: stored, context, releasedHolds, evidenceReference, ...core } = record;
   const recomputed = integrityHash(core);
   return recomputed === stored ? { ok: true } : { ok: false, reason: 'HASH_MISMATCH', stored, recomputed };
 }
@@ -137,16 +145,42 @@ export const AUDIT_ACTIONS = Object.freeze([
   'CONSENT_RECORDED', 'CONSENT_REVOKED',
 ]);
 
-/** Values that must never reach a log line. */
-const REDACT_KEYS = /^(ssn|mbi|medicare(number|_number)?|bank|account|card|cvv|dob|dateofbirth|date_of_birth|password|token)$/i;
+/**
+ * Values that must never reach a log line.
+ *
+ * RED TEAM 2026-10-02 (EF-04, HIGH) — this was an EXACT-match list, so the
+ * ordinary spellings of the same identifiers walked straight through:
+ * ssn_number, socialSecurity, social_security_number, memberId, medicareId,
+ * accountNumber, cardNumber, routing, dateOfBirth, birthDate, accessToken,
+ * apiKey, secret. Matching on a substring of the normalized key closes that.
+ */
+const REDACT_KEY_PARTS = [
+  'ssn', 'socialsecurity', 'mbi', 'medicarenumber', 'medicareid', 'memberid', 'beneficiaryid',
+  'bank', 'account', 'routing', 'iban', 'card', 'cvv', 'cvc', 'pan',
+  'dob', 'dateofbirth', 'birthdate', 'birthday',
+  'password', 'passcode', 'pin', 'token', 'secret', 'apikey', 'authorization', 'cookie', 'signature',
+];
 
-/** Shallow redaction for anything handed to the audit log. */
-export function redactForLog(obj) {
+function shouldRedactKey(key) {
+  const k = String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return REDACT_KEY_PARTS.some((p) => k.includes(p));
+}
+
+/**
+ * Redaction for anything handed to the audit log.
+ *
+ * RED TEAM 2026-10-02 (EF-03, HIGH) — arrays were skipped entirely, so
+ * `details: { people: [{ ssn: '…' }] }` logged the SSN in clear. Arrays are now
+ * walked like any other container.
+ */
+export function redactForLog(obj, depth = 0) {
+  if (depth > 8) return '[depth-limited]';
+  if (Array.isArray(obj)) return obj.map((v) => redactForLog(v, depth + 1));
   if (!obj || typeof obj !== 'object') return obj;
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (REDACT_KEYS.test(k)) { out[k] = '[redacted]'; continue; }
-    if (v && typeof v === 'object' && !Array.isArray(v)) { out[k] = redactForLog(v); continue; }
+    if (shouldRedactKey(k)) { out[k] = '[redacted]'; continue; }
+    if (v && typeof v === 'object') { out[k] = redactForLog(v, depth + 1); continue; }
     out[k] = v;
   }
   return out;

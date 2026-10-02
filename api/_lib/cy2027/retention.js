@@ -94,14 +94,33 @@ export function callRetentionRequirement(createdAt, now = new Date()) {
 export function mayPurge(record, now = new Date()) {
   if (!record) return { allowed: false, reason: 'NO_RECORD' };
 
+  // RED TEAM 2026-10-02 (JR-03, HIGH) — a `holds` value that was not an Array
+  // (a scalar, an object map, a Set) was silently treated as "no holds", so a
+  // record under legal hold became purgeable because its holds were stored in a
+  // shape this function did not expect. Anything unrecognizable is a hold.
+  if (record.holds != null && !Array.isArray(record.holds)) {
+    return { allowed: false, reason: 'HOLDS_UNREADABLE' };
+  }
   const holds = Array.isArray(record.holds) ? record.holds.filter(Boolean) : [];
   if (holds.length) return { allowed: false, reason: 'ACTIVE_HOLD', holds };
+  // A falsy entry in the list means a hold we cannot describe — still a hold.
+  if (Array.isArray(record.holds) && record.holds.length !== holds.length) {
+    return { allowed: false, reason: 'HOLDS_UNREADABLE' };
+  }
 
+  // RED TEAM 2026-10-02 (JR-02, HIGH) — `cls in RETENTION_YEARS` is true for
+  // every Object.prototype key, so recordClass 'constructor' / 'toString' /
+  // '__proto__' passed the class check and then read a FUNCTION as the
+  // retention period, which compared as not-less-than and allowed the purge.
   const cls = record.recordClass;
-  if (!cls || !(cls in RETENTION_YEARS)) return { allowed: false, reason: 'UNKNOWN_RECORD_CLASS' };
+  if (typeof cls !== 'string' || !Object.prototype.hasOwnProperty.call(RETENTION_YEARS, cls)) {
+    return { allowed: false, reason: 'UNKNOWN_RECORD_CLASS' };
+  }
 
   const years = RETENTION_YEARS[cls];
-  if (years == null) return { allowed: false, reason: 'RETENTION_PERIOD_NOT_CONFIRMED', recordClass: cls };
+  if (typeof years !== 'number' || !Number.isFinite(years) || years <= 0) {
+    return { allowed: false, reason: 'RETENTION_PERIOD_NOT_CONFIRMED', recordClass: cls };
+  }
 
   const age = ageInYears(record.createdAt, now);
   if (!Number.isFinite(age)) return { allowed: false, reason: 'UNPARSEABLE_CREATED_AT' };
@@ -113,15 +132,25 @@ export function mayPurge(record, now = new Date()) {
 /** Attach a hold. Idempotent; unknown reasons are rejected rather than stored. */
 export function applyHold(record, reason, { at = new Date().toISOString(), note = null } = {}) {
   if (!HOLD_REASONS.includes(reason)) throw new Error(`retention: unknown hold reason "${reason}"`);
-  const holds = Array.isArray(record?.holds) ? record.holds.slice() : [];
-  if (!holds.some((h) => h.reason === reason)) holds.push({ reason, at, note });
+  // RED TEAM 2026-10-02 (JR-07, HIGH) — `holds.some(h => h.reason === …)` threw
+  // on a falsy entry and a non-array holds value was silently discarded, which
+  // could DROP existing holds while appearing to add one.
+  if (record?.holds != null && !Array.isArray(record.holds)) {
+    throw new Error('retention: refusing to rewrite an unreadable holds list — inspect the record first');
+  }
+  const holds = Array.isArray(record?.holds) ? record.holds.filter(Boolean).slice() : [];
+  if (!holds.some((h) => h && h.reason === reason)) holds.push({ reason, at, note });
   return { ...record, holds };
 }
 
 /** Release a hold. Releasing one hold never releases the others. */
 export function releaseHold(record, reason, { at = new Date().toISOString(), actor } = {}) {
   if (!actor) throw new Error('retention: releasing a hold requires an actor for the audit log');
-  const holds = (Array.isArray(record?.holds) ? record.holds : []).filter((h) => h.reason !== reason);
+  if (!HOLD_REASONS.includes(reason)) throw new Error(`retention: unknown hold reason "${reason}"`);
+  if (record?.holds != null && !Array.isArray(record.holds)) {
+    throw new Error('retention: refusing to rewrite an unreadable holds list — inspect the record first');
+  }
+  const holds = (Array.isArray(record?.holds) ? record.holds : []).filter((h) => h && h.reason !== reason);
   const released = Array.isArray(record?.releasedHolds) ? record.releasedHolds.slice() : [];
   released.push({ reason, at, actor });
   return { ...record, holds, releasedHolds: released };

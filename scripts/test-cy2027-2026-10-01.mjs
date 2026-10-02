@@ -589,9 +589,20 @@ const baseInput = {
 
   // Resending a copy must not mint a new SOA.
   ok('re-issuing for a signed SOA is refused',
-    mayReissue(record, 'COMPLETED').reason === 'SOA_ALREADY_SIGNED_RESEND_EVIDENCE_INSTEAD');
+    mayReissue(record, 'COMPLETED').reason === 'SOA_STATUS_DOES_NOT_PERMIT_REISSUE');
   ok('re-issuing before signature is fine', mayReissue(record, 'PENDING_SIGNATURE').allowed === true);
   ok('re-issuing a revoked link is refused', mayReissue(revokeLink(record), 'PENDING_SIGNATURE').reason === 'LINK_REVOKED');
+  // SL-02 — an unknown or failed status must not mint a fresh signing link.
+  ok('SL-02: an unknown status refuses', mayReissue(record, undefined).reason === 'SOA_STATUS_DOES_NOT_PERMIT_REISSUE');
+  ok('SL-02: a superseded instance refuses', mayReissue(record, 'SUPERSEDED').reason === 'SOA_STATUS_DOES_NOT_PERMIT_REISSUE');
+  ok('SL-02: a revoked instance refuses', mayReissue(record, 'REVOKED').reason === 'SOA_STATUS_DOES_NOT_PERMIT_REISSUE');
+  ok('SL-02: a consumed link refuses', mayReissue(consumeLink(record).record, 'PENDING_SIGNATURE').reason === 'LINK_ALREADY_USED');
+  // SL-03 — checkLink must not fail open.
+  ok('SL-03: a missing expiry fails closed', checkLink({ ...record, expiresAt: undefined }).reason === 'LINK_EXPIRY_UNREADABLE');
+  ok('SL-03: an unparseable expiry fails closed', checkLink({ ...record, expiresAt: 'later' }).reason === 'LINK_EXPIRY_UNREADABLE');
+  ok('SL-03: a falsy-but-present revokedAt still counts as revoked', checkLink({ ...record, revokedAt: '' }).reason === 'LINK_REVOKED');
+  ok('SL-03: a falsy-but-present consumedAt still counts as used', checkLink({ ...record, consumedAt: 0 }).reason === 'LINK_ALREADY_USED');
+  ok('SL-03: a non-numeric view count fails closed', checkLink({ ...record, views: 'many' }).reason === 'LINK_VIEW_LIMIT');
 
   ok('views are counted for abuse detection', recordView(record).views === 1);
 }
@@ -815,6 +826,73 @@ const baseInput = {
   ok('EF-01: nor from the CY2027 barrel', !('CARRIER_OVERLAYS' in barrelModule));
   ok('EF-01: the guarded accessor still works',
     overlayInventory('LICENSED_AGENT_WORKSPACE').length === 10);
+
+  // ── HIGH findings, pinned ────────────────────────────────────────────────
+  // EF-03/EF-04 — the audit log must not leak through arrays or key spellings.
+  const leaky = auditEvent({
+    action: 'SOA_SIGNED', actor: 'a', result: 'OK', source: 'WEB', correlationId: 'c',
+    details: {
+      people: [{ ssn_number: '123-45-6789' }, { socialSecurity: '987654321' }],
+      memberId: '1EG4TE5MK73', accountNumber: '12345678', dateOfBirth: '1950-01-01',
+      accessToken: 'tok_live_x', zip: '11717',
+    },
+  });
+  ok('EF-03: arrays are walked, not skipped', leaky.details.people[0].ssn_number === '[redacted]');
+  ok('EF-03: every array element is walked', leaky.details.people[1].socialSecurity === '[redacted]');
+  ok('EF-04: memberId is redacted', leaky.details.memberId === '[redacted]');
+  ok('EF-04: accountNumber is redacted', leaky.details.accountNumber === '[redacted]');
+  ok('EF-04: dateOfBirth is redacted', leaky.details.dateOfBirth === '[redacted]');
+  ok('EF-04: accessToken is redacted', leaky.details.accessToken === '[redacted]');
+  ok('EF-04: the non-sensitive field survives', leaky.details.zip === '11717');
+
+  // EF-06 — backdating a record must break its hash.
+  const inst6 = completeSoaInstance(createSoaInstance({ ...baseInput, soaId: 'ef6' }).instance,
+    { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'p', evidenceReference: 'e' });
+  const { record: r6 } = buildEvidenceRecord(inst6, { stateName: 'New York', signature: 'Jane Q Public' });
+  ok('EF-06: an intact record verifies', verifyEvidence(r6).ok === true);
+  ok('EF-06: backdating createdAt is detectable',
+    verifyEvidence({ ...r6, createdAt: '2020-01-01T00:00:00Z' }).reason === 'HASH_MISMATCH');
+  ok('EF-06: applying a legal hold is NOT tampering',
+    verifyEvidence(applyHold(r6, 'CMS_INQUIRY')).ok === true);
+
+  // JR-02/03/07 — retention must never purge what it cannot read.
+  for (const cls of ['constructor', 'toString', 'valueOf', '__proto__', 'hasOwnProperty']) {
+    ok(`JR-02: recordClass "${cls}" is not a retention class`,
+      mayPurge({ recordClass: cls, createdAt: '1990-01-01T00:00:00Z' }).reason === 'UNKNOWN_RECORD_CLASS');
+  }
+  const oldEv = { recordClass: RECORD_CLASS.SOA_EVIDENCE, createdAt: '2010-01-01T00:00:00Z' };
+  ok('JR-03: a non-array holds value blocks the purge',
+    mayPurge({ ...oldEv, holds: 'LEGAL_HOLD' }).reason === 'HOLDS_UNREADABLE');
+  ok('JR-03: an object holds map blocks the purge',
+    mayPurge({ ...oldEv, holds: { LEGAL_HOLD: true } }).reason === 'HOLDS_UNREADABLE');
+  ok('JR-03: a falsy entry in the holds list blocks the purge',
+    mayPurge({ ...oldEv, holds: [null] }).reason === 'HOLDS_UNREADABLE');
+  ok('JR-07: applyHold refuses an unreadable holds list',
+    (() => { try { applyHold({ ...oldEv, holds: 'x' }, 'COMPLAINT'); return false; } catch { return true; } })());
+  ok('JR-07: applyHold survives a falsy entry',
+    applyHold({ ...oldEv, holds: [null, { reason: 'COMPLAINT', at: 'x' }] }, 'CMS_INQUIRY').holds.length === 2);
+  ok('JR-07: releaseHold rejects an unknown reason',
+    (() => { try { releaseHold(oldEv, 'BECAUSE', { actor: 'sawil' }); return false; } catch { return true; } })());
+
+  // CT-06 — an unrecognized trust state must not skip the human gate.
+  for (const bad of [undefined, null, 'security_quarantine', { state: 'SECURITY_QUARANTINE' }, 'TYPO']) {
+    const c = trustCapabilities(bad);
+    ok(`CT-06: unknown trust state ${JSON.stringify(bad)} is treated as quarantined`,
+      c.requiresHumanReview === true && c.mayExposeCrmData === false && c.mayCreateHomeVisit === false);
+  }
+  ok('CT-06: a real verified state still works',
+    trustCapabilities(LEAD_TRUST_STATE.VERIFIED_REQUEST).mayExposeCrmData === true);
+
+  // CT-05 — the review task must not carry prohibited detail in allowed fields.
+  const t5 = buildSecurityReviewTask({
+    requestId: 'r', state: 'NY', channel: 'caller said he has cancer and gets Extra Help',
+    signals: ['DEVICE_IP_VELOCITY', 'note: Medicaid dual-eligible'],
+  });
+  ok('CT-05: prohibited detail in an allowed string field is removed',
+    !/cancer/i.test(t5.facts.channel) && !/extra help/i.test(t5.facts.channel), t5.facts.channel);
+  ok('CT-05: prohibited detail inside an allowed array is removed',
+    !/medicaid/i.test(JSON.stringify(t5.facts.signals)), JSON.stringify(t5.facts.signals));
+  ok('CT-05: the legitimate signal survives', /DEVICE_IP_VELOCITY/.test(JSON.stringify(t5.facts.signals)));
 }
 
 if (failures.length) {
