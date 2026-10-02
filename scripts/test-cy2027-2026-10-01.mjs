@@ -45,6 +45,7 @@ import {
 } from '../api/_lib/cy2027/prohibited-signals.js';
 import * as overlayModule from '../api/_lib/cy2027/carrier-overlay.js';
 import * as barrelModule from '../api/_lib/cy2027/index.js';
+import { complianceFilter } from '../api/_lib/compliance-filter.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -954,6 +955,62 @@ const baseInput = {
       { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'h', evidenceReference: 'e' });
     ok('SOA-06: a stateless appointment is refused',
       marketingGate(inst, { appointmentId: 'appt_1', startsAt: '2026-11-10T15:00:00Z', format: 'TELEPHONE' }, CMS_RULESET_2027).reason === 'APPOINTMENT_STATE_UNKNOWN');
+  }
+}
+
+// ── 16. Carrier firewall in the public layer (spec §16, §20, §21, §33) ───────
+{
+  const say = (t, l = 'en') => { const r = complianceFilter(t, l); return typeof r === 'string' ? r : (r.text || ''); };
+  const removed = (t, l = 'en') => say(t, l) !== t;
+
+  // CBF-04 — ranking expressed as a COMPARISON, not a superlative.
+  ok('CBF-04: "better … than" ranking is removed',
+    removed('An HMO plan is better for someone with your doctors than a PPO.'));
+  ok('CBF-04: "that plan is worse" is removed',
+    removed('That plan is worse on drug costs than the other option.'));
+  ok('CBF-04: Spanish "le conviene más" is removed',
+    removed('Ese plan le conviene más que el otro.', 'es'));
+  ok('CBF-04: Spanish "es más barato" ranking is removed',
+    removed('Ese plan es más barato para usted.', 'es'));
+  // The other direction — ordinary comparatives are not rankings.
+  for (const s of [
+    'Part B is better explained by Medicare than by me.',
+    'Starting later is worse for you because of the late penalty.',
+    'A licensed advisor can compare the options with you at no cost.',
+  ]) ok(`CBF-04: legitimate comparative survives: "${s.slice(0, 40)}…"`, !removed(s), say(s));
+
+  // CBF-03 — descriptive plan-specific premium / benefit figures.
+  ok('CBF-03: a quoted plan premium is removed',
+    removed('That plan has a $0 monthly premium and gives $150 a quarter for over-the-counter items.'));
+  ok('CBF-03: a quoted copay is removed', removed("That plan's copay is $47 for tier 3."));
+  ok('CBF-03: a named supplemental benefit attributed to a plan is removed',
+    removed('Su plan incluye dental y visión.', 'es'));
+  ok('CBF-03: a general Medicare figure survives',
+    !removed('The 2027 Part B standard premium is $185.00 per month.'));
+  ok('CBF-03: explaining the mechanism without a figure survives',
+    !removed("This usually happens because the plan's deductible resets in January or the drug moved to a higher tier."));
+  ok('CBF-03: a deferral survives',
+    !removed('A licensed advisor can check whether that plan covers your dentist.'));
+  ok('CBF-03: the Spanish non-quote survives',
+    !removed('No puedo citar la prima de un plan específico; varía según el plan.', 'es'));
+
+  // CBF-05 — the refusal is deterministic and routes, and names nothing.
+  const CHAT = readFileSync(new URL('../api/chat.js', import.meta.url), 'utf8');
+  ok('CBF-05: the carrier classifier now acts instead of only logging',
+    /CARRIER-FIREWALL/.test(CHAT) && /_intentInfo\.intent === 'CARRIER_SPECIFIC_REQUEST'/.test(CHAT));
+  ok('CBF-05: the refusal happens before the model is called',
+    CHAT.indexOf('[CARRIER-FIREWALL]') < CHAT.indexOf('var messages = [];'), 'refusal is after the prompt is assembled');
+  ok('CBF-05: the refusal escalates rather than dead-ending', /wantHandoff: true,[\s\S]{0,120}CARRIER_FIREWALL/.test(CHAT));
+  const refusal = CHAT.match(/const CARRIER_REFUSAL = \{[\s\S]*?\n\};/)[0];
+  ok('CBF-05: the refusal copy names no carrier',
+    !/aetna|humana|unitedhealth|wellcare|clover|emblem|healthfirst|fidelis|anthem|connecticare|cigna/i.test(refusal), refusal.slice(0, 80));
+  ok('CBF-05: the refusal copy exists in both languages', /\ben:/.test(refusal) && /\bes:/.test(refusal));
+  const planRe = eval(CHAT.match(/const PLAN_RECOMMENDATION_RE = (\/[\s\S]*?\/i);/)[1]);
+  for (const s of ['which plan is best for me?', 'what plan should I pick?', '¿cuál plan me conviene más?', '¿qué plan me recomienda?']) {
+    ok(`CBF-05: "${s}" is refused deterministically`, planRe.test(s));
+  }
+  for (const s of ['what is a Part D plan?', 'when does my coverage start?', '¿cuál es el teléfono de Medicare?']) {
+    ok(`CBF-05: legitimate question is not refused: "${s}"`, !planRe.test(s));
   }
 }
 

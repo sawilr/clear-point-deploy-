@@ -558,6 +558,22 @@ const PLAN_REC_SENTENCE_RES = [
   /\brecommend\s+that\s+you\s+(?:enroll\s+in|sign\s+up\s+for|choose|pick|switch\s+to|get)\s+(?:the\s+|that\s+)?(?:[\w'’-]+\s+){0,6}plan\b/gi,
   /\ble\s+recomiend[oa]\s+(?:mucho\s+)?(?:el|este|ese|un)\s+(?!(?:sitio|p[aá]gina|directorio|documento|resumen|portal|n[uú]mero)\b)(?:[\w'’-]+\s+){0,5}plan\b(?!\s+(?:directorio|comparador))/gi,
   /\b(?:you\s+should|usted\s+deber[ií]a)\s+(?:enroll\s+in|sign\s+up\s+for|inscribirse\s+en|choose|pick|escoger|elegir|tomar)\s+(?:the\s+|el\s+|este\s+|ese\s+|un\s+)?(?:[\w'’-]+\s+){0,5}plan\b/gi,
+  // AUDIT 2026-10-02 (CBF-04, CRITICAL) — only the SUPERLATIVE form of ranking
+  // was caught ("the best plan for you", "su mejor plan", "I recommend…").
+  // Nothing matched the COMPARATIVE form, so a ranking phrased as a comparison
+  // shipped verbatim: "An HMO plan is better for someone with your doctors than
+  // a PPO", "that one is worse on drug costs", "ese plan le conviene más que el
+  // otro". Spec §20 bans the CARRIER COMPARISON / RANKING knowledge class
+  // outright — comparing two anonymous products is still ranking.
+  //
+  // Each pattern requires a comparative word AND a plan/coverage/option noun in
+  // the same sentence, so ordinary comparatives survive ("Part B is better
+  // explained by Medicare", "a later start date is worse for you").
+  /\b(?:plan|plans|coverage|option|options|policy|policies)\b[^.!?;\n]{0,80}\b(?:is|are|would\s+be|'?s)\s+(?:a\s+)?(?:better|worse|stronger|weaker|cheaper|costlier|more\s+affordable|less\s+expensive|a\s+better\s+fit)\b/gi,
+  /\b(?:better|worse|stronger|cheaper|costlier|more\s+affordable|less\s+expensive)\b[^.!?;\n]{0,60}\b(?:than|compared\s+to|vs\.?|versus)\b[^.!?;\n]{0,60}\b(?:plan|plans|coverage|option|options|hmo|ppo|pdp|advantage|medigap)\b/gi,
+  /\b(?:plan|plans|coverage|opci[oó]n|opciones|p[oó]liza)\b[^.!?;\n]{0,80}\b(?:es|ser[ií]a|resulta)\s+(?:m[aá]s\s+(?:barat[oa]|convenient[e]|complet[oa]|conveniente)|mejor|peor)\b/gi,
+  /\b(?:le\s+)?conviene\s+m[aá]s\b[^.!?;\n]{0,70}\b(?:plan|cobertura|opci[oó]n|p[oó]liza)\b/gi,
+  /\b(?:plan|cobertura|opci[oó]n)\b[^.!?;\n]{0,70}\b(?:le\s+conviene\s+m[aá]s|es\s+mejor\s+que|es\s+peor\s+que|supera\s+a)\b/gi,
 ];
 
 // ── SELF-HARM — SINGLE SOURCE OF TRUTH (2026-08-13, red team P1) ─────────
@@ -1476,6 +1492,66 @@ export function complianceFilter(text, lang, opts) {
     ];
     if (!alreadyCovered(out, NET18_COVERED)) {
       out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + net18Safe : net18Safe;
+    }
+  }
+
+  // ── 19) AUDIT 2026-10-02 (CBF-03) — DESCRIPTIVE PLAN-SPECIFIC FIGURES ─────
+  // Spec §20 puts "PLAN-SPECIFIC benefits/network/formulary/premium" in the Not
+  // allowed class for the public AI. Network and formulary were enforced by
+  // rule 18; premium and benefit were not enforced ANYWHERE. A reply like
+  // "That plan has a $0 monthly premium and gives $150 a quarter for
+  // over-the-counter items" names no carrier, recommends nothing, promises
+  // nothing and claims no eligibility — so it passed every existing rule and
+  // shipped verbatim. It is still a plan-specific quote the public layer may
+  // not make.
+  //
+  // Scoped to sentences that attach a figure or a named supplemental benefit to
+  // a PLAN DEMONSTRATIVE. General Medicare education keeps its figures: "the
+  // 2027 Part B premium is $X" has no plan demonstrative and is untouched, as
+  // is "plans in general may offer dental" with no amount.
+  var PLAN_DEMONSTRATIVE = '(?:that|this|the|your|their)\\s+plan|(?:ese|este|su|el)\\s+plan|plans?\\s+in\\s+your\\s+(?:area|county|zip)|planes\\s+en\\s+su\\s+(?:[aá]rea|condado)';
+  var PLAN_FIGURE_RES = [
+    // "that plan has a $0 premium" / "su plan da $150 al trimestre"
+    new RegExp('\\b(?:' + PLAN_DEMONSTRATIVE + ')\\b[^.!?;\\n]{0,90}\\$\\s?\\d', 'i'),
+    // "$0 premium ... that plan" (figure first)
+    new RegExp('\\$\\s?\\d[^.!?;\\n]{0,90}\\b(?:' + PLAN_DEMONSTRATIVE + ')\\b', 'i'),
+    // Named supplemental benefits attributed to a plan, with or without a figure.
+    new RegExp('\\b(?:' + PLAN_DEMONSTRATIVE + ')\\b[^.!?;\\n]{0,90}\\b(?:dental|vision|visi[oó]n|hearing|audici[oó]n|over[-\\s]?the[-\\s]?counter|\\bOTC\\b|transportation|transporte|flex\\s+card|tarjeta\\s+flex|grocery|groceries|comestibles|gym|gimnasio|silver\\s?sneakers)\\b', 'i'),
+    // Copay / deductible / allowance attached to a plan demonstrative — but only
+    // when an AMOUNT is quoted. Explaining the mechanism is education and must
+    // survive: "This usually happens because the plan's deductible resets in
+    // January" names no figure and is exactly the kind of cause the prompt
+    // requires the bot to give (caught as a false positive by
+    // test-round8b-compliance BOT-05 before this was tightened).
+    new RegExp('\\b(?:' + PLAN_DEMONSTRATIVE + ')\\b[^.!?;\\n]{0,90}\\b(?:copay|co-?payment|copago|deductible|deducible|allowance|asignaci[oó]n|out[-\\s]?of[-\\s]?pocket\\s+max|m[aá]ximo\\s+de\\s+bolsillo)\\b[^.!?;\\n]{0,40}(?:\\$\\s?\\d|\\b\\d{2,}\\s?(?:d[oó]lares|dollars)\\b)', 'i'),
+  ];
+  // A sentence that DEFERS rather than quotes is compliant and must survive.
+  var PLAN_FIGURE_VERIFY_RE = /\b(can'?t|cannot|unable\s+to)\s+(confirm|quote|tell\s+you)|only\s+the\s+plan'?s?\s+(own\s+)?(documents?|summary|evidence\s+of\s+coverage)|no\s+puedo\s+(confirmar|decirle|citar)|var[ií]a\s+seg[uú]n\s+el\s+plan|depende\s+del\s+plan|advisor\s+can\s+(check|confirm|look)|asesor\s+(licenciado\s+)?puede\s+(revisar|confirmar)/i;
+  var PLAN_FIGURE_SAFE = {
+    en: "I can't quote a specific plan's premium or extra benefits — those vary by plan and county and change each year. A licensed ClearPoint advisor can go through the exact figures with you, at no cost.",
+    es: 'No puedo citar la prima ni los beneficios extra de un plan específico — varían según el plan y el condado y cambian cada año. Un asesor licenciado de ClearPoint puede revisar las cifras exactas con usted, sin costo.',
+  };
+  var pf19Hit = false;
+  var pf19Clean = out.split(/(?<=[.!?])\s+/).filter(function (s) {
+    var n = String(s).replace(INVISIBLE_RE, '').replace(/[ \t]{2,}/g, ' ').replace(/[‘’ʼ´`]/g, "'");
+    for (var p19 = 0; p19 < PLAN_FIGURE_RES.length; p19++) {
+      if (!PLAN_FIGURE_RES[p19].test(n)) continue;
+      if (PLAN_FIGURE_VERIFY_RE.test(n)) return true;   // deferral — compliant
+      pf19Hit = true;
+      return false;
+    }
+    return true;
+  });
+  if (pf19Hit) {
+    violations.push('plan_specific_figure');
+    out = pf19Clean.join(' ').trim();
+    var pf19Safe = PLAN_FIGURE_SAFE[lang === 'en' ? 'en' : 'es'];
+    var PF19_COVERED = [
+      /(can'?t|cannot)\s+quote|no\s+puedo\s+citar/i,
+      /vary\s+by\s+plan|var[ií]an\s+seg[uú]n\s+el\s+plan/i,
+    ];
+    if (!alreadyCovered(out, PF19_COVERED)) {
+      out = out ? (/[.!?]\s*$/.test(out) ? out + ' ' : out + '. ') + pf19Safe : pf19Safe;
     }
   }
 

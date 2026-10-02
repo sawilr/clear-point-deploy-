@@ -48,6 +48,19 @@ import { resolveScope, scopeGate, buildScopeNote } from './_lib/entity-scope.js'
 // AUDIT 2026-08-18 (CLARA-MED-03) — deterministic Medicare figure backstop.
 import { verifyMedicareFigures, MEDICARE_FIGURES_YEAR } from './_lib/medicare-figures.js';
 
+// ── CARRIER FIREWALL COPY + DETECTOR (CY2027 §20/§21/§33) ─────────────────
+// Deliberately names no carrier and no plan, so the refusal itself can never
+// become the ranking it refuses to give. It answers the real question the
+// person asked — "who decides this?" — and hands off.
+const CARRIER_REFUSAL = {
+  en: "I'm not able to recommend, rank or compare plans or insurance companies — that has to come from a licensed advisor who can look at your actual situation, and it's the rule we follow rather than a limitation of this chat. What I can do is set that up: a licensed ClearPoint advisor will go through your options with you at no cost, and you're never obligated to enroll in anything. Would you like me to arrange that?",
+  es: 'No puedo recomendar, clasificar ni comparar planes ni compañías de seguros — eso tiene que venir de un asesor licenciado que pueda ver su situación real, y es la regla que seguimos, no un límite de este chat. Lo que sí puedo hacer es coordinarlo: un asesor licenciado de Clear Point revisará sus opciones con usted sin costo, y nunca está obligado a inscribirse en nada. ¿Quiere que se lo organice?',
+};
+
+// Plan-recommendation asks that name no carrier ("which plan is best for me?",
+// "what should I pick?"). The carrier classifier only catches named companies.
+const PLAN_RECOMMENDATION_RE = /\b(?:which|what)\s+(?:plan|coverage|option|policy)\b[^.?!]{0,40}\b(?:best|better|should\s+i|recommend|pick|choose|suits?\s+me|for\s+me)\b|\bwhat\s+(?:plan|coverage)\s+should\s+i\b|\bwhich\s+one\s+(?:is\s+)?(?:better|best)\b|\bwhat\s+do\s+you\s+recommend\b|\bcu[aá]l\s+(?:plan|cobertura|opci[oó]n|p[oó]liza)\b[^.?!]{0,40}\b(?:mejor|me\s+conviene|recomienda|deber[ií]a|elijo|escojo)\b|\bqu[eé]\s+(?:plan|cobertura)\s+(?:me\s+)?(?:recomienda|conviene|deber[ií]a)\b|\bcu[aá]l\s+(?:es\s+)?mejor\b|\bqu[eé]\s+me\s+recomienda\b/i;
+
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
 
@@ -782,11 +795,47 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── SHADOW INTENT CLASSIFICATION (master spec §4/§5/§114) ──────────────
-  // Deterministic, confidence-scored, LOGGED ONLY — it routes nothing and
-  // closes nothing (spec §114: shadow-observe before any new classifier may
-  // act). The scope router above remains the only deterministic actor.
+  // ── INTENT CLASSIFICATION ──────────────────────────────────────────────
+  // Most classes remain shadow-observed (spec §114). ONE class now acts, below.
   var _intentInfo = classifyIntent(userMessage, _turnLang || conversationContext.language || 'es');
+
+  // ── CARRIER / PLAN-RECOMMENDATION REFUSAL (CY2027 spec §20, §21, §33) ───
+  // AUDIT 2026-10-02 (CBF-05) — the carrier-specific classifier existed and was
+  // deliberately inert: "LOGGED ONLY — it routes nothing". The only enforcement
+  // was the output filter deleting the offending sentence AFTER the model had
+  // written it, which is post-hoc deletion, not a refusal, and produced no
+  // escalation. Spec §21: "Do not rely on prompt text alone … Remove
+  // plan-search, carrier-search, comparison, recommendation and enrollment
+  // tools entirely", and §2054 asks for the tool to be unavailable AND an
+  // escalation. §33 makes "AI recommends/ranks/names a carrier or plan in the
+  // public pre-intake/SOA role" an immediate-fail.
+  //
+  // Placement mirrors the scope router: after every life-safety gate and both
+  // injection guards, before the model is called. The refusal is carrier-
+  // neutral by construction — it names nothing — and routes to a licensed human
+  // rather than dead-ending, because the person asked a reasonable question.
+  var _carrierAsk = _intentInfo && _intentInfo.intent === 'CARRIER_SPECIFIC_REQUEST';
+  var _planRecAsk = PLAN_RECOMMENDATION_RE.test(userMessage || '');
+  if (_carrierAsk || _planRecAsk) {
+    var _refLang = (_turnLang || conversationContext.language || 'es') === 'en' ? 'en' : 'es';
+    console.warn('[CARRIER-FIREWALL] ' + JSON.stringify({
+      reason: _carrierAsk ? 'CARRIER_SPECIFIC_REQUEST' : 'PLAN_RECOMMENDATION_REQUEST',
+      confidence: _intentInfo && _intentInfo.confidence != null ? _intentInfo.confidence : null,
+      lang: _refLang,
+      escalation: 'LICENSED_AGENT_REVIEW_REQUIRED',
+      llm_skipped: true,
+    }) + ' ip=' + ip);
+    return res.status(200).json({
+      response: CARRIER_REFUSAL[_refLang],
+      meta: {
+        // The escalation half of §2054: this is a handoff, not a dead end.
+        wantHandoff: true,
+        wantClose: false,
+        wantSchedule: false,
+        scope: 'CARRIER_FIREWALL',
+      },
+    });
+  }
 
   var contextSummary = buildContextSummary(conversationContext, _turnLang, _now);
   // ── ENTITY SCOPE LOCK (2026-08-15, PARTD-001) ───────────────────────────
