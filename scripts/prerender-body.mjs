@@ -39,6 +39,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
+// AUDIT 2026-10-02 (TPY-09) — the TPMO check was a two-phrase substring match,
+// so a page carrying the PREVIOUS plan year's wording passed it. That is exactly
+// the state production was found in on 2026-10-02: the sentence was present, and
+// it was last year's. The canonical source decides what the sentence must be.
+import { tpmoDisclaimerText, activeContractYearVariant } from '../api/_lib/cy2027/tpmo.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENTRY = '/scripts/ssr-entry.tsx';
@@ -61,6 +66,15 @@ if (ROUTES.length < 13) {
 const THIN_OK = new Set(['/support']);
 const MIN_WORDS = 300;
 const TPMO_RE = /do not offer every plan|no ofrecemos todos los planes/i;
+// The exact sentence required right now, in both languages, plus the phrase that
+// marks the OTHER year's variant so it can be named in the error.
+const TPMO_VARIANT = activeContractYearVariant();
+const TPMO_EXPECT_EN = tpmoDisclaimerText('en');
+const TPMO_EXPECT_ES = tpmoDisclaimerText('es');
+const TPMO_WRONG_YEAR_RE = TPMO_VARIANT === 'CY2027'
+  ? /State Health Insurance|Asistencia de Seguro de Salud|Seguro de Salud \(SHIP\)/i
+  : /Medicare\.gov or 1-800-MEDICARE to get information|Medicare\.gov o llame al 1-800-MEDICARE para obtener/i;
+const norm = (x) => String(x).replace(/\s+/g, ' ').trim();
 
 // createServer() es command === 'serve' para vite.config.ts, y en ese modo el
 // plugin de inspección de desarrollo estampa code-path="src\…" en cada
@@ -132,6 +146,17 @@ for (const t of targets) {
   if (!thin && words < MIN_WORDS) problems.push(`${t.path}: solo ${words} palabras (mínimo ${MIN_WORDS}) — ¿una página quedó en su fallback de Suspense?`);
   if (!thin && !hasH1) problems.push(`${t.path}: sin <h1> en el HTML prerenderizado`);
   if (!thin && !TPMO_RE.test(text)) problems.push(`${t.path}: la declaración TPMO no aparece en el cuerpo prerenderizado`);
+  // TPY-09 — presence is not enough: it has to be THIS plan year's sentence.
+  if (!thin && TPMO_RE.test(text)) {
+    const body = norm(text);
+    const okYear = body.includes(norm(TPMO_EXPECT_EN)) || body.includes(norm(TPMO_EXPECT_ES));
+    if (!okYear) {
+      const why = TPMO_WRONG_YEAR_RE.test(body)
+        ? `lleva la redacción de otro año de contrato (se espera ${TPMO_VARIANT})`
+        : `no coincide con la frase canónica de ${TPMO_VARIANT}`;
+      problems.push(`${t.path}: la declaración TPMO ${why} — reconstruya tras cambiar la variante`);
+    }
+  }
 
   const shell = readFileSync(t.file, 'utf8');
   const marker = '<div id="root"></div>';

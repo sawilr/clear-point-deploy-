@@ -1353,6 +1353,32 @@ const baseInput = {
   ok('SJ-11: the header no longer calls Florida a service area',
     !/Only covers NY, NJ, CT, FL service areas/.test(ZIPSRC));
   ok('SJ-11: it says what the code actually does', /the only authorized SERVICE areas/.test(ZIPSRC));
+
+  // TPY-09 — the prerender gate must check the YEAR, not just the presence of a
+  // TPMO-ish sentence. Production on 2026-10-02 passed the old check while
+  // serving the CY2026 wording on all 46 routes: the sentence was there, and it
+  // was last year's. A presence-only guard cannot see that.
+  const PRE = readFileSync(new URL('./prerender-body.mjs', import.meta.url), 'utf8');
+  ok('TPY-09: the gate imports the canonical disclaimer source',
+    /from '\.\.\/api\/_lib\/cy2027\/tpmo\.js'/.test(PRE) &&
+    /tpmoDisclaimerText/.test(PRE) && /activeContractYearVariant/.test(PRE));
+  ok('TPY-09: it compares the exact sentence, not a loose pattern',
+    /includes\(norm\(TPMO_EXPECT_EN\)\)/.test(PRE) && /includes\(norm\(TPMO_EXPECT_ES\)\)/.test(PRE));
+  ok('TPY-09: a wrong-year page is reported as a problem',
+    /problems\.push\([^)]*declaración TPMO/.test(PRE));
+  ok('TPY-09: it names the previous-year wording specifically',
+    /TPMO_WRONG_YEAR_RE/.test(PRE) && /State Health Insurance/.test(PRE));
+  // And the canonical source must actually differ year over year, or the check
+  // above would be comparing a constant to itself.
+  const pin = (v) => ({ pinContractYearVariant: true, contractYearVariant: v });
+  ok('TPY-09: the two contract-year variants are not the same string',
+    tpmoDisclaimerText('en', pin('CY2026')) !== tpmoDisclaimerText('en', pin('CY2027')));
+  ok('TPY-09: only the CY2026 variant names the SHIP',
+    /State Health Insurance/i.test(tpmoDisclaimerText('en', pin('CY2026'))) &&
+    !/State Health Insurance/i.test(tpmoDisclaimerText('en', pin('CY2027'))));
+  ok('TPY-09: the same holds in Spanish',
+    /Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2026'))) &&
+    !/Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2027'))));
 }
 
 if (failures.length) {
