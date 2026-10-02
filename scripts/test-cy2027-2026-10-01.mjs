@@ -43,6 +43,8 @@ import {
 import {
   redactProhibitedForScoring, requiresLicensedReview, findProhibited, SIGNAL_FLAGS,
 } from '../api/_lib/cy2027/prohibited-signals.js';
+import * as overlayModule from '../api/_lib/cy2027/carrier-overlay.js';
+import * as barrelModule from '../api/_lib/cy2027/index.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -244,12 +246,54 @@ const baseInput = {
     { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:x', evidenceReference: 'ev_v' });
   ok('voice-only method is not written', methodIsWritten('VOICE_RECORDED') === false);
   ok('web signature is written', methodIsWritten('WEB_ELECTRONIC_SIGNATURE') === true);
+  // An SOA signed for an in-person appointment, by voice. This is the case the
+  // written-SOA rule is actually about; the telephone instances above now trip
+  // the separate format-mismatch rule first.
+  const voiceInPerson = completeSoaInstance(
+    createSoaInstance({ ...baseInput, soaId: 'soa_vip', method: 'VOICE_RECORDED', appointmentFormat: 'IN_PERSON' }).instance,
+    { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:x', evidenceReference: 'ev_vip' });
+  const writtenInPerson = completeSoaInstance(
+    createSoaInstance({ ...baseInput, soaId: 'soa_wip', appointmentFormat: 'IN_PERSON' }).instance,
+    { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:x', evidenceReference: 'ev_wip' });
+
   ok('voice-only SOA does NOT unlock an in-person appointment',
-    marketingGate(voice, { ...appt, format: 'IN_PERSON' }, CMS_RULESET_2027).reason === 'IN_PERSON_REQUIRES_WRITTEN_SOA');
+    marketingGate(voiceInPerson, { ...appt, format: 'IN_PERSON' }, CMS_RULESET_2027).reason === 'IN_PERSON_REQUIRES_WRITTEN_SOA');
   ok('voice-only SOA still works for a telephone appointment',
     marketingGate(voice, appt, CMS_RULESET_2027).allowed === true);
   ok('written SOA unlocks an in-person appointment',
-    marketingGate(done, { ...appt, format: 'IN_PERSON' }, CMS_RULESET_2027).allowed === true);
+    marketingGate(writtenInPerson, { ...appt, format: 'IN_PERSON' }, CMS_RULESET_2027).allowed === true);
+  ok('an SOA signed for a phone appointment does not cover an in-person one',
+    marketingGate(done, { ...appt, format: 'IN_PERSON' }, CMS_RULESET_2027).reason === 'APPOINTMENT_FORMAT_MISMATCH');
+
+  // ── RED TEAM 2026-10-02, reproduced CRITICALs. Regression-pinned. ──────────
+  // SOA-01: in-person detection was one exact-string compare, so every other
+  // spelling — and an absent format — fell through to the non-in-person branch.
+  for (const f of ['in_person', 'In Person', 'in person', 'IN-PERSON']) {
+    ok(`SOA-01: "${f}" is still in person`,
+      marketingGate(voiceInPerson, { ...appt, format: f }, CMS_RULESET_2027).reason === 'IN_PERSON_REQUIRES_WRITTEN_SOA');
+  }
+  ok('SOA-01: an absent format is refused, not assumed remote',
+    marketingGate(voiceInPerson, { appointmentId: 'appt_1', startsAt: appt.startsAt, state: 'NY' }, CMS_RULESET_2027).reason === 'UNKNOWN_APPOINTMENT_FORMAT');
+  ok('SOA-01: an unknown format is refused',
+    marketingGate(voiceInPerson, { ...appt, format: 'HOME_VISIT' }, CMS_RULESET_2027).reason === 'UNKNOWN_APPOINTMENT_FORMAT');
+  ok('SOA-01: a non-string format is refused',
+    marketingGate(voiceInPerson, { ...appt, format: ['IN_PERSON'] }, CMS_RULESET_2027).reason === 'UNKNOWN_APPOINTMENT_FORMAT');
+  ok('SOA-01: an unknown format cannot be stored on an instance',
+    createSoaInstance({ ...baseInput, appointmentFormat: 'carrier pop-up kiosk' }).errors?.appointmentFormat === 'unknown_format');
+  ok('SOA-01: requiresNewInstance is no longer silent on a lowercase in-person',
+    requiresNewInstance(voice, { ...appt, format: 'in_person' }, CMS_RULESET_2027) === true);
+
+  // SOA-02: the ruleset was optional, so omitting it switched three rules off.
+  ok('SOA-02: no ruleset refuses', marketingGate(done, appt).reason === 'RULESET_UNRESOLVED');
+  ok('SOA-02: a null ruleset refuses', marketingGate(done, appt, null).reason === 'RULESET_UNRESOLVED');
+  ok('SOA-02: a fabricated empty-soa ruleset refuses',
+    marketingGate(voiceInPerson, { ...appt, format: 'IN_PERSON' }, { planYear: 2027, status: 'PRODUCTION_ACTIVE', soa: {} }).reason === 'RULESET_INCOMPLETE');
+  ok('SOA-02: the SUPERSEDED 2026 ruleset cannot govern live work',
+    marketingGate({ ...done, planYear: 2026 }, appt, CMS_RULESET_2026).reason === 'RULESET_NOT_ACTIVE');
+  ok('SOA-02: the regulatory kill switch closes the gate',
+    marketingGate(done, appt, CMS_RULESET_2027, { env: { CY2027_REGULATORY_KILL: '1' } }).reason === 'REGULATORY_KILL_ENGAGED');
+  ok('SOA-02: the kill switch off leaves the gate working',
+    marketingGate(done, appt, CMS_RULESET_2027, { env: {} }).allowed === true);
 
   // Supersession.
   const sup = superseded(done, { ...baseInput, soaId: 'soa_2', selectedCategories: ['MA_WITH_RX', 'STANDALONE_RX'] });
@@ -704,6 +748,73 @@ const baseInput = {
   ok('the Medicaid example is gone from the system prompt', !/dual eligible/i.test(LI), 'prompt still suggests flagging Medicaid');
   ok('the prompt forbids scoring on prohibited attributes', /NEVER use any of the following to set intent_strength/.test(LI));
   ok('the scorer emits licensed_agent_review_required', /licensed_agent_review_required/.test(LI));
+}
+
+// ── 15. RED TEAM 2026-10-02 — reproduced criticals, pinned ───────────────────
+{
+  const appt = { appointmentId: 'appt_1', startsAt: '2026-11-10T15:00:00Z', state: 'NY', format: 'TELEPHONE' };
+  const mk = (over = {}) => createSoaInstance({ ...baseInput, ...over });
+  const sign = (inst, over = {}) => completeSoaInstance(inst, {
+    completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:x', evidenceReference: 'ev', ...over,
+  });
+  const done = sign(mk({ soaId: 'rt_1' }).instance);
+
+  // SOA-04 — the ordering rule must not be skippable by omitting a timestamp.
+  ok('SOA-04: an appointment with no start time is refused',
+    marketingGate(done, { appointmentId: 'appt_1', state: 'NY', format: 'TELEPHONE' }, CMS_RULESET_2027).reason === 'APPOINTMENT_TIME_UNKNOWN');
+  ok('SOA-04: an unparseable start time is refused',
+    marketingGate(done, { ...appt, startsAt: 'whenever' }, CMS_RULESET_2027).reason === 'APPOINTMENT_TIME_UNKNOWN');
+  ok('SOA-04: an unparseable signature time is refused',
+    marketingGate({ ...done, completedAt: 'soon' }, appt, CMS_RULESET_2027).reason === 'APPOINTMENT_TIME_UNKNOWN');
+
+  // SOA-05 — scope cannot be widened after signature.
+  ok('SOA-05: a completed instance is frozen', Object.isFrozen(done) === true);
+  ok('SOA-05: its authorized list is frozen', Object.isFrozen(done.authorizedCategories) === true);
+  ok('SOA-05: a widened scope is refused',
+    marketingGate({ ...done, authorizedCategories: ['MA_WITH_RX', 'STANDALONE_RX'] }, appt, CMS_RULESET_2027).reason === 'SOA_SCOPE_CONTRADICTORY');
+  ok('SOA-05: an unknown category in the scope is refused',
+    marketingGate({ ...done, authorizedCategories: ['NOT_A_CODE'] }, appt, CMS_RULESET_2027).reason === 'SOA_SCOPE_INVALID');
+  ok('SOA-05: the non-authorizing option cannot be smuggled into the scope',
+    marketingGate({ ...done, authorizedCategories: ['UNSURE_DISCUSS_PROCESS'] }, appt, CMS_RULESET_2027).reason === 'SOA_SCOPE_INVALID');
+  ok('SOA-05: an empty scope is refused',
+    marketingGate({ ...done, authorizedCategories: [] }, appt, CMS_RULESET_2027).reason === 'SOA_SCOPE_EMPTY');
+
+  // SOA-03 — a replaced or withdrawn instance cannot be revived.
+  const sup = superseded(done, { ...baseInput, soaId: 'rt_2' });
+  throws('SOA-03: a superseded instance cannot be completed again',
+    () => sign(sup.previous, { evidenceReference: 'ev2' }), /superseded/);
+  throws('SOA-03: a revoked instance cannot be completed',
+    () => sign(revokeSoaInstance(mk({ soaId: 'rt_3' }).instance)), /revoked/);
+  throws('SOA-03: a completed instance cannot be completed twice',
+    () => sign(done), /already completed/);
+
+  // CT-02 — automation must not self-approve a quarantine.
+  const task = buildSecurityReviewTask({ requestId: 'r', state: 'NY' });
+  for (const actor of ['AI-Agent', 'svc_bot', 'automation-1', 'claude', 'assistant', 'workflow-runner', 'sys', 'api-user', 'GPT', '12345']) {
+    throws(`CT-02: "${actor}" cannot resolve a quarantine`,
+      () => resolveSecurityReview(task, { actor, decision: 'CONFIRMED', reasonCode: 'x' }), /human reviewer|not a human/);
+  }
+  ok('CT-02: a named person still can',
+    resolveSecurityReview(task, { actor: 'Sawil Reyes', decision: 'CONFIRMED', reasonCode: 'CALLED_BACK' }).reviewer === 'Sawil Reyes');
+
+  // CT-03 — a consent of the wrong type authorizes nothing.
+  const rec = createConsent({ type: 'RECORDING_NOTICE', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'VOICE', scriptVersion: 'v1', scope: 'recording' });
+  const soaC = createConsent({ type: 'SCOPE_OF_APPOINTMENT', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 'categories' });
+  ok('CT-03: a recording notice is not callback permission',
+    isAffirmative(rec, 'CALLBACK_CONTACT_PERMISSION') === false);
+  ok('CT-03: an SOA is not callback permission',
+    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: soaC }).reason === 'NO_CALLBACK_CONSENT');
+  ok('CT-03: a recording notice is not AI outbound consent',
+    mayPlaceOutbound({ mode: 'AI_AUTOMATED', aiOutboundConsent: rec }).reason === 'NO_AI_OUTBOUND_CONSENT');
+  ok('CT-03: the right type still works',
+    isAffirmative(createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 's' }), 'CALLBACK_CONTACT_PERMISSION') === true);
+
+  // EF-01 / PG-02 — the registry must not be reachable as data.
+  ok('EF-01: CARRIER_OVERLAYS is not exported from the module',
+    !('CARRIER_OVERLAYS' in overlayModule), 'the carrier registry is still a public export');
+  ok('EF-01: nor from the CY2027 barrel', !('CARRIER_OVERLAYS' in barrelModule));
+  ok('EF-01: the guarded accessor still works',
+    overlayInventory('LICENSED_AGENT_WORKSPACE').length === 10);
 }
 
 if (failures.length) {

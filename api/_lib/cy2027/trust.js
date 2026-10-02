@@ -214,8 +214,20 @@ export function buildSecurityReviewTask(ctx = {}) {
  */
 export function resolveSecurityReview(task, { actor, decision, reasonCode, at = new Date().toISOString(), evidenceReference = null }) {
   if (!task || task.kind !== 'SECURITY_REVIEW') throw new Error('trust: not a security review task');
-  if (!actor || /^(ai|bot|system|automation|agent[-_]?ai)$/i.test(String(actor))) {
-    throw new Error('trust: security review requires a human reviewer (spec §13 forbids AI self-approval)');
+  // RED TEAM 2026-10-02 (CT-02, CRITICAL) — this was an exact-match list of four
+  // words, so "AI-Agent", "svc_bot", "automation-1", "claude", "assistant",
+  // "workflow" and every other automation identity self-approved a quarantine —
+  // the §13 line this exists to enforce. An allowlist of shapes is no better,
+  // so the rule is now: the actor must look like a named human account and must
+  // not contain any automation token anywhere in it.
+  const who = String(actor || '').trim();
+  if (!who) throw new Error('trust: security review requires a human reviewer (spec §13 forbids AI self-approval)');
+  if (/(^|[^a-z])(ai|bot|svc|service|system|sys|automation|auto|agent|robot|daemon|cron|job|worker|script|workflow|assistant|claude|gpt|llm|machine|api)([^a-z]|$)/i.test(who)
+      || /^[^a-z]*$/i.test(who)) {
+    throw new Error(
+      `trust: "${who}" is not a human reviewer. Spec §13 forbids AI self-approval of quarantined cases — ` +
+      'record the named person who made the decision.',
+    );
   }
   if (!['CONFIRMED', 'REJECTED_DUPLICATE', 'REJECTED_INVALID', 'NEEDS_FURTHER_VERIFICATION'].includes(decision)) {
     throw new Error(`trust: unknown review decision "${decision}"`);

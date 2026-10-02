@@ -17,9 +17,34 @@
 import {
   AUTHORIZING_CATEGORY_CODES,
   ALL_CATEGORY_CODES,
+  APPOINTMENT_FORMATS,
   SOA_SCRIPT_VERSION,
   categoryByCode,
 } from './soa-text.js';
+
+/**
+ * RED TEAM 2026-10-02 (SOA-01, CRITICAL, reproduced) — in-person detection was
+ * the single expression `appointment.format === 'IN_PERSON'`. Everything else
+ * fell through to the NON-in-person branch, so a voice-only SOA unlocked an
+ * in-person marketing appointment — the §33 immediate-fail — for 'in_person',
+ * 'In Person', 'HOME_VISIT', ['IN_PERSON'] and for an appointment with no
+ * format field at all. An exact-string compare is not a gate; it is a gate with
+ * one key and an open window beside it.
+ *
+ * Formats are now resolved through the approved list. An unknown or absent
+ * format resolves to null, and callers must refuse rather than assume remote.
+ */
+export function resolveFormat(value) {
+  if (typeof value !== 'string') return null;
+  const want = value.trim().toUpperCase().replace(/[\s-]+/g, '_');
+  return APPOINTMENT_FORMATS.find((f) => f.code === want) || null;
+}
+
+/** True only for a format the approved list marks as in person. */
+export function formatIsInPerson(value) {
+  const f = resolveFormat(value);
+  return f ? f.inPerson === true : false;
+}
 
 /** Lifecycle of one instance. */
 export const SOA_STATUS = Object.freeze({
@@ -98,7 +123,11 @@ export function createSoaInstance(input) {
   const errors = {};
   if (!soaId) errors.soaId = 'required';
   if (!appointmentId) errors.appointmentId = 'required_no_universal_soa';
+  // RED TEAM 2026-10-02 (SOA-01) — the instance's own format was never checked,
+  // so 'carrier pop-up kiosk' was stored happily and then compared by equality
+  // against 'IN_PERSON' forever after.
   if (!appointmentFormat) errors.appointmentFormat = 'required';
+  else if (!resolveFormat(appointmentFormat)) errors.appointmentFormat = 'unknown_format';
   if (!Number.isInteger(planYear)) errors.planYear = 'required';
   if (!state) errors.state = 'required';
   if (!/^\d{5}$/.test(String(zip || ''))) errors.zip = 'invalid_zip';
@@ -156,7 +185,23 @@ export function completeSoaInstance(instance, { completedAt = new Date().toISOSt
   }
   if (!integrityHash) throw new Error('soa: integrityHash required to complete');
   if (!evidenceReference) throw new Error('soa: evidenceReference required to complete');
-  return { ...instance, status: SOA_STATUS.COMPLETED, completedAt, integrityHash, evidenceReference };
+  // RED TEAM 2026-10-02 (SOA-03, HIGH) — a SUPERSEDED or REVOKED instance could
+  // be handed back through here and returned to COMPLETED, reopening the gate on
+  // a scope that had been replaced or withdrawn.
+  if (instance.status === SOA_STATUS.SUPERSEDED) throw new Error('soa: a superseded instance cannot be completed again');
+  if (instance.status === SOA_STATUS.REVOKED || instance.revokedAt) throw new Error('soa: a revoked instance cannot be completed');
+  if (instance.status === SOA_STATUS.COMPLETED) throw new Error('soa: already completed');
+  // Frozen so the authorized scope cannot be widened in place after signature
+  // (SOA-05). The integrity hash covers the scope; the object now matches it.
+  return Object.freeze({
+    ...instance,
+    status: SOA_STATUS.COMPLETED,
+    completedAt,
+    integrityHash,
+    evidenceReference,
+    authorizedCategories: Object.freeze(instance.authorizedCategories.slice()),
+    declinedCategories: Object.freeze(instance.declinedCategories.slice()),
+  });
 }
 
 /**
@@ -205,7 +250,31 @@ export function requiresScopeUpdate(instance, code) {
  * identity, the CY2027 ordering rule (SOA recorded BEFORE the appointment
  * begins) and the in-person written requirement.
  */
-export function marketingGate(instance, appointment, ruleset) {
+export function marketingGate(instance, appointment, ruleset, { env } = {}) {
+  // RED TEAM 2026-10-02 (SOA-02, CRITICAL, reproduced) — `ruleset` was optional
+  // and every rule that depended on it was written `ruleset && …` or
+  // `ruleset?.soa?.…`. Omitting it, or passing `{soa:{}}`, or passing the
+  // SUPERSEDED CMS_RULESET_2026, silently switched OFF the plan-year check, the
+  // ordering check and the in-person check — and the gate never consulted the
+  // regulatory kill switch at all. An optional governing ruleset is not a
+  // ruleset. It is now mandatory and self-validated, and the gate fails closed
+  // on anything it cannot vouch for (spec §26).
+  const e = env || (typeof process !== 'undefined' && process && process.env) || {};
+  const killed = String(e.CY2027_REGULATORY_KILL || '').trim().toLowerCase();
+  if (killed === '1' || killed === 'true' || killed === 'on' || killed === 'yes') {
+    return { allowed: false, reason: 'REGULATORY_KILL_ENGAGED' };
+  }
+  if (!ruleset || typeof ruleset !== 'object') return { allowed: false, reason: 'RULESET_UNRESOLVED' };
+  if (ruleset.status !== 'PRODUCTION_ACTIVE') {
+    return { allowed: false, reason: 'RULESET_NOT_ACTIVE', status: ruleset.status || null };
+  }
+  if (!Number.isInteger(ruleset.planYear)) return { allowed: false, reason: 'RULESET_UNRESOLVED' };
+  const rules = ruleset.soa;
+  if (!rules || typeof rules.mustPrecedeAppointment !== 'boolean' || typeof rules.inPersonRequiresWritten !== 'boolean') {
+    // A fabricated ruleset with an empty soa block used to pass straight through.
+    return { allowed: false, reason: 'RULESET_INCOMPLETE' };
+  }
+
   if (!instance) return { allowed: false, reason: 'NO_SOA' };
   if (instance.status === SOA_STATUS.INCOMPLETE) return { allowed: false, reason: 'SOA_INCOMPLETE' };
   if (instance.status === SOA_STATUS.SUPERSEDED) return { allowed: false, reason: 'SOA_SUPERSEDED' };
@@ -219,20 +288,58 @@ export function marketingGate(instance, appointment, ruleset) {
   if (instance.appointmentId !== appointment.appointmentId) {
     return { allowed: false, reason: 'SOA_FOR_DIFFERENT_APPOINTMENT' };
   }
-  if (ruleset && instance.planYear !== ruleset.planYear) {
+  if (instance.planYear !== ruleset.planYear) {
     // Spec §7: "If the plan year changes, do not silently reuse the old instance."
     return { allowed: false, reason: 'SOA_PLAN_YEAR_MISMATCH' };
   }
   if (appointment.state && instance.state !== String(appointment.state).toUpperCase()) {
     return { allowed: false, reason: 'SOA_STATE_MISMATCH' };
   }
-  if (ruleset?.soa?.mustPrecedeAppointment && instance.completedAt && appointment.startsAt) {
-    if (Date.parse(instance.completedAt) >= Date.parse(appointment.startsAt)) {
-      return { allowed: false, reason: 'SOA_NOT_RECORDED_BEFORE_APPOINTMENT' };
+  // RED TEAM 2026-10-02 (SOA-04, CRITICAL) — this was guarded by
+  // `instance.completedAt && appointment.startsAt`, so an appointment with no
+  // start time, or an unparseable date, skipped the CY2027 ordering rule
+  // entirely. The rule the spec keeps for CY2027 is precisely that the SOA is
+  // recorded BEFORE the appointment begins; a missing timestamp means we cannot
+  // show that, which is a refusal, not a pass.
+  if (rules.mustPrecedeAppointment) {
+    const signedTs = Date.parse(instance.completedAt);
+    const startTs = Date.parse(appointment.startsAt);
+    if (!Number.isFinite(signedTs) || !Number.isFinite(startTs)) {
+      return { allowed: false, reason: 'APPOINTMENT_TIME_UNKNOWN' };
     }
+    if (signedTs >= startTs) return { allowed: false, reason: 'SOA_NOT_RECORDED_BEFORE_APPOINTMENT' };
   }
-  const inPerson = appointment.format === 'IN_PERSON';
-  if (inPerson && ruleset?.soa?.inPersonRequiresWritten && !methodIsWritten(instance.method)) {
+
+  // RED TEAM 2026-10-02 (SOA-05, CRITICAL) — the gate trusted
+  // instance.authorizedCategories without checking it against the rest of the
+  // record, so a widened array on a completed instance simply authorized more.
+  // The integrity hash covers the real scope; these checks catch a record that
+  // contradicts itself before it is ever used.
+  const authorized = Array.isArray(instance.authorizedCategories) ? instance.authorizedCategories : null;
+  const declined = Array.isArray(instance.declinedCategories) ? instance.declinedCategories : [];
+  if (!authorized || !authorized.length) return { allowed: false, reason: 'SOA_SCOPE_EMPTY' };
+  if (authorized.some((c) => !AUTHORIZING_CATEGORY_CODES.includes(c))) {
+    return { allowed: false, reason: 'SOA_SCOPE_INVALID' };
+  }
+  if (authorized.some((c) => declined.includes(c))) {
+    return { allowed: false, reason: 'SOA_SCOPE_CONTRADICTORY' };
+  }
+  if (new Set(authorized).size !== authorized.length) return { allowed: false, reason: 'SOA_SCOPE_INVALID' };
+
+  // The appointment's format must be one the approved list knows. An absent or
+  // unrecognized format is refused, never treated as "not in person".
+  const apptFormat = resolveFormat(appointment.format);
+  if (!apptFormat) return { allowed: false, reason: 'UNKNOWN_APPOINTMENT_FORMAT' };
+
+  // The SOA was signed for a stated modality. If the appointment has since
+  // crossed the in-person boundary, the old instance does not cover it.
+  const instFormat = resolveFormat(instance.appointmentFormat);
+  if (!instFormat) return { allowed: false, reason: 'UNKNOWN_SOA_FORMAT' };
+  if (instFormat.inPerson !== apptFormat.inPerson) {
+    return { allowed: false, reason: 'APPOINTMENT_FORMAT_MISMATCH' };
+  }
+
+  if (apptFormat.inPerson && rules.inPersonRequiresWritten && !methodIsWritten(instance.method)) {
     return { allowed: false, reason: 'IN_PERSON_REQUIRES_WRITTEN_SOA' };
   }
   return { allowed: true, reason: 'OK', authorizedCategories: instance.authorizedCategories };
@@ -247,7 +354,12 @@ export function requiresNewInstance(instance, appointment, ruleset) {
   if (ruleset && instance.planYear !== ruleset.planYear) return true;
   if (instance.appointmentId !== appointment.appointmentId) return true;
   if (appointment.state && instance.state !== String(appointment.state).toUpperCase()) return true;
-  // Format change matters when it crosses the written/voice boundary.
-  if (appointment.format === 'IN_PERSON' && !methodIsWritten(instance.method)) return true;
+  // RED TEAM 2026-10-02 (SOA-01) — this repeated the same exact-string compare,
+  // so the advisory stayed silent for 'in_person' and for an absent format too.
+  const f = resolveFormat(appointment.format);
+  if (!f) return true; // unknown format: re-paper rather than guess
+  if (f.inPerson && !methodIsWritten(instance.method)) return true;
+  const instF = resolveFormat(instance.appointmentFormat);
+  if (!instF || instF.inPerson !== f.inPerson) return true;
   return false;
 }

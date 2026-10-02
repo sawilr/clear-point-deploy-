@@ -89,9 +89,24 @@ export function classifyReply(text) {
   return CONSENT_STATUS.UNCLEAR;
 }
 
-/** True only for an explicit, current grant. */
-export function isAffirmative(consent) {
-  return !!consent && consent.status === CONSENT_STATUS.GRANTED && !consent.revokedAt;
+/**
+ * True only for an explicit, current grant OF THE EXPECTED TYPE.
+ *
+ * RED TEAM 2026-10-02 (CT-03, CRITICAL) — this ignored `consent.type`, so a
+ * granted RECORDING_NOTICE or SCOPE_OF_APPOINTMENT satisfied a callback or
+ * AI-outbound check. That is precisely the cross-inference the whole module
+ * exists to prevent: the four objects were distinct everywhere except at the
+ * one function that decides whether to act on them.
+ *
+ * `expectedType` is required for any decision. It is optional only for the
+ * generic "is this record a live grant" question, which must not be used to
+ * authorize anything.
+ */
+export function isAffirmative(consent, expectedType) {
+  if (!consent || consent.status !== CONSENT_STATUS.GRANTED || consent.revokedAt) return false;
+  if (expectedType === undefined) return true;
+  if (!CONSENT_TYPES.includes(expectedType)) throw new Error(`consent: unknown type "${expectedType}"`);
+  return consent.type === expectedType;
 }
 
 /**
@@ -174,14 +189,15 @@ export function assertNoCrossInference(targetType, sourceSignal) {
 export function mayPlaceOutbound({ mode, callbackConsent, aiOutboundConsent, doNotContact }) {
   if (doNotContact) return { allowed: false, reason: 'DO_NOT_CONTACT' };
   if (mode === 'AI_AUTOMATED') {
-    if (!isAffirmative(aiOutboundConsent)) {
+    // Type-checked (CT-03): a granted recording notice is not outbound consent.
+    if (!isAffirmative(aiOutboundConsent, 'AI_OUTBOUND_VOICE_CONSENT')) {
       return { allowed: false, reason: 'NO_AI_OUTBOUND_CONSENT' };
     }
     // Even with consent recorded, the architecture itself must be validated.
     return { allowed: false, reason: 'AI_OUTBOUND_ARCHITECTURE_NOT_VALIDATED' };
   }
   if (mode === 'HUMAN_LICENSED_AGENT') {
-    return isAffirmative(callbackConsent)
+    return isAffirmative(callbackConsent, 'CALLBACK_CONTACT_PERMISSION')
       ? { allowed: true, reason: 'CALLBACK_CONSENT_GRANTED', scope: callbackConsent.scope }
       : { allowed: false, reason: 'NO_CALLBACK_CONSENT' };
   }

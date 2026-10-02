@@ -40,7 +40,14 @@ const PERMITTING = Object.freeze([OVERLAY_STATUS.VERIFIED_CURRENT, OVERLAY_STATU
  * verifiable; `openQuestion` is what a human must resolve before the status can
  * move. Nothing here is a customer-facing script (spec §17 title).
  */
-export const CARRIER_OVERLAYS = Object.freeze([
+// RED TEAM 2026-10-02 (EF-01 / PG-02, CRITICAL) — this array used to be an
+// `export const`, and api/_lib/cy2027/index.js re-exports with `export *`. The
+// entire carrier firewall — assertPrivateContext, getOverlay, canDiscussCarrier
+// — was therefore bypassable by importing the data directly, from anywhere,
+// including the browser bundle. A guard on the accessors is worthless while the
+// thing they guard is a public export. It is now module-private: the only way
+// out is through a function that demands the licensed-workspace context.
+const CARRIER_OVERLAYS = Object.freeze([
   Object.freeze({
     carrier: 'Aetna', planYear: 2027, states: ['NY', 'NJ', 'CT'],
     status: OVERLAY_STATUS.PENDING_PRIVATE_VERIFICATION,
