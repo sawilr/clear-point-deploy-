@@ -164,6 +164,34 @@ if (STATE_DIGEST !== PINNED_STATE_DIGEST) {
   notes.push('approved per-state values digest OK');
 }
 
+// ── 4b. The architecture doc must describe the code that exists (SJ-11) ──────
+// A doc that drifts from the data is worse than no doc: a future implementer
+// trusts the table and ships the wrong SOA_FORM_VERSION on a signed document.
+// Every state's three identifying values must appear verbatim in the doc.
+{
+  let doc;
+  try { doc = read('docs/compliance/CY2027-ARCHITECTURE.md'); } catch { doc = null; }
+  if (!doc) {
+    problems.push('docs/compliance/CY2027-ARCHITECTURE.md is missing — the state table has nothing to check against.');
+  } else {
+    const missing = [];
+    for (const s of Object.values(stateMod.STATE_RULESETS)) {
+      if (!doc.includes(s.name)) missing.push(`${s.code} name "${s.name}"`);
+      if (!doc.includes(s.soaFormVersion)) missing.push(`${s.code} ${s.soaFormVersion}`);
+      if (!doc.includes(s.stateRulesetVersion)) missing.push(`${s.code} ${s.stateRulesetVersion}`);
+    }
+    if (missing.length) {
+      problems.push(
+        'docs/compliance/CY2027-ARCHITECTURE.md no longer matches api/_lib/cy2027/state-rules.js.\n' +
+          '      Missing from the doc: ' + missing.join(', ') + '\n' +
+          '      These versions print on a signed document; the doc is what a future implementer reads.',
+      );
+    } else {
+      notes.push(`architecture doc matches all ${Object.keys(stateMod.STATE_RULESETS).length} state rulesets`);
+    }
+  }
+}
+
 // ── 5. Approved wording must not be copy-pasted ──────────────────────────────
 // A distinctive fragment of each approved category description. If any of these
 // appears outside the canonical module, a second copy is forming.

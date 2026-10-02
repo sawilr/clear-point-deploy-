@@ -1258,6 +1258,30 @@ const baseInput = {
     /'Printed name'/.test(SIGN2) && /'Date\/time'/.test(SIGN2) && /'Electronic affirmation method'/.test(SIGN2));
 }
 
+// ── 22. CSRF posture, pinned (SEC-TOK-11 / SEC-TOK-15) ───────────────────────
+// A classic CSRF needs an AMBIENT credential to ride. These endpoints have
+// none: no cookie is set or read, the client sends credentials:'omit', and
+// authorization is the opaque token in the body plus a second factor. The
+// origin allowlist is the remaining control. That posture is a design choice,
+// so it is pinned — introducing cookie auth later would silently reopen the
+// hole that currently cannot exist.
+{
+  const files = ['api/sign-soa.js', 'api/soa-token.js', 'api/soa-status.js'];
+  for (const f of files) {
+    const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    ok(`${f} sets no cookie`, !/set-cookie/i.test(code));
+    ok(`${f} reads no cookie`, !/req\.cookies|req\.headers\[['"]cookie/i.test(code));
+    ok(`${f} checks the origin allowlist`, /checkOrigin\(req\)/.test(code));
+    ok(`${f} refuses a disallowed origin before anything else`,
+      code.indexOf('checkOrigin(req)') < code.indexOf('if (!SOA_ENABLED)'), 'origin check is not first');
+  }
+  const page = readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8');
+  const fetches = (page.match(/fetch\(/g) || []).length;
+  const omits = (page.match(/credentials: 'omit'/g) || []).length;
+  ok('every SOA fetch omits ambient credentials', omits >= fetches - 1 && omits >= 2, `${omits}/${fetches}`);
+}
+
 if (failures.length) {
   console.error(`CY2027 LAYER: ${passed} passed, ${failures.length} failed\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');
