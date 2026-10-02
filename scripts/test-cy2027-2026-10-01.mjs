@@ -40,6 +40,9 @@ import { integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, redactF
 import {
   issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
 } from '../api/_lib/cy2027/secure-link.js';
+import {
+  redactProhibitedForScoring, requiresLicensedReview, findProhibited, SIGNAL_FLAGS,
+} from '../api/_lib/cy2027/prohibited-signals.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -630,6 +633,77 @@ const baseInput = {
   ok('the page POSTs the factor', /\/api\/soa-status'/.test(PAGE) && /factor: factorValue/.test(PAGE));
   ok('a used link says "already signed", not "not found"', /LINK_ALREADY_USED.*alreadyConsumed|alreadyConsumed.*LINK_ALREADY_USED/s.test(PAGE));
   ok('a locked link sends the person to a human', /SECOND_FACTOR_LOCKED|'locked'/.test(PAGE));
+}
+
+// ── 14. Prohibited signals never reach the commercial scorer ─────────────────
+// Spec §15 and the §33 immediate-fail line on medical detail in scoring.
+// Tested in BOTH directions: the attribute must go, and the legitimate Medicare
+// process detail an advisor needs must stay.
+{
+  const red = (s) => redactProhibitedForScoring(s);
+
+  // Medical detail.
+  const m1 = red('The caller has diabetes and asked when his coverage starts.');
+  ok('a diagnosis is removed', !/diabetes/i.test(m1.text), m1.text);
+  ok('a diagnosis raises the licensed-review flag', m1.flags.includes(SIGNAL_FLAGS.MEDICAL));
+  ok('the rest of the sentence survives', /coverage starts/i.test(m1.text), m1.text);
+  ok('a diagnosis requires licensed review', requiresLicensedReview(m1.flags) === true);
+
+  const m2 = red('Me diagnosticaron cáncer el año pasado y quiero saber sobre la Parte B.');
+  ok('a Spanish diagnosis is removed', !/cáncer/i.test(m2.text), m2.text);
+  ok('the Spanish Medicare question survives', /Parte B/i.test(m2.text), m2.text);
+
+  ok('medications are removed', !/lisinopril/i.test(red('My medications include lisinopril daily.').text));
+  ok('disability status is removed', !/on disability/i.test(red('He is on disability since 2019.').text));
+
+  // Benefit status — self-reported, never a score.
+  const b1 = red('Caller says she has Medicaid and Medicare, dual-eligible.');
+  ok('Medicaid status is removed', !/medicaid/i.test(b1.text), b1.text);
+  ok('dual-eligible is removed', !/dual-eligible/i.test(b1.text), b1.text);
+  ok('benefit status raises its own flag', b1.flags.includes(SIGNAL_FLAGS.BENEFIT_STATUS));
+  ok('benefit status alone does NOT force licensed review', requiresLicensedReview([SIGNAL_FLAGS.BENEFIT_STATUS]) === false);
+  ok('Extra Help is removed', !/extra help/i.test(red('He gets Extra Help with his drug costs.').text));
+  ok('LIS is removed', !/\bLIS\b/.test(red('Qualified for LIS last year.').text));
+
+  // Financial.
+  const f1 = red("I can't afford the premium right now.");
+  ok('inability to pay is removed', !/afford/i.test(f1.text), f1.text);
+  ok('financial hardship requires licensed review', requiresLicensedReview(f1.flags) === true);
+
+  // Demographic / immigration.
+  ok('ethnicity is removed', !/hispanic/i.test(red('I am Hispanic and turning 65.').text));
+  ok('immigration status is removed', !/green card/i.test(red('She has a green card.').text));
+
+  // ── The other direction: legitimate Medicare talk must survive intact ──
+  const keep = [
+    'The caller is turning 65 in March and wants to know about enrollment periods.',
+    'She has Medicare Part A and Part B already and asked about Part D.',
+    'He moved from New Jersey to New York and wants to know what changes.',
+    'Lost employer coverage last month, asking about a special enrollment period.',
+    'Quiere saber la diferencia entre Medicare Advantage y Medigap.',
+    'Asked whether the appointment can be by phone instead of in person.',
+  ];
+  for (const s of keep) {
+    const r = red(s);
+    ok(`legitimate Medicare detail survives: "${s.slice(0, 44)}…"`, r.text === s && r.flags.length === 0, r.text);
+  }
+  ok('"Medicare" is never confused with "Medicaid"', red('He has Medicare only.').flags.length === 0);
+
+  // The redactor must actually finish the job.
+  const dirty = 'I have cancer, I get Extra Help, and I cannot afford my medications.';
+  const cleaned = red(dirty);
+  ok('nothing prohibited survives a combined note', findProhibited(cleaned.text).length === 0, cleaned.text);
+  ok('a combined note raises every relevant flag', cleaned.flags.length >= 2, JSON.stringify(cleaned.flags));
+  ok('empty input is safe', red('').text === '' && red(null).flags.length === 0);
+
+  // And the scorer must be wired to it.
+  const LI = readFileSync(new URL('../api/_lib/lead-intel.js', import.meta.url), 'utf8');
+  ok('the scorer redacts before building its payload',
+    LI.indexOf('redactProhibitedForScoring(notes)') < LI.indexOf('=== Lead notes / conversation ==='), 'ordering wrong');
+  ok('the structured metadata is filtered too', /redactProhibitedForScoring\(meta\(metadata\.medicareStatus/.test(LI));
+  ok('the Medicaid example is gone from the system prompt', !/dual eligible/i.test(LI), 'prompt still suggests flagging Medicaid');
+  ok('the prompt forbids scoring on prohibited attributes', /NEVER use any of the following to set intent_strength/.test(LI));
+  ok('the scorer emits licensed_agent_review_required', /licensed_agent_review_required/.test(LI));
 }
 
 if (failures.length) {

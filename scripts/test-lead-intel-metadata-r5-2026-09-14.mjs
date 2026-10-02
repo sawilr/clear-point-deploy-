@@ -87,9 +87,19 @@ for (const [sent, want] of [
 
 // ── Layer 2: the boundary guard inside lead-intel.js. ─────────────────────
 // Rebuild the payload the model receives from the shipped source.
+// AUDIT 2026-10-01 — the lift anchor moved. medicareStatus is now additionally
+// passed through redactProhibitedForScoring() (spec §15: a benefit-status value
+// may not reach the commercial scorer), so `var mStatus = meta(...)` became a
+// two-step. The R5-SL-02 guarantee under test is unchanged — every metadata
+// value is still single-lined and capped by meta() — only the extraction had to
+// follow the source. A stub stands in for the redactor so this suite keeps
+// testing the boundary guard and not the redactor, which section 14 of
+// test-cy2027-2026-10-01.mjs covers on its own.
 const payloadFn = new Function('metadata', 'source', 'language', 'notes',
+  'var signalFlags = [];\n' +
+  'function redactProhibitedForScoring(t) { return { text: String(t == null ? "" : t), flags: [] }; }\n' +
   INTEL.match(/function meta\(v, max\) \{[\s\S]*?\n  \}/)[0] + '\n' +
-  INTEL.match(/var mZip = meta[\s\S]*?var mStatus = meta\([^)]*\);/)[0] + '\n' +
+  INTEL.match(/var mZip = meta[\s\S]*?\n  \}\n/)[0] + '\n' +
   INTEL.match(/var userPayload = \[[\s\S]*?\]\.filter\(Boolean\)\.join\('\\n'\);/)[0] + '\n' +
   'return userPayload;'
 );

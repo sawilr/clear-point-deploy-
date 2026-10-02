@@ -18,6 +18,8 @@
 // lead notes. Lead submission MUST NOT fail because intel failed.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { redactProhibitedForScoring, requiresLicensedReview } from './cy2027/prohibited-signals.js';
+
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 const MODEL = 'claude-haiku-4-5';
 const TIMEOUT_MS = 8_000;
@@ -36,7 +38,7 @@ Hard requirements:
 - "lead_temperature" is exactly one of: "hot", "warm", "cold".
 - "urgency" is exactly one of: "today", "this_week", "this_month", "low".
 - "advisor_prep_notes" is 2-4 sentences listing what advisor should know BEFORE calling.
-- "compliance_flags" is an array of strings. Empty array if none. Examples: ["asked about Medigap which we do not offer", "user is in Florida (not served)", "user has Medicaid + Medicare (dual eligible)"].
+- "compliance_flags" is an array of strings. Empty array if none. Examples: ["asked about Medigap which we do not offer", "user is in Florida (not served)", "limited information — verify on first call"].
 - "recommended_first_questions" is an array of 2-3 specific questions for the advisor to ask first.
 
 JSON schema (return EXACTLY these keys, no extras):
@@ -57,6 +59,15 @@ DO NOT:
 - Confirm eligibility
 - Confirm whether a doctor is in network
 - Promise outcomes
+
+NEVER use any of the following to set intent_strength, lead_temperature, urgency or any
+other ranking, and never restate them in any field: health conditions, diagnoses,
+disability, medications or their cost, Medicaid / Extra Help / Low-Income Subsidy status,
+income or ability to pay, race, ethnicity, national origin, immigration status, or gender.
+A person who mentions any of these receives exactly the same service path and the same
+scores as a person who does not. If such a topic came up, the system has already removed
+it from the notes you were given and flagged it separately for a licensed human — do not
+try to reconstruct it or infer it from context.
 
 Always include a recommendation that the advisor confirm details on the call before making any assumptions.`;
 
@@ -82,6 +93,17 @@ export async function analyzeLeadIntelligence(input) {
 
   if (!notes.trim()) return null;
 
+  // AUDIT 2026-10-01 (DM-01/02/05/06, FTQ-02/13) — strip the attributes that may
+  // never influence a commercial score BEFORE the scorer sees them. This model
+  // is asked for intent_strength, lead_temperature and urgency; §33 lists
+  // "Medical detail is used for commercial scoring/routing" as an immediate
+  // fail, and §21 says not to rely on prompt text alone. The instruction in
+  // SYSTEM_PROMPT is the belt; this is the braces — the scorer cannot weigh
+  // what it never received.
+  var redacted = redactProhibitedForScoring(notes);
+  notes = redacted.text;
+  var signalFlags = redacted.flags;
+
   // Trim aggressively — long transcripts blow the token budget.
   if (notes.length > 4000) notes = notes.slice(0, 4000) + '… [truncated]';
 
@@ -98,7 +120,14 @@ export async function analyzeLeadIntelligence(input) {
   var mZip = meta(metadata.zipCode, 5);
   var mState = meta(metadata.state, 20);
   var mAge = meta(metadata.age, 10);
-  var mStatus = meta(metadata.medicareStatus, 40);
+  // The structured metadata goes through the same filter: a benefit-status value
+  // medicareStatus field is the same prohibited attribute as in free text, and
+  // it sits ABOVE the notes delimiter where it carries more weight.
+  var mStatusRedacted = redactProhibitedForScoring(meta(metadata.medicareStatus, 40));
+  var mStatus = mStatusRedacted.text;
+  for (var si = 0; si < mStatusRedacted.flags.length; si++) {
+    if (signalFlags.indexOf(mStatusRedacted.flags[si]) === -1) signalFlags.push(mStatusRedacted.flags[si]);
+  }
 
   var userPayload = [
     'Source: ' + meta(source, 60),
@@ -157,6 +186,16 @@ export async function analyzeLeadIntelligence(input) {
     var parsed;
     try { parsed = JSON.parse(match[0]); } catch (e) { return null; }
     var clean = sanitizeIntel(parsed);
+    if (!clean) return null;
+    // Attach what was removed, as a flag for a licensed human rather than as
+    // detail in the notes (spec §14). The advisor learns that a topic came up;
+    // the clinical or benefit-status specifics do not travel into the CRM.
+    if (signalFlags.length) {
+      clean.compliance_flags = clean.compliance_flags.concat(signalFlags);
+      clean.licensed_agent_review_required = requiresLicensedReview(signalFlags);
+    } else {
+      clean.licensed_agent_review_required = false;
+    }
     return clean;
   } catch (e) {
     clearTimeout(timer);
