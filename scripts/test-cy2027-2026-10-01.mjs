@@ -1282,6 +1282,40 @@ const baseInput = {
   ok('every SOA fetch omits ambient credentials', omits >= fetches - 1 && omits >= 2, `${omits}/${fetches}`);
 }
 
+// ── 23. Claims match mechanisms, and inference cannot overwrite the person ───
+{
+  // EV-14 — the page may not promise a copy the system does not send.
+  const LABELS_SRC = readFileSync(new URL('../src/lib/soaContent.ts', import.meta.url), 'utf8');
+  const PAGE = readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8');
+  const SIGN3 = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+  ok('EV-14: the unconditional copy promise is gone from success_body',
+    !/success_body:[\s\S]{0,260}receive a copy/.test(LABELS_SRC), 'the promise is still unconditional');
+  ok('EV-14: there is a separate string for when a copy WAS sent', /success_copy_sent/.test(LABELS_SRC));
+  ok('EV-14: and one for when it was not', /success_copy_onreq/.test(LABELS_SRC));
+  ok('EV-14: the server reports whether a copy went out', /copySent: _copy\.sent === true/.test(SIGN3));
+  ok('EV-14: the page picks the message from that report', /copySent \? 'success_copy_sent' : 'success_copy_onreq'/.test(PAGE));
+  ok('EV-14: the fallback tells the person how to get a copy', /1-855-720-8555/.test(LABELS_SRC));
+
+  // CRM-28 — provenance is enforceable in the data, not only in prose.
+  const ids = { CY2027_CRM_FIELD_IDS: '{"SOA_STATE":"s1","SOA_ZIP":"z1","SOA_STATUS":"st1"}' };
+  const inferred = buildCustomFields({
+    SOA_STATE: { value: 'NJ', source: 'AI_INFERRED' },
+    SOA_ZIP: { value: '07030', source: 'AI_INFERRED' },
+    SOA_STATUS: { value: 'COMPLETED', source: 'AI_INFERRED' },
+  }, ids);
+  ok('CRM-28: an inferred state is refused', inferred.refused.includes('SOA_STATE'));
+  ok('CRM-28: an inferred ZIP is refused', inferred.refused.includes('SOA_ZIP'));
+  ok('CRM-28: nothing inferred reaches a confirmed-only field',
+    !inferred.fields.some((f) => f.id === 's1' || f.id === 'z1'));
+  ok('CRM-28: an inferred value on a non-confirmed field is still allowed',
+    inferred.fields.some((f) => f.id === 'st1'));
+  const confirmed = buildCustomFields({ SOA_STATE: { value: 'NY', source: 'BENEFICIARY_CONFIRMED' } }, ids);
+  ok('CRM-28: what the beneficiary confirmed is written', confirmed.fields.some((f) => f.id === 's1'));
+  ok('CRM-28: a plain value still works and counts as SYSTEM',
+    buildCustomFields({ SOA_STATE: 'NY' }, ids).fields.length === 1);
+  ok('CRM-28: refusals are reported, never silently dropped', Array.isArray(inferred.refused) && inferred.refused.length === 2);
+}
+
 if (failures.length) {
   console.error(`CY2027 LAYER: ${passed} passed, ${failures.length} failed\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

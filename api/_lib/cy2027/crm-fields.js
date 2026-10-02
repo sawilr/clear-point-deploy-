@@ -105,18 +105,53 @@ export function fieldIdMap(env = process.env) {
  * previously confirmed value would be the "overwrite confirmed data" the spec
  * forbids (§18: "Do not overwrite confirmed data with AI inference").
  */
+/**
+ * Fields whose value the BENEFICIARY stated. Spec §18: "Do not overwrite
+ * confirmed data with AI inference."
+ *
+ * AUDIT 2026-10-02 (CRM-28) — that rule lived only in a comment. It is now
+ * enforceable in the data: a value may declare its provenance, and an inferred
+ * one is REFUSED for these fields rather than written. A model that decides the
+ * caller "probably lives in New Jersey" must not be able to overwrite the state
+ * they typed, because the state selects the ruleset printed on a signed document.
+ */
+export const CONFIRMED_ONLY_FIELDS = Object.freeze([
+  'SOA_STATE', 'SOA_ZIP', 'SOA_COUNTY', 'RESIDENCE_STATE',
+  'SOA_AUTHORIZED_CATEGORIES', 'SOA_DECLINED_CATEGORIES',
+  'CALLBACK_CONSENT_STATUS', 'RECORDING_NOTICE_STATUS', 'AI_OUTBOUND_CONSENT_STATUS',
+]);
+
+export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED']);
+
+/**
+ * Build the customFields array for a GoHighLevel upsert.
+ *
+ * A value may be a plain scalar (treated as SYSTEM) or `{ value, source }`.
+ *
+ * @returns {{ fields, unmapped, refused, mapped }}
+ *   `refused` — values rejected because an inference tried to overwrite a field
+ *   only the beneficiary may set. Logged by the caller; never silently dropped.
+ */
 export function buildCustomFields(values, env = process.env) {
   const ids = fieldIdMap(env);
   const fields = [];
   const unmapped = [];
-  for (const [name, value] of Object.entries(values || {})) {
+  const refused = [];
+  for (const [name, raw] of Object.entries(values || {})) {
     if (!Object.prototype.hasOwnProperty.call(CY2027_FIELD_KEYS, name)) continue;
+    const isWrapped = raw && typeof raw === 'object' && !Array.isArray(raw) && 'value' in raw;
+    const value = isWrapped ? raw.value : raw;
+    const source = isWrapped && raw.source ? raw.source : 'SYSTEM';
     if (value === undefined || value === null || value === '') continue;
+    if (source === 'AI_INFERRED' && CONFIRMED_ONLY_FIELDS.includes(name)) {
+      refused.push(name);
+      continue;
+    }
     const id = ids[name];
     if (!id) { unmapped.push(name); continue; }
     fields.push({ id, key: CY2027_FIELD_KEYS[name], field_value: String(value), value: String(value) });
   }
-  return { fields, unmapped, mapped: fields.length };
+  return { fields, unmapped, refused, mapped: fields.length };
 }
 
 /** Flatten a completed SOA instance into the §18 field names. */

@@ -522,6 +522,8 @@ export default async function handler(req, res) {
     signedAt: signedAt,
     pdfHash: pdfHash,
     ghlDelivered: true,
+    // EV-14 — the page may only promise a copy if one actually went out.
+    copySent: _copy.sent === true,
   });
 }
 

@@ -51,6 +51,9 @@ export default function SignSOA() {
   const [factorValue, setFactorValue] = useState('');
   const [factorError, setFactorError] = useState('');
   const [factorBusy, setFactorBusy] = useState(false);
+  // EV-14 — whether a confirmation copy actually went out. The page may not
+  // promise one otherwise.
+  const [copySent, setCopySent] = useState(false);
 
   // ── Second factor: exchange the link + factor for the prefill ───────────
   const submitFactor = async (ev: React.FormEvent) => {
@@ -147,6 +150,7 @@ export default function SignSOA() {
         return;
       }
       setSignedResult({ ok: true, soaId: data.soaId, signedAt: data.signedAt, pdfHash: data.pdfHash });
+      setCopySent(data.copySent === true);
       setPhase('success');
     } catch (e) {
       clearTimeout(timer);
@@ -263,7 +267,10 @@ export default function SignSOA() {
                 <svg className="w-10 h-10 text-emerald-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round"/></svg>
               </div>
               <h1 className="font-serif text-2xl mb-3 text-earth-900">{tLabel('success_title', language)}</h1>
-              <p className="text-earth-600 mb-6">{tLabel('success_body', language)}</p>
+              <p className="text-earth-600 mb-2">{tLabel('success_body', language)}</p>
+              <p className="text-earth-600 mb-6">
+                {tLabel(copySent ? 'success_copy_sent' : 'success_copy_onreq', language)}
+              </p>
               {/* Sawil 2026-07-04 (a11y, approved) — earth-400 on light bg is 2.6:1
                   (AA fail); earth-600 = 4.9:1, same family. */}
               <p className="text-xs text-earth-600">

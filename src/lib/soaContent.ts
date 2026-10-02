@@ -217,7 +217,16 @@ export const LABELS = {
   submit:               { en: 'Sign and Submit',                                                  es: 'Firmar y Enviar' },
   signing:              { en: 'Signing…',                                                         es: 'Firmando…' },
   success_title:        { en: 'Thank you — your SOA has been signed.',                            es: 'Gracias — su SOA ha sido firmado.' },
-  success_body:         { en: 'A licensed ClearPoint advisor will contact you within 24–48 hours at the phone number on file. You will also receive a copy of this signed document for your records.', es: 'Un asesor licenciado de ClearPoint le contactará dentro de 24 a 48 horas al teléfono registrado. También recibirá una copia de este documento firmado para sus registros.' },
+  // AUDIT 2026-10-02 (EV-14) — this used to promise "You will also receive a
+  // copy of this signed document", unconditionally. The confirmation copy is
+  // gated (api/_lib/cy2027/beneficiary-copy.js) and is OFF, so that sentence was
+  // a claim the system could not honour. §19/§35 require claims made to the
+  // beneficiary to be traceable to a mechanism that exists. The promise is now
+  // a separate string the page only shows when the server reports a copy was
+  // actually sent.
+  success_body:         { en: 'A licensed ClearPoint advisor will contact you within 24–48 hours at the phone number on file.', es: 'Un asesor licenciado de ClearPoint le contactará dentro de 24 a 48 horas al teléfono registrado.' },
+  success_copy_sent:    { en: 'You will also receive a copy of this signed document for your records.', es: 'También recibirá una copia de este documento firmado para sus registros.' },
+  success_copy_onreq:   { en: 'If you would like a copy of the signed document for your records, call us at 1-855-720-8555 and we will send it.', es: 'Si desea una copia del documento firmado para sus registros, llámenos al 1-855-720-8555 y se la enviamos.' },
   error_title:          { en: 'We could not save your signature',                                 es: 'No pudimos guardar su firma' },
   error_retry:          { en: 'Please try again or call us directly at 1-855-720-8555.',          es: 'Por favor inténtelo de nuevo o llámenos directamente al 1-855-720-8555.' },
   required:             { en: 'Required',                                                         es: 'Requerido' },
