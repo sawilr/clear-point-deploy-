@@ -230,6 +230,26 @@ export default async function handler(req, res) {
   var signerIp = ip;
   var signerUserAgent = String(req.headers['user-agent'] || '').slice(0, 240);
 
+  // AUDIT 2026-10-02 (G27) — the evidence record is built BEFORE the PDF. Its
+  // integrity hash covers the agreement (text shown, selections, identifiers),
+  // not the PDF bytes, so nothing circular happens — and the signed document can
+  // actually print the hash instead of a dash. The evidence REFERENCE is the
+  // storage location and genuinely does not exist yet, so the PDF says so.
+  var evidence;
+  try {
+    evidence = buildEvidenceRecord(instance, {
+      stateName: stateRuleset.name,
+      signature: signature,
+      signedAt: signedAt,
+      sourceIp: signerIp,
+      userAgent: signerUserAgent,
+      correlationId: soaId,
+    });
+  } catch (e) {
+    console.error('[sign-soa] evidence build failed:', e && e.message);
+    return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
+  }
+
   var pdfBuffer;
   try {
     pdfBuffer = await buildSoaPdf({
@@ -244,6 +264,14 @@ export default async function handler(req, res) {
       appointmentFormat: instance.appointmentFormat,
       planYear: instance.planYear,
       declined: instance.declinedCategories,
+      soaFormVersion: instance.soaFormVersion,
+      stateRulesetVersion: instance.stateRulesetVersion,
+      scriptVersion: instance.scriptVersion,
+      source: instance.source,
+      appointmentId: instance.appointmentId,
+      representativeRelationship: instance.representativeRelationship,
+      integrityHash: evidence.integrityHash,
+      evidenceReference: (language === 'es' ? '(se asigna al archivar)' : '(assigned on filing)'),
       phone: phone,
       email: email,
       zip: zip,
@@ -266,21 +294,6 @@ export default async function handler(req, res) {
   // §19). The SOA instance is only marked COMPLETED once both exist, so a
   // failure here leaves the marketing gate locked rather than producing a
   // signature with no evidence behind it.
-  var evidence;
-  try {
-    evidence = buildEvidenceRecord(instance, {
-      stateName: stateRuleset.name,
-      signature: signature,
-      signedAt: signedAt,
-      sourceIp: signerIp,
-      userAgent: signerUserAgent,
-      correlationId: soaId,
-    });
-  } catch (e) {
-    console.error('[sign-soa] evidence build failed:', e && e.message);
-    return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
-  }
-
   // Persist the signed PDF + its evidence record to durable storage BEFORE the
   // instance is marked COMPLETED. Previously the PDF was hashed and discarded,
   // so Clear Point could not produce the signed document on request — enablement
@@ -599,6 +612,41 @@ function buildSoaPdf(opts) {
       doc.font('Helvetica-Oblique').fontSize(14).text(opts.signature);
       doc.font('Helvetica').fontSize(8).fillColor('#555').text((L === 'es' ? 'Firmado el ' : 'Signed on ') + opts.signedAt + ' UTC  ·  ' + (L === 'es' ? 'IP: ' : 'IP: ') + opts.signerIp);
       doc.fillColor('#000');
+      doc.font('Helvetica').fontSize(9);
+      // AUDIT 2026-10-02 (G18/G20/G21/G19) — the approved signature block has
+      // four entries plus the representative line, not just the typed name.
+      kv(doc, L === 'es' ? 'Nombre en letra de molde' : 'Printed name', opts.signature);
+      kv(doc, L === 'es' ? 'Fecha y hora' : 'Date/time', opts.signedAt + ' UTC');
+      kv(doc, L === 'es' ? 'Método de confirmación electrónica' : 'Electronic affirmation method',
+        L === 'es' ? 'Firma electrónica en la web' : 'Web electronic signature');
+      kv(doc, L === 'es' ? 'Relación o autoridad si firma un representante' : 'Relationship/authority if representative',
+        opts.representativeRelationship || (L === 'es' ? '(firma el beneficiario)' : '(beneficiary signing)'));
+      doc.moveDown(0.6);
+
+      // AUDIT 2026-10-02 (G24/G27/EV-04) — "System evidence — not
+      // customer-editable". The approved template prints it, and without it the
+      // signed artifact cannot say which form version or state ruleset governed
+      // the signature, which is the whole point of versioning them.
+      doc.font('Helvetica-Bold').fontSize(10).text(
+        L === 'es' ? 'Evidencia del sistema — no editable por el cliente' : 'System evidence — not customer-editable');
+      doc.font('Helvetica').fontSize(8);
+      kv(doc, 'SOA_ID', opts.soaId);
+      kv(doc, 'SOA_FORM_VERSION', opts.soaFormVersion || '—');
+      kv(doc, 'STATE_RULESET_VERSION', opts.stateRulesetVersion || '—');
+      kv(doc, 'SOA_SCRIPT_VERSION', opts.scriptVersion || '—');
+      kv(doc, L === 'es' ? 'Idioma' : 'Language', L === 'es' ? 'ES' : 'EN');
+      kv(doc, L === 'es' ? 'Creado' : 'Created at', opts.signedAt + ' UTC');
+      kv(doc, L === 'es' ? 'Completado' : 'Completed at', opts.signedAt + ' UTC');
+      kv(doc, L === 'es' ? 'Origen' : 'Source', opts.source || 'WEB');
+      kv(doc, 'APPOINTMENT_ID', opts.appointmentId || '—');
+      kv(doc, L === 'es' ? 'Hash de integridad' : 'Integrity hash', opts.integrityHash || '—');
+      kv(doc, L === 'es' ? 'Referencia de evidencia' : 'Evidence reference', opts.evidenceReference || '—');
+      doc.fontSize(9);
+      doc.moveDown(0.6);
+
+      // Security warning, verbatim from the approved template.
+      doc.fontSize(8).fillColor('#555').text(SOA_TEXT[L === 'es' ? 'es' : 'en'].security, { align: 'justify' });
+      doc.fillColor('#000').fontSize(9);
       doc.moveDown(0.6);
 
       // Agent
