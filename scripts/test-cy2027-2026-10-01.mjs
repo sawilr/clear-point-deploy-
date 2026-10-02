@@ -784,6 +784,17 @@ const baseInput = {
   ok('CRM-24: licensed review is set deterministically', /LICENSED_AGENT_REVIEW_REQUIRED'\)/.test(SL));
   ok('DM-09: only the category is logged, never the phrase', /\[DATA-MIN\][\s\S]{0,120}flags: _dmFlags/.test(SL));
 
+  // FTQ — the trust engine is wired into the live lead pipeline, as a SIGNAL.
+  ok('FTQ-08: ZIP/state inconsistency becomes a review signal in the lead path',
+    /IMPOSSIBLE_STATE_ZIP/.test(SL) && /zipStateConsistency\(zip, derived_state\)/.test(SL));
+  ok('FTQ-08: IP velocity becomes a review signal', /DEVICE_IP_VELOCITY/.test(SL));
+  ok('FTQ-10: mass submission becomes a review signal', /REPEATED_MASS_SUBMISSION/.test(SL));
+  ok('FTQ-06: a security review task is built for a flagged lead', /buildSecurityReviewTask\(\{/.test(SL));
+  ok('FTQ-06: the task records that AI may not approve it', /aiMayApprove/.test(SL));
+  ok('FTQ-16: nothing in the lead path rejects on a trust signal',
+    !/_trust[\s\S]{0,200}return res\.status\(4/.test(SL), 'a trust signal can reject a lead');
+  ok('the trust state travels as a flag', /_dmFlags\.push\('TRUST_'/.test(SL));
+
   // And the scorer must be wired to it.
   const LI = readFileSync(new URL('../api/_lib/lead-intel.js', import.meta.url), 'utf8');
   ok('the scorer redacts before building its payload',

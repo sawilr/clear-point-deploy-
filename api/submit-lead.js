@@ -18,6 +18,8 @@ import { enforceKill } from './_lib/kill-switch.js';
 // narrower, misses non-chat surfaces, and is bypassable with a direct POST.
 import { scrubPHI } from './_lib/phi-scrub.js';
 import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
+import { evaluateTrust, buildSecurityReviewTask } from './_lib/cy2027/trust.js';
+import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
 // AUDIT 2026-08-15 (security remediation) — shared body reader (fixes the
 // malformed-JSON hang; see read-body.js) + Turnstile server-side verification
 // (remediation target 1; inert until TURNSTILE_SECRET is configured).
@@ -875,6 +877,53 @@ export default async function handler(req, res) {
     }
     // CRM-24 — set deterministically, not left to a human to notice in prose.
     if (requiresLicensedReview(_dmFlags)) _dmFlags.push('LICENSED_AGENT_REVIEW_REQUIRED');
+
+    // AUDIT 2026-10-02 (FTQ-06/08/10/16, CRM-20) — LEAD TRUST STATE.
+    //
+    // DELIBERATE LIMIT ON THIS CHANGE: this is the LIVE lead pipeline, unlike
+    // the SOA flow which is gated off. §13 asks that a high-risk lead stop the
+    // automated workflow before appointment confirmation, but altering the
+    // opportunity/dialing control flow here without being able to exercise it
+    // end to end would risk the business's core function — the master prompt is
+    // explicit that a change which could break something working must stop and
+    // prefer an alternative that preserves current behaviour. So this ATTACHES
+    // the signal for a human and changes no routing. Wiring the stop itself is
+    // an owner-gated follow-up, recorded in docs/compliance/CY2027-ARCHITECTURE.md.
+    //
+    // Signals are derived only from what is already observed here. §12 forbids
+    // rejecting anyone for struggling, having an accent, using a caregiver or
+    // lacking an email (FTQ-16), and nothing below can reject: the worst
+    // outcome is a flag a human reads.
+    var _trustSignals = [];
+    if (zip && derived_state && zipStateConsistency(zip, derived_state) === 'FLAG_FOR_REVIEW') {
+      _trustSignals.push('IMPOSSIBLE_STATE_ZIP');
+    }
+    // Approaching the per-IP ceiling is velocity; the limiter above already
+    // refuses outright past it, so this only sees the run-up.
+    if (rlFlood && typeof rlFlood.remaining === 'number' && rlFlood.remaining <= 5) {
+      _trustSignals.push('DEVICE_IP_VELOCITY');
+    }
+    if (rlFloodDay && typeof rlFloodDay.remaining === 'number' && rlFloodDay.remaining <= 10) {
+      _trustSignals.push('REPEATED_MASS_SUBMISSION');
+    }
+    var _trust = evaluateTrust({ signals: _trustSignals });
+    if (_trust.state !== 'UNVERIFIED') _dmFlags.push('TRUST_' + _trust.state);
+    if (_trust.humanReviewRequired) {
+      // Only non-sensitive facts (§13); buildSecurityReviewTask enforces the
+      // allowlist and runs the same redactor over every value.
+      // No requestId here: submission_id is generated later in the flow, and a
+      // review task carrying an empty id is worse than one that is matched by
+      // timestamp + signals. The [LEAD-AUDIT] line for the same request carries it.
+      var _review = buildSecurityReviewTask({
+        state: derived_state || null,
+        zip: zip || null,
+        language: preferred_language || null,
+        signals: _trustSignals,
+        trustState: _trust.state,
+        receivedAt: new Date().toISOString(),
+      });
+      console.warn('[SECURITY-REVIEW] ' + JSON.stringify(_review.facts) + ' aiMayApprove=' + _review.aiMayApprove);
+    }
     // Red-team FORMS-01-B3: the field also carries the server's AI verdict later; client
     // text is labelled and cannot carry verdict-shaped tokens.
     // Red-team round 3 (R3-SL-10): every dash variant and the underscore, and
