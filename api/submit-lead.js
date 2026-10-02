@@ -17,6 +17,7 @@ import { enforceKill } from './_lib/kill-switch.js';
 // The client-side firewall (sensitiveGuard) covers the common chat path but is
 // narrower, misses non-chat surfaces, and is bypassable with a direct POST.
 import { scrubPHI } from './_lib/phi-scrub.js';
+import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
 // AUDIT 2026-08-15 (security remediation) — shared body reader (fixes the
 // malformed-JSON hang; see read-body.js) + Turnstile server-side verification
 // (remediation target 1; inert until TURNSTILE_SECRET is configured).
@@ -851,6 +852,29 @@ export default async function handler(req, res) {
     lead_notes = _scrubNotes.text;
     conversation_summary = _scrubSummary.text;
     lead_quality_flags = _scrubFlags.text;
+
+    // AUDIT 2026-10-02 (DM-07 / DM-09) — scrubPHI removes IDENTIFIERS (SSN, MBI,
+    // card, routing). It does not remove the ATTRIBUTES spec §14/§15 keep out of
+    // broad CRM notes and out of any commercial score: diagnoses, medications,
+    // disability, Medicaid / Extra Help / LIS status, income or ability to pay.
+    // These three values become the contact note, the chat_conversation_summary
+    // custom field and the input to the lead scorer, so §14's remedy applies
+    // here: "create a general flag such as MEDICAL_TOPIC_FOR_LICENSED_REVIEW
+    // without copying unnecessary clinical detail into broad CRM notes."
+    //
+    // Self-reported Medicaid/LIS is kept out as a VALUE too (§14 stores it as
+    // SELF_REPORTED on its own field, never as prose and never as a score).
+    var _dmNotes = redactProhibitedForScoring(lead_notes);
+    var _dmSummary = redactProhibitedForScoring(conversation_summary);
+    lead_notes = _dmNotes.text;
+    conversation_summary = _dmSummary.text;
+    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags)));
+    if (_dmFlags.length) {
+      // Category only — never the phrase that triggered it.
+      console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions }));
+    }
+    // CRM-24 — set deterministically, not left to a human to notice in prose.
+    if (requiresLicensedReview(_dmFlags)) _dmFlags.push('LICENSED_AGENT_REVIEW_REQUIRED');
     // Red-team FORMS-01-B3: the field also carries the server's AI verdict later; client
     // text is labelled and cannot carry verdict-shaped tokens.
     // Red-team round 3 (R3-SL-10): every dash variant and the underscore, and
@@ -1434,7 +1458,7 @@ export default async function handler(req, res) {
         { id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: (email && body.consent_to_contact === true) ? 'true' : 'false' },
         { id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age', value: age || '' },
         { id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age', value: calculated_age != null ? String(calculated_age) : '' },
-        { id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags', value: lead_quality_flags || '' },
+        { id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags', value: [lead_quality_flags || '', _dmFlags.join(' ')].filter(Boolean).join(' ').trim() },
         { id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary', value: lead_notes || '' },
         // Sawil 2026-07-04 — populate the Best Time / Interest custom fields created
         // in GHL this session. Previously these lived only in notes + CallTime-/Interest-

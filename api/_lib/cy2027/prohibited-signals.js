@@ -94,7 +94,10 @@ const GROUPS = Object.freeze([
     res: [
       /\b(?:my|our)\s+income\s+is\b[^.!?;\n]{0,40}/gi,
       /\b(?:mi|nuestro)\s+ingreso\s+es\b[^.!?;\n]{0,40}/gi,
-      /\b(?:i|we)\s+(?:can'?t|cannot|can\s+not)\s+afford\b[^.!?;\n]{0,50}/gi,
+      // Third person too: a note written ABOUT the caller ("she cannot afford
+      // the premium") is the same prohibited attribute as one written by them.
+      /\b(?:i|we|he|she|they|the\s+(?:caller|client|beneficiary))\s+(?:can'?t|cannot|can\s+not|could\s+not|couldn'?t)\s+afford\b[^.!?;\n]{0,50}/gi,
+      /\b(?:struggl\w+|having\s+trouble)\s+to\s+(?:pay|afford)\b[^.!?;\n]{0,40}/gi,
       /\bno\s+(?:me\s+alcanza|puedo\s+pagar)\b[^.!?;\n]{0,50}/gi,
       /\b(?:on\s+a\s+fixed\s+income|food\s+stamps|snap\s+benefits|section\s+8)\b/gi,
     ],

@@ -770,6 +770,20 @@ const baseInput = {
   ok('a combined note raises every relevant flag', cleaned.flags.length >= 2, JSON.stringify(cleaned.flags));
   ok('empty input is safe', red('').text === '' && red(null).flags.length === 0);
 
+  // Third-person financial hardship — a note written ABOUT the caller.
+  ok('third-person inability to pay is removed', !/afford/i.test(red('She cannot afford the premium.').text));
+  ok('third-person hardship requires licensed review', requiresLicensedReview(red('He could not afford it.').flags) === true);
+  ok('"the caller cannot afford" is removed', !/afford/i.test(red('The caller cannot afford her medications.').text));
+
+  // DM-07/DM-09 — the lead pipeline must apply this before the CRM note.
+  const SL = readFileSync(new URL('../api/submit-lead.js', import.meta.url), 'utf8');
+  ok('DM-09: the lead notes are filtered before the CRM', /redactProhibitedForScoring\(lead_notes\)/.test(SL));
+  ok('DM-09: the conversation summary is filtered too', /redactProhibitedForScoring\(conversation_summary\)/.test(SL));
+  ok('DM-09: the filter runs AFTER the PHI scrub, on the scrubbed text',
+    SL.indexOf('lead_notes = _scrubNotes.text;') < SL.indexOf('redactProhibitedForScoring(lead_notes)'));
+  ok('CRM-24: licensed review is set deterministically', /LICENSED_AGENT_REVIEW_REQUIRED'\)/.test(SL));
+  ok('DM-09: only the category is logged, never the phrase', /\[DATA-MIN\][\s\S]{0,120}flags: _dmFlags/.test(SL));
+
   // And the scorer must be wired to it.
   const LI = readFileSync(new URL('../api/_lib/lead-intel.js', import.meta.url), 'utf8');
   ok('the scorer redacts before building its payload',
