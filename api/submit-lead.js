@@ -1985,7 +1985,31 @@ export default async function handler(req, res) {
         console.error('[GHL] Status-NeedsOpportunity note failed: ' + (e && e.message ? e.message : String(e)));
       }
     };
-    if (contactId) {
+    // AUDIT 2026-10-02 (FTQ-07) — QUARANTINE STOP, behind a flag that is OFF.
+    //
+    // Spec §13: "For high-risk or inconsistent leads, automated workflow must
+    // stop before appointment confirmation or SOA execution." The contact is
+    // still created and the note still written — the person is served and the
+    // request is on file; what stops is the automated commercial follow-up.
+    //
+    // CY2027_QUARANTINE_STOP is unset in production, so today this changes
+    // nothing: the trust state is a flag a human reads, exactly as before. Turn
+    // it on once the owner has watched the [SECURITY-REVIEW] lines for a while
+    // and agrees the signal is right. Fail-safe either way: a lead is never
+    // rejected, only held back from automated outreach (§12 — uncertainty is
+    // not fraud).
+    var _quarantineStop = (function (v) {
+      v = String(v || '').trim().toLowerCase();
+      return v === '1' || v === 'true' || v === 'on' || v === 'yes';
+    })(process.env.CY2027_QUARANTINE_STOP);
+    var _holdForReview = _quarantineStop && _trust && _trust.humanReviewRequired === true;
+    if (_holdForReview) {
+      console.warn('[QUARANTINE-STOP] ' + JSON.stringify({
+        trustState: _trust.state, signals: _trustSignals, opportunity: 'withheld', contact: 'created',
+      }));
+    }
+
+    if (contactId && !_holdForReview) {
       try {
         // FASE 15 — opportunity idempotency. The contact upsert already dedupes by
         // phone, but a retry-after-success (client never saw the 200, or the client

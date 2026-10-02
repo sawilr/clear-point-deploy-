@@ -50,6 +50,7 @@ import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-te
 import { buildEvidenceRecord, emitAudit } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
 import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+import { sendCopy } from './_lib/cy2027/beneficiary-copy.js';
 import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
 
 // The signed SOA keeps the EVIDENCE retention class, not the signing-link TTL.
@@ -412,6 +413,25 @@ export default async function handler(req, res) {
   }));
   var _cfWarn = unmappedFieldsWarning(_cf.unmapped);
   if (_cfWarn) console.warn(_cfWarn);
+
+  // ── Confirmation copy to the beneficiary (spec §9 / EV-07) ─────────────
+  // Disabled until the owner configures a channel AND a recorded contact
+  // permission exists — the SOA signature itself is NOT that permission (§6).
+  // The reason is always logged, so "no copy was sent" is never silent.
+  var _copy = await sendCopy({
+    channel: email ? 'EMAIL' : 'SMS',
+    to: email || phone,
+    consent: null, // CALLBACK_CONTACT_PERMISSION is not captured on this path yet
+    soaId: soaId,
+    evidenceLinkUrl: null, // a one-time retrieval link, once the store is configured
+    language: language,
+  });
+  if (!_copy.sent) console.warn('[SOA-COPY] not sent: ' + _copy.reason);
+  emitAudit({
+    action: _copy.sent ? 'SOA_LINK_RESENT' : 'SOA_EVIDENCE_WRITE_FAILED',
+    actor: 'system:sign-soa', result: _copy.sent ? 'COPY_SENT' : 'COPY_NOT_SENT:' + _copy.reason,
+    source: instance.source, correlationId: soaId, soaId: soaId, details: { channel: _copy.channel || null },
+  });
 
   // ── Send to GHL (createOrUpdate contact + add note) ────────────────────
   var ghlOk = false;

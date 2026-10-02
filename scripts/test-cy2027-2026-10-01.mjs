@@ -49,6 +49,10 @@ import { complianceFilter } from '../api/_lib/compliance-filter.js';
 import {
   buildCustomFields, soaInstanceToFields, consentsToFields, unmappedFieldsWarning, fieldIdMap,
 } from '../api/_lib/cy2027/crm-fields.js';
+import {
+  sendingEnabled, maySendCopy, buildCopyMessage, assertNotMarketing,
+} from '../api/_lib/cy2027/beneficiary-copy.js';
+import { parseCountyCsv } from '../api/_lib/cy2027/state-rules.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -1135,6 +1139,60 @@ const baseInput = {
   ok('TPY-03: the disclaimer never ships a placeholder', !/\[X\]|\[Y\]/.test(en + es));
   ok('TPY-03: the ruleset and the renderer agree on the plan year',
     (nowYear >= 2027) === (CMS_RULESET_2027.tpmo.includesShipReference === false));
+}
+
+// ── 19. Outbound copy, quarantine stop and the county loader ─────────────────
+{
+  const grant = (type) => createConsent({ type, status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 'this request' });
+
+  // EV-07 — built, and OFF. Nothing may leave without all three conditions.
+  ok('sending is disabled by default', sendingEnabled({}) === false);
+  ok('a copy is refused while sending is disabled',
+    maySendCopy({ channel: 'EMAIL', consent: grant('CALLBACK_CONTACT_PERMISSION'), env: {} }).reason === 'SENDING_DISABLED');
+  ok('a copy is refused without a configured channel',
+    maySendCopy({ channel: 'EMAIL', consent: grant('CALLBACK_CONTACT_PERMISSION'), env: { CY2027_SEND_BENEFICIARY_COPY: '1' } }).reason === 'CHANNEL_NOT_CONFIGURED');
+  const fullEnv = { CY2027_SEND_BENEFICIARY_COPY: '1', CY2027_COPY_EMAIL_URL: 'https://x/y', CY2027_COPY_EMAIL_TOKEN: 't' };
+  ok('a copy is refused without contact permission',
+    maySendCopy({ channel: 'EMAIL', consent: null, env: fullEnv }).reason === 'NO_CONTACT_PERMISSION');
+  // §6 — the SOA signature is NOT contact permission.
+  ok('an SOA consent does not authorize a message',
+    maySendCopy({ channel: 'EMAIL', consent: grant('SCOPE_OF_APPOINTMENT'), env: fullEnv }).reason === 'NO_CONTACT_PERMISSION');
+  ok('with all three, it is allowed',
+    maySendCopy({ channel: 'EMAIL', consent: grant('CALLBACK_CONTACT_PERMISSION'), env: fullEnv }).allowed === true);
+  ok('an http (non-TLS) channel is not configured',
+    maySendCopy({ channel: 'EMAIL', consent: grant('CALLBACK_CONTACT_PERMISSION'), env: { ...fullEnv, CY2027_COPY_EMAIL_URL: 'http://x/y' } }).reason === 'CHANNEL_NOT_CONFIGURED');
+
+  // The message carries no beneficiary data and no marketing (§9).
+  for (const lang of ['en', 'es']) {
+    const m = buildCopyMessage({ soaId: 'soa_abc', evidenceLinkUrl: 'https://store/x', language: lang });
+    const all = m.subject + ' ' + m.body;
+    ok(`copy (${lang}) carries the reference`, all.includes('soa_abc'));
+    ok(`copy (${lang}) states it is not an enrollment`, /not an enrollment|no es una inscripción/i.test(all));
+    ok(`copy (${lang}) gives a way to report a signature they don't recognize`, /1-855-720-8555/.test(all));
+    ok(`copy (${lang}) carries no categories or appointment detail`,
+      !/MA_WITH_RX|Medicare Advantage plan with|appointment date|fecha de la cita/i.test(all));
+    ok(`copy (${lang}) is not marketing`, (() => { try { assertNotMarketing(all); return true; } catch { return false; } })());
+  }
+  throws('a marketing phrase can never be sent',
+    () => assertNotMarketing('Enroll now and save on the best plan!'), /may not carry marketing/);
+
+  // FTQ-07 — the quarantine stop exists and is off.
+  const SL2 = readFileSync(new URL('../api/submit-lead.js', import.meta.url), 'utf8');
+  ok('FTQ-07: the quarantine stop is behind a flag', /CY2027_QUARANTINE_STOP/.test(SL2));
+  ok('FTQ-07: the flag gates the opportunity, not the contact',
+    /if \(contactId && !_holdForReview\)/.test(SL2));
+  ok('FTQ-07: the hold is logged', /\[QUARANTINE-STOP\]/.test(SL2));
+
+  // The county loader — a file drop, never a guess.
+  const csv = 'zip,county\n11717,Suffolk\n10001,New York\n10001,Kings\nbad,Row\n06320,New London\n';
+  const parsed = parseCountyCsv(csv);
+  ok('the CSV loader reads valid rows', parsed.zips === 3, String(parsed.zips));
+  ok('the CSV loader skips malformed rows instead of guessing', parsed.skipped === 1);
+  setCountyDataset(parsed.dataset);
+  ok('a single-county ZIP resolves from the CSV', resolveCounty('11717', 'NY').county === 'Suffolk');
+  ok('a multi-county ZIP still asks the beneficiary', resolveCounty('10001', 'NY').status === 'ASK_BENEFICIARY');
+  ok('both options are offered', resolveCounty('10001', 'NY').options.length === 2);
+  setCountyDataset(null);
 }
 
 if (failures.length) {

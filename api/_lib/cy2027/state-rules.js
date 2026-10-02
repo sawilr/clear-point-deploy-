@@ -201,6 +201,34 @@ export function hasCountyDataset() {
 }
 
 /**
+ * Build a dataset from a two-column CSV so installing real data is a file drop,
+ * not a code change: `zip,county` with an optional header, one row per
+ * zip↔county pair. A ZIP that appears more than once becomes ambiguous and the
+ * form asks the beneficiary, which is the §5 behaviour for a multi-county ZIP.
+ *
+ * Returns the map; pass it to setCountyDataset(). Malformed rows are SKIPPED
+ * and counted rather than guessed at — a dataset that silently invents a county
+ * is worse than no dataset.
+ */
+export function parseCountyCsv(text) {
+  const out = {};
+  let skipped = 0;
+  const lines = String(text == null ? '' : text).split(/\r?\n/);
+  for (const line of lines) {
+    const raw = line.trim();
+    if (!raw) continue;
+    if (/^zip\b/i.test(raw)) continue; // header
+    const cols = raw.split(',').map((c) => c.trim().replace(/^"|"$/g, ''));
+    const zip = (cols[0] || '').replace(/\D/g, '');
+    const county = (cols[1] || '').trim();
+    if (zip.length !== 5 || !county) { skipped++; continue; }
+    if (!out[zip]) out[zip] = [];
+    if (!out[zip].includes(county)) out[zip].push(county);
+  }
+  return { dataset: out, zips: Object.keys(out).length, skipped };
+}
+
+/**
  * Resolve county for a ZIP.
  *   { status: 'RESOLVED', county }        — exactly one county, dataset-backed
  *   { status: 'ASK_BENEFICIARY', options } — ambiguous, or no dataset installed
