@@ -1195,6 +1195,37 @@ const baseInput = {
   setCountyDataset(null);
 }
 
+// ── 20. The SOA flow is carrier-free, and stays that way (spec §16) ──────────
+// "No carrier logo, carrier name, plan name, premium, benefit, network,
+//  formulary, ranking or recommendation appears in the SOA selection flow."
+// This is the HARD prohibition, and unlike the marketing site it is entirely a
+// code question — so it is pinned here rather than left to review.
+{
+  const CARRIERS = /\b(?:aetna|humana|unitedhealth(?:care)?|united\s+health|wellcare|centene|emblem(?:health)?|healthfirst|fidelis|anthem|empire\s+blue|connecticare|clover\s+health|cigna|healthspring|hcsc|devoted|elderplan|aarp)\b/i;
+  const SOA_FLOW = [
+    'src/pages/SignSOA.tsx',
+    'src/components/SOAForm.tsx',
+    'api/_lib/cy2027/soa-text.js',
+    'api/_lib/cy2027/soa-instance.js',
+    'api/sign-soa.js',
+    'api/soa-token.js',
+    'api/soa-status.js',
+  ];
+  for (const f of SOA_FLOW) {
+    const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    // Strip comments: the carrier-overlay rationale is discussed in prose in a
+    // couple of these files, and discussing the rule is not breaking it.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const hit = code.match(CARRIERS);
+    ok(`§16: no carrier named in ${f}`, !hit, hit ? hit[0] : '');
+  }
+  // The approved text itself must stay carrier-neutral in both languages.
+  const allText = JSON.stringify(SOA_TEXT) + JSON.stringify(SOA_CATEGORIES);
+  ok('§16: the approved SOA wording names no carrier', !CARRIERS.test(allText));
+  ok('§16: the refusal copy names no carrier either',
+    !CARRIERS.test(readFileSync(new URL('../api/chat.js', import.meta.url), 'utf8').match(/const CARRIER_REFUSAL = \{[\s\S]*?\n\};/)[0]));
+}
+
 if (failures.length) {
   console.error(`CY2027 LAYER: ${passed} passed, ${failures.length} failed\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');
