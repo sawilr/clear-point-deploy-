@@ -49,6 +49,7 @@ import { createSoaInstance, completeSoaInstance } from './_lib/cy2027/soa-instan
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
 import { buildEvidenceRecord } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
+import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
 import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
 
 // The signed SOA keeps the EVIDENCE retention class, not the signing-link TTL.
@@ -377,6 +378,16 @@ export default async function handler(req, res) {
     'lead_source: ' + leadSource,
   ].join('\n');
 
+  // ── CY2027 custom fields (spec §18) ────────────────────────────────────
+  // AUDIT 2026-10-02 (CRM-27) — sendToGhl() below passes NAMES where
+  // GoHighLevel expects opaque field IDs ({ id: 'soa_pdf_hash' }), so those
+  // writes never land on a custom field. Creating the fields is an owner action
+  // in the sub-account, not something this code may do. So the mapping is
+  // explicit and the gap is LOGGED on every signature instead of being silent.
+  var _cf = buildCustomFields(soaInstanceToFields(instance));
+  var _cfWarn = unmappedFieldsWarning(_cf.unmapped);
+  if (_cfWarn) console.warn(_cfWarn);
+
   // ── Send to GHL (createOrUpdate contact + add note) ────────────────────
   var ghlOk = false;
   try {
@@ -407,6 +418,8 @@ export default async function handler(req, res) {
       // in the approved repository. This is the pointer back to it.
       soa_evidence_uri: instance.evidenceReference,
       note: ghlNote,
+      // Only entries with a REAL GoHighLevel id; the rest are logged above.
+      cy2027CustomFields: _cf.fields,
       pdfBase64: pdfBuffer.toString('base64'),
     });
   } catch (e) {
@@ -584,11 +597,18 @@ async function sendToGhl(payload) {
     source: 'website-soa',
     tags: ['soa_signed', payload.lead_source || 'unknown'],
     customFields: [
+      // AUDIT 2026-10-02 (CRM-27) — these five entries pass NAMES where
+      // GoHighLevel expects opaque field IDs, so they have never landed on a
+      // custom field. They are left in place rather than deleted because
+      // removing them would change nothing and hide the history; the real
+      // fields arrive through cy2027CustomFields below, which carries only
+      // entries with a configured ID. See api/_lib/cy2027/crm-fields.js.
       { id: 'soa_signed', field_value: 'true' },
       { id: 'soa_pdf_hash', field_value: payload.soa_pdf_hash },
       { id: 'soa_signed_at', field_value: payload.soa_signed_at },
       { id: 'soa_id', field_value: payload.soa_id },
       { id: 'preferred_language', field_value: payload.preferred_language },
+      ...(Array.isArray(payload.cy2027CustomFields) ? payload.cy2027CustomFields : []),
     ],
   };
 

@@ -46,6 +46,9 @@ import {
 import * as overlayModule from '../api/_lib/cy2027/carrier-overlay.js';
 import * as barrelModule from '../api/_lib/cy2027/index.js';
 import { complianceFilter } from '../api/_lib/compliance-filter.js';
+import {
+  buildCustomFields, soaInstanceToFields, consentsToFields, unmappedFieldsWarning, fieldIdMap,
+} from '../api/_lib/cy2027/crm-fields.js';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -1012,6 +1015,56 @@ const baseInput = {
   for (const s of ['what is a Part D plan?', 'when does my coverage start?', '¿cuál es el teléfono de Medicare?']) {
     ok(`CBF-05: legitimate question is not refused: "${s}"`, !planRe.test(s));
   }
+}
+
+// ── 17. CRM field mapping (spec §18, audit CRM-27) ───────────────────────────
+{
+  const inst = completeSoaInstance(createSoaInstance({ ...baseInput, soaId: 'crm_1' }).instance,
+    { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:h', evidenceReference: 'https://store/x.pdf' });
+  const vals = soaInstanceToFields(inst);
+
+  ok('the instance flattens to spec §18 names', vals.SOA_PLAN_YEAR === 2027 && vals.SOA_STATE === 'NY');
+  ok('the evidence URI is carried as a field', vals.SOA_EVIDENCE_URI === 'https://store/x.pdf');
+  ok('the retention class travels with it', vals.RETENTION_CLASS === 'SOA_EVIDENCE');
+
+  // With NO ids configured, nothing is sent and everything is reported.
+  const none = buildCustomFields(vals, {});
+  ok('nothing is sent when no field ID is configured', none.fields.length === 0);
+  ok('every unwritable field is reported, not silently dropped', none.unmapped.length >= 15, String(none.unmapped.length));
+  ok('the warning names the GHL keys the owner must create',
+    /contact\.soa_plan_year/.test(unmappedFieldsWarning(none.unmapped)));
+  ok('no warning when nothing is unmapped', unmappedFieldsWarning([]) === null);
+
+  // With ids configured, only those are sent — and with a real id, not a name.
+  const some = buildCustomFields(vals, { CY2027_CRM_FIELD_IDS: '{"SOA_PLAN_YEAR":"abc123","SOA_STATE":"def456"}' });
+  ok('a configured field is sent with its real id', some.fields.some((f) => f.id === 'abc123'));
+  ok('a configured field carries the canonical key', some.fields.some((f) => f.key === 'contact.soa_plan_year'));
+  ok('only configured fields are sent', some.fields.length === 2);
+  ok('the rest are still reported', some.unmapped.length === none.unmapped.length - 2);
+  ok('a name is never used as an id', some.fields.every((f) => !/^contact\./.test(f.id) && !/^SOA_/.test(f.id)));
+
+  // Malformed configuration must not break a signature.
+  ok('malformed env yields an empty map', Object.keys(fieldIdMap({ CY2027_CRM_FIELD_IDS: 'not json' })).length === 0);
+  ok('an unknown field name in the env is ignored',
+    Object.keys(fieldIdMap({ CY2027_CRM_FIELD_IDS: '{"MADE_UP":"x"}' })).length === 0);
+
+  // Empty values must never overwrite confirmed data.
+  const withEmpty = buildCustomFields({ SOA_COUNTY: '', SOA_STATE: 'NY' }, { CY2027_CRM_FIELD_IDS: '{"SOA_COUNTY":"c1","SOA_STATE":"s1"}' });
+  ok('an empty value is not written over a confirmed one', withEmpty.fields.length === 1 && withEmpty.fields[0].id === 's1');
+
+  // The four consent objects become queryable values, not prose (CRM-14/16).
+  const cf = consentsToFields({
+    recordingNotice: createConsent({ type: 'RECORDING_NOTICE', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'VOICE', scriptVersion: 'v1', scope: 'recording', at: '2026-10-02T10:00:00Z' }),
+    callbackConsent: createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 'this request', at: '2026-10-02T10:05:00Z' }),
+  });
+  ok('CRM-16: the recording notice has its own status field', cf.RECORDING_NOTICE_STATUS === 'GRANTED');
+  ok('CRM-14: the callback consent timestamp is a field, not prose', cf.CALLBACK_CONSENT_AT === '2026-10-02T10:05:00Z');
+  ok('the callback scope is queryable', cf.CALLBACK_CONSENT_SCOPE === 'this request');
+  ok('an absent consent produces no field', cf.AI_OUTBOUND_CONSENT_STATUS === undefined);
+
+  const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+  ok('sign-soa logs the unwritable fields on every signature', /unmappedFieldsWarning\(_cf\.unmapped\)/.test(SRC));
+  ok('sign-soa forwards only the mapped fields', /cy2027CustomFields: _cf\.fields/.test(SRC));
 }
 
 if (failures.length) {
