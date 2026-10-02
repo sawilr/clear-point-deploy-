@@ -239,6 +239,24 @@ Stated plainly rather than implied:
 - `npm test` — 44/44 suites.
 - `scripts/test-cy2027-2026-10-01.mjs` — 223 assertions covering every gate in both
   directions (blocks what it must block, still permits what must keep working).
+- **Independent red team (2026-10-02)** — 6 attack lenses, every claimed break
+  re-run from scratch by a different agent before it counted. **37 findings
+  reproduced: 9 critical, 22 high, 4 medium, 2 low. All 37 are fixed and pinned
+  by regression assertions.** The suite had missed every one of them because it
+  only exercised the happy path. The worst were:
+  - in-person detection was one exact-string compare, so `in_person`, `In Person`,
+    a missing format or `HOME_VISIT` let a voice-only SOA unlock an in-person
+    appointment — the §33 immediate-fail;
+  - the governing ruleset was an *optional* argument, so omitting it switched off
+    the plan-year, ordering and in-person rules and skipped the kill switch;
+  - `CARRIER_OVERLAYS` was a public export re-exported by the barrel, so the
+    whole carrier firewall was bypassable by importing the data;
+  - `isAffirmative()` ignored the consent *type*, so a recording notice
+    authorized an outbound call;
+  - the quarantine actor check blocked four exact words, so `AI-Agent`,
+    `svc_bot` and `claude` self-approved;
+  - `redactForLog` skipped arrays and matched keys exactly, so `ssn_number` and
+    `people[0].ssn` reached the log in clear.
 - **Mutation-tested**, because a suite does not verify its own author's control:
   removing the in-person→written rule, admitting a prohibited trust signal, and marking
   one carrier overlay `VERIFIED_CURRENT` each make the suite fail. Files restored; the
