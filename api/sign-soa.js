@@ -339,12 +339,40 @@ export default async function handler(req, res) {
     console.error('[sign-soa] GHL post failed', e && e.message);
   }
 
+  // AUDIT 2026-10-01 (EV-12 / WVG-09 / SEC-TOK-03 / CE-06) — this used to return
+  // 200 { ok: true } with ghlDelivered:false tucked inside, and the UI showed
+  // "Thank you — your SOA has been signed… you will also receive a copy".
+  // Spec §21: "Never tell the beneficiary an appointment, update, consent or SOA
+  // was saved until the system returns verified success." Spec §26: "CRM write
+  // failure -> do not claim saved; queue/retry safely and alert."
+  //
+  // The signature IS valid — it is hashed, evidenced and the token is burned —
+  // but it has not reached the system of record, so the honest answer is
+  // "accepted, not yet filed", never "done". 202 keeps the signature (a 500
+  // would invite the beneficiary to sign a second time and create a duplicate
+  // scope) while refusing to claim delivery.
+  if (!ghlOk) {
+    console.error('[sign-soa] CRM delivery failed for soa_id=' + soaId + ' — requires manual filing');
+    return res.status(202).json({
+      ok: false,
+      pending: true,
+      // `error` as well as `reason`: the client's existing branch reads
+      // data.error, and a bare fallback would show "signing failed".
+      error: 'CRM_WRITE_FAILED',
+      reason: 'CRM_WRITE_FAILED',
+      soaId: soaId,
+      signedAt: signedAt,
+      pdfHash: pdfHash,
+      ghlDelivered: false,
+    });
+  }
+
   return res.status(200).json({
     ok: true,
     soaId: soaId,
     signedAt: signedAt,
     pdfHash: pdfHash,
-    ghlDelivered: ghlOk,
+    ghlDelivered: true,
   });
 }
 

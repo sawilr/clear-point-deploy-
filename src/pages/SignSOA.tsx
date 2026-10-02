@@ -206,7 +206,31 @@ export default function SignSOA() {
             </div>
           )}
 
-          {phase === 'error' && (
+          {phase === 'error' && error === 'CRM_WRITE_FAILED' && (
+            // AUDIT 2026-10-01 (EV-12 / WVG-09) — the signature WAS taken: it is
+            // hashed, evidenced and the token is burned. Only the delivery to the
+            // system of record failed. Showing the generic "we could not save your
+            // signature" here would be false and would invite a second signature,
+            // creating a duplicate scope for the same appointment. Say exactly
+            // what happened, and do not offer a retry button.
+            <div className="text-center py-12">
+              <h1 className="font-serif text-2xl mb-3 text-earth-900">
+                {language === 'es' ? 'Su firma quedó registrada' : 'Your signature was recorded'}
+              </h1>
+              <p className="text-earth-600 mb-2 max-w-prose mx-auto leading-relaxed">
+                {language === 'es'
+                  ? 'Recibimos y guardamos su firma, pero todavía no pudimos archivarla en nuestro sistema. No la firme de nuevo.'
+                  : 'We received and stored your signature, but we have not been able to file it in our system yet. Please do not sign again.'}
+              </p>
+              <p className="text-earth-600 mb-4 max-w-prose mx-auto leading-relaxed">
+                {language === 'es'
+                  ? 'Un asesor licenciado lo completará y le confirmará. Si prefiere, llámenos al 1-855-720-8555.'
+                  : 'A licensed advisor will complete it and confirm with you. If you prefer, call us at 1-855-720-8555.'}
+              </p>
+            </div>
+          )}
+
+          {phase === 'error' && error !== 'CRM_WRITE_FAILED' && (
             <div className="text-center py-12">
               <h1 className="font-serif text-2xl mb-3 text-earth-900">{tLabel('error_title', language)}</h1>
               <p className="text-earth-600 mb-4">{tLabel('error_retry', language)}</p>
