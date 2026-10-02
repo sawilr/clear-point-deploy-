@@ -24,23 +24,25 @@ import { getSoaToken, setSoaToken } from './_lib/soa-store.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
 
+// AUDIT 2026-10-01 (CY2027) — the TPMO disclaimer is no longer defined here.
+// This file carried the THIRD copy of the (e)(41) sentence, hardcoded with
+// [X]/[Y], while the site rendered a different, count-less sentence from
+// src/lib/tpmoConfig.ts. A signed PDF disagreeing with the published
+// disclaimer is an audit failure, and unifying the copies was blocker #1
+// against enabling the SOA workflow. api/*.js cannot import from src/, so the
+// canonical module lives in the environment-neutral CY2027 layer and both
+// worlds import it. scripts/check-cy2027-parity.mjs fails the build if a
+// fourth copy appears.
+import { tpmoDisclaimerText, assertDisclaimerSignable, TPMO_DISCLAIMER_VERSION } from './_lib/cy2027/tpmo.js';
+
 const AGENT_NAME = 'Sawil Reyes';
 const AGENT_NPN = '17261494';
-const TPMO_VERSION = '2024-10';
+const TPMO_VERSION = TPMO_DISCLAIMER_VERSION;
 
 // PHASE 7 — SOA gate (mirror of src/lib/soaContent.ts SOA_ENABLED).
 // Until the owner confirms FMO carrier/product counts, refuse to sign so
 // that no PDF with [X]/[Y] placeholders can be generated.
 const SOA_ENABLED = false;
-
-// Until SOA_ENABLED flips to true, these are unused. When configured,
-// replace both with real integers (e.g. '5', '47') in the same commit.
-const TPMO_CARRIER_COUNT = '[X]';
-const TPMO_PRODUCT_COUNT = '[Y]';
-
-// CMS TPMO disclaimer text — VERBATIM. Do not modify wording.
-const TPMO_EN = 'We do not offer every plan available in your area. Currently we represent ' + TPMO_CARRIER_COUNT + ' organizations which offer ' + TPMO_PRODUCT_COUNT + ' products in your area. Please contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Program (SHIP) to get information on all of your options.';
-const TPMO_ES = 'No ofrecemos todos los planes disponibles en su área. Actualmente representamos ' + TPMO_CARRIER_COUNT + ' organizaciones que ofrecen ' + TPMO_PRODUCT_COUNT + ' productos en su área. Para obtener información sobre todas sus opciones, comuníquese con Medicare.gov, 1-800-MEDICARE o su Programa Estatal de Asesoramiento sobre Seguros de Salud (SHIP) local.';
 
 const PRODUCT_LABEL = {
   en: { MA_only: 'Medicare Advantage (Part C) — without prescription drug coverage', MAPD: 'Medicare Advantage with Prescription Drug coverage (MAPD)', PDP: 'Standalone Part D Prescription Drug Plan', DVH_HI: 'Other (Dental, Vision, Hearing, Hospital Indemnity, etc.)' },
@@ -224,7 +226,11 @@ function buildSoaPdf(opts) {
 
       // TPMO disclaimer
       doc.font('Helvetica-Bold').fontSize(10).text(L === 'es' ? 'AVISO TPMO (Requerido por CMS)' : 'TPMO DISCLAIMER (CMS-required)');
-      doc.font('Helvetica').fontSize(9).text(L === 'es' ? TPMO_ES : TPMO_EN, { align: 'justify' });
+      // Canonical, contract-year-aware text. assertDisclaimerSignable throws
+      // rather than letting a bracketed placeholder reach a signature.
+      var tpmoText = tpmoDisclaimerText(L === 'es' ? 'es' : 'en');
+      assertDisclaimerSignable(tpmoText);
+      doc.font('Helvetica').fontSize(9).text(tpmoText, { align: 'justify' });
       doc.moveDown(0.6);
 
       // Beneficiary info

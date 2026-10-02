@@ -54,6 +54,9 @@ const SUITES = [
   'test-round8b-leads-2026-09-28.mjs',
   'test-round8b-safety-2026-09-28.mjs',
   'test-round8b-bots-2026-09-28.mjs',
+  // CY2027 compliance layer (SOA instance model, state engine, consent objects,
+  // trust/quarantine, retention, carrier overlays, canonical TPMO, evidence).
+  'test-cy2027-2026-10-01.mjs',
 ];
 
 const only = process.argv.slice(2);

@@ -1,0 +1,166 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// CY2027 — EVIDENCE AND AUDIT (spec §19, §30). SERVER ONLY (uses node:crypto).
+//
+// "Every SOA stores the exact customer-facing text/version used, not merely the
+//  final checkbox values."
+// "Audit every SOA view/sign/send/resend/revoke; log actor, timestamp, action,
+//  result, source and correlation ID."
+// "Redact sensitive values from logs, monitoring, error traces and analytics."
+//
+// The integrity hash covers the rendered text AND the selections AND the
+// identifiers, so a later edit to any of them is detectable. It deliberately
+// does NOT cover volatile fields (evidenceReference, storage URIs) that are
+// assigned after hashing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import crypto from 'node:crypto';
+
+import { SOA_TEXT, SOA_SCRIPT_VERSION, categoryText, soaTitle, SOA_AGENT_LINE } from './soa-text.js';
+import { RECORD_CLASS } from './retention.js';
+
+/** Stable key ordering so the same logical object always hashes the same. */
+function canonical(value) {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(canonical);
+  return Object.keys(value)
+    .sort()
+    .reduce((acc, k) => {
+      if (value[k] !== undefined) acc[k] = canonical(value[k]);
+      return acc;
+    }, {});
+}
+
+/** sha256 hex of the canonical JSON form. */
+export function integrityHash(payload) {
+  return 'sha256:' + crypto.createHash('sha256').update(JSON.stringify(canonical(payload)), 'utf8').digest('hex');
+}
+
+/**
+ * Snapshot of EXACTLY what the beneficiary was shown, in their language.
+ * This is what makes the evidence self-explaining years later: a reviewer does
+ * not need this repository at that version to know what the person agreed to.
+ */
+export function renderTextSnapshot(instance, stateName) {
+  const lang = instance.language === 'es' ? 'es' : 'en';
+  const t = SOA_TEXT[lang];
+  const shown = (codes) =>
+    codes.map((code) => {
+      const c = categoryText(code, lang);
+      return { code, label: c.label, description: c.description };
+    });
+  return {
+    language: lang,
+    scriptVersion: instance.scriptVersion || SOA_SCRIPT_VERSION,
+    org: t.org,
+    title: soaTitle(lang, stateName),
+    subtitle: t.subtitle,
+    intro: t.intro,
+    categoriesHeading: t.categoriesHeading,
+    categoriesHelp: t.categoriesHelp,
+    categoriesAuthorized: shown(instance.authorizedCategories || []),
+    categoriesDeclined: shown(instance.declinedCategories || []),
+    nonAuthorizingSelections: shown(instance.nonAuthorizingSelections || []),
+    important: t.important,
+    authorizationStatement: t.authorizationStatement,
+    security: t.security,
+    agentLine: SOA_AGENT_LINE,
+  };
+}
+
+/**
+ * Build the complete, immutable evidence record for a signed SOA.
+ * Returns the record plus its hash; the caller persists both and only then
+ * calls completeSoaInstance().
+ */
+export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null }) {
+  if (!instance) throw new Error('evidence: no instance');
+  if (!signature) throw new Error('evidence: signature/affirmation is required');
+
+  const textSnapshot = renderTextSnapshot(instance, stateName);
+  const core = {
+    soaId: instance.soaId,
+    appointmentId: instance.appointmentId,
+    appointmentAt: instance.appointmentAt,
+    appointmentFormat: instance.appointmentFormat,
+    planYear: instance.planYear,
+    state: instance.state,
+    zip: instance.zip,
+    county: instance.county,
+    language: instance.language,
+    method: instance.method,
+    source: instance.source,
+    beneficiaryName: instance.beneficiaryName,
+    representativeRelationship: instance.representativeRelationship,
+    authorizedCategories: instance.authorizedCategories,
+    declinedCategories: instance.declinedCategories,
+    nonAuthorizingSelections: instance.nonAuthorizingSelections,
+    stateRulesetVersion: instance.stateRulesetVersion,
+    soaFormVersion: instance.soaFormVersion,
+    scriptVersion: instance.scriptVersion,
+    supersedesId: instance.supersedesId,
+    signature,
+    signedAt,
+    textSnapshot,
+  };
+
+  const hash = integrityHash(core);
+  return {
+    record: {
+      ...core,
+      recordClass: RECORD_CLASS.SOA_EVIDENCE,
+      createdAt: signedAt,
+      holds: [],
+      integrityHash: hash,
+      // Context kept for the audit trail but excluded from the hash so that a
+      // proxy/IP change can never look like tampering with the agreement.
+      context: { sourceIp, userAgent: userAgent ? String(userAgent).slice(0, 180) : null, correlationId },
+    },
+    integrityHash: hash,
+  };
+}
+
+/** Recompute and compare. Use before relying on a stored evidence record. */
+export function verifyEvidence(record) {
+  if (!record || !record.integrityHash) return { ok: false, reason: 'NO_HASH' };
+  const { recordClass, createdAt, holds, integrityHash: stored, context, releasedHolds, evidenceReference, ...core } = record;
+  const recomputed = integrityHash(core);
+  return recomputed === stored ? { ok: true } : { ok: false, reason: 'HASH_MISMATCH', stored, recomputed };
+}
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+
+export const AUDIT_ACTIONS = Object.freeze([
+  'SOA_LINK_ISSUED', 'SOA_LINK_RESENT', 'SOA_VIEWED', 'SOA_SIGNED', 'SOA_SUPERSEDED',
+  'SOA_REVOKED', 'SOA_EVIDENCE_WRITTEN', 'SOA_EVIDENCE_WRITE_FAILED',
+  'MARKETING_GATE_ALLOWED', 'MARKETING_GATE_BLOCKED',
+  'SECURITY_QUARANTINE', 'SECURITY_REVIEW_RESOLVED',
+  'CONSENT_RECORDED', 'CONSENT_REVOKED',
+]);
+
+/** Values that must never reach a log line. */
+const REDACT_KEYS = /^(ssn|mbi|medicare(number|_number)?|bank|account|card|cvv|dob|dateofbirth|date_of_birth|password|token)$/i;
+
+/** Shallow redaction for anything handed to the audit log. */
+export function redactForLog(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (REDACT_KEYS.test(k)) { out[k] = '[redacted]'; continue; }
+    if (v && typeof v === 'object' && !Array.isArray(v)) { out[k] = redactForLog(v); continue; }
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Build one audit event. Every field the spec names is required; a missing one
+ * throws rather than producing an event that cannot answer "who did what".
+ */
+export function auditEvent({ action, actor, result, source, correlationId, soaId = null, details = {}, at = new Date().toISOString() }) {
+  if (!AUDIT_ACTIONS.includes(action)) throw new Error(`evidence: unknown audit action "${action}"`);
+  if (!actor) throw new Error('evidence: audit event requires an actor');
+  if (!result) throw new Error('evidence: audit event requires a result');
+  if (!source) throw new Error('evidence: audit event requires a source');
+  if (!correlationId) throw new Error('evidence: audit event requires a correlationId');
+  return { at, action, actor, result, source, correlationId, soaId, details: redactForLog(details) };
+}

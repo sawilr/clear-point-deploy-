@@ -13,8 +13,13 @@
 //
 // Compliance constraint: DO NOT modify TPMO_DISCLAIMER_* strings without
 // re-running them past the CMS October 2024 verbatim text. Only edit the
-// [X] and [Y] placeholders by changing the carrier/product COUNTS below.
+// AUDIT 2026-10-01 (CY2027): the TPMO wording and the carrier/product counts
+// are no longer edited here. They live in api/_lib/cy2027/tpmo.js, reached
+// through src/lib/tpmoConfig.ts, and are enforced by
+// scripts/check-cy2027-parity.mjs.
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { tpmoDisclaimerText } from './tpmoConfig';
 
 /** Agent identity — Sawil Reyes, ClearPoint Senior Advisors. */
 export const AGENT = {
@@ -25,14 +30,13 @@ export const AGENT = {
   agencyEmail: 'info@clearpointsenioradvisors.com',
 } as const;
 
-/** Tracks WHICH version of the TPMO disclaimer the user signed (audit). */
-export const TPMO_DISCLAIMER_VERSION = '2024-10';
-
-/** Owner-confirmed counts. Until these are set to real integers, SOA is gated
- *  off below (SOA_ENABLED). A signed CMS disclaimer with [X]/[Y] in it is an
- *  audit failure — see SOA_ENABLED. */
-export const TPMO_CARRIER_COUNT_PLACEHOLDER = '[X]';
-export const TPMO_PRODUCT_COUNT_PLACEHOLDER = '[Y]';
+// AUDIT 2026-10-01 (CY2027) — the TPMO disclaimer and its counts configuration
+// moved to the canonical api/_lib/cy2027/tpmo.js. This file used to carry a
+// SECOND copy of the (e)(41) sentence, hardcoded with [X]/[Y] placeholders,
+// which disagreed with the count-less sentence src/lib/tpmoConfig.ts actually
+// rendered on the site. That divergence is blocker #1 below. It is now gone:
+// the placeholders no longer exist anywhere, and tpmoDisclaimer() delegates.
+export { TPMO_DISCLAIMER_VERSION } from './tpmoConfig';
 
 /** PHASE 7 — SOA workflow gate. Mirrored by api/soa-token.js, api/soa-status.js and
  *  api/sign-soa.js, and — since CP-01 — consulted by the CLIENT too, so the UI can
@@ -124,16 +128,6 @@ export function assertSoaEnablementSafe(): void {
 }
 assertSoaEnablementSafe();
 
-/** CMS October 2024 TPMO disclaimer — verbatim, EN. DO NOT EDIT WORDING. */
-export const TPMO_DISCLAIMER_EN = (
-  `We do not offer every plan available in your area. Currently we represent ${TPMO_CARRIER_COUNT_PLACEHOLDER} organizations which offer ${TPMO_PRODUCT_COUNT_PLACEHOLDER} products in your area. Please contact Medicare.gov, 1-800-MEDICARE, or your local State Health Insurance Program (SHIP) to get information on all of your options.`
-);
-
-/** CMS October 2024 TPMO disclaimer — verbatim, ES. Official CMS translation. */
-export const TPMO_DISCLAIMER_ES = (
-  `No ofrecemos todos los planes disponibles en su área. Actualmente representamos ${TPMO_CARRIER_COUNT_PLACEHOLDER} organizaciones que ofrecen ${TPMO_PRODUCT_COUNT_PLACEHOLDER} productos en su área. Para obtener información sobre todas sus opciones, comuníquese con Medicare.gov, 1-800-MEDICARE o su Programa Estatal de Asesoramiento sobre Seguros de Salud (SHIP) local.`
-);
-
 /** Product scope checkbox options — CMS-required taxonomy. */
 export type SOAProduct = 'MA_only' | 'MAPD' | 'PDP' | 'DVH_HI';
 
@@ -189,9 +183,18 @@ export const LABELS = {
   validation_acknowledgement: { en: 'You must agree to both acknowledgements to sign.',           es: 'Debe aceptar ambos reconocimientos para firmar.' },
 } as const;
 
-/** Returns the TPMO disclaimer (EN/ES) with placeholders intact. */
+/**
+ * The TPMO disclaimer, delegated to the canonical source.
+ *
+ * AUDIT 2026-10-01 (CY2027) — this used to return a local literal carrying
+ * [X]/[Y] placeholders, so the SOA form could show a different sentence from
+ * the rest of the site and a signed PDF could contain brackets. It now returns
+ * exactly what DisclaimerBlock, ChatBot and CustomerServiceBot render: the
+ * contract-year-aware sentence, count-less until the owner supplies verified
+ * organization/product counts.
+ */
 export function tpmoDisclaimer(lang: 'en' | 'es'): string {
-  return lang === 'es' ? TPMO_DISCLAIMER_ES : TPMO_DISCLAIMER_EN;
+  return tpmoDisclaimerText(lang);
 }
 
 /** Returns a localized label. */
