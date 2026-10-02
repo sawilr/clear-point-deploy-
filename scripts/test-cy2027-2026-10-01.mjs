@@ -37,6 +37,9 @@ import { RECORD_CLASS, mayPurge, applyHold, releaseHold, callRetentionRequiremen
 import { canDiscussCarrier, overlayInventory, assertPrivateContext, OVERLAY_STATUS } from '../api/_lib/cy2027/carrier-overlay.js';
 import { tpmoDisclaimerText, activeContractYearVariant, hasVerifiedTpmoCounts, assertDisclaimerSignable, TPMO_DISCLAIMER_CONFIG } from '../api/_lib/cy2027/tpmo.js';
 import { integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, redactForLog, renderTextSnapshot } from '../api/_lib/cy2027/evidence.js';
+import {
+  issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
+} from '../api/_lib/cy2027/secure-link.js';
 import { createHash } from 'node:crypto';
 
 let passed = 0;
@@ -463,6 +466,86 @@ const baseInput = {
   throws('an audit event without a correlation id is refused', () => auditEvent({ action: 'SOA_SIGNED', actor: 'a', result: 'OK', source: 'WEB' }), /correlationId/);
   throws('an unknown audit action is refused', () => auditEvent({ action: 'WHATEVER', actor: 'a', result: 'OK', source: 'WEB', correlationId: 'c' }), /unknown audit action/);
   ok('nested sensitive values are redacted too', redactForLog({ a: { mbi: '1EG4TE5MK73' } }).a.mbi === '[redacted]');
+}
+
+// ── 11. Secure SOA link (spec §9, §12, §26, §30) ─────────────────────────────
+{
+  const mkLink = (over = {}) => issueLink({
+    soaId: 'soa_1', appointmentId: 'appt_1', beneficiaryRef: 'contact_abc',
+    channel: 'SMS_LINK', secondFactorKind: 'PHONE_LAST4', secondFactorValue: '(631) 555-0147',
+    language: 'es', ...over,
+  });
+
+  const { token, storeKey, record } = mkLink();
+  ok('token is 256 bits of entropy, not a UUID', Buffer.from(token, 'base64url').length === 32);
+  ok('token is not UUID-shaped', !/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(token));
+  ok('two links never collide', mkLink().token !== token);
+  ok('the store is keyed by the hash, not the token', storeKey === storeKeyFor(token) && !storeKey.includes(token));
+  ok('a store dump yields no usable token', !JSON.stringify(record).includes(token));
+
+  // The record must not hold the VALUES the link could then leak. Field NAMES
+  // like "secondFactorKind: PHONE_LAST4" are fine — they say which question to
+  // ask, not the answer.
+  const asText = JSON.stringify(record);
+  ok('the link record holds no phone digits', !/\d{4}\b(?!.*T\d)/.test(asText.replace(/"(issuedAt|expiresAt)":"[^"]+"/g, '')), asText);
+  ok('the link record holds no last four of the phone', !asText.includes('0147'));
+  ok('the link record holds no email', !asText.includes('@'));
+  ok('the link record holds no beneficiary name', !/fullName|beneficiaryName/.test(asText));
+  ok('the second factor is stored hashed', record.secondFactorHash.length === 64);
+
+  throws('a link without an appointment is refused (no universal SOA link)',
+    () => mkLink({ appointmentId: undefined }), /appointmentId is required/);
+  throws('an unknown channel is refused', () => mkLink({ channel: 'CARRIER_PIGEON' }), /unknown channel/);
+  throws('an empty second factor is refused', () => mkLink({ secondFactorValue: '   ' }), /cannot be empty/);
+
+  ok('a fresh link checks out', checkLink(record).ok === true);
+  ok('a missing link is not found', checkLink(null).reason === 'LINK_NOT_FOUND');
+  ok('an expired link fails closed',
+    checkLink({ ...record, expiresAt: '2020-01-01T00:00:00Z' }).reason === 'LINK_EXPIRED');
+  ok('a revoked link fails closed', checkLink(revokeLink(record)).reason === 'LINK_REVOKED');
+  ok('view-limit abuse fails closed', checkLink({ ...record, views: 999 }).reason === 'LINK_VIEW_LIMIT');
+
+  // Possession alone must reveal nothing private — the forwarded-link case.
+  const anon = linkDisclosure(record, { factorVerified: false });
+  ok('possession reveals only which factor to ask for', anon.factorRequired === 'PHONE_LAST4');
+  ok('possession reveals no beneficiary reference', !('beneficiaryRef' in anon));
+  ok('possession reveals no SOA id', !('soaId' in anon));
+  ok('possession reveals no appointment id', !('appointmentId' in anon));
+  ok('an invalid link discloses only that it is not usable',
+    Object.keys(linkDisclosure({ ...record, consumedAt: '2026-01-01T00:00:00Z' })).join(',') === 'exists,reason');
+
+  // Second factor.
+  const wrong = verifySecondFactor(record, '9999');
+  ok('a wrong factor is rejected', wrong.ok === false && wrong.reason === 'SECOND_FACTOR_MISMATCH');
+  ok('a wrong factor counts an attempt', wrong.record.failedFactorAttempts === 1);
+  ok('a wrong factor does not say what was wrong', !('secondFactorKind' in wrong) && !('beneficiaryRef' in wrong));
+  ok('formatting of the factor does not matter', verifySecondFactor(record, '0147').ok === true);
+  ok('the full phone also normalizes to the last four', verifySecondFactor(record, '631-555-0147').ok === true);
+
+  let locked = record;
+  for (let i = 0; i < 5; i++) locked = verifySecondFactor(locked, '0000').record;
+  const lockedOut = verifySecondFactor(locked, '0147');
+  ok('brute force locks out even with the correct factor', lockedOut.reason === 'SECOND_FACTOR_LOCKED');
+  ok('lockout raises the abuse signal the trust engine understands', lockedOut.signal === 'REPEATED_FAILED_OTP');
+
+  const verified = verifySecondFactor(record, '0147').record;
+  const full = linkDisclosure(verified, { factorVerified: true });
+  ok('after verification the prefill reference is released', full.beneficiaryRef === 'contact_abc');
+  ok('after verification the SOA and appointment are released', full.soaId === 'soa_1' && full.appointmentId === 'appt_1');
+
+  // Replay protection.
+  const used = consumeLink(record);
+  ok('a link can be consumed once', used.ok === true && !!used.record.consumedAt);
+  ok('a second consumption is refused', consumeLink(used.record).reason === 'LINK_ALREADY_USED');
+  ok('a consumed link no longer checks out', checkLink(used.record).reason === 'LINK_ALREADY_USED');
+
+  // Resending a copy must not mint a new SOA.
+  ok('re-issuing for a signed SOA is refused',
+    mayReissue(record, 'COMPLETED').reason === 'SOA_ALREADY_SIGNED_RESEND_EVIDENCE_INSTEAD');
+  ok('re-issuing before signature is fine', mayReissue(record, 'PENDING_SIGNATURE').allowed === true);
+  ok('re-issuing a revoked link is refused', mayReissue(revokeLink(record), 'PENDING_SIGNATURE').reason === 'LINK_REVOKED');
+
+  ok('views are counted for abuse detection', recordView(record).views === 1);
 }
 
 if (failures.length) {
