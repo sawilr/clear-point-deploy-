@@ -91,14 +91,37 @@ export const SOA_ENABLED = false;
 export const SOA_PRECONDITIONS = {
   /** Real FMO-confirmed integers in ALL THREE sources (here, tpmoConfig, sign-soa). */
   tpmoCountsVerifiedEverywhere: false,
+  // CODE PATH CLOSED 2026-10-01, CONFIGURATION STILL REQUIRED. api/sign-soa.js
+  // now writes the signed PDF and its evidence record to the durable store
+  // (api/_lib/cy2027/evidence-store.js) BEFORE the SOA instance is marked
+  // COMPLETED, and returns 503 SOA_EVIDENCE_NOT_STORED rather than completing
+  // if the write fails — so the marketing gate stays locked (spec §26).
+  // It stays FALSE because the store has no backend configured: set
+  // CY2027_EVIDENCE_STORE_URL and CY2027_EVIDENCE_STORE_TOKEN, verify a real
+  // round trip with getEvidence(), then flip this. A deliberately generic
+  // authenticated-PUT adapter is used rather than a provider SDK written from
+  // memory; an unverified storage call fails at the worst moment, just after a
+  // beneficiary has signed.
   /** Signed PDF bytes persisted to durable storage with a retrievable URI. */
   signedPdfPersisted: false,
+  // CLOSED 2026-10-01. The signed instance is written to 'soa-signed:<soaId>'
+  // with the SOA_EVIDENCE retention class (six years), not back through the
+  // signing link's TTL. Previously the evidence vanished a day after signing.
   /** Signed SOA record has its own retention, NOT the 24h signing-token TTL. */
-  signedRecordDurableRetention: false,
+  signedRecordDurableRetention: true,
+  // CLOSED 2026-10-01. appointmentId is required to construct an SOA instance
+  // at all, and appointmentAt + appointmentFormat are captured by the form and
+  // enforced server-side; marketingGate() refuses a mismatch and refuses an
+  // SOA recorded after the appointment began.
   /** appointmentAt + appointmentChannel captured and linked to the booking. */
-  appointmentLinkageCaptured: false,
+  appointmentLinkageCaptured: true,
+  // CLOSED 2026-10-01. api/soa-status.js no longer returns personal data on a
+  // bare token: GET says only which factor is needed, and the prefill requires
+  // a POST whose factor matches a hash stored on a link record that holds no
+  // personal data at all. api/sign-soa.js additionally refuses to sign unless
+  // that factor was verified on this link.
   /** soa-status requires a second factor (not a bare UUID returning PII). */
-  statusEndpointSecondFactor: false,
+  statusEndpointSecondFactor: true,
   // AUDIT 2026-10-01 (CY2027-SRV-01) — found by the Phase 0 audit, about the
   // CY2027 work itself. The compliance layer (api/_lib/cy2027/) is wired into
   // the CLIENT: SOAForm.tsx resolves the state ruleset, requires an appointment

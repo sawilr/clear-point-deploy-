@@ -16,7 +16,8 @@
 import crypto from 'node:crypto';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
-import { setSoaToken, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
+import { SOA_TOKEN_TTL_SEC, setRecord, leadKey } from './_lib/soa-store.js';
+import { issueLink } from './_lib/cy2027/secure-link.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
 
@@ -65,11 +66,39 @@ export default async function handler(req, res) {
   if (!fullName || fullName.length < 2) return res.status(400).json({ error: 'fullName required' });
   if (!/^(\+1)?\d{10}$/.test(phone)) return res.status(400).json({ error: 'valid phone required' });
 
-  // ── Issue token (UUID v4) ──────────────────────────────────────────────
-  var token = crypto.randomUUID();
+  // ── Issue a CY2027 secure link ─────────────────────────────────────────
+  // AUDIT 2026-10-01 (SEC-TOK-01/02) — this used to mint a crypto.randomUUID()
+  // and store the lead's name, phone, email and ZIP under 'soa-token:<uuid>',
+  // which api/soa-status.js then handed to anyone presenting that UUID. The
+  // link was the only handle on the data, so possession of a forwarded URL was
+  // possession of the record.
+  //
+  // Now the two are separated: an opaque lead record holds the personal data,
+  // and the link record — the thing the URL addresses — holds no personal data
+  // at all, only a pointer and a hashed second factor. See
+  // api/_lib/cy2027/secure-link.js for why the store is keyed by sha256(token).
+  var beneficiaryRef = crypto.randomUUID();
   var issuedAt = new Date().toISOString();
-  var record = {
-    token: token,
+
+  var link;
+  try {
+    link = issueLink({
+      soaId: 'soa_' + crypto.randomUUID(),
+      appointmentId: 'appt_' + crypto.randomUUID(),
+      beneficiaryRef: beneficiaryRef,
+      channel: 'WEB',
+      secondFactorKind: 'PHONE_LAST4',
+      secondFactorValue: phone,
+      language: language,
+      ttlSec: SOA_TOKEN_TTL_SEC,
+    });
+  } catch (e) {
+    console.error('[soa-token] link issue failed:', e && e.message);
+    return res.status(400).json({ error: 'Could not issue a secure link' });
+  }
+
+  var leadRecord = {
+    beneficiaryRef: beneficiaryRef,
     issuedAt: issuedAt,
     fullName: fullName,
     phone: phone,
@@ -78,19 +107,23 @@ export default async function handler(req, res) {
     language: language,
     leadSource: leadSource,
     issuerIp: ip,
-    consumed: false,
   };
 
-  try {
-    await setSoaToken(token, record);
-  } catch (e) {
-    console.error('[soa-token] storage failed:', e && e.message);
-    return res.status(500).json({ error: 'Token storage failed' });
+  // Both writes must be durable. A link whose lead record lives only in one
+  // lambda's memory breaks on the next request, and a beneficiary who clicks a
+  // dead link is a beneficiary who signs nothing.
+  var w1 = await setRecord(leadKey(beneficiaryRef), leadRecord, SOA_TOKEN_TTL_SEC);
+  var w2 = await setRecord(link.storeKey, link.record, SOA_TOKEN_TTL_SEC);
+  if (!w1.ok || !w2.ok) {
+    console.error('[soa-token] storage failed:', w1.reason || w2.reason);
+    return res.status(503).json({ error: 'Token storage failed' });
   }
 
   return res.status(200).json({
-    token: token,
+    token: link.token,
     expiresIn: SOA_TOKEN_TTL_SEC,
-    soaUrl: '/soa/' + token,
+    soaUrl: '/soa/' + link.token,
+    // The UI must know which question to ask before it can show anything.
+    factorRequired: link.record.secondFactorKind,
   });
 }

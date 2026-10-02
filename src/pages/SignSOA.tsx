@@ -31,7 +31,11 @@ interface LeadHydrate {
 // CP-01 (2026-08-13) — 'unavailable' added so a server-side 503 (SOA workflow off) is
 // distinguishable from a transient network 'error'. They need opposite affordances:
 // one is worth retrying, the other never is.
-type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'ready' | 'submitting' | 'success' | 'error' | 'unavailable';
+// AUDIT 2026-10-01 (SEC-TOK-01/02) — 'challenge' is new. /api/soa-status no
+// longer hands the beneficiary's details to whoever holds the link: a GET only
+// says WHICH factor is needed, and the prefill arrives from a POST once the
+// factor matches. So the page now has a step between "link is live" and "form".
+type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'challenge' | 'ready' | 'submitting' | 'success' | 'error' | 'unavailable';
 
 export default function SignSOA() {
   const params = useParams<{ token: string }>();
@@ -43,6 +47,37 @@ export default function SignSOA() {
   // CP-01 (2026-08-13) — bumping this re-runs the hydration effect so "Try again"
   // actually re-fetches instead of switching to a phase that cannot render.
   const [reloadKey, setReloadKey] = useState(0);
+  const [factorRequired, setFactorRequired] = useState<string>('PHONE_LAST4');
+  const [factorValue, setFactorValue] = useState('');
+  const [factorError, setFactorError] = useState('');
+  const [factorBusy, setFactorBusy] = useState(false);
+
+  // ── Second factor: exchange the link + factor for the prefill ───────────
+  const submitFactor = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setFactorError('');
+    setFactorBusy(true);
+    try {
+      const r = await fetch('/api/soa-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
+        body: JSON.stringify({ token, factor: factorValue.trim() }),
+      });
+      const data = await r.json();
+      if (r.status === 429) { setFactorError('too_many'); return; }
+      if (!r.ok || !data.verified) {
+        setFactorError(data.reason === 'SECOND_FACTOR_LOCKED' ? 'locked' : 'mismatch');
+        return;
+      }
+      setLead(data.lead);
+      setPhase('ready');
+    } catch {
+      setFactorError('network');
+    } finally {
+      setFactorBusy(false);
+    }
+  };
 
   // ── Fetch token status on mount ────────────────────────────────────────
   useEffect(() => {
@@ -68,10 +103,15 @@ export default function SignSOA() {
         if (r.status === 503) { setPhase('unavailable'); return; }
         if (!r.ok) { setPhase('error'); setError('status_failed'); return; }
         const data = await r.json();
-        if (!data.exists) { setPhase('notFound'); return; }
-        if (data.consumed) { setPhase('alreadyConsumed'); return; }
-        setLead(data.lead);
-        setPhase('ready');
+        if (!data.exists) {
+          // LINK_ALREADY_USED is a different story from "never existed": the
+          // person already signed, and telling them "not found" would invite a
+          // second signature on the same appointment.
+          setPhase(data.reason === 'LINK_ALREADY_USED' ? 'alreadyConsumed' : 'notFound');
+          return;
+        }
+        setFactorRequired(data.factorRequired || 'PHONE_LAST4');
+        setPhase('challenge');
       } catch (e) {
         clearTimeout(timer);
         if (!cancelled) {
@@ -150,6 +190,57 @@ export default function SignSOA() {
                   : 'We have received your signature. A ClearPoint advisor will contact you soon.'}
               </p>
             </div>
+          )}
+
+          {phase === 'challenge' && (
+            <form onSubmit={submitFactor} className="py-10 max-w-md mx-auto">
+              <h1 className="font-serif text-2xl mb-3 text-earth-900">
+                {language === 'es' ? 'Confirmemos que es usted' : "Let's confirm it's you"}
+              </h1>
+              <p className="text-earth-600 mb-6 leading-relaxed">
+                {factorRequired === 'ZIP'
+                  ? (language === 'es' ? 'Escriba su código postal.' : 'Enter your ZIP code.')
+                  : (language === 'es'
+                    ? 'Escriba los últimos cuatro dígitos del teléfono donde recibió este enlace.'
+                    : 'Enter the last four digits of the phone number where you received this link.')}
+              </p>
+              <label className="block">
+                <span className="sr-only">
+                  {factorRequired === 'ZIP'
+                    ? (language === 'es' ? 'Código postal' : 'ZIP code')
+                    : (language === 'es' ? 'Últimos cuatro dígitos' : 'Last four digits')}
+                </span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={factorValue}
+                  onChange={(e) => { setFactorValue(e.target.value.replace(/\D/g, '').slice(0, 5)); setFactorError(''); }}
+                  aria-invalid={!!factorError}
+                  className="w-full px-4 py-4 text-2xl tracking-[0.3em] text-center rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
+                />
+              </label>
+              {factorError && (
+                <p role="alert" className="text-sm text-red-600 mt-3 leading-relaxed">
+                  {factorError === 'locked'
+                    ? (language === 'es'
+                      ? 'Demasiados intentos. Por su seguridad este enlace quedó bloqueado — llámenos al 1-855-720-8555.'
+                      : 'Too many attempts. For your protection this link is now locked — please call us at 1-855-720-8555.')
+                    : factorError === 'too_many'
+                      ? (language === 'es' ? 'Demasiados intentos seguidos. Espere unos minutos.' : 'Too many attempts in a row. Please wait a few minutes.')
+                      : factorError === 'network'
+                        ? (language === 'es' ? 'No pudimos conectar. Inténtelo de nuevo.' : 'We could not connect. Please try again.')
+                        : (language === 'es' ? 'Esos números no coinciden. Inténtelo de nuevo.' : "That doesn't match. Please try again.")}
+                </p>
+              )}
+              <button
+                type="submit"
+                disabled={factorBusy || factorValue.length < 4}
+                className="mt-6 w-full px-6 py-4 bg-gold-500 text-white rounded-full font-bold hover:bg-gold-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors min-h-[52px]"
+              >
+                {factorBusy ? (language === 'es' ? 'Verificando…' : 'Checking…') : (language === 'es' ? 'Continuar' : 'Continue')}
+              </button>
+            </form>
           )}
 
           {phase === 'ready' && lead && (

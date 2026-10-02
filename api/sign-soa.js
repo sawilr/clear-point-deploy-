@@ -20,7 +20,8 @@ import crypto from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
-import { getSoaToken, setSoaToken } from './_lib/soa-store.js';
+import { getRecord, setRecord, leadKey, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
+import { storeKeyFor, checkLink, consumeLink } from './_lib/cy2027/secure-link.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
 
@@ -47,6 +48,14 @@ import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
 import { createSoaInstance, completeSoaInstance } from './_lib/cy2027/soa-instance.js';
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
 import { buildEvidenceRecord } from './_lib/cy2027/evidence.js';
+import { putEvidence } from './_lib/cy2027/evidence-store.js';
+import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
+
+// The signed SOA keeps the EVIDENCE retention class, not the signing-link TTL.
+// Six years in seconds; the authoritative copy lives in the evidence store and
+// this is the operational index entry beside it.
+const SIGNED_RECORD_CLASS = RECORD_CLASS.SOA_EVIDENCE;
+const SIGNED_RECORD_TTL_SEC = RETENTION_YEARS[RECORD_CLASS.SOA_EVIDENCE] * 365 * 24 * 60 * 60;
 
 const AGENT_NAME = 'Sawil Reyes';
 const AGENT_NPN = '17261494';
@@ -92,13 +101,27 @@ export default async function handler(req, res) {
   if (body === null) return;
 
   // ── Verify token ───────────────────────────────────────────────────────
+  // AUDIT 2026-10-01 (SEC-TOK-01/02) — the CY2027 secure link replaces the bare
+  // UUID. The link record holds no personal data, so the lead is loaded through
+  // the opaque reference inside it, and only after the second factor has been
+  // verified on this link. Signing is therefore not reachable by possession of
+  // a forwarded URL alone.
   var token = typeof body.token === 'string' ? body.token : '';
-  if (!/^[a-f0-9-]{36}$/i.test(token)) return res.status(400).json({ error: 'Invalid token' });
+  if (!/^[A-Za-z0-9_-]{40,64}$/.test(token)) return res.status(400).json({ error: 'Invalid token' });
 
-  var record;
-  try { record = await getSoaToken(token); } catch (e) { record = null; }
-  if (!record) return res.status(404).json({ error: 'Token not found or expired' });
-  if (record.consumed) return res.status(409).json({ error: 'SOA already signed for this token' });
+  var linkKey = storeKeyFor(token);
+  var link = await getRecord(linkKey);
+  var linkState = checkLink(link);
+  if (!linkState.ok) {
+    return res.status(linkState.reason === 'LINK_ALREADY_USED' ? 409 : 404)
+      .json({ error: 'SOA_LINK_UNUSABLE', reason: linkState.reason });
+  }
+  if (!link.factorVerifiedAt) {
+    return res.status(401).json({ error: 'SECOND_FACTOR_REQUIRED' });
+  }
+
+  var record = await getRecord(leadKey(link.beneficiaryRef));
+  if (!record) return res.status(404).json({ error: 'Lead record not found or expired' });
 
   // ── Validate payload ───────────────────────────────────────────────────
   var fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
@@ -251,24 +274,70 @@ export default async function handler(req, res) {
       userAgent: signerUserAgent,
       correlationId: soaId,
     });
-    instance = completeSoaInstance(instance, {
-      completedAt: signedAt,
-      integrityHash: evidence.integrityHash,
-      evidenceReference: 'pdf:sha256:' + pdfHash,
-    });
   } catch (e) {
     console.error('[sign-soa] evidence build failed:', e && e.message);
     return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
   }
 
+  // Persist the signed PDF + its evidence record to durable storage BEFORE the
+  // instance is marked COMPLETED. Previously the PDF was hashed and discarded,
+  // so Clear Point could not produce the signed document on request — enablement
+  // blocker #2 in src/lib/soaContent.ts. Spec §26: "SOA evidence write failure
+  // -> marketing gate stays locked", so a storage failure must leave the
+  // instance un-completed rather than produce a signature with nothing behind it.
+  var stored = await putEvidence({
+    instance: instance,
+    integrityHash: evidence.integrityHash,
+    pdfBuffer: pdfBuffer,
+    evidenceRecord: evidence.record,
+  });
+  if (!stored.ok) {
+    console.error('[sign-soa] evidence NOT stored for soa_id=' + instance.soaId + ': ' + stored.reason);
+    // 503, not 500: this is a configuration/availability condition the operator
+    // can fix, and the beneficiary must not be told their SOA is on file.
+    return res.status(503).json({
+      error: 'SOA_EVIDENCE_NOT_STORED',
+      reason: stored.reason,
+      message: 'The signed document could not be filed, so the scope was not recorded.',
+    });
+  }
+
+  try {
+    instance = completeSoaInstance(instance, {
+      completedAt: signedAt,
+      integrityHash: evidence.integrityHash,
+      evidenceReference: stored.uri,
+    });
+  } catch (e) {
+    console.error('[sign-soa] instance completion failed:', e && e.message);
+    return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
+  }
+
   // ── Mark consumed + persist ────────────────────────────────────────────
-  record.consumed = true;
-  record.consumedAt = signedAt;
-  record.soaId = soaId;
-  record.pdfHash = pdfHash;
-  record.soaInstance = instance;
-  record.soaIntegrityHash = evidence.integrityHash;
-  try { await setSoaToken(token, record); } catch (e) { /* log but don't fail */ console.error('[sign-soa] token update failed', e && e.message); }
+  // Burn the link (replay protection) and record the outcome on it. The signed
+  // instance is stored under its own key with the EVIDENCE retention class —
+  // not back through the 24-hour signing-link TTL, which was enablement blocker
+  // #3: "SIGNED RECORD SELF-DESTRUCTS — the SOA evidence disappears a day later."
+  var burned = consumeLink(link);
+  if (!burned.ok) return res.status(409).json({ error: 'SOA_LINK_UNUSABLE', reason: burned.reason });
+  burned.record.soaId = soaId;
+  burned.record.signedAt = signedAt;
+  var linkWrite = await setRecord(linkKey, burned.record, SOA_TOKEN_TTL_SEC);
+  if (!linkWrite.ok) {
+    // Without a durable burn the same link could sign twice and create two
+    // active scopes for one appointment, so this is not a warning.
+    console.error('[sign-soa] could not burn link for soa_id=' + soaId);
+    return res.status(503).json({ error: 'SOA_LINK_BURN_FAILED' });
+  }
+  await setRecord('soa-signed:' + soaId, {
+    soaId: soaId,
+    signedAt: signedAt,
+    pdfHash: pdfHash,
+    instance: instance,
+    evidenceUri: instance.evidenceReference,
+    integrityHash: evidence.integrityHash,
+    recordClass: SIGNED_RECORD_CLASS,
+  }, SIGNED_RECORD_TTL_SEC);
 
   // ── Compose GHL note ───────────────────────────────────────────────────
   var ghlNote = [
@@ -297,6 +366,8 @@ export default async function handler(req, res) {
     'authorized_categories: ' + instance.authorizedCategories.join(', '),
     'declined_categories: ' + (instance.declinedCategories.join(', ') || '(none)'),
     'soa_integrity_hash: ' + instance.integrityHash,
+    'soa_evidence_uri: ' + instance.evidenceReference,
+    'soa_evidence_retention_years: ' + stored.retentionYears,
     'consent_no_obligation: true',
     'consent_esign_act: true',
     'tpmo_disclaimer_version: ' + TPMO_VERSION,
@@ -332,6 +403,9 @@ export default async function handler(req, res) {
       soa_form_version: instance.soaFormVersion,
       soa_authorized_categories: instance.authorizedCategories.join(','),
       soa_integrity_hash: instance.integrityHash,
+      // Spec §19: the CRM is the operational INDEX; the evidence itself lives
+      // in the approved repository. This is the pointer back to it.
+      soa_evidence_uri: instance.evidenceReference,
       note: ghlNote,
       pdfBase64: pdfBuffer.toString('base64'),
     });

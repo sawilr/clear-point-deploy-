@@ -76,3 +76,50 @@ export async function setSoaToken(token, value) {
 }
 
 export const SOA_TOKEN_TTL_SEC = TOKEN_TTL_SEC;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT 2026-10-01 (SEC-TOK-01/02) — generic keyed access.
+//
+// The pair above can only address a record BY ITS TOKEN, which is why the SOA
+// link record had to hold the beneficiary's name, phone, email and ZIP: the
+// token was the only handle. api/soa-status.js then returned all of it to
+// anyone presenting the bare UUID.
+//
+// The CY2027 link (api/_lib/cy2027/secure-link.js) splits that in two: a link
+// record addressed by sha256(token) that holds NO personal data, and a lead
+// record addressed by an opaque reference that is only reachable after a second
+// factor passes. Both need an arbitrary key, hence these.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Read any record by its full store key. Returns null if missing / expired. */
+export async function getRecord(storeKey) {
+  try {
+    return KV_AVAILABLE ? await kvGetJson(storeKey) : memoryGet(storeKey);
+  } catch (e) {
+    console.error('[soa-store] getRecord kv error, falling back to memory:', e && e.message);
+    return memoryGet(storeKey);
+  }
+}
+
+/**
+ * Write any record by its full store key, with an explicit TTL.
+ *
+ * Unlike setSoaToken this does NOT swallow a KV failure into the in-memory map:
+ * a link or lead record that exists only in one lambda's memory is a link that
+ * breaks on the next request. The caller must be told.
+ */
+export async function setRecord(storeKey, value, ttlSec) {
+  if (!KV_AVAILABLE) { memorySet(storeKey, value, ttlSec); return { ok: true, durable: false }; }
+  try {
+    await kvSetJson(storeKey, value, ttlSec);
+    return { ok: true, durable: true };
+  } catch (e) {
+    console.error('[soa-store] setRecord kv failed:', e && e.message);
+    return { ok: false, durable: false, reason: 'KV_WRITE_FAILED' };
+  }
+}
+
+/** Opaque, non-sequential reference for a lead record. Never appears in a URL. */
+export function leadKey(beneficiaryRef) {
+  return 'soa-lead:' + beneficiaryRef;
+}

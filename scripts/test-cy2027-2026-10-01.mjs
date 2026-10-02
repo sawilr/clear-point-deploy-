@@ -588,6 +588,48 @@ const baseInput = {
   const CONTENT = readFileSync(new URL('../src/lib/soaContent.ts', import.meta.url), 'utf8');
   ok('enablement tracks server-side CY2027 enforcement', /serverEnforcesCy2027/.test(CONTENT));
   ok('SOA is still disabled', /export const SOA_ENABLED = false/.test(CONTENT));
+
+  // Evidence must be stored BEFORE the instance is completed, or not at all.
+  ok('server stores evidence before completing the instance',
+    SRC.indexOf('putEvidence(') < SRC.indexOf('completeSoaInstance('), 'ordering reversed');
+  ok('a storage failure refuses rather than completing', /SOA_EVIDENCE_NOT_STORED/.test(SRC));
+  ok('the evidence URI becomes the evidence reference', /evidenceReference: stored\.uri/.test(SRC));
+  ok('the evidence URI reaches the CRM', /soa_evidence_uri/.test(SRC));
+  ok('the signed record gets the evidence retention class, not the link TTL',
+    /soa-signed:/.test(SRC) && /SIGNED_RECORD_TTL_SEC/.test(SRC));
+}
+
+// ── 13. The SOA link no longer leaks on possession ───────────────────────────
+{
+  const TOK = readFileSync(new URL('../api/soa-token.js', import.meta.url), 'utf8');
+  const STAT = readFileSync(new URL('../api/soa-status.js', import.meta.url), 'utf8');
+  const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+
+  ok('token issuer uses the CY2027 secure link', /issueLink\(/.test(TOK));
+  ok('token issuer no longer mints a bare UUID as the link', !/var token = crypto\.randomUUID\(\)/.test(TOK));
+  ok('the lead data is stored apart from the link', /leadKey\(beneficiaryRef\)/.test(TOK));
+  ok('the issuer tells the UI which factor to ask for', /factorRequired/.test(TOK));
+  ok('a failed storage write refuses the link', /Token storage failed/.test(TOK) && /503/.test(TOK));
+
+  ok('status GET no longer returns a lead object',
+    !/lead: \{\s*\n?\s*fullName: rec\.fullName/.test(STAT), 'old disclosure shape still present');
+  ok('status exposes only the required factor before verification',
+    /linkDisclosure\(rec, \{ factorVerified: false \}\)/.test(STAT));
+  ok('status verifies the factor on POST', /verifySecondFactor\(/.test(STAT));
+  ok('status persists the attempt counter', /setRecord\(storeKeyFor\(ptoken\), verdict\.record/.test(STAT));
+  ok('status rate-limits the factor attempt harder than the probe', /prefix: 'soa-factor'/.test(STAT));
+  ok('status accepts the opaque token shape, not a UUID', /A-Za-z0-9_-\]\{40,64\}/.test(STAT));
+
+  ok('signing requires the factor to have been verified', /SECOND_FACTOR_REQUIRED/.test(SRC));
+  ok('signing burns the link', /consumeLink\(link\)/.test(SRC));
+  ok('a link that cannot be burned refuses to sign', /SOA_LINK_BURN_FAILED/.test(SRC));
+  ok('signing loads the lead through the opaque reference', /leadKey\(link\.beneficiaryRef\)/.test(SRC));
+
+  const PAGE = readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8');
+  ok('the page has a second-factor step', /'challenge'/.test(PAGE));
+  ok('the page POSTs the factor', /\/api\/soa-status'/.test(PAGE) && /factor: factorValue/.test(PAGE));
+  ok('a used link says "already signed", not "not found"', /LINK_ALREADY_USED.*alreadyConsumed|alreadyConsumed.*LINK_ALREADY_USED/s.test(PAGE));
+  ok('a locked link sends the person to a human', /SECOND_FACTOR_LOCKED|'locked'/.test(PAGE));
 }
 
 if (failures.length) {
