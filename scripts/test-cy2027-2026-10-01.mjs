@@ -474,9 +474,24 @@ const baseInput = {
   ok('EN still carries the standardized opening', /^We do not offer every plan available in your area\./.test(en27));
   ok('ES still carries the standardized opening', /^No ofrecemos todos los planes disponibles en su área\./.test(es27));
 
-  const cy26 = { ...TPMO_DISCLAIMER_CONFIG, contractYearVariant: 'CY2026' };
+  // Historical rendering must now be explicit (EF-08): a config that merely
+  // carries an old variant no longer serves old wording by accident.
+  const cy26 = { ...TPMO_DISCLAIMER_CONFIG, contractYearVariant: 'CY2026', pinContractYearVariant: true };
   ok('the CY2026 wording is still reachable for historical records',
     /State Health Insurance/i.test(tpmoDisclaimerText('en', cy26)));
+  ok('EF-08: an unpinned old variant does NOT serve old wording after the cut-over',
+    !/State Health Insurance/i.test(tpmoDisclaimerText('en', { ...TPMO_DISCLAIMER_CONFIG, contractYearVariant: 'CY2026' })));
+  ok('EF-07: the counts config cannot be flipped at runtime',
+    (() => { try { TPMO_DISCLAIMER_CONFIG.status = 'VERIFIED'; } catch { /* strict mode */ }
+      return TPMO_DISCLAIMER_CONFIG.status === 'BLOCKED_COUNTS_REQUIRED'; })());
+  ok('EF-07: the config is frozen', Object.isFrozen(TPMO_DISCLAIMER_CONFIG) === true);
+  for (const bad of [null, undefined, 123, {}, '']) {
+    throws(`EF-02: a non-string disclaimer (${JSON.stringify(bad)}) cannot be signed`,
+      () => assertDisclaimerSignable(bad), /without a disclaimer string/);
+  }
+  ok('EF-02: other placeholder shapes are caught',
+    ['We represent {X} organizations', 'We represent <Y> products', 'We represent [ X ] orgs']
+      .every((s) => { try { assertDisclaimerSignable(s); return false; } catch { return true; } }));
 
   ok('a clean sentence is signable', assertDisclaimerSignable(en27) === true);
   throws('a placeholder sentence can never be signed',
@@ -893,6 +908,30 @@ const baseInput = {
   ok('CT-05: prohibited detail inside an allowed array is removed',
     !/medicaid/i.test(JSON.stringify(t5.facts.signals)), JSON.stringify(t5.facts.signals));
   ok('CT-05: the legitimate signal survives', /DEVICE_IP_VELOCITY/.test(JSON.stringify(t5.facts.signals)));
+
+  // CT-01 — a refusal anywhere in the reply beats an affirmative opening.
+  for (const s of ['yes I said no', 'yes, do not call me', 'sí pero no', 'yes — stop calling', 'si, no me llame']) {
+    ok(`CT-01: "${s}" is a refusal, not a grant`, classifyReply(s) === CONSENT_STATUS.DECLINED, classifyReply(s));
+  }
+  ok('CT-01: a long sentence opening with "yes" goes back for clarification',
+    classifyReply('yes well I suppose that could be alright if you really need to') === CONSENT_STATUS.UNCLEAR);
+  ok('CT-01: a plain yes is still a grant', classifyReply('yes') === CONSENT_STATUS.GRANTED);
+  ok('CT-01: a short explicit yes is still a grant', classifyReply('yes you may call me') === CONSENT_STATUS.GRANTED);
+
+  // CT-04 — the cross-inference guard is not defeated by capitalization.
+  for (const variant of ['website_browsing', 'Website Browsing', 'WEBSITE-BROWSING', ' website_browsing ']) {
+    throws(`CT-04: "${variant}" is still a banned source`,
+      () => assertNoCrossInference('SCOPE_OF_APPOINTMENT', variant), /never be inferred/);
+  }
+  throws('CT-04: an empty source is refused', () => assertNoCrossInference('SCOPE_OF_APPOINTMENT', ''), /source signal is required/);
+
+  // SOA-06 — an appointment with no state cannot skip the jurisdiction check.
+  {
+    const inst = completeSoaInstance(createSoaInstance({ ...baseInput, soaId: 'soa06' }).instance,
+      { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'h', evidenceReference: 'e' });
+    ok('SOA-06: a stateless appointment is refused',
+      marketingGate(inst, { appointmentId: 'appt_1', startsAt: '2026-11-10T15:00:00Z', format: 'TELEPHONE' }, CMS_RULESET_2027).reason === 'APPOINTMENT_STATE_UNKNOWN');
+  }
 }
 
 if (failures.length) {

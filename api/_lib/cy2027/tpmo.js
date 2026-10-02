@@ -45,8 +45,14 @@ export function activeContractYearVariant(now = new Date()) {
  * carrier website — only from the FMO/carrier appointment records, approved by
  * a named person on a named date.
  */
-export const TPMO_DISCLAIMER_CONFIG = {
-  serviceArea: ['NY', 'NJ', 'CT'],
+// RED TEAM 2026-10-02 (EF-07, HIGH) — this was a mutable module singleton, so
+// any importer could flip `status` to 'VERIFIED' and set counts at runtime and
+// the BLOCKED_COUNTS_REQUIRED fail-closed state would simply evaporate — in a
+// module whose entire job is to keep an unverified figure out of a signed
+// document. Frozen: the counts are a deliberate source edit with a named
+// approver, not something a call site can arrange.
+export const TPMO_DISCLAIMER_CONFIG = Object.freeze({
+  serviceArea: Object.freeze(['NY', 'NJ', 'CT']),
   contractYearVariant: activeContractYearVariant(),
   organizationCount: null,
   productCount: null,
@@ -55,7 +61,7 @@ export const TPMO_DISCLAIMER_CONFIG = {
   approvedOn: null,
   nextReviewDate: null,
   status: 'BLOCKED_COUNTS_REQUIRED',
-};
+});
 
 /** TRUE only when verified counts exist and are approved. */
 export function hasVerifiedTpmoCounts(cfg = TPMO_DISCLAIMER_CONFIG) {
@@ -75,7 +81,13 @@ export function hasVerifiedTpmoCounts(cfg = TPMO_DISCLAIMER_CONFIG) {
  * that appears in no version of the rule; that invention is not reinstated.
  */
 export function tpmoDisclaimerText(lang, cfg = TPMO_DISCLAIMER_CONFIG) {
-  const variant = cfg === TPMO_DISCLAIMER_CONFIG ? activeContractYearVariant() : cfg.contractYearVariant;
+  // RED TEAM 2026-10-02 (EF-08, HIGH) — the render-time variant resolution was
+  // reached only by IDENTITY with the singleton, so an owner's own verified
+  // config object (the supported way to supply counts) froze its variant at
+  // construction and could serve CY2026 wording after the cut-over. Resolve
+  // from the calendar unless the config explicitly pins a variant.
+  const pinned = cfg && cfg !== TPMO_DISCLAIMER_CONFIG && cfg.pinContractYearVariant === true;
+  const variant = pinned ? cfg.contractYearVariant : activeContractYearVariant();
 
   if (hasVerifiedTpmoCounts(cfg)) {
     const x = cfg.organizationCount;
@@ -107,7 +119,15 @@ export function tpmoDisclaimerText(lang, cfg = TPMO_DISCLAIMER_CONFIG) {
  * something a caller should be able to swallow.
  */
 export function assertDisclaimerSignable(text) {
-  if (/\[X\]|\[Y\]/.test(String(text || ''))) {
+  // RED TEAM 2026-10-02 (EF-02, HIGH) — `String(text || '')` turned every
+  // non-string into '' and passed, so a null, undefined, number or object
+  // reaching the PDF renderer satisfied the guard that exists to stop a
+  // placeholder from being signed. A non-string is not a signable disclaimer.
+  if (typeof text !== 'string' || !text.trim()) {
+    throw new Error('tpmo: refusing to render a signable document without a disclaimer string.');
+  }
+  // Bracketed placeholders in any of the shapes the codebase has used.
+  if (/\[\s*[XY]\s*\]|\{\{?\s*[XY]\s*\}?\}|＜[XY]＞|<\s*[XY]\s*>/i.test(text)) {
     throw new Error(
       'tpmo: refusing to render a signable document containing [X]/[Y] placeholders. ' +
         'Supply verified organization/product counts in TPMO_DISCLAIMER_CONFIG first.',

@@ -83,9 +83,22 @@ const norm = (s) => String(s == null ? '' : s).trim().toLowerCase().replace(/[.!
 export function classifyReply(text) {
   const t = norm(text);
   if (!t) return CONSENT_STATUS.NOT_ASKED;
-  if (NEGATIVE.some((n) => t === n || t.startsWith(n + ' '))) return CONSENT_STATUS.DECLINED;
+
+  // RED TEAM 2026-10-02 (CT-01, HIGH) — an explicit refusal that merely BEGAN
+  // with an affirmative token was read as a grant: "yes I said no", "sí pero
+  // no", "yes — do not call me". The affirmative test matched the prefix and
+  // returned first. A refusal anywhere in the reply now wins, because the cost
+  // of misreading a refusal as consent is unacceptable and the cost of the
+  // reverse is one more question.
+  const hasNegative = NEGATIVE.some((n) => t === n || t.startsWith(n + ' ') || t.includes(' ' + n + ' ') || t.endsWith(' ' + n));
+  if (hasNegative) return CONSENT_STATUS.DECLINED;
+
   if (NOT_AFFIRMATIVE_ALONE.includes(t)) return CONSENT_STATUS.UNCLEAR;
-  if (AFFIRMATIVE.some((a) => t === a || t.startsWith(a + ' '))) return CONSENT_STATUS.GRANTED;
+  // An affirmative only counts when the reply IS the affirmative, or begins with
+  // one and stays short. A long sentence that opens with "yes" is a sentence,
+  // not an answer, and goes back for clarification.
+  const affirmativeOpening = AFFIRMATIVE.some((a) => t === a || t.startsWith(a + ' '));
+  if (affirmativeOpening && t.split(' ').length <= 6) return CONSENT_STATUS.GRANTED;
   return CONSENT_STATUS.UNCLEAR;
 }
 
@@ -167,9 +180,18 @@ export function revokeConsent(consent, { at = new Date().toISOString(), via = 'U
  * robocall them".
  */
 export function assertNoCrossInference(targetType, sourceSignal) {
-  const banned = NEVER_INFER_FROM[targetType];
+  // RED TEAM 2026-10-02 (CT-04, HIGH) — this was a case-sensitive exact-match
+  // denylist, so the same banned source in lowercase, or with spaces instead of
+  // underscores, passed the guard. The guard is the whole point of the module;
+  // it cannot be defeated by capitalization.
+  const banned = Object.prototype.hasOwnProperty.call(NEVER_INFER_FROM, targetType)
+    ? NEVER_INFER_FROM[targetType]
+    : null;
   if (!banned) throw new Error(`consent: unknown type "${targetType}"`);
-  if (banned.includes(sourceSignal)) {
+  const normalize = (s) => String(s == null ? '' : s).trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const src = normalize(sourceSignal);
+  if (!src) throw new Error('consent: a source signal is required to check cross-inference');
+  if (banned.map(normalize).includes(src)) {
     throw new Error(
       `consent: ${targetType} may never be inferred from ${sourceSignal} (spec §6). ` +
         'Capture the consent explicitly instead.',

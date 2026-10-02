@@ -292,7 +292,11 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
     // Spec §7: "If the plan year changes, do not silently reuse the old instance."
     return { allowed: false, reason: 'SOA_PLAN_YEAR_MISMATCH' };
   }
-  if (appointment.state && instance.state !== String(appointment.state).toUpperCase()) {
+  // RED TEAM 2026-10-02 (SOA-06, HIGH) — guarded by `appointment.state &&`, so
+  // an appointment with no state skipped the jurisdiction check entirely. State
+  // drives the whole ruleset; not knowing it is a refusal, not a pass.
+  if (!appointment.state) return { allowed: false, reason: 'APPOINTMENT_STATE_UNKNOWN' };
+  if (instance.state !== String(appointment.state).toUpperCase()) {
     return { allowed: false, reason: 'SOA_STATE_MISMATCH' };
   }
   // RED TEAM 2026-10-02 (SOA-04, CRITICAL) — this was guarded by

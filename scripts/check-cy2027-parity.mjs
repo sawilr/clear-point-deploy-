@@ -93,13 +93,21 @@ const MIRRORS = [
   'api/soa-status.js',
   'api/sign-soa.js',
 ];
+// RED TEAM 2026-10-02 (PG-04, HIGH) — the first regex match won, so a COMMENT
+// mentioning `SOA_ENABLED = false` above a real `SOA_ENABLED = true` satisfied
+// the guard. Comments are stripped first, and EVERY declaration in a file must
+// agree — a file with two is itself the bug.
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
 const values = new Map();
 for (const f of MIRRORS) {
   let txt;
   try { txt = read(f); } catch { problems.push(`SOA_ENABLED mirror missing: ${f}`); continue; }
-  const mm = txt.match(/SOA_ENABLED\s*=\s*(true|false)\b/);
-  if (!mm) { problems.push(`${f} no longer declares SOA_ENABLED = true|false.`); continue; }
-  values.set(f, mm[1] === 'true');
+  const decls = [...stripComments(txt).matchAll(/\bSOA_ENABLED\s*=\s*(true|false)\b/g)].map((m) => m[1] === 'true');
+  if (!decls.length) { problems.push(`${f} no longer declares SOA_ENABLED = true|false (outside comments).`); continue; }
+  if (new Set(decls).size > 1) { problems.push(`${f} declares SOA_ENABLED more than once, with different values.`); continue; }
+  values.set(f, decls[0]);
 }
 const distinct = new Set(values.values());
 if (distinct.size > 1) {
@@ -127,11 +135,22 @@ notes.push(`${DECLARED.length} declaration files match their modules`);
 // ── 5. Approved wording must not be copy-pasted ──────────────────────────────
 // A distinctive fragment of each approved category description. If any of these
 // appears outside the canonical module, a second copy is forming.
+// RED TEAM 2026-10-02 (PG-05, HIGH) — this was a hand-written list covering 2 of
+// the 4 approved category descriptions, so a divergent copy of the other two
+// could be reintroduced unnoticed. The fragments are now DERIVED from the
+// canonical module, so the guard automatically covers whatever it defines.
 const FRAGMENTS = [
-  'but does not include integrated Medicare prescription drug coverage',
-  'apart from a Medicare Advantage plan',
-  'does not authorize discussion of product categories you did not select',
-  'no autoriza conversar sobre categorías que usted no seleccionó',
+  ...soaText.SOA_CATEGORIES.flatMap((c) => [
+    c.en.description.slice(-64),
+    c.es.description.slice(-64),
+    c.en.label,
+    c.es.label,
+  ]),
+  soaText.SOA_TEXT.en.important.slice(-64),
+  soaText.SOA_TEXT.es.important.slice(-64),
+  soaText.SOA_TEXT.en.categoriesHelp.slice(0, 64),
+  soaText.SOA_TEXT.es.categoriesHelp.slice(0, 64),
+  soaText.SOA_TEXT.en.authorizationStatement.slice(0, 64),
 ];
 const SEARCH_FILES = [
   'src/lib/soaContent.ts',
@@ -142,6 +161,10 @@ const SEARCH_FILES = [
 for (const f of SEARCH_FILES) {
   let txt;
   try { txt = read(f); } catch { continue; }
+  // Scan CODE, not comments. A design note that quotes the approved wording to
+  // explain why it exists is documentation; the thing being guarded against is
+  // a second literal that can render and then diverge.
+  txt = stripComments(txt);
   for (const frag of FRAGMENTS) {
     if (txt.includes(frag)) {
       problems.push(
@@ -170,6 +193,26 @@ for (const f of TPMO_CANDIDATES) {
   try { txt = read(f); } catch { continue; }
   if (txt.includes(TPMO_FRAGMENT) && !TPMO_ALLOWED.has(f)) tpmoCopies.push(f);
 }
+// RED TEAM 2026-10-02 (PG-01, HIGH) — the fragment check only caught a copy that
+// reused the exact opening sentence. A fourth copy written with a different
+// lead-in but the same [X]/[Y] placeholders slipped through — and the
+// placeholders are the actual hazard, because they are what reaches a signature.
+// Narrowed to the actual hazard: a COUNT placeholder inside a TPMO sentence.
+// A bare "[X] " is the PDF's checked-box glyph and is not a disclaimer defect.
+const PLACEHOLDER_RE = /\[\s*[XY]\s*\]\s*(?:organizations?|organizaciones|products?|productos)|(?:represent|representamos)\s*\[\s*[XY]\s*\]/i;
+for (const f of [...TPMO_CANDIDATES, 'src/components/SOAForm.tsx', 'src/lib/soa.ts', 'src/pages/SignSOA.tsx']) {
+  if (TPMO_ALLOWED.has(f)) continue;
+  let txt;
+  try { txt = read(f); } catch { continue; }
+  if (PLACEHOLDER_RE.test(stripComments(txt))) {
+    problems.push(
+      `${f} contains a bracketed TPMO count placeholder ([X]/[Y]) outside the canonical module.\n` +
+        '      A signed disclaimer reading "[X] organizations" is an audit failure. Render the\n' +
+        '      sentence from tpmoDisclaimerText() instead of restating it.',
+    );
+  }
+}
+
 if (tpmoCopies.length) {
   problems.push(
     'The TPMO (e)(41) disclaimer is duplicated outside src/lib/tpmoConfig.ts:\n' +
