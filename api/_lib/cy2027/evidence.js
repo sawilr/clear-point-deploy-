@@ -196,5 +196,11 @@ export function auditEvent({ action, actor, result, source, correlationId, soaId
   if (!result) throw new Error('evidence: audit event requires a result');
   if (!source) throw new Error('evidence: audit event requires a source');
   if (!correlationId) throw new Error('evidence: audit event requires a correlationId');
-  return { at, action, actor, result, source, correlationId, soaId, details: redactForLog(details) };
+  // RED TEAM 2026-10-02 (EF-05, LOW) — only `details` was redacted, so a
+  // structured actor carried SSN/DOB straight into the log line.
+  return {
+    at, action, result, source, correlationId, soaId,
+    actor: typeof actor === 'object' ? redactForLog(actor) : actor,
+    details: redactForLog(details),
+  };
 }

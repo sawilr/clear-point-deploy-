@@ -132,7 +132,11 @@ export function resolveStateRuleset(state, planYear, now = new Date()) {
   if (rs.status !== 'PRODUCTION_ACTIVE') {
     return { ok: false, reason: 'RULESET_NOT_ACTIVE', state: code, status: rs.status, humanReview: true };
   }
+  // RED TEAM 2026-10-02 (JR-04, MEDIUM) — an unparseable `now` produced NaN, and
+  // every NaN comparison is false, so an EXPIRED or NOT_YET_EFFECTIVE ruleset
+  // resolved ok:true. A clock we cannot read is not a clock.
   const t = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  if (!Number.isFinite(t)) return { ok: false, reason: 'CLOCK_UNREADABLE', state: code, humanReview: true };
   if (rs.effectiveFrom && t < Date.parse(rs.effectiveFrom + 'T00:00:00Z')) {
     return { ok: false, reason: 'RULESET_NOT_YET_EFFECTIVE', state: code, humanReview: true };
   }
@@ -206,8 +210,16 @@ export function resolveCounty(zip, state) {
   const z = String(zip || '');
   if (!/^\d{5}$/.test(z)) return { status: 'ASK_BENEFICIARY', options: [], reason: 'INVALID_ZIP' };
   if (!countyDataset) return { status: 'ASK_BENEFICIARY', options: [], reason: 'NO_DATASET' };
-  const hit = countyDataset[z];
-  const options = Array.isArray(hit) ? hit.filter(Boolean) : hit ? [hit] : [];
-  if (options.length === 1) return { status: 'RESOLVED', county: options[0], state: state || null };
+  // RED TEAM 2026-10-02 (JR-09, LOW) — `hit.filter(Boolean)` silently collapsed
+  // an ambiguous ZIP to a single RESOLVED county whenever a sibling entry was
+  // falsy, which is exactly the "system guessed the county" outcome §5 forbids.
+  // A malformed entry now forces the question rather than shrinking the choice.
+  const hit = Object.prototype.hasOwnProperty.call(countyDataset, z) ? countyDataset[z] : undefined;
+  const raw = Array.isArray(hit) ? hit : hit === undefined || hit === null ? [] : [hit];
+  const options = raw.filter((c) => typeof c === 'string' && c.trim());
+  if (raw.length !== options.length) {
+    return { status: 'ASK_BENEFICIARY', options, reason: 'DATASET_ENTRY_MALFORMED' };
+  }
+  if (options.length === 1) return { status: 'RESOLVED', county: options[0].trim(), state: state || null };
   return { status: 'ASK_BENEFICIARY', options, reason: options.length ? 'AMBIGUOUS' : 'NOT_IN_DATASET' };
 }

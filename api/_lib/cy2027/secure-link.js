@@ -127,9 +127,18 @@ export function storeKeyFor(token) {
 /**
  * Validate a presented link BEFORE any second factor.
  *
- * Every failure returns the same shape and reveals nothing about the record.
  * Spec §26: "Invalid/expired secure token -> do not reveal form data; issue
  * safe restart."
+ *
+ * RED TEAM 2026-10-02 (SL-06, MEDIUM) — an earlier comment here claimed failures
+ * "reveal nothing about the record", which the six distinct reasons contradict.
+ * Stating the real boundary instead of overclaiming: the reasons distinguish the
+ * STATE OF A LINK THE CALLER ALREADY HOLDS (expired, used, revoked), which the
+ * UI needs — telling someone who already signed that the link was "not found"
+ * invites a second signature and a duplicate scope. They reveal nothing about
+ * any BENEFICIARY: no name, phone, email, ZIP, SOA id or appointment id, and no
+ * way to learn whether a given person has an SOA pending. Tokens are 256 bits,
+ * so enumerating links to harvest states is not a reachable attack.
  */
 export function checkLink(record, { now = new Date() } = {}) {
   if (!record || typeof record !== 'object') return { ok: false, reason: 'LINK_NOT_FOUND' };

@@ -147,6 +147,17 @@ export function applyHold(record, reason, { at = new Date().toISOString(), note 
 export function releaseHold(record, reason, { at = new Date().toISOString(), actor } = {}) {
   if (!actor) throw new Error('retention: releasing a hold requires an actor for the audit log');
   if (!HOLD_REASONS.includes(reason)) throw new Error(`retention: unknown hold reason "${reason}"`);
+  // RED TEAM 2026-10-02 (JR-06, MEDIUM) — automation could release a CMS_INQUIRY
+  // hold, and releasing a hold that was never applied succeeded silently.
+  // Lifting a legal hold is a human decision with a named owner, like resolving
+  // a quarantine (spec §13's reasoning applies to both).
+  if (/(^|[^a-z])(ai|bot|svc|service|system|sys|automation|auto|agent|robot|daemon|cron|job|worker|script|workflow|assistant|claude|gpt|llm|api)([^a-z]|$)/i.test(String(actor))) {
+    throw new Error(`retention: "${actor}" may not release a hold — record the named person who decided.`);
+  }
+  const existing = Array.isArray(record?.holds) ? record.holds.filter(Boolean) : [];
+  if (!existing.some((h) => h && h.reason === reason)) {
+    throw new Error(`retention: there is no active ${reason} hold on this record to release.`);
+  }
   if (record?.holds != null && !Array.isArray(record.holds)) {
     throw new Error('retention: refusing to rewrite an unreadable holds list — inspect the record first');
   }

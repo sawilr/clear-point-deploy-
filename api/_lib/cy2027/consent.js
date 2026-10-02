@@ -208,7 +208,14 @@ export function assertNoCrossInference(targetType, sourceSignal) {
  *
  * Returns a decision object, never a bare boolean, so the reason is logged.
  */
-export function mayPlaceOutbound({ mode, callbackConsent, aiOutboundConsent, doNotContact }) {
+export function mayPlaceOutbound({ mode, callbackConsent, aiOutboundConsent, doNotContact, purpose }) {
+  // RED TEAM 2026-10-02 (CT-07, MEDIUM) — an ABSENT do-not-contact flag read as
+  // "no DNC". Not having checked the suppression list is not the same as having
+  // checked it and found nothing; a caller that forgets to pass it must not get
+  // a green light. Pass `false` explicitly once the list has been consulted.
+  if (doNotContact === undefined || doNotContact === null) {
+    return { allowed: false, reason: 'DO_NOT_CONTACT_STATUS_UNKNOWN' };
+  }
   if (doNotContact) return { allowed: false, reason: 'DO_NOT_CONTACT' };
   if (mode === 'AI_AUTOMATED') {
     // Type-checked (CT-03): a granted recording notice is not outbound consent.
@@ -219,9 +226,16 @@ export function mayPlaceOutbound({ mode, callbackConsent, aiOutboundConsent, doN
     return { allowed: false, reason: 'AI_OUTBOUND_ARCHITECTURE_NOT_VALIDATED' };
   }
   if (mode === 'HUMAN_LICENSED_AGENT') {
-    return isAffirmative(callbackConsent, 'CALLBACK_CONTACT_PERMISSION')
-      ? { allowed: true, reason: 'CALLBACK_CONSENT_GRANTED', scope: callbackConsent.scope }
-      : { allowed: false, reason: 'NO_CALLBACK_CONSENT' };
+    if (!isAffirmative(callbackConsent, 'CALLBACK_CONTACT_PERMISSION')) {
+      return { allowed: false, reason: 'NO_CALLBACK_CONSENT' };
+    }
+    // Spec §24: "Generic callback consent authorizes only the scope actually
+    // stated." A purpose outside that scope is a different call and needs its
+    // own permission (CT-07).
+    if (purpose !== undefined && purpose !== callbackConsent.scope) {
+      return { allowed: false, reason: 'PURPOSE_OUTSIDE_CONSENT_SCOPE', consentScope: callbackConsent.scope, purpose };
+    }
+    return { allowed: true, reason: 'CALLBACK_CONSENT_GRANTED', scope: callbackConsent.scope };
   }
   return { allowed: false, reason: 'UNKNOWN_MODE' };
 }

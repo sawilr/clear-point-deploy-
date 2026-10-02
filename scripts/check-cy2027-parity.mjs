@@ -120,17 +120,49 @@ if (distinct.size > 1) {
 }
 
 // ── 4. .d.ts promises vs .js reality ─────────────────────────────────────────
-const DECLARED = ['soa-text', 'state-rules', 'soa-instance', 'rulesets'];
+// RED TEAM 2026-10-02 (PG-07, HIGH) — this skipped tpmo.d.ts entirely, matched
+// only `export declare const|function`, and then printed "4 declaration files
+// match" unconditionally whether or not it had checked anything. A guard that
+// reports success for work it did not do is worse than no guard.
+const DECLARED = ['soa-text', 'state-rules', 'soa-instance', 'rulesets', 'tpmo'];
+let declChecked = 0;
 for (const base of DECLARED) {
-  const dts = read(`api/_lib/cy2027/${base}.d.ts`);
+  let dts;
+  try { dts = read(`api/_lib/cy2027/${base}.d.ts`); }
+  catch { problems.push(`api/_lib/cy2027/${base}.d.ts is missing — the client would get no types for it.`); continue; }
   const mod = await import(`../api/_lib/cy2027/${base}.js`);
-  const names = [...dts.matchAll(/export\s+declare\s+(?:const|function)\s+(\w+)/g)].map((x) => x[1]);
-  const missing = names.filter((n) => !(n in mod));
+  const names = [
+    ...[...dts.matchAll(/export\s+declare\s+(?:const|function|let|var|class)\s+(\w+)/g)].map((x) => x[1]),
+    // `export { A, B } from …` / `export { A, B }` re-export forms.
+    ...[...dts.matchAll(/export\s*\{([^}]*)\}/g)].flatMap((m) =>
+      m[1].split(',').map((s) => s.replace(/\bas\b[\s\S]*$/, '').trim()).filter((s) => /^[A-Za-z_$][\w$]*$/.test(s))),
+  ];
+  const missing = [...new Set(names)].filter((n) => !(n in mod));
   if (missing.length) {
     problems.push(`${base}.d.ts declares exports that ${base}.js does not provide: ${missing.join(', ')}`);
   }
+  declChecked++;
 }
-notes.push(`${DECLARED.length} declaration files match their modules`);
+notes.push(`${declChecked}/${DECLARED.length} declaration files checked against their modules`);
+
+// PG-06 — the approved-text digest covers soa-text.js, but soaTitle() prints a
+// STATE NAME that lives in state-rules.js, and the per-state form/ruleset
+// versions are printed on the evidence copy. Those are approved values too.
+const stateMod = await import('../api/_lib/cy2027/state-rules.js');
+const statePayload = JSON.stringify(
+  Object.values(stateMod.STATE_RULESETS).map((s) => [s.code, s.name, s.nameEs, s.soaFormVersion, s.stateRulesetVersion]),
+);
+const STATE_DIGEST = 'sha256:' + createHash('sha256').update(statePayload, 'utf8').digest('hex');
+const PINNED_STATE_DIGEST = 'sha256:313d59c760579fe1d3761ef450ea8991d23a07af4e7c64f7f39ffb53f3de06e0';
+if (STATE_DIGEST !== PINNED_STATE_DIGEST) {
+  problems.push(
+    'The approved per-state values (state name, SOA_FORM_VERSION, STATE_RULESET_VERSION) changed.\n' +
+      `      These print on the form and on the evidence copy. Re-pin deliberately:\n` +
+      `      const PINNED_STATE_DIGEST = '${STATE_DIGEST}';`,
+  );
+} else {
+  notes.push('approved per-state values digest OK');
+}
 
 // ── 5. Approved wording must not be copy-pasted ──────────────────────────────
 // A distinctive fragment of each approved category description. If any of these

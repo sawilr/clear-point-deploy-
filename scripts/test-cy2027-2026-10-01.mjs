@@ -348,15 +348,15 @@ const baseInput = {
 
   // Outbound safety.
   ok('human callback allowed with callback consent',
-    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: granted }).allowed === true);
+    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: granted, doNotContact: false }).allowed === true);
   ok('human callback blocked without it',
-    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: null }).reason === 'NO_CALLBACK_CONSENT');
+    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: null, doNotContact: false }).reason === 'NO_CALLBACK_CONSENT');
   ok('do-not-contact overrides a prior grant',
     mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: granted, doNotContact: true }).reason === 'DO_NOT_CONTACT');
   ok('AI outbound blocked without its own consent',
-    mayPlaceOutbound({ mode: 'AI_AUTOMATED', callbackConsent: granted }).reason === 'NO_AI_OUTBOUND_CONSENT');
+    mayPlaceOutbound({ mode: 'AI_AUTOMATED', callbackConsent: granted, doNotContact: false }).reason === 'NO_AI_OUTBOUND_CONSENT');
   ok('AI outbound still blocked WITH consent until the architecture is validated',
-    mayPlaceOutbound({ mode: 'AI_AUTOMATED', aiOutboundConsent: mk('AI_OUTBOUND_VOICE_CONSENT', CONSENT_STATUS.GRANTED) }).reason
+    mayPlaceOutbound({ mode: 'AI_AUTOMATED', aiOutboundConsent: mk('AI_OUTBOUND_VOICE_CONSENT', CONSENT_STATUS.GRANTED), doNotContact: false }).reason
     === 'AI_OUTBOUND_ARCHITECTURE_NOT_VALIDATED');
 }
 
@@ -829,9 +829,9 @@ const baseInput = {
   ok('CT-03: a recording notice is not callback permission',
     isAffirmative(rec, 'CALLBACK_CONTACT_PERMISSION') === false);
   ok('CT-03: an SOA is not callback permission',
-    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: soaC }).reason === 'NO_CALLBACK_CONSENT');
+    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: soaC, doNotContact: false }).reason === 'NO_CALLBACK_CONSENT');
   ok('CT-03: a recording notice is not AI outbound consent',
-    mayPlaceOutbound({ mode: 'AI_AUTOMATED', aiOutboundConsent: rec }).reason === 'NO_AI_OUTBOUND_CONSENT');
+    mayPlaceOutbound({ mode: 'AI_AUTOMATED', aiOutboundConsent: rec, doNotContact: false }).reason === 'NO_AI_OUTBOUND_CONSENT');
   ok('CT-03: the right type still works',
     isAffirmative(createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 's' }), 'CALLBACK_CONTACT_PERMISSION') === true);
 
@@ -924,6 +924,29 @@ const baseInput = {
       () => assertNoCrossInference('SCOPE_OF_APPOINTMENT', variant), /never be inferred/);
   }
   throws('CT-04: an empty source is refused', () => assertNoCrossInference('SCOPE_OF_APPOINTMENT', ''), /source signal is required/);
+
+  // CT-07 — not having checked the suppression list is not "no DNC".
+  ok('CT-07: an absent do-not-contact flag refuses',
+    mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent: createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 'this request' }) }).reason === 'DO_NOT_CONTACT_STATUS_UNKNOWN');
+  ok('CT-07: a purpose outside the stated scope refuses',
+    mayPlaceOutbound({
+      mode: 'HUMAN_LICENSED_AGENT', doNotContact: false, purpose: 'plan marketing',
+      callbackConsent: createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: 'this request' }),
+    }).reason === 'PURPOSE_OUTSIDE_CONSENT_SCOPE');
+
+  // JR-04 / JR-06 / JR-09 / EF-05.
+  ok('JR-04: an unreadable clock fails closed',
+    resolveStateRuleset('NY', 2027, 'not-a-date').reason === 'CLOCK_UNREADABLE');
+  ok('JR-06: automation cannot release a legal hold',
+    (() => { try { releaseHold(applyHold({ recordClass: RECORD_CLASS.SOA_EVIDENCE, createdAt: '2010-01-01T00:00:00Z' }, 'CMS_INQUIRY'), 'CMS_INQUIRY', { actor: 'automation-1' }); return false; } catch { return true; } })());
+  ok('JR-06: releasing a hold that was never applied refuses',
+    (() => { try { releaseHold({ recordClass: RECORD_CLASS.SOA_EVIDENCE, createdAt: '2010-01-01T00:00:00Z' }, 'COMPLAINT', { actor: 'Sawil Reyes' }); return false; } catch { return true; } })());
+  setCountyDataset({ '10001': ['New York', null] });
+  ok('JR-09: a malformed dataset entry asks instead of guessing',
+    resolveCounty('10001', 'NY').reason === 'DATASET_ENTRY_MALFORMED');
+  setCountyDataset(null);
+  ok('EF-05: a structured actor is redacted too',
+    auditEvent({ action: 'SOA_SIGNED', actor: { name: 'x', ssn: '123-45-6789' }, result: 'OK', source: 'WEB', correlationId: 'c' }).actor.ssn === '[redacted]');
 
   // SOA-06 — an appointment with no state cannot skip the jurisdiction check.
   {
