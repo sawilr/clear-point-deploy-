@@ -28,6 +28,7 @@ import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.j
 import { noStorePII } from './_lib/security-headers.js';
 import { readJsonBody } from './_lib/read-body.js';
 import { storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView } from './_lib/cy2027/secure-link.js';
+import { emitAudit } from './_lib/cy2027/evidence.js';
 
 // PHASE 7 — SOA gate. Mirror of src/lib/soaContent.ts SOA_ENABLED.
 const SOA_ENABLED = false;
@@ -63,6 +64,10 @@ export default async function handler(req, res) {
     // signal, and the counter has to survive the request to mean anything.
     await setRecord(storeKeyFor(token), recordView(rec), SOA_TOKEN_TTL_SEC);
 
+    emitAudit({
+      action: 'SOA_VIEWED', actor: 'beneficiary:unverified', result: 'CHALLENGE_SHOWN', source: 'WEB',
+      correlationId: rec.beneficiaryRef, soaId: rec.soaId, details: { views: (rec.views || 0) + 1 },
+    });
     return res.status(200).json(linkDisclosure(rec, { factorVerified: false }));
   }
 
@@ -92,6 +97,11 @@ export default async function handler(req, res) {
   await setRecord(storeKeyFor(ptoken), verdict.record, SOA_TOKEN_TTL_SEC);
 
   if (!verdict.ok) {
+    emitAudit({
+      action: 'SOA_VIEWED', actor: 'beneficiary:unverified', result: verdict.reason, source: 'WEB',
+      correlationId: prec.beneficiaryRef, soaId: prec.soaId,
+      details: { attemptsRemaining: verdict.attemptsRemaining, signal: verdict.signal || null },
+    });
     return res.status(401).json({
       exists: true,
       verified: false,
@@ -105,6 +115,11 @@ export default async function handler(req, res) {
   var full = linkDisclosure(verdict.record, { factorVerified: true });
   var lead = await getRecord(leadKey(full.beneficiaryRef));
   if (!lead) return res.status(404).json({ exists: false, reason: 'LEAD_RECORD_MISSING' });
+
+  emitAudit({
+    action: 'SOA_VIEWED', actor: 'beneficiary:channel-verified', result: 'PREFILL_RELEASED', source: 'WEB',
+    correlationId: full.beneficiaryRef, soaId: full.soaId, details: { factor: prec.secondFactorKind },
+  });
 
   return res.status(200).json({
     exists: true,

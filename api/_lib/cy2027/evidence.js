@@ -190,6 +190,27 @@ export function redactForLog(obj, depth = 0) {
  * Build one audit event. Every field the spec names is required; a missing one
  * throws rather than producing an event that cannot answer "who did what".
  */
+/**
+ * Emit an audit event to the log.
+ *
+ * AUDIT 2026-10-02 (EV-06 / WVG-18 / SEC-TOK-07) — auditEvent() existed and was
+ * called by nothing, so "audit every SOA view/sign/send/resend/revoke" (spec
+ * §19, §30) was satisfied by a function that never ran. A builder nobody
+ * invokes is not an audit trail.
+ *
+ * One stable prefix so the lines are greppable and shippable to a drain, and
+ * `redactForLog` already applied by auditEvent() before anything reaches here.
+ * Never throws: a logging failure must not fail a signature that is otherwise
+ * valid, but it must be visible.
+ */
+export function emitAudit(fields) {
+  try {
+    console.warn('[SOA-AUDIT] ' + JSON.stringify(auditEvent(fields)));
+  } catch (e) {
+    console.error('[SOA-AUDIT] could not record an audit event: ' + (e && e.message));
+  }
+}
+
 export function auditEvent({ action, actor, result, source, correlationId, soaId = null, details = {}, at = new Date().toISOString() }) {
   if (!AUDIT_ACTIONS.includes(action)) throw new Error(`evidence: unknown audit action "${action}"`);
   if (!actor) throw new Error('evidence: audit event requires an actor');

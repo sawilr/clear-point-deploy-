@@ -36,7 +36,7 @@ import {
 import { RECORD_CLASS, mayPurge, applyHold, releaseHold, callRetentionRequirement } from '../api/_lib/cy2027/retention.js';
 import { canDiscussCarrier, overlayInventory, assertPrivateContext, OVERLAY_STATUS } from '../api/_lib/cy2027/carrier-overlay.js';
 import { tpmoDisclaimerText, activeContractYearVariant, hasVerifiedTpmoCounts, assertDisclaimerSignable, TPMO_DISCLAIMER_CONFIG } from '../api/_lib/cy2027/tpmo.js';
-import { integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, redactForLog, renderTextSnapshot } from '../api/_lib/cy2027/evidence.js';
+import { integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, emitAudit, redactForLog, renderTextSnapshot } from '../api/_lib/cy2027/evidence.js';
 import {
   issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
 } from '../api/_lib/cy2027/secure-link.js';
@@ -1065,6 +1065,51 @@ const baseInput = {
   const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
   ok('sign-soa logs the unwritable fields on every signature', /unmappedFieldsWarning\(_cf\.unmapped\)/.test(SRC));
   ok('sign-soa forwards only the mapped fields', /cy2027CustomFields: _cf\.fields/.test(SRC));
+}
+
+// ── 18. The audit trail actually emits, and the TPMO year is pinned ──────────
+{
+  // EV-06 / WVG-18 / SEC-TOK-07 — auditEvent() existed and nothing called it,
+  // so "audit every SOA view/sign/send/resend/revoke" was satisfied by a
+  // function that never ran.
+  const TOK = readFileSync(new URL('../api/soa-token.js', import.meta.url), 'utf8');
+  const STAT = readFileSync(new URL('../api/soa-status.js', import.meta.url), 'utf8');
+  const SIGN = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+
+  ok('issuing a link is audited', /action: 'SOA_LINK_ISSUED'/.test(TOK));
+  ok('viewing a link is audited', /action: 'SOA_VIEWED'/.test(STAT));
+  ok('a failed second factor is audited', /attemptsRemaining: verdict\.attemptsRemaining/.test(STAT));
+  ok('releasing the prefill is audited', /PREFILL_RELEASED/.test(STAT));
+  ok('signing is audited', /action: 'SOA_SIGNED'/.test(SIGN));
+  ok('evidence written is audited', /action: 'SOA_EVIDENCE_WRITTEN'/.test(SIGN));
+  ok('evidence failure is audited', /action: 'SOA_EVIDENCE_WRITE_FAILED'/.test(SIGN));
+  ok('a CRM failure is audited too', /result: 'CRM_WRITE_FAILED'/.test(SIGN));
+
+  // The emitter must never take down a valid signature.
+  let threw = false;
+  try { emitAudit({ action: 'NOT_A_REAL_ACTION', actor: 'x', result: 'y', source: 'z', correlationId: 'c' }); }
+  catch { threw = true; }
+  ok('a bad audit event is logged, not thrown', threw === false);
+
+  // CRM-21 — the channel proof is recorded rather than assumed.
+  ok('CRM-21: channel verification status is written on signature',
+    /CHANNEL_VERIFICATION_STATUS: 'VERIFIED'/.test(SIGN));
+  ok('CRM-21: signing refuses without a verified factor', /SECOND_FACTOR_REQUIRED/.test(SIGN));
+
+  // TPY-03 — year correctness of the TPMO disclaimer belongs in the battery,
+  // not only in a build guard that a rebuild could silently pass.
+  const nowYear = activePlanYear();
+  const en = tpmoDisclaimerText('en');
+  const es = tpmoDisclaimerText('es');
+  if (nowYear >= 2027) {
+    ok('TPY-03: the live EN disclaimer is the CY2027 variant', !/State Health Insurance/i.test(en), en);
+    ok('TPY-03: the live ES disclaimer is the CY2027 variant', !/SHIP|Seguro de Salud/i.test(es), es);
+  } else {
+    ok('TPY-03: the live EN disclaimer is the CY2026 variant', /State Health Insurance/i.test(en), en);
+  }
+  ok('TPY-03: the disclaimer never ships a placeholder', !/\[X\]|\[Y\]/.test(en + es));
+  ok('TPY-03: the ruleset and the renderer agree on the plan year',
+    (nowYear >= 2027) === (CMS_RULESET_2027.tpmo.includesShipReference === false));
 }
 
 if (failures.length) {

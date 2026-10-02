@@ -47,7 +47,7 @@ import { resolveRuleset } from './_lib/cy2027/rulesets.js';
 import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
 import { createSoaInstance, completeSoaInstance } from './_lib/cy2027/soa-instance.js';
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
-import { buildEvidenceRecord } from './_lib/cy2027/evidence.js';
+import { buildEvidenceRecord, emitAudit } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
 import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
 import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
@@ -294,6 +294,10 @@ export default async function handler(req, res) {
   });
   if (!stored.ok) {
     console.error('[sign-soa] evidence NOT stored for soa_id=' + instance.soaId + ': ' + stored.reason);
+    emitAudit({
+      action: 'SOA_EVIDENCE_WRITE_FAILED', actor: 'system:sign-soa', result: stored.reason, source: 'WEB',
+      correlationId: instance.soaId, soaId: instance.soaId, details: { state: instance.state, planYear: instance.planYear },
+    });
     // 503, not 500: this is a configuration/availability condition the operator
     // can fix, and the beneficiary must not be told their SOA is on file.
     return res.status(503).json({
@@ -313,6 +317,22 @@ export default async function handler(req, res) {
     console.error('[sign-soa] instance completion failed:', e && e.message);
     return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
   }
+
+  emitAudit({
+    action: 'SOA_EVIDENCE_WRITTEN', actor: 'system:sign-soa', result: 'OK', source: instance.source,
+    correlationId: instance.soaId, soaId: instance.soaId,
+    details: { uri: stored.uri, retentionYears: stored.retentionYears, integrityHash: instance.integrityHash },
+  });
+  emitAudit({
+    action: 'SOA_SIGNED', actor: 'beneficiary:channel-verified', result: 'OK', source: instance.source,
+    correlationId: instance.soaId, soaId: instance.soaId,
+    details: {
+      planYear: instance.planYear, state: instance.state, appointmentId: instance.appointmentId,
+      method: instance.method, authorized: instance.authorizedCategories.join(','),
+      declined: instance.declinedCategories.join(','),
+      stateRulesetVersion: instance.stateRulesetVersion, soaFormVersion: instance.soaFormVersion,
+    },
+  });
 
   // ── Mark consumed + persist ────────────────────────────────────────────
   // Burn the link (replay protection) and record the outcome on it. The signed
@@ -384,7 +404,12 @@ export default async function handler(req, res) {
   // writes never land on a custom field. Creating the fields is an owner action
   // in the sub-account, not something this code may do. So the mapping is
   // explicit and the gap is LOGGED on every signature instead of being silent.
-  var _cf = buildCustomFields(soaInstanceToFields(instance));
+  // CRM-21 — the channel was proven before any prefill was released (sign-soa
+  // refuses without link.factorVerifiedAt), so the proof is recorded, not assumed.
+  var _cf = buildCustomFields(soaInstanceToFields(instance, {
+    CHANNEL_VERIFICATION_STATUS: 'VERIFIED',
+    DATA_SENSITIVITY_CLASS: 'SOA_EVIDENCE',
+  }));
   var _cfWarn = unmappedFieldsWarning(_cf.unmapped);
   if (_cfWarn) console.warn(_cfWarn);
 
@@ -440,6 +465,10 @@ export default async function handler(req, res) {
   // scope) while refusing to claim delivery.
   if (!ghlOk) {
     console.error('[sign-soa] CRM delivery failed for soa_id=' + soaId + ' — requires manual filing');
+    emitAudit({
+      action: 'SOA_EVIDENCE_WRITE_FAILED', actor: 'system:sign-soa', result: 'CRM_WRITE_FAILED', source: instance.source,
+      correlationId: soaId, soaId: soaId, details: { note: 'signature stored, not filed in the CRM' },
+    });
     return res.status(202).json({
       ok: false,
       pending: true,

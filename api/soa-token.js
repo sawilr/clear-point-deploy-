@@ -18,6 +18,7 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 import { noStorePII } from './_lib/security-headers.js';
 import { SOA_TOKEN_TTL_SEC, setRecord, leadKey } from './_lib/soa-store.js';
 import { issueLink } from './_lib/cy2027/secure-link.js';
+import { emitAudit } from './_lib/cy2027/evidence.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
 
@@ -118,6 +119,12 @@ export default async function handler(req, res) {
     console.error('[soa-token] storage failed:', w1.reason || w2.reason);
     return res.status(503).json({ error: 'Token storage failed' });
   }
+
+  emitAudit({
+    action: 'SOA_LINK_ISSUED', actor: 'system:soa-token', result: 'OK', source: 'WEB',
+    correlationId: beneficiaryRef, soaId: link.record.soaId,
+    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language },
+  });
 
   return res.status(200).json({
     token: link.token,
