@@ -223,10 +223,8 @@ Stated plainly rather than implied:
 | ZIP→county dataset | Not installed; the form asks the beneficiary instead. |
 | `ENROLLMENT_RECORD` retention period | Unconfirmed; that class cannot be purged at all until the owner supplies it. |
 | Recording-notice all-party positions | Carried as the project's existing position of record, flagged `complianceReview: OWNER_COUNSEL`. Not re-determined by this code. |
-| Carrier firewall in the chat bots | The private registry exists; what Clara/Zara may answer has not been re-audited against the §20 knowledge classes. |
-| Data minimization in lead scoring | `api/_lib/lead-intel.js` has not been audited against the prohibited-signal list. |
-| Consent objects as CRM fields | Modelled in code; not yet written as queryable CRM fields. |
-| Confirmation copy to the beneficiary | Not implemented (spec §9). |
+| GoHighLevel custom fields | **OWNER ACTION.** The ~32 §18 fields do not exist in the sub-account, and `api/sign-soa.js` was passing field *names* where GHL expects opaque IDs, so SOA fields never landed (CRM-27). The mapping now sends only fields with a configured ID and logs the rest on every signature. Create the fields, then set `CY2027_CRM_FIELD_IDS`. |
+| Confirmation copy to the beneficiary | Not implemented (spec §9). It is an outbound message, so it needs a channel, a consent check and owner authorization before it is wired. |
 | SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of six preconditions now closed; `tpmoCountsVerifiedEverywhere` and `signedPdfPersisted` remain. |
 | Production deploy | Not done. Requires owner GO. |
 
