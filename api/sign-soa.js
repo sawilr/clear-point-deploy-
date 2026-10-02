@@ -602,7 +602,8 @@ function buildSoaPdf(opts) {
       doc.font('Helvetica-Bold').fontSize(10).text(L === 'es' ? 'Reconocimientos' : 'Acknowledgements');
       doc.font('Helvetica').fontSize(9);
       doc.text('[X] ' + (L === 'es'
-        ? 'Entiendo que esto NO es una inscripción y NO hay obligación.'
+        // G32 — same neutral register as the English line beside it.
+        ? 'Entiendo que esto no es una inscripción y que no hay obligación.'
         : 'I understand this is not an enrollment, and there is no obligation.'));
       doc.text('[X] ' + (L === 'es'
         ? 'Acepto firmar este documento electrónicamente (Ley ESIGN, 15 U.S.C. §7001).'

@@ -904,13 +904,26 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
           const inService = state === 'NY' || state === 'NJ' || state === 'CT';
           if (!inService) {
             // Sawil 2026-06 — OUT OF SERVICE AREA (e.g. a Florida ZIP like 32828).
-            // Keep it BRIEF, tell them ClearPoint doesn't serve their area, and
-            // STOP: do NOT hand off to the LLM (no wasted tokens) and close the
-            // input. NEVER name the non-service place (compliance).
+            // Do NOT hand off to the LLM (no wasted tokens) and NEVER name the
+            // non-service place (compliance).
+            //
+            // AUDIT 2026-10-02 (SJ-09) — this used to end with "We wish you the
+            // best." and setChatClosed(true): a hard dead end. Someone who needs
+            // Medicare help typed their ZIP and got the door shut, with no
+            // 1-800-MEDICARE, no SHIP and no human. Spec §5 says a state we do
+            // not serve must still "offer appropriate general service/escalation",
+            // and the project's own rule is never to leave a senior at a dead end
+            // — the state-NAME branch below already does this correctly; this
+            // branch was simply never brought in line.
+            //
+            // The referrals are the official, carrier-neutral ones, so saying
+            // them breaks no boundary: we are not advising, we are pointing to
+            // Medicare's own help. The composer stays OPEN in case they have a
+            // question we CAN answer (general Medicare education is in scope
+            // everywhere).
             const out = isEs
-              ? `Gracias. ClearPoint solo atiende Nueva York, Nueva Jersey y Connecticut, así que no podemos ayudarle con su área. Le deseamos lo mejor.`
-              : `Thank you. ClearPoint serves only New York, New Jersey, and Connecticut, so we're not able to help in your area. We wish you the best.`;
-            setChatClosed(true);
+              ? `Gracias. ClearPoint solo atiende Nueva York, Nueva Jersey y Connecticut, así que no puedo ayudarle con un plan en su área — pero no quiero dejarle sin salida.\n\nPara su zona, estas son las fuentes oficiales y gratuitas:\n• Medicare: 1-800-MEDICARE (1-800-633-4227), TTY 1-877-486-2048, las 24 horas\n• Medicare.gov\n• Su programa estatal SHIP, que da asesoría gratuita e imparcial: shiphelp.org\n\nSi tiene una pregunta general sobre Medicare, con gusto se la respondo aquí.`
+              : `Thank you. ClearPoint serves only New York, New Jersey and Connecticut, so I can't help you with a plan in your area — but I don't want to leave you without a next step.\n\nFor your area, these are the official, free sources:\n• Medicare: 1-800-MEDICARE (1-800-633-4227), TTY 1-877-486-2048, 24 hours a day\n• Medicare.gov\n• Your State Health Insurance Assistance Program (SHIP), which gives free, unbiased counseling: shiphelp.org\n\nIf you have a general Medicare question, I'm glad to answer it here.`;
             setTimeout(() => pushBotTyped(out), 300);
             return;
           }

@@ -1,8 +1,9 @@
 import { useLanguage } from '../hooks/useLanguage';
+import { tpmoDisclaimerText } from '../lib/tpmoConfig';
 import { useScrollReveal } from '../components/ScrollReveal';
 
 export default function Terms() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   const reveal = useScrollReveal();
 
   return (
@@ -47,11 +48,19 @@ export default function Terms() {
 
           <section>
             <h2 className="font-serif text-xl font-semibold text-earth-900 mb-3">{t('4. No Government Affiliation', '4. Sin Afiliación Gubernamental')}</h2>
+            {/* AUDIT 2026-10-02 (TPY-12) — the second sentence used to be a
+                hardcoded, abridged, contract-year-blind paraphrase: it said
+                "We do not offer every plan available in your area." and stopped,
+                dropping the rest of the standardized (e)(41) wording, and it
+                could not follow the CY2026 -> CY2027 cut-over the rest of the
+                site follows. The affiliation sentence stays local (it is not
+                (e)(41)); the disclaimer now comes from the one canonical source. */}
             <p>
               {t(
-                'We are not affiliated with, endorsed by, or connected to the U.S. Government, the Centers for Medicare & Medicaid Services (CMS), or the federal Medicare program. We do not offer every plan available in your area.',
-                'No estamos afiliados, respaldados ni conectados con el Gobierno de los Estados Unidos, los Centros de Servicios de Medicare y Medicaid (CMS), o el programa federal de Medicare. No ofrecemos todos los planes disponibles en su área.'
-              )}
+                'We are not affiliated with, endorsed by, or connected to the U.S. Government, the Centers for Medicare & Medicaid Services (CMS), or the federal Medicare program.',
+                'No estamos afiliados, respaldados ni conectados con el Gobierno de los Estados Unidos, los Centros de Servicios de Medicare y Medicaid (CMS), o el programa federal de Medicare.'
+              )}{' '}
+              {tpmoDisclaimerText(lang === 'es' ? 'es' : 'en')}
             </p>
           </section>
 

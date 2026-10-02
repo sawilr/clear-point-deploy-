@@ -1,6 +1,13 @@
 /**
  * Lightweight ZIP code → City, County, State lookup for supported states.
- * Only covers NY, NJ, CT, FL service areas.
+ * Covers NY, NJ and CT — the only authorized SERVICE areas.
+ *
+ * AUDIT 2026-10-02 (SJ-11) — this line used to read "NY, NJ, CT, FL service
+ * areas", which states that Florida is a service area. It is not, and the
+ * code twenty lines down says so explicitly and blocks it from every
+ * service-area and lead path. FL ZIP data exists ONLY so the educational
+ * bot can recognize a Florida ZIP and decline it; a reader who trusted the
+ * header instead of the code would have reached the opposite conclusion.
  */
 
 interface ZipInfo {

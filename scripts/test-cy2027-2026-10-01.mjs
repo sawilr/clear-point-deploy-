@@ -1316,6 +1316,45 @@ const baseInput = {
   ok('CRM-28: refusals are reported, never silently dropped', Array.isArray(inferred.refused) && inferred.refused.length === 2);
 }
 
+// ── 24. Re-verification round: the gaps that survived (2026-10-02) ───────────
+{
+  // SJ-09 — an out-of-service ZIP must still get general service/escalation.
+  // This branch used to end "We wish you the best." and close the composer.
+  const BOT = readFileSync(new URL('../src/components/CustomerServiceBot.tsx', import.meta.url), 'utf8');
+  ok('SJ-09: the out-of-service branch no longer wishes them well and shuts the door',
+    !/We wish you the best|Le deseamos lo mejor/.test(BOT));
+  ok('SJ-09: it gives 1-800-MEDICARE', /1-800-633-4227/.test(BOT));
+  ok('SJ-09: it gives the TTY line', /1-877-486-2048/.test(BOT));
+  ok('SJ-09: it points to the state SHIP', /shiphelp\.org/.test(BOT));
+  ok('SJ-09: it offers both languages', /no quiero dejarle sin salida/.test(BOT) && /without a next step/.test(BOT));
+  // Strip comments first: this file now DOCUMENTS what the branch used to do,
+  // and a comment describing the old dead end is not the old dead end.
+  const BOT_CODE = BOT.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  ok('SJ-09: nothing closes the composer on an out-of-service ZIP any more',
+    !/setChatClosed\(true\)/.test(BOT_CODE), 'a setChatClosed(true) survives in code');
+  ok('SJ-09: it still never names the non-service state', !/\bFlorida\b/.test(BOT_CODE));
+
+  // TPY-12 — the Terms page must render the standardized sentence, not a paraphrase.
+  const TERMS = readFileSync(new URL('../src/pages/Terms.tsx', import.meta.url), 'utf8');
+  ok('TPY-12: Terms renders the canonical disclaimer', /tpmoDisclaimerText\(lang === 'es'/.test(TERMS));
+  ok('TPY-12: the abridged paraphrase is gone',
+    !/federal Medicare program\. We do not offer every plan/.test(TERMS));
+
+  // G32 — equal register in both languages.
+  const CONTENT2 = readFileSync(new URL('../src/lib/soaContent.ts', import.meta.url), 'utf8');
+  const SIGN4 = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+  ok('G32: the Spanish acknowledgement no longer shouts', !/NO es una inscripción y NO hay/.test(CONTENT2));
+  ok('G32: nor does the PDF copy', !/NO es una inscripción y NO hay/.test(SIGN4));
+  ok('G32: the Spanish text is still complete',
+    /no es una inscripción y que no hay obligación/.test(CONTENT2));
+
+  // SJ-11 — a comment that contradicts the code is a defect.
+  const ZIPSRC = readFileSync(new URL('../src/lib/zipLookup.ts', import.meta.url), 'utf8');
+  ok('SJ-11: the header no longer calls Florida a service area',
+    !/Only covers NY, NJ, CT, FL service areas/.test(ZIPSRC));
+  ok('SJ-11: it says what the code actually does', /the only authorized SERVICE areas/.test(ZIPSRC));
+}
+
 if (failures.length) {
   console.error(`CY2027 LAYER: ${passed} passed, ${failures.length} failed\n`);
   for (const f of failures) console.error('  FAIL ' + f + '\n');

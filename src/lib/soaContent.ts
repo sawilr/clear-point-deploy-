@@ -187,7 +187,12 @@ export const PRODUCT_OPTIONS: Array<{ code: SOAProduct; en: string; es: string }
 export const ACKNOWLEDGEMENTS = {
   no_obligation: {
     en: 'I understand this is not an enrollment, and there is no obligation.',
-    es: 'Entiendo que esto NO es una inscripción y NO hay obligación.',
+    // AUDIT 2026-10-02 (G32) — the Spanish version shouted "NO ... NO" in caps
+    // while the English read neutrally. Spec §31/§32 require the two languages
+    // to be semantically equivalent with no emphasis or framing difference; a
+    // senior reading the Spanish was being pushed harder than one reading the
+    // English, for the same legal content.
+    es: 'Entiendo que esto no es una inscripción y que no hay obligación.',
   },
   e_signature: {
     en: 'I agree to sign this document electronically. I understand that my typed name is a valid electronic signature under the ESIGN Act (15 U.S.C. §7001).',

@@ -192,6 +192,35 @@ if (STATE_DIGEST !== PINNED_STATE_DIGEST) {
   }
 }
 
+// ── 4c. The static shell's disclaimer must track the plan year (TPY-07) ──────
+// index.html is a static file: it cannot import tpmoConfig, so its <noscript>
+// copy of the (e)(41) sentence is necessarily a literal. Today it happens to
+// carry the CY2027 wording, but nothing tied it to the config — it would have
+// been silently wrong on the next cut-over, in the one surface a JavaScript-less
+// visitor sees. It cannot import the source, so the BUILD compares them.
+{
+  let shell;
+  try { shell = read('index.html'); } catch { shell = null; }
+  if (!shell) {
+    problems.push('index.html is missing — the noscript disclaimer cannot be checked.');
+  } else if (!shell.includes('do not offer every plan available in your area')) {
+    problems.push('index.html no longer carries the (e)(41) disclaimer in its <noscript> block.');
+  } else {
+    const expected = tpmo.tpmoDisclaimerText('en');
+    if (!shell.includes(expected)) {
+      const shown = (shell.match(/We do not offer every plan[^<]{0,200}/) || ['(not found)'])[0];
+      problems.push(
+        'index.html\'s <noscript> disclaimer does not match the canonical sentence for the active plan year.\n' +
+          `      expected: ${expected}\n` +
+          `      found:    ${shown}\n` +
+          '      A visitor without JavaScript sees only this copy. Update the literal in index.html.',
+      );
+    } else {
+      notes.push('index.html noscript disclaimer matches the active plan-year wording');
+    }
+  }
+}
+
 // ── 5. Approved wording must not be copy-pasted ──────────────────────────────
 // A distinctive fragment of each approved category description. If any of these
 // appears outside the canonical module, a second copy is forming.
