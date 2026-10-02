@@ -41,6 +41,7 @@ import {
   issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
 } from '../api/_lib/cy2027/secure-link.js';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 let passed = 0;
 const failures = [];
@@ -546,6 +547,47 @@ const baseInput = {
   ok('re-issuing a revoked link is refused', mayReissue(revokeLink(record), 'PENDING_SIGNATURE').reason === 'LINK_REVOKED');
 
   ok('views are counted for abuse detection', recordView(record).views === 1);
+}
+
+// ── 12. The SERVER enforces CY2027, not just the browser ─────────────────────
+// Found by the Phase 0 audit (CY2027-SRV-01): the form resolved the state
+// ruleset, required an appointment and submitted planYear / residenceState /
+// stateRulesetVersion / soaFormVersion, and api/sign-soa.js dropped all four.
+// These are SOURCE assertions, not behavioural ones — the handler short-circuits
+// on SOA_ENABLED=false, so it cannot be exercised end to end until enablement.
+// They are deliberately written to fail if the wiring is removed again.
+{
+  const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
+
+  ok('server imports the ruleset resolver', /import \{[^}]*resolveRuleset[^}]*\} from '\.\/_lib\/cy2027\/rulesets\.js'/.test(SRC));
+  ok('server imports the state resolver', /import \{[^}]*resolveStateRuleset[^}]*\} from '\.\/_lib\/cy2027\/state-rules\.js'/.test(SRC));
+  ok('server imports the instance builder', /createSoaInstance/.test(SRC) && /completeSoaInstance/.test(SRC));
+  ok('server imports the evidence builder', /buildEvidenceRecord/.test(SRC));
+
+  ok('server resolves the plan year from its own clock, not the body',
+    /resolveRuleset\(null\)/.test(SRC), 'resolveRuleset(null) not found');
+  ok('server fails closed when no ruleset governs', /SOA_RULESET_UNAVAILABLE/.test(SRC));
+  ok('server gates on the state ruleset', /resolveStateRuleset\(residenceState/.test(SRC));
+  ok('server returns a named state reason', /SOA_STATE_GATE/.test(SRC));
+  ok('server treats the browser versions as a claim to check', /SOA_VERSION_MISMATCH/.test(SRC));
+  ok('server refuses an SOA that authorizes nothing', /SOA_INCOMPLETE/.test(SRC));
+  ok('server derives the authorized scope from the instance, not the body',
+    /var products = instance\.authorizedCategories;/.test(SRC));
+  ok('server locks the gate when evidence cannot be built', /SOA_EVIDENCE_FAILED/.test(SRC));
+
+  ok('the CMS-10566 product codes are gone from the server',
+    !/'MA_only'|'MAPD'|'DVH_HI'/.test(SRC), 'legacy taxonomy still present');
+  ok('the server no longer reads a date of birth', !/body\.dob/.test(SRC));
+  ok('the plan year reaches the CRM', /soa_plan_year/.test(SRC));
+  ok('the ruleset version reaches the CRM', /soa_state_ruleset_version/.test(SRC));
+  ok('the integrity hash reaches the CRM', /soa_integrity_hash/.test(SRC));
+  ok('the PDF prints the plan year', /Plan\/contract year/.test(SRC));
+  ok('the PDF prints what was NOT authorized', /Not authorized at this appointment/.test(SRC));
+
+  // The enablement gate must still refuse, and must now also know about this.
+  const CONTENT = readFileSync(new URL('../src/lib/soaContent.ts', import.meta.url), 'utf8');
+  ok('enablement tracks server-side CY2027 enforcement', /serverEnforcesCy2027/.test(CONTENT));
+  ok('SOA is still disabled', /export const SOA_ENABLED = false/.test(CONTENT));
 }
 
 if (failures.length) {

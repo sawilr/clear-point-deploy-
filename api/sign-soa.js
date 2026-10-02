@@ -34,6 +34,19 @@ import { readJsonBody } from './_lib/read-body.js';
 // worlds import it. scripts/check-cy2027-parity.mjs fails the build if a
 // fourth copy appears.
 import { tpmoDisclaimerText, assertDisclaimerSignable, TPMO_DISCLAIMER_VERSION } from './_lib/cy2027/tpmo.js';
+// AUDIT 2026-10-01 (CY2027-SRV-01) — the Phase 0 audit found that the CY2027
+// rules were enforced ONLY in the browser: SOAForm.tsx resolved the state
+// ruleset, required an appointment and submitted planYear / residenceState /
+// stateRulesetVersion / soaFormVersion, and this file silently dropped all
+// four. A direct POST therefore bypassed every gate the form enforced.
+// Client-side enforcement is not enforcement. The server now resolves the
+// rulesets itself and treats the browser's versions as a claim to CHECK, never
+// as a value to trust.
+import { resolveRuleset } from './_lib/cy2027/rulesets.js';
+import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
+import { createSoaInstance, completeSoaInstance } from './_lib/cy2027/soa-instance.js';
+import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
+import { buildEvidenceRecord } from './_lib/cy2027/evidence.js';
 
 const AGENT_NAME = 'Sawil Reyes';
 const AGENT_NPN = '17261494';
@@ -44,10 +57,13 @@ const TPMO_VERSION = TPMO_DISCLAIMER_VERSION;
 // that no PDF with [X]/[Y] placeholders can be generated.
 const SOA_ENABLED = false;
 
-const PRODUCT_LABEL = {
-  en: { MA_only: 'Medicare Advantage (Part C) — without prescription drug coverage', MAPD: 'Medicare Advantage with Prescription Drug coverage (MAPD)', PDP: 'Standalone Part D Prescription Drug Plan', DVH_HI: 'Other (Dental, Vision, Hearing, Hospital Indemnity, etc.)' },
-  es: { MA_only: 'Medicare Advantage (Parte C) — sin cobertura de medicamentos recetados', MAPD: 'Medicare Advantage con cobertura de medicamentos recetados (MAPD)', PDP: 'Plan independiente de medicamentos recetados de Parte D', DVH_HI: 'Otros (Dental, Visión, Audición, Hospital Indemnity, etc.)' },
-};
+// AUDIT 2026-10-01 (CY2027) — the five-product CMS-10566 taxonomy (MA_only,
+// MAPD, PDP, DVH_HI) is gone. The approved Master SOA defines exactly three
+// authorizing categories plus a non-authorizing "I am not sure" option, and
+// their wording lives in api/_lib/cy2027/soa-text.js. DVH_HI in particular was
+// an "Other (Dental, Vision, Hearing, Hospital Indemnity…)" catch-all; spec §8
+// allows additional categories only after the agency's actual licensed product
+// scope is confirmed, so it is not reinstated without that confirmation.
 
 export default async function handler(req, res) {
   // ── CORS + method gates ────────────────────────────────────────────────
@@ -86,30 +102,105 @@ export default async function handler(req, res) {
 
   // ── Validate payload ───────────────────────────────────────────────────
   var fullName = typeof body.fullName === 'string' ? body.fullName.trim() : '';
-  var dob = typeof body.dob === 'string' ? body.dob : '';
+  // Date of birth is deliberately NOT read: it is absent from the approved
+  // Master SOA template, and collecting what the form does not need is the data
+  // minimization rule (spec §14). Any dob a client still sends is ignored.
   var phone = String(body.phone || '').replace(/[\s\-().]/g, '');
   var email = typeof body.email === 'string' ? body.email.trim() : '';
   var zip = typeof body.zip === 'string' ? body.zip : '';
   var address = typeof body.address === 'string' ? body.address.trim() : '';
-  var products = Array.isArray(body.products) ? body.products.filter(function (p) { return ['MA_only', 'MAPD', 'PDP', 'DVH_HI'].includes(p); }) : [];
   var ack = (body.acknowledgements && typeof body.acknowledgements === 'object') ? body.acknowledgements : {};
   var signature = typeof body.signature === 'string' ? body.signature.trim() : '';
   var language = body.language === 'en' ? 'en' : 'es';
   var leadSource = body.leadSource === 'smart_review' ? 'smart_review' : 'customer_service';
 
+  // CY2027 fields. The browser sends them; none of them is trusted.
+  var residenceState = typeof body.residenceState === 'string' ? body.residenceState.trim().toUpperCase() : '';
+  var county = typeof body.county === 'string' && body.county.trim() ? body.county.trim() : null;
+  var appointmentId = typeof body.appointmentId === 'string' && body.appointmentId.trim() ? body.appointmentId.trim() : '';
+  var appointmentAt = typeof body.appointmentAt === 'string' ? body.appointmentAt.trim() : '';
+  var appointmentFormat = typeof body.appointmentFormat === 'string' ? body.appointmentFormat.trim() : '';
+  var selectedCategories = Array.isArray(body.selectedCategories)
+    ? body.selectedCategories.filter(function (c) { return ALL_CATEGORY_CODES.includes(c); })
+    : [];
+
   // Match captured name (case-insensitive, whitespace collapse)
   var sigA = signature.toLowerCase().replace(/\s+/g, ' ');
   var sigB = (record.fullName || '').toLowerCase().replace(/\s+/g, ' ');
   if (!signature || sigA !== sigB) return res.status(400).json({ error: 'Signature must match the captured name' });
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dob)) return res.status(400).json({ error: 'Invalid DOB' });
   if (!/^(\+1)?\d{10}$/.test(phone)) return res.status(400).json({ error: 'Invalid phone' });
   if (!/^\d{5}$/.test(zip)) return res.status(400).json({ error: 'Invalid ZIP' });
-  if (products.length === 0) return res.status(400).json({ error: 'Select at least one product' });
   if (!ack.no_obligation || !ack.e_signature) return res.status(400).json({ error: 'Both acknowledgements required' });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
 
+  // ── CY2027 gates, server-side and fail-closed ──────────────────────────
+  // The plan year is resolved from the server clock, never read from the body:
+  // a client that sends planYear 2026 must not be able to sign under last
+  // year's rules (spec §33, "old-year rules silently reused for new plan year").
+  var rulesetRes = resolveRuleset(null);
+  if (!rulesetRes.ok) {
+    console.error('[sign-soa] ruleset unavailable:', rulesetRes.reason);
+    return res.status(503).json({ error: 'SOA_RULESET_UNAVAILABLE', reason: rulesetRes.reason });
+  }
+  var ruleset = rulesetRes.ruleset;
+
+  var stateRes = resolveStateRuleset(residenceState, ruleset.planYear);
+  if (!stateRes.ok) {
+    // Named reason, not a generic 400 — the UI must distinguish "we are not
+    // licensed in your state" from "something failed".
+    return res.status(stateRes.reason === 'STATE_NOT_SUPPORTED' ? 409 : 400)
+      .json({ error: 'SOA_STATE_GATE', reason: stateRes.reason });
+  }
+  var stateRuleset = stateRes.ruleset;
+
+  // The browser's version strings are a CLAIM. Compare them with what the
+  // server resolved and refuse on any mismatch rather than recording theirs.
+  if (body.stateRulesetVersion && body.stateRulesetVersion !== stateRuleset.stateRulesetVersion) {
+    return res.status(409).json({ error: 'SOA_VERSION_MISMATCH', field: 'stateRulesetVersion' });
+  }
+  if (body.soaFormVersion && body.soaFormVersion !== stateRuleset.soaFormVersion) {
+    return res.status(409).json({ error: 'SOA_VERSION_MISMATCH', field: 'soaFormVersion' });
+  }
+  if (body.planYear != null && Number(body.planYear) !== ruleset.planYear) {
+    return res.status(409).json({ error: 'SOA_VERSION_MISMATCH', field: 'planYear' });
+  }
+
+  // An SOA is appointment-specific. Without an appointment reference there is
+  // nothing to scope, so one is minted and returned rather than defaulted away.
+  if (!appointmentId) appointmentId = 'appt_' + crypto.randomUUID();
+
+  var built = createSoaInstance({
+    soaId: crypto.randomUUID(),
+    appointmentId: appointmentId,
+    appointmentAt: appointmentAt || null,
+    appointmentFormat: appointmentFormat,
+    planYear: ruleset.planYear,
+    state: stateRuleset.code,
+    zip: zip,
+    county: county,
+    language: language,
+    method: 'WEB_ELECTRONIC_SIGNATURE',
+    beneficiaryName: fullName || record.fullName,
+    selectedCategories: selectedCategories,
+    stateRulesetVersion: stateRuleset.stateRulesetVersion,
+    soaFormVersion: stateRuleset.soaFormVersion,
+  });
+  if (!built.ok) return res.status(400).json({ error: 'SOA_INVALID', fields: built.errors });
+
+  var instance = built.instance;
+  // Spec §10: if nothing was authorized, do not force completion — hand the
+  // caller to a licensed agent instead of producing an empty "signed" scope.
+  if (!instance.authorizedCategories.length) {
+    return res.status(422).json({ error: 'SOA_INCOMPLETE', message: 'No product category was authorized' });
+  }
+
+  // The authorized scope is what the SERVER computed from the selection, so a
+  // crafted authorizedCategories in the body cannot widen it.
+  var products = instance.authorizedCategories;
+
   // ── Generate PDF ───────────────────────────────────────────────────────
-  var soaId = crypto.randomUUID();
+  // One id for the instance, the PDF, the evidence and the CRM — not three.
+  var soaId = instance.soaId;
   var signedAt = new Date().toISOString();
   var signerIp = ip;
   var signerUserAgent = String(req.headers['user-agent'] || '').slice(0, 240);
@@ -121,7 +212,13 @@ export default async function handler(req, res) {
       soaId: soaId,
       signedAt: signedAt,
       fullName: fullName,
-      dob: dob,
+      stateName: stateRuleset.name,
+      state: instance.state,
+      county: instance.county,
+      appointmentAt: instance.appointmentAt,
+      appointmentFormat: instance.appointmentFormat,
+      planYear: instance.planYear,
+      declined: instance.declinedCategories,
       phone: phone,
       email: email,
       zip: zip,
@@ -138,11 +235,39 @@ export default async function handler(req, res) {
 
   var pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
 
+  // ── CY2027 evidence record ─────────────────────────────────────────────
+  // Stores the EXACT wording the beneficiary saw, in their language, plus an
+  // integrity hash over the text, the selections and the identifiers (spec
+  // §19). The SOA instance is only marked COMPLETED once both exist, so a
+  // failure here leaves the marketing gate locked rather than producing a
+  // signature with no evidence behind it.
+  var evidence;
+  try {
+    evidence = buildEvidenceRecord(instance, {
+      stateName: stateRuleset.name,
+      signature: signature,
+      signedAt: signedAt,
+      sourceIp: signerIp,
+      userAgent: signerUserAgent,
+      correlationId: soaId,
+    });
+    instance = completeSoaInstance(instance, {
+      completedAt: signedAt,
+      integrityHash: evidence.integrityHash,
+      evidenceReference: 'pdf:sha256:' + pdfHash,
+    });
+  } catch (e) {
+    console.error('[sign-soa] evidence build failed:', e && e.message);
+    return res.status(500).json({ error: 'SOA_EVIDENCE_FAILED' });
+  }
+
   // ── Mark consumed + persist ────────────────────────────────────────────
   record.consumed = true;
   record.consumedAt = signedAt;
   record.soaId = soaId;
   record.pdfHash = pdfHash;
+  record.soaInstance = instance;
+  record.soaIntegrityHash = evidence.integrityHash;
   try { await setSoaToken(token, record); } catch (e) { /* log but don't fail */ console.error('[sign-soa] token update failed', e && e.message); }
 
   // ── Compose GHL note ───────────────────────────────────────────────────
@@ -151,15 +276,27 @@ export default async function handler(req, res) {
     'soa_id: ' + soaId,
     'signed_at: ' + signedAt,
     'signer_full_name: ' + fullName,
-    'signer_dob: ' + dob,
     'signer_phone: +1' + phone.replace(/^\+1/, ''),
     'signer_email: ' + (email || '(skipped)'),
     'signer_zip: ' + zip,
-    'signer_address: ' + (address || '(not provided)'),
     'signer_ip: ' + signerIp,
     'signer_user_agent: ' + signerUserAgent,
     'language: ' + language,
-    'product_scope: ' + products.join(', '),
+    // CY2027 scope — the fields that make this an appointment-specific
+    // instance rather than a standing authorization.
+    'plan_year: ' + instance.planYear,
+    'residence_state: ' + instance.state,
+    'county: ' + (instance.county || '(to be confirmed)'),
+    'appointment_id: ' + instance.appointmentId,
+    'appointment_at: ' + (instance.appointmentAt || '(not supplied)'),
+    'appointment_format: ' + instance.appointmentFormat,
+    'state_ruleset_version: ' + instance.stateRulesetVersion,
+    'soa_form_version: ' + instance.soaFormVersion,
+    'soa_script_version: ' + instance.scriptVersion,
+    'soa_method: ' + instance.method,
+    'authorized_categories: ' + instance.authorizedCategories.join(', '),
+    'declined_categories: ' + (instance.declinedCategories.join(', ') || '(none)'),
+    'soa_integrity_hash: ' + instance.integrityHash,
     'consent_no_obligation: true',
     'consent_esign_act: true',
     'tpmo_disclaimer_version: ' + TPMO_VERSION,
@@ -185,6 +322,16 @@ export default async function handler(req, res) {
       soa_pdf_hash: pdfHash,
       soa_signed_at: signedAt,
       soa_id: soaId,
+      // A year-scoped, appointment-scoped status. The bare soa_signed boolean
+      // above cannot distinguish a CY2027 signature from one reused in CY2028,
+      // which is why these travel with it.
+      soa_plan_year: instance.planYear,
+      soa_state: instance.state,
+      soa_appointment_id: instance.appointmentId,
+      soa_state_ruleset_version: instance.stateRulesetVersion,
+      soa_form_version: instance.soaFormVersion,
+      soa_authorized_categories: instance.authorizedCategories.join(','),
+      soa_integrity_hash: instance.integrityHash,
       note: ghlNote,
       pdfBase64: pdfBuffer.toString('base64'),
     });
@@ -236,20 +383,40 @@ function buildSoaPdf(opts) {
       // Beneficiary info
       doc.font('Helvetica-Bold').fontSize(10).text(L === 'es' ? 'Información del Beneficiario' : 'Beneficiary Information');
       doc.font('Helvetica').fontSize(9);
-      kv(doc, L === 'es' ? 'Nombre completo' : 'Full legal name', opts.fullName);
-      kv(doc, L === 'es' ? 'Fecha de nacimiento' : 'Date of birth', opts.dob);
+      kv(doc, L === 'es' ? 'Nombre completo del beneficiario' : 'Beneficiary full name', opts.fullName);
+      kv(doc, L === 'es' ? 'Estado de residencia' : 'Residence state', opts.stateName || opts.state);
+      kv(doc, L === 'es' ? 'Código postal' : 'ZIP code', opts.zip);
+      kv(doc, L === 'es' ? 'Condado' : 'County', opts.county || (L === 'es' ? '(por confirmar)' : '(to be confirmed)'));
+      kv(doc, L === 'es' ? 'Fecha de la cita' : 'Appointment date', opts.appointmentAt || '—');
+      kv(doc, L === 'es' ? 'Modalidad' : 'Appointment format', opts.appointmentFormat || '—');
+      kv(doc, L === 'es' ? 'Año del plan' : 'Plan/contract year', String(opts.planYear));
       kv(doc, L === 'es' ? 'Teléfono' : 'Phone', '+1 ' + opts.phone.replace(/^\+1/, ''));
       kv(doc, L === 'es' ? 'Correo' : 'Email', opts.email || '—');
-      kv(doc, L === 'es' ? 'Código postal' : 'ZIP Code', opts.zip);
-      kv(doc, L === 'es' ? 'Dirección' : 'Address', opts.address || '—');
       doc.moveDown(0.6);
 
-      // Products discussed
-      doc.font('Helvetica-Bold').fontSize(10).text(L === 'es' ? 'Productos a discutir' : 'Products to be discussed');
+      // Authorized categories — the approved CY2027 wording, from the single
+      // canonical source. What was NOT authorized is printed too, because the
+      // approved form records the boundary of the scope, not only its contents.
+      doc.font('Helvetica-Bold').fontSize(10).text(
+        L === 'es' ? 'Categorías que usted autoriza para esta cita' : 'Product categories you authorize for this appointment',
+      );
       doc.font('Helvetica').fontSize(9);
       opts.products.forEach(function (code) {
-        doc.text('[X] ' + (PRODUCT_LABEL[L] && PRODUCT_LABEL[L][code] ? PRODUCT_LABEL[L][code] : code));
+        var c = categoryText(code, L);
+        doc.text('[X] ' + (c ? c.label : code));
       });
+      if (opts.declined && opts.declined.length) {
+        doc.moveDown(0.3);
+        doc.font('Helvetica-Bold').fontSize(9).text(L === 'es' ? 'No autorizado en esta cita:' : 'Not authorized at this appointment:');
+        doc.font('Helvetica').fontSize(9);
+        opts.declined.forEach(function (code) {
+          var c = categoryText(code, L);
+          doc.text('[ ] ' + (c ? c.label : code));
+        });
+      }
+      doc.moveDown(0.4);
+      doc.fontSize(8).text(SOA_TEXT[L === 'es' ? 'es' : 'en'].important, { align: 'justify' });
+      doc.fontSize(9);
       doc.moveDown(0.6);
 
       // Acknowledgements

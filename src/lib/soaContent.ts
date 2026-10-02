@@ -99,6 +99,28 @@ export const SOA_PRECONDITIONS = {
   appointmentLinkageCaptured: false,
   /** soa-status requires a second factor (not a bare UUID returning PII). */
   statusEndpointSecondFactor: false,
+  // AUDIT 2026-10-01 (CY2027-SRV-01) — found by the Phase 0 audit, about the
+  // CY2027 work itself. The compliance layer (api/_lib/cy2027/) is wired into
+  // the CLIENT: SOAForm.tsx resolves the state ruleset, requires an appointment
+  // and submits residenceState, planYear, stateRulesetVersion and
+  // soaFormVersion. The SERVER ignores all four. api/sign-soa.js contains no
+  // occurrence of "state": its field whitelist drops them, it never calls
+  // resolveStateRuleset or createSoaInstance, and nothing it persists records a
+  // ruleset version or a plan year. A direct POST therefore bypasses every gate
+  // the browser enforces — client-side enforcement is not enforcement.
+  //
+  // Not currently exploitable (SOA_ENABLED=false makes every SOA route answer
+  // 503 first), which is exactly why it belongs here: it must block ENABLEMENT.
+  //
+  // CLOSED 2026-10-01. api/sign-soa.js now resolves the plan year from the
+  // server clock (never the body), gates on resolveStateRuleset, treats the
+  // browser's version strings as a claim to compare rather than a value to
+  // record, builds the SOA instance server-side so the authorized scope cannot
+  // be widened by a crafted payload, and refuses to complete without an
+  // evidence record. Pinned by test-cy2027-2026-10-01.mjs section 12.
+  /** api/sign-soa.js validates planYear + state ruleset server-side and builds a
+   *  CY2027 SOA instance, instead of trusting the browser. */
+  serverEnforcesCy2027: true,
 } as const;
 
 /** Names of every precondition still unmet. Empty array = safe to enable. */
