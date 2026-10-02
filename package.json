@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "node scripts/run-battery.mjs",
+    "preflight": "npx tsx scripts/cy2027-preflight.mjs",
     "test:clara": "npx tsx scripts/test-clara-routing.mjs"
   },
   "dependencies": {
