@@ -263,3 +263,59 @@ Stated plainly rather than implied:
   suite returns to 223/223.
 - Prerendered HTML verified to carry the CY2027 TPMO sentence (no SHIP reference) in
   both EN and ES, with zero occurrences of the CY2026 sentence remaining in `dist/`.
+
+---
+
+## 8. Live production verification — 2026-10-02
+
+Measured against `https://clearpointsenioradvisors.com`, read-only, no POST to any
+production endpoint.
+
+### 8.1 The live site serves the CY2026 TPMO disclaimer
+
+All **46/46** routes in the live sitemap were fetched. Every one carries the
+disclaimer (so it is not missing anywhere), none contains an `[X]`/`[Y]`
+placeholder — and every one serves the **CY2026** variant, which still names the
+State Health Insurance Program. CY2027 marketing began 2026-10-01.
+
+| Check | Result |
+|---|---|
+| TPMO disclaimer present | 46/46 |
+| CY2026 variant served | 46/46 (EN and ES) |
+| `[X]` / `[Y]` placeholder | 0 |
+
+The local build is correct: every prerendered HTML file carries the CY2027
+sentence. The only CY2026 string left in `dist/` is the historical branch inside
+the JS bundle, which must stay so a 2026-dated document can still be explained,
+and which the render-time variant resolution no longer reaches.
+
+**Cause:** the disclaimer is frozen into the prerendered HTML at build time. It
+does not correct itself when the calendar rolls over — it needs a rebuild AND a
+promote. That is an owner decision; whether one day of stale wording is material
+is a compliance judgement for the owner or their counsel, not for this code.
+
+### 8.2 The SOA gate holds in production
+
+```
+GET /api/soa-status?token=00000000-0000-0000-0000-000000000000
+→ HTTP 503 {"error":"SOA_DISABLED"}
+```
+
+`/soa/:token` renders its shell with the advisor phone number and leaks no
+beneficiary data. This is the direct evidence for a claim made throughout this
+document: the pre-existing IDOR in `api/soa-status.js` was never reachable in
+production, because `SOA_ENABLED = false` answers 503 before any of it runs.
+
+### 8.3 Security headers (spec §30) — all present
+
+| Header | Value |
+|---|---|
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains; preload` |
+| `Content-Security-Policy` | `default-src 'self'`, `script-src 'self'` + GTM + Turnstile, `style-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `camera=(), microphone=(self), geolocation=(), payment=(), usb=()` |
+
+No `unsafe-inline` and no `unsafe-eval` in any directive — §30 asks for a CSP
+without unnecessary `unsafe-inline`, and the live policy already meets it.
