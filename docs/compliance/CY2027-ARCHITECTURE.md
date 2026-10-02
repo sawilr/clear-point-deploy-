@@ -218,11 +218,16 @@ Stated plainly rather than implied:
 | Item | Status |
 |---|---|
 | TPMO organization/product counts | **OWNER-SUPPLIED.** `BLOCKED_COUNTS_REQUIRED`; the count-less standardized sentence renders. Never to be guessed. |
+| Evidence store backend | **CONFIGURATION.** The code path is complete and fails closed, but `CY2027_EVIDENCE_STORE_URL` / `_TOKEN` are unset, so `signedPdfPersisted` stays false until a real round trip is verified. |
 | Carrier overlays | All `PENDING_*`. Each needs private/contract/current-year verification. |
 | ZIP→county dataset | Not installed; the form asks the beneficiary instead. |
 | `ENROLLMENT_RECORD` retention period | Unconfirmed; that class cannot be purged at all until the owner supplies it. |
 | Recording-notice all-party positions | Carried as the project's existing position of record, flagged `complianceReview: OWNER_COUNSEL`. Not re-determined by this code. |
-| SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. |
+| Carrier firewall in the chat bots | The private registry exists; what Clara/Zara may answer has not been re-audited against the §20 knowledge classes. |
+| Data minimization in lead scoring | `api/_lib/lead-intel.js` has not been audited against the prohibited-signal list. |
+| Consent objects as CRM fields | Modelled in code; not yet written as queryable CRM fields. |
+| Confirmation copy to the beneficiary | Not implemented (spec §9). |
+| SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of six preconditions now closed; `tpmoCountsVerifiedEverywhere` and `signedPdfPersisted` remain. |
 | Production deploy | Not done. Requires owner GO. |
 
 ---
