@@ -53,6 +53,8 @@ export type { SupportedState, StateRuleset, StateResolution, CountyResolution } 
 export {
   SOA_STATUS,
   SOA_METHOD,
+  LANGUAGE_SOURCE,
+  languageWasElected,
   methodIsWritten,
   partitionSelection,
   marketingGate,
@@ -60,6 +62,8 @@ export {
   coversCategory,
 } from '../../api/_lib/cy2027/soa-instance.js';
 
-export type { SoaInstance, SoaStatus, SoaMethodCode, SoaAppointment, GateDecision } from '../../api/_lib/cy2027/soa-instance.js';
+export type {
+  SoaInstance, SoaStatus, SoaMethodCode, SoaAppointment, GateDecision, LanguageSourceCode,
+} from '../../api/_lib/cy2027/soa-instance.js';
 
 export { activePlanYear, CY2027_MARKETING_START_UTC } from '../../api/_lib/cy2027/rulesets.js';

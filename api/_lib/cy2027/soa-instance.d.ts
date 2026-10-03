@@ -18,6 +18,12 @@ export type SoaMethodCode =
   | 'APPROVED_WRITTEN_METHOD'
   | 'VOICE_RECORDED';
 
+export type LanguageSourceCode =
+  | 'BENEFICIARY_ELECTED'
+  | 'REPRESENTATIVE_ELECTED'
+  | 'SYSTEM_DEFAULT'
+  | 'INFERRED_FROM_LEAD';
+
 export interface SoaInstance {
   soaId: string;
   appointmentId: string;
@@ -28,6 +34,7 @@ export interface SoaInstance {
   zip: string;
   county: string | null;
   language: SoaLang;
+  languageSource: LanguageSourceCode;
   method: SoaMethodCode;
   source: string;
   beneficiaryName: string;
@@ -66,6 +73,11 @@ export declare const SOA_METHOD: Readonly<
   Record<SoaMethodCode, { code: SoaMethodCode; written: boolean; source: string }>
 >;
 
+export declare const LANGUAGE_SOURCE: Readonly<
+  Record<LanguageSourceCode, { code: LanguageSourceCode; signable: boolean }>
+>;
+
+export declare function languageWasElected(source: string | null | undefined): boolean;
 export declare function methodIsWritten(methodCode: string): boolean;
 export declare function partitionSelection(selectedCodes: readonly string[] | null | undefined): {
   authorized: SoaCategoryCode[];

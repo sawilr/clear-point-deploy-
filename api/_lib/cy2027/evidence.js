@@ -138,7 +138,7 @@ export function verifyEvidence(record) {
 // ── Audit log ────────────────────────────────────────────────────────────────
 
 export const AUDIT_ACTIONS = Object.freeze([
-  'SOA_LINK_ISSUED', 'SOA_LINK_RESENT', 'SOA_VIEWED', 'SOA_SIGNED', 'SOA_SUPERSEDED',
+  'SOA_LINK_ISSUED', 'SOA_LINK_RESENT', 'SOA_VIEWED', 'SOA_SIGNED', 'SOA_REFUSED', 'SOA_SUPERSEDED',
   'SOA_REVOKED', 'SOA_EVIDENCE_WRITTEN', 'SOA_EVIDENCE_WRITE_FAILED',
   'MARKETING_GATE_ALLOWED', 'MARKETING_GATE_BLOCKED',
   'SECURITY_QUARANTINE', 'SECURITY_REVIEW_RESOLVED',

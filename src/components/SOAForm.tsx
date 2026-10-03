@@ -37,7 +37,8 @@ import { useMemo, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
   STATE_RULESETS, SUPPORTED_STATES, resolveStateRuleset, readBackLines, partitionSelection,
-  type SoaCategoryCode, type SupportedState,
+  LANGUAGE_SOURCE,
+  type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
 
@@ -49,6 +50,11 @@ export interface SOAFormResult {
 }
 
 interface SOAFormProps {
+  /**
+   * The language the surrounding page is already displaying. It is a PRESENTATION
+   * default only — never the language recorded on the signed document. See the
+   * election gate below (audit G08).
+   */
   language: 'en' | 'es';
   lead: {
     fullName: string;
@@ -68,6 +74,7 @@ const UI = {
   },
   statePick: { en: 'Select your state', es: 'Seleccione su estado' },
   stateOther: { en: 'Another state', es: 'Otro estado' },
+  langChange: { en: 'Change language', es: 'Cambiar idioma' },
   stateUnsupported: {
     en: 'We are licensed in New York, New Jersey and Connecticut. We can still help you by phone — please call 1-855-720-8555 and a licensed advisor will point you to the right place.',
     es: 'Tenemos licencia en Nueva York, Nueva Jersey y Connecticut. Aun así podemos ayudarle por teléfono — llame al 1-855-720-8555 y un asesor licenciado le orientará.',
@@ -102,7 +109,15 @@ const UI = {
 const t = (k: keyof typeof UI, L: 'en' | 'es') => UI[k][L];
 
 export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
-  const L = language;
+  // ── Language election (audit G08) ───────────────────────────────────────────
+  // The document's language used to come from `lead?.language || 'es'`, so a
+  // signed record could not distinguish "this person chose Spanish" from "there
+  // was no lead and the page fell back to Spanish". The disclosures on this form
+  // ARE the document; the language they are read in has to be chosen, on the
+  // record, by the person signing. Nothing is preselected and the prompt is
+  // bilingual, because before the election there is no language to ask in.
+  const [elected, setElected] = useState<'en' | 'es' | null>(null);
+  const L = elected ?? language;
   const txt = SOA_TEXT[L];
 
   const [step, setStep] = useState<'form' | 'review'>('form');
@@ -118,6 +133,12 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   const [representativeAuthority, setRepresentativeAuthority] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+
+  // Taken from the shared table so the client cannot drift from what the server
+  // will accept as an election.
+  const electionSource: LanguageSourceCode = representativeAuthority.trim()
+    ? LANGUAGE_SOURCE.REPRESENTATIVE_ELECTED.code
+    : LANGUAGE_SOURCE.BENEFICIARY_ELECTED.code;
 
   const stateResolution = useMemo(
     () => (residenceState && residenceState !== 'OTHER' ? resolveStateRuleset(residenceState, 2027) : null),
@@ -202,6 +223,10 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
       acknowledgements: { no_obligation: ackNoObl, e_signature: ackEsig },
       signature: signature.trim(),
       language: L,
+      // The person reading this screen is the one who elected the language. If
+      // they identified themselves as a representative, say so rather than
+      // attributing the choice to the beneficiary.
+      languageSource: electionSource,
     });
     setSubmitting(false);
   };
@@ -228,6 +253,58 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
     <p className="text-xs text-earth-600 bg-cream-50 border border-cream-200 rounded-lg p-4 leading-relaxed">
       {txt.security}
     </p>
+  );
+
+  // ── Step 0: the language election ──────────────────────────────────────────
+  // Rendered before any disclosure, because a disclosure read in a language the
+  // person did not choose is not a disclosure. Both labels appear in their own
+  // language and neither is preselected.
+  if (elected === null) {
+    return (
+      <div className="space-y-8">
+        {Header}
+        <section aria-labelledby="soa-lang-heading" className="space-y-4">
+          <h2 id="soa-lang-heading" className="text-sm font-bold text-earth-700 uppercase tracking-wide">
+            Language / Idioma
+          </h2>
+          <p className="text-earth-600 text-sm leading-relaxed">
+            <span lang="en">Choose the language for this document. Everything you sign will be in the language you pick.</span>
+            <br />
+            <span lang="es">Elija el idioma de este documento. Todo lo que firme estará en el idioma que elija.</span>
+          </p>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setElected('en')}
+              lang="en"
+              className="rounded-xl border-2 border-cream-300 hover:border-gold-500 bg-white px-5 py-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-gold-500"
+            >
+              <span className="block font-serif text-lg text-earth-900">English</span>
+              <span className="block text-xs text-earth-600 mt-1">Continue in English</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setElected('es')}
+              lang="es"
+              className="rounded-xl border-2 border-cream-300 hover:border-gold-500 bg-white px-5 py-4 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-gold-500"
+            >
+              <span className="block font-serif text-lg text-earth-900">Español</span>
+              <span className="block text-xs text-earth-600 mt-1">Continuar en español</span>
+            </button>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  const LangChange = (
+    <button
+      type="button"
+      onClick={() => { setElected(null); setStep('form'); }}
+      className="text-xs text-earth-500 underline hover:text-earth-700"
+    >
+      {UI.langChange[L]}
+    </button>
   );
 
   // ── Step 2: read-back ──────────────────────────────────────────────────────
@@ -269,7 +346,11 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             compact
           />
           <RoField label={txt.fields.planYear} value="2027" compact />
-          <RoField label={txt.fields.language} value={L === 'es' ? 'Español' : 'English'} compact />
+          <RoField
+            label={txt.fields.language}
+            value={(L === 'es' ? 'Español' : 'English') + (L === 'es' ? ' (elegido por usted)' : ' (elected by you)')}
+            compact
+          />
         </section>
 
         <p className="text-earth-600 text-sm leading-relaxed">{txt.important}</p>
@@ -348,6 +429,10 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             <EvidenceRow label="SOA_FORM_VERSION" value={ruleset.soaFormVersion} />
             <EvidenceRow label="STATE_RULESET_VERSION" value={ruleset.stateRulesetVersion} />
             <EvidenceRow label={txt.fields.language} value={L === 'es' ? 'ES' : 'EN'} />
+            <EvidenceRow
+              label={L === 'es' ? 'Elección de idioma' : 'Language election'}
+              value={electionSource}
+            />
             <EvidenceRow label={txt.fields.planYear} value="2027" />
             <EvidenceRow label="SOURCE" value="WEB" />
             <EvidenceRow label={txt.fields.soaInstanceId} value={systemGenerated} />
@@ -389,6 +474,9 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   return (
     <form onSubmit={goToReview} method="post" action="#" noValidate className="space-y-8">
       {Header}
+      {/* Always reachable, including before a state is chosen: a mis-tap on the
+          election screen must not trap someone in a language they cannot read. */}
+      <div className="flex justify-end -mt-4">{LangChange}</div>
       {Tpmo}
 
       {/* State first — nothing below opens until this is answered. */}

@@ -69,6 +69,27 @@ export const SOA_METHOD = Object.freeze({
   VOICE_RECORDED: { code: 'VOICE_RECORDED', written: false, source: 'WEB' },
 });
 
+/**
+ * How the document's language came to be what it is (audit G08).
+ *
+ * Only an ELECTION is signable. `SYSTEM_DEFAULT` and `INFERRED_FROM_LEAD` exist
+ * so the gap is NAMEABLE — a caller that has no election must say so and be
+ * refused, instead of quietly writing 'es' into a signed record and leaving an
+ * auditor unable to tell a choice from a fallback.
+ */
+export const LANGUAGE_SOURCE = Object.freeze({
+  BENEFICIARY_ELECTED: { code: 'BENEFICIARY_ELECTED', signable: true },
+  REPRESENTATIVE_ELECTED: { code: 'REPRESENTATIVE_ELECTED', signable: true },
+  SYSTEM_DEFAULT: { code: 'SYSTEM_DEFAULT', signable: false },
+  INFERRED_FROM_LEAD: { code: 'INFERRED_FROM_LEAD', signable: false },
+});
+
+/** True only for a language the beneficiary (or their representative) picked. */
+export function languageWasElected(source) {
+  const s = LANGUAGE_SOURCE[source];
+  return !!s && s.signable === true;
+}
+
 export function methodIsWritten(methodCode) {
   const m = SOA_METHOD[methodCode];
   return !!m && m.written === true;
@@ -109,6 +130,7 @@ export function createSoaInstance(input) {
     zip,
     county = null,
     language,
+    languageSource,
     method,
     beneficiaryName,
     representativeRelationship = null,
@@ -132,6 +154,15 @@ export function createSoaInstance(input) {
   if (!state) errors.state = 'required';
   if (!/^\d{5}$/.test(String(zip || ''))) errors.zip = 'invalid_zip';
   if (language !== 'en' && language !== 'es') errors.language = 'required';
+  // AUDIT 2026-10-02 (G08) — the language of a signed document was inferred:
+  // `lead?.language || 'es'` on the client and `body.language === 'en' ? 'en' : 'es'`
+  // on the server. Both are silent defaults, so a reader of the signed record
+  // could not distinguish "the beneficiary chose Spanish" from "hydration
+  // produced no lead and the page defaulted to Spanish". The language is the
+  // language the disclosures were READ in; it has to be an election, recorded
+  // as one. A default is not signable.
+  if (!LANGUAGE_SOURCE[languageSource]) errors.languageSource = 'election_required';
+  else if (!LANGUAGE_SOURCE[languageSource].signable) errors.languageSource = 'not_an_election';
   if (!SOA_METHOD[method]) errors.method = 'invalid_method';
   if (!beneficiaryName || String(beneficiaryName).trim().length < 2) errors.beneficiaryName = 'required';
   if (!stateRulesetVersion) errors.stateRulesetVersion = 'required';
@@ -154,6 +185,7 @@ export function createSoaInstance(input) {
       zip,
       county,
       language,
+      languageSource,
       method,
       source: SOA_METHOD[method].source,
       beneficiaryName: String(beneficiaryName).trim(),

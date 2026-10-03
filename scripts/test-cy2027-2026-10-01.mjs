@@ -25,6 +25,7 @@ import {
 import {
   SOA_STATUS, SOA_METHOD, methodIsWritten, partitionSelection, createSoaInstance, completeSoaInstance,
   superseded, revokeSoaInstance, coversCategory, requiresScopeUpdate, marketingGate, requiresNewInstance,
+  LANGUAGE_SOURCE, languageWasElected,
 } from '../api/_lib/cy2027/soa-instance.js';
 import {
   CONSENT_STATUS, createConsent, revokeConsent, classifyReply, isAffirmative, assertNoCrossInference, mayPlaceOutbound,
@@ -48,6 +49,7 @@ import * as barrelModule from '../api/_lib/cy2027/index.js';
 import { complianceFilter } from '../api/_lib/compliance-filter.js';
 import {
   buildCustomFields, soaInstanceToFields, consentsToFields, unmappedFieldsWarning, fieldIdMap,
+  CY2027_FIELD_KEYS, CONFIRMED_ONLY_FIELDS,
 } from '../api/_lib/cy2027/crm-fields.js';
 import {
   sendingEnabled, maySendCopy, buildCopyMessage, assertNotMarketing,
@@ -196,10 +198,18 @@ const throws = (label, fn, re) => {
 }
 
 // ── 4. SOA instance model (spec §7, §8, §11) ─────────────────────────────────
+/**
+ * Code scans must look at CODE. During this audit three assertions passed on a
+ * COMMENT that quoted the very string the scan forbade, so every scan here
+ * strips comments first.
+ */
+const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
 const baseInput = {
   soaId: 'soa_1', appointmentId: 'appt_1', appointmentAt: '2026-11-10T15:00:00Z',
   appointmentFormat: 'TELEPHONE', planYear: 2027, state: 'NY', zip: '11717', county: 'Suffolk',
-  language: 'en', method: 'WEB_ELECTRONIC_SIGNATURE', beneficiaryName: 'Jane Q Public',
+  language: 'en', languageSource: 'BENEFICIARY_ELECTED',
+  method: 'WEB_ELECTRONIC_SIGNATURE', beneficiaryName: 'Jane Q Public',
   selectedCategories: ['MA_WITH_RX'], stateRulesetVersion: 'NY-CY2027-v1.0', soaFormVersion: 'CP-SOA-NY-CY2027-v1.0',
 };
 {
@@ -288,6 +298,24 @@ const baseInput = {
     marketingGate(voiceInPerson, { ...appt, format: ['IN_PERSON'] }, CMS_RULESET_2027).reason === 'UNKNOWN_APPOINTMENT_FORMAT');
   ok('SOA-01: an unknown format cannot be stored on an instance',
     createSoaInstance({ ...baseInput, appointmentFormat: 'carrier pop-up kiosk' }).errors?.appointmentFormat === 'unknown_format');
+
+  // ── G08: the document language must be an ELECTION, never a default ────────
+  ok('G08: an instance without a language election is refused',
+    createSoaInstance({ ...baseInput, languageSource: undefined }).errors?.languageSource === 'election_required');
+  ok('G08: an unknown election value is refused',
+    createSoaInstance({ ...baseInput, languageSource: 'MAYBE_SPANISH' }).errors?.languageSource === 'election_required');
+  ok('G08: a system default is explicitly NOT signable',
+    createSoaInstance({ ...baseInput, languageSource: 'SYSTEM_DEFAULT' }).errors?.languageSource === 'not_an_election');
+  ok('G08: an inference from the lead is explicitly NOT signable',
+    createSoaInstance({ ...baseInput, languageSource: 'INFERRED_FROM_LEAD' }).errors?.languageSource === 'not_an_election');
+  ok('G08: a representative may elect it',
+    createSoaInstance({ ...baseInput, soaId: 'soa_rep', languageSource: 'REPRESENTATIVE_ELECTED' }).ok === true);
+  ok('G08: the election is carried on the instance',
+    createSoaInstance(baseInput).instance.languageSource === 'BENEFICIARY_ELECTED');
+  ok('G08: languageWasElected separates a choice from a fallback',
+    languageWasElected('BENEFICIARY_ELECTED') && languageWasElected('REPRESENTATIVE_ELECTED') &&
+    !languageWasElected('SYSTEM_DEFAULT') && !languageWasElected('INFERRED_FROM_LEAD') &&
+    !languageWasElected(undefined) && !languageWasElected('es'));
   ok('SOA-01: requiresNewInstance is no longer silent on a lowercase in-person',
     requiresNewInstance(voice, { ...appt, format: 'in_person' }, CMS_RULESET_2027) === true);
 
@@ -1329,7 +1357,7 @@ const baseInput = {
   ok('SJ-09: it offers both languages', /no quiero dejarle sin salida/.test(BOT) && /without a next step/.test(BOT));
   // Strip comments first: this file now DOCUMENTS what the branch used to do,
   // and a comment describing the old dead end is not the old dead end.
-  const BOT_CODE = BOT.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  const BOT_CODE = strip(BOT);
   ok('SJ-09: nothing closes the composer on an out-of-service ZIP any more',
     !/setChatClosed\(true\)/.test(BOT_CODE), 'a setChatClosed(true) survives in code');
   ok('SJ-09: it still never names the non-service state', !/\bFlorida\b/.test(BOT_CODE));
@@ -1379,6 +1407,58 @@ const baseInput = {
   ok('TPY-09: the same holds in Spanish',
     /Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2026'))) &&
     !/Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2027'))));
+
+  // ── G08, end to end: client election → server refusal → stored evidence ────
+  ok('G08: every entry in the table is keyed by its own code',
+    Object.entries(LANGUAGE_SOURCE).every(([k, v]) => v.code === k));
+
+  const SIGN5 = strip(readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8'));
+  ok('G08: the server no longer coalesces a missing language to Spanish',
+    !/body\.language === 'en' \? 'en' : 'es'/.test(SIGN5));
+  ok('G08: it reads the election as its own field',
+    /body\.languageSource/.test(SIGN5));
+  ok('G08: it refuses a signature without an election',
+    /languageWasElected\(languageSource\)/.test(SIGN5) &&
+    /SOA_LANGUAGE_ELECTION_REQUIRED/.test(SIGN5));
+  ok('G08: the refusal is auditable', /action: 'SOA_REFUSED'/.test(SIGN5));
+  ok('G08: the election reaches the instance, the note and the PDF',
+    /languageSource: languageSource/.test(SIGN5) &&
+    /'language_source: ' \+ instance\.languageSource/.test(SIGN5) &&
+    /languageSource: instance\.languageSource/.test(SIGN5));
+
+  const FORM2 = strip(readFileSync(new URL('../src/components/SOAForm.tsx', import.meta.url), 'utf8'));
+  ok('G08: the form asks before it discloses anything',
+    /elected === null/.test(FORM2) && /Language \/ Idioma/.test(FORM2));
+  ok('G08: neither option is preselected',
+    /useState<'en' \| 'es' \| null>\(null\)/.test(FORM2));
+  ok('G08: the prompt itself is bilingual',
+    /Choose the language for this document/.test(FORM2) && /Elija el idioma de este documento/.test(FORM2));
+  ok('G08: it sends the shared election code, not a literal',
+    /LANGUAGE_SOURCE\.BENEFICIARY_ELECTED\.code/.test(FORM2) &&
+    /LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED\.code/.test(FORM2) &&
+    /languageSource: electionSource/.test(FORM2));
+  ok('G08: the way back to the election sits above the state question, not behind it',
+    // `strip` leaves an empty `{}` where the JSX comment was.
+    /\{Header\}\s*(?:\{\}\s*)?<div className="flex justify-end -mt-4">\{LangChange\}<\/div>\s*\{Tpmo\}/.test(FORM2));
+  ok('G08: each option is announced in its own language',
+    /onClick=\{\(\) => setElected\('en'\)\}\s*lang="en"/.test(FORM2) &&
+    /onClick=\{\(\) => setElected\('es'\)\}\s*lang="es"/.test(FORM2));
+  ok('G08: a representative signing is attributed to the representative',
+    /representativeAuthority\.trim\(\)\s*\?\s*LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED/.test(FORM2));
+
+  const SIGNPAGE = readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8');
+  ok('G08: the page default is documented as presentation-only',
+    /display default and must never become the language/.test(SIGNPAGE));
+  ok('G08: the page does not override what the form elected',
+    !/language: language/.test(SIGNPAGE));
+
+  ok('G08: the election is a queryable CRM field',
+    CY2027_FIELD_KEYS.SOA_LANGUAGE_SOURCE === 'contact.soa_language_source');
+  ok('G08: and an inference may not overwrite it',
+    CONFIRMED_ONLY_FIELDS.includes('SOA_LANGUAGE_SOURCE') && CONFIRMED_ONLY_FIELDS.includes('SOA_LANGUAGE'));
+  ok('G08: it is flattened out of the instance',
+    soaInstanceToFields(createSoaInstance({ ...baseInput, soaId: 'g08' }).instance).SOA_LANGUAGE_SOURCE
+      === 'BENEFICIARY_ELECTED');
 }
 
 if (failures.length) {

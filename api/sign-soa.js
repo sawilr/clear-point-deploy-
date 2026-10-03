@@ -45,7 +45,7 @@ import { tpmoDisclaimerText, assertDisclaimerSignable, TPMO_DISCLAIMER_VERSION }
 // as a value to trust.
 import { resolveRuleset } from './_lib/cy2027/rulesets.js';
 import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
-import { createSoaInstance, completeSoaInstance } from './_lib/cy2027/soa-instance.js';
+import { createSoaInstance, completeSoaInstance, languageWasElected } from './_lib/cy2027/soa-instance.js';
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
 import { buildEvidenceRecord, emitAudit } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
@@ -136,7 +136,15 @@ export default async function handler(req, res) {
   var address = typeof body.address === 'string' ? body.address.trim() : '';
   var ack = (body.acknowledgements && typeof body.acknowledgements === 'object') ? body.acknowledgements : {};
   var signature = typeof body.signature === 'string' ? body.signature.trim() : '';
-  var language = body.language === 'en' ? 'en' : 'es';
+  // AUDIT 2026-10-02 (G08) — this used to be
+  //     var language = body.language === 'en' ? 'en' : 'es';
+  // which turns absent, malformed and "the beneficiary actually chose Spanish"
+  // into the same stored value. The language is the language the disclosures
+  // were READ in, so on a signed record it has to be an election, not a
+  // coalesce. Read the two fields separately and let createSoaInstance refuse
+  // anything that is not an election.
+  var language = body.language === 'en' || body.language === 'es' ? body.language : null;
+  var languageSource = typeof body.languageSource === 'string' ? body.languageSource.trim() : '';
   var leadSource = body.leadSource === 'smart_review' ? 'smart_review' : 'customer_service';
 
   // CY2027 fields. The browser sends them; none of them is trusted.
@@ -157,6 +165,20 @@ export default async function handler(req, res) {
   if (!/^\d{5}$/.test(zip)) return res.status(400).json({ error: 'Invalid ZIP' });
   if (!ack.no_obligation || !ack.e_signature) return res.status(400).json({ error: 'Both acknowledgements required' });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
+  // G08 — refuse before anything downstream can coalesce a missing election
+  // into 'es'. The reason is named so a client bug is diagnosable from the log
+  // rather than appearing as a signed Spanish document nobody chose.
+  if (!language || !languageWasElected(languageSource)) {
+    emitAudit({
+      action: 'SOA_REFUSED', actor: 'system:sign-soa', result: 'LANGUAGE_ELECTION_REQUIRED', source: 'WEB',
+      correlationId: link.beneficiaryRef || 'unlinked',
+      details: { language: language || '(absent)', languageSource: languageSource || '(absent)' },
+    });
+    return res.status(400).json({
+      error: 'SOA_LANGUAGE_ELECTION_REQUIRED',
+      reason: !language ? 'LANGUAGE_NOT_SUPPLIED' : (languageSource ? 'NOT_AN_ELECTION' : 'ELECTION_NOT_RECORDED'),
+    });
+  }
 
   // ── CY2027 gates, server-side and fail-closed ──────────────────────────
   // The plan year is resolved from the server clock, never read from the body:
@@ -204,6 +226,7 @@ export default async function handler(req, res) {
     zip: zip,
     county: county,
     language: language,
+    languageSource: languageSource,
     method: 'WEB_ELECTRONIC_SIGNATURE',
     beneficiaryName: fullName || record.fullName,
     selectedCategories: selectedCategories,
@@ -262,6 +285,7 @@ export default async function handler(req, res) {
       county: instance.county,
       appointmentAt: instance.appointmentAt,
       appointmentFormat: instance.appointmentFormat,
+      languageSource: instance.languageSource,
       planYear: instance.planYear,
       declined: instance.declinedCategories,
       soaFormVersion: instance.soaFormVersion,
@@ -386,6 +410,7 @@ export default async function handler(req, res) {
     'signer_ip: ' + signerIp,
     'signer_user_agent: ' + signerUserAgent,
     'language: ' + language,
+    'language_source: ' + instance.languageSource,
     // CY2027 scope — the fields that make this an appointment-specific
     // instance rather than a standing authorization.
     'plan_year: ' + instance.planYear,
@@ -638,6 +663,13 @@ function buildSoaPdf(opts) {
       kv(doc, 'STATE_RULESET_VERSION', opts.stateRulesetVersion || '—');
       kv(doc, 'SOA_SCRIPT_VERSION', opts.scriptVersion || '—');
       kv(doc, L === 'es' ? 'Idioma' : 'Language', L === 'es' ? 'ES' : 'EN');
+      // G08 — the language of the document is also EVIDENCE: a reader has to be
+      // able to tell that the beneficiary elected it rather than that a default
+      // picked it for them.
+      kv(doc, L === 'es' ? 'Elección de idioma' : 'Language election',
+        opts.languageSource === 'REPRESENTATIVE_ELECTED'
+          ? (L === 'es' ? 'Elegido por el representante' : 'Elected by representative')
+          : (L === 'es' ? 'Elegido por el beneficiario' : 'Elected by beneficiary'));
       kv(doc, L === 'es' ? 'Creado' : 'Created at', opts.signedAt + ' UTC');
       kv(doc, L === 'es' ? 'Completado' : 'Completed at', opts.signedAt + ' UTC');
       kv(doc, L === 'es' ? 'Origen' : 'Source', opts.source || 'WEB');

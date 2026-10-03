@@ -126,6 +126,12 @@ export default function SignSOA() {
     return () => { cancelled = true; };
   }, [token, reloadKey]);
 
+  // AUDIT 2026-10-02 (G08) — this is the language the PAGE CHROME is drawn in
+  // (loading, link-expired, challenge, error), while the signer's own election
+  // is not yet known. It is a display default and must never become the language
+  // recorded on a signed document: SOAForm asks explicitly, in both languages,
+  // and sends `language` together with `languageSource` so the record says which
+  // it was. Do not reuse this value as the document language.
   const language: 'en' | 'es' = lead?.language || 'es';
 
   // ── Submit handler ─────────────────────────────────────────────────────

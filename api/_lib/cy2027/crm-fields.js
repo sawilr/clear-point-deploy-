@@ -40,6 +40,7 @@ export const CY2027_FIELD_KEYS = Object.freeze({
   SOA_STATUS: 'contact.soa_status',
   SOA_METHOD: 'contact.soa_method',
   SOA_LANGUAGE: 'contact.soa_language',
+  SOA_LANGUAGE_SOURCE: 'contact.soa_language_source',
   SOA_STATE: 'contact.soa_state',
   SOA_ZIP: 'contact.soa_zip',
   SOA_COUNTY: 'contact.soa_county',
@@ -117,6 +118,7 @@ export function fieldIdMap(env = process.env) {
  */
 export const CONFIRMED_ONLY_FIELDS = Object.freeze([
   'SOA_STATE', 'SOA_ZIP', 'SOA_COUNTY', 'RESIDENCE_STATE',
+  'SOA_LANGUAGE', 'SOA_LANGUAGE_SOURCE',
   'SOA_AUTHORIZED_CATEGORIES', 'SOA_DECLINED_CATEGORIES',
   'CALLBACK_CONSENT_STATUS', 'RECORDING_NOTICE_STATUS', 'AI_OUTBOUND_CONSENT_STATUS',
 ]);
@@ -164,6 +166,7 @@ export function soaInstanceToFields(instance, extra = {}) {
     SOA_STATUS: instance.status,
     SOA_METHOD: instance.method,
     SOA_LANGUAGE: instance.language,
+    SOA_LANGUAGE_SOURCE: instance.languageSource,
     SOA_STATE: instance.state,
     SOA_ZIP: instance.zip,
     SOA_COUNTY: instance.county,
