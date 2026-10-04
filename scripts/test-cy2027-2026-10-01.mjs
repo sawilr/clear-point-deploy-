@@ -30,7 +30,8 @@ import {
 } from '../api/_lib/cy2027/soa-instance.js';
 import {
   CONSENT_STATUS, createConsent, revokeConsent, classifyReply, isAffirmative, assertNoCrossInference, mayPlaceOutbound,
-  CONTACT_CONSENT_TEXT_VERSIONS, webCallbackConsent, isStatedConsentScope, isIsoInstant,
+  CONTACT_CONSENT_TEXT_VERSIONS, webCallbackConsent, isStatedConsentScope, isIsoInstant, isRecordableInstant,
+  CONSENT_CLOCK_TOLERANCE_MS,
 } from '../api/_lib/cy2027/consent.js';
 import {
   LEAD_TRUST_STATE, CHANNEL_VERIFICATION, IDENTITY_VERIFICATION, evaluateTrust, trustCapabilities,
@@ -58,17 +59,24 @@ import {
 } from '../api/_lib/cy2027/crm-fields.js';
 import {
   recordWebCallbackConsent, CALLBACK_CONSENT_UNAVAILABLE, CALLBACK_CONSENT_NOT_RECORDED_FLAG,
+  tcpaReceiptLine, consentReceiptText, receiptClaim, neutralizeReceiptLookalikes, crmRefusalStep,
+  recordCallbackRevocation, callbackConsentStateOf, callbackRevocationNoteLine,
+  CALLBACK_REVOCATION_UNAVAILABLE, CALLBACK_REVOCATION_MODE, CALLBACK_CONSENT_STATE,
 } from '../api/_lib/cy2027/callback-consent.js';
-import { consentWordingProblems, readShownConsentWording } from './consent-wording-gate.mjs';
+import {
+  consentWordingProblems, readShownConsentWording, consentWordingCopyProblems, CONSENT_WORDING_PROBES,
+} from './consent-wording-gate.mjs';
 import { scrubPHI } from '../api/_lib/phi-scrub.js';
 import {
   sendingEnabled, maySendCopy, buildCopyMessage, assertNotMarketing,
 } from '../api/_lib/cy2027/beneficiary-copy.js';
 import { parseCountyCsv } from '../api/_lib/cy2027/state-rules.js';
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
+import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from 'node:path';
 
 let passed = 0;
 const failures = [];
@@ -1128,8 +1136,21 @@ const baseInput = {
   });
   ok('CRM-16: the recording notice has its own status field', cf.RECORDING_NOTICE_STATUS === 'GRANTED');
   ok('CRM-14: the callback consent timestamp is a field, not prose', cf.CALLBACK_CONSENT_AT === '2026-10-02T10:05:00Z');
-  ok('the callback scope is queryable', cf.CALLBACK_CONSENT_SCOPE === 'this request');
+  // RED TEAM 2026-10-04 — this assertion was labelled "the callback scope is
+  // queryable" and kept passing after 'this request' (the voice script's scope)
+  // could no longer be written. It tests the FLATTEN step, and says so; what the
+  // write stage does with that scope is asserted right below.
+  ok('the flatten step carries the callback scope as its own value', cf.CALLBACK_CONSENT_SCOPE === 'this request');
   ok('an absent consent produces no field', cf.AI_OUTBOUND_CONSENT_STATUS === undefined);
+  {
+    const r = buildCustomFields(cf, {
+      CY2027_CRM_FIELD_IDS: '{"RECORDING_NOTICE_STATUS":"rn","CALLBACK_CONSENT_STATUS":"cbS","CALLBACK_CONSENT_AT":"cbA","CALLBACK_CONSENT_SCOPE":"cbX"}',
+    });
+    ok('CRM-15: a GRANTED callback consent whose scope no registered wording states ("this request") is not written at all',
+      r.fields.map((f) => f.id + '=' + f.value).join() === 'rn=GRANTED' && r.withheld.length === 0 &&
+      ['CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_STATUS', 'CALLBACK_CONSENT_AT'].every((n) => r.refused.includes(n)),
+      JSON.stringify(r));
+  }
 
   const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
   ok('sign-soa logs the unwritable fields on every signature', /unmappedFieldsWarning\(_cf\.unmapped\)/.test(SRC));
@@ -1762,6 +1783,11 @@ consentScope: {
       mkSrc().replace("'Llame para discutir X.'", "'Llame ' + who + ' para discutir X.'"),  // an interpolation
       mkSrc().replace("'Llame para discutir X.'", "'Llame para discutir X.\\n'"),            // an escape
       mkSrc() + "export const DISCLAIMER_VERSION = 'v1';\n",                                // declared twice
+      // RED TEAM 2026-10-04 — only the VERSION was doubled here, so "first
+      // declaration wins" for a text went unnoticed. A second text is the same defect.
+      mkSrc() + "export const TCPA_CONSENT_TEXT_ES = 'Llame para discutir X.';\n",          // a text declared twice (same)
+      "export const TCPA_CONSENT_TEXT_EN = 'Call me to discuss X and Y.';\n" + mkSrc(),     // a text declared twice (first differs)
+      mkSrc() + "export const TCPA_CONSENT_TEXT_ES = 'Llame para discutir X y Z.';\n",      // a text declared twice (last differs)
       mkSrc().replace(/export const TCPA_CONSENT_TEXT_EN[\s\S]*?;\n/, ''),                  // a text missing
       '', undefined, null, 42,
     ].every((s) => /Could not read/.test(gate(s).problems[0] || '')) &&
@@ -1787,14 +1813,132 @@ consentScope: {
     parityRun.status === 0 &&
     String(parityRun.stdout).includes('contact-consent wording v' + SHOWN.version + ' matches its scope registry (' + (entry && entry.scope) + ')'),
     String(parityRun.stderr || parityRun.stdout || parityRun.error || '').slice(0, 300));
-  const PARITY = strip(readFileSync(new URL('./check-cy2027-parity.mjs', import.meta.url), 'utf8'));
-  ok('CE-09: the build gate takes its verdict from that function',
-    // Anchored to whole lines: `if (false) …` in front of any of them breaks the match.
-    /^import \{ consentWordingProblems \} from '\.\/consent-wording-gate\.mjs';\r?$/m.test(PARITY) &&
-    /^[ \t]*const wording = consentWordingProblems\(\{ source: dv, registry: consentMod\.CONTACT_CONSENT_TEXT_VERSIONS \}\);\r?$/m.test(PARITY) &&
-    /^[ \t]*if \(wording\.problems\.length\) problems\.push\(\.\.\.wording\.problems\);\r?$/m.test(PARITY));
   ok('CE-09: the gate module ships to the Vercel build',
     /^!scripts\/consent-wording-gate\.mjs\r?$/m.test(readFileSync(new URL('../.vercelignore', import.meta.url), 'utf8')));
+
+  // ── One source for the wording (red team 2026-10-04) ─────────────────────────
+  // The rule is a function of the files; it is called with wording made up here.
+  {
+    const CANON = 'src/lib/disclaimerVersion.ts';
+    const canonSrc =
+      "export const DISCLAIMER_VERSION = 'v1';\n" +
+      "export const TCPA_CONSENT_TEXT_EN = 'By agreeing, you authorize ClearPoint Senior ' +\n  'Advisors to call you.';\n" +
+      "export const TCPA_CONSENT_TEXT_ES = 'Al aceptar, usted autoriza a ClearPoint Senior Advisors a llamarle.';\n";
+    const scan = (others, canon = canonSrc) => consentWordingCopyProblems({
+      files: [{ path: CANON, source: canon }, ...others.map(([path, source]) => ({ path, source }))],
+    });
+    const clean = scan([['src/a.tsx', "import { TCPA_CONSENT_TEXT_EN } from './lib/disclaimerVersion';\nconst m = 'May I have your number?\\n\\n' + TCPA_CONSENT_TEXT_EN;\n"]]);
+    ok('CE-09: a file that USES the constants is not a copy', clean.problems.length === 0 && clean.scanned === 1, clean.problems.join('|'));
+    for (const [label, src] of [
+      ['an English copy', "const m = 'By agreeing, you authorize ClearPoint Senior Advisors and any other company to call you.';\n"],
+      ['a Spanish copy', "const m = 'Al aceptar, usted autoriza a ClearPoint Senior Advisors a venderle lo que sea.';\n"],
+      ['a copy split across concatenated pieces', "const m = 'By agreeing, you authorize ' +\n  'ClearPoint Senior Advisors to call.';\n"],
+      ['a copy in a template literal wrapped over two lines', 'const m = `By agreeing, you authorize\n   ClearPoint Senior Advisors to call.`;\n'],
+      ['a copy in other capitals', "const m = 'YOU AUTHORIZE CLEARPOINT SENIOR ADVISORS';\n"],
+      ['a copy in JSX text', '<p>\n  Al aceptar, usted autoriza a\n  ClearPoint Senior Advisors.\n</p>\n'],
+    ]) {
+      const r = scan([['src/components/Bot.tsx', src]]);
+      ok('CE-09: ' + label + ' outside the canonical file fails the build',
+        r.problems.length === 1 && /src\/components\/Bot\.tsx contains its own copy/.test(r.problems[0]), r.problems.join('|'));
+    }
+    ok('CE-09: the wording quoted in a COMMENT is not a copy',
+      scan([['src/x.ts', '// you authorize ClearPoint Senior Advisors\n/* usted autoriza a ClearPoint Senior Advisors */\nexport const x = 1;\n']]).problems.length === 0);
+    ok('CE-09: a Windows path is the same file',
+      consentWordingCopyProblems({ files: [{ path: 'src\\lib\\disclaimerVersion.ts', source: canonSrc }] }).problems.length === 0);
+    ok('CE-09: the scan refuses to run without the canonical file, or with it twice',
+      /was not given/.test(consentWordingCopyProblems({ files: [{ path: 'src/a.ts', source: 'x' }] }).problems[0] || '') &&
+      /was not given/.test(consentWordingCopyProblems({ files: [{ path: CANON, source: canonSrc }, { path: CANON, source: canonSrc }] }).problems[0] || '') &&
+      [undefined, null, {}, { files: 'x' }].every((i) => /was not given/.test(consentWordingCopyProblems(i).problems[0] || '')));
+    ok('CE-09: a wording change that drops the clause the scan looks for is itself a failure, not a blind scan', (() => {
+      const r = scan([], canonSrc.replace('you authorize ClearPoint Senior ', 'you allow ClearPoint Senior '));
+      return r.problems.length === 1 && /no longer contains "you authorize ClearPoint Senior Advisors"/.test(r.problems[0]);
+    })());
+    ok('CE-09: the clauses the scan looks for are in the wording shown today',
+      SHOWN.en.includes(CONSENT_WORDING_PROBES.en) && SHOWN.es.includes(CONSENT_WORDING_PROBES.es) && Object.isFrozen(CONSENT_WORDING_PROBES));
+  }
+
+  // ── The REAL gate, run on a copy of the tree (red team 2026-10-04) ───────────
+  // The fail path of check-cy2027-parity.mjs was never executed: an inserted
+  // `wording.problems.length = 0;`, a shadowed `problems` array, a check skipped
+  // "when VERCEL is set" and a missing-file branch that only wrote a note all
+  // passed 908 assertions, because three line-anchored greps and one PASSING run
+  // cannot see any of them. The gate is now run for real — from a temporary copy
+  // of the tree, so the repository is never edited — against a drifted wording,
+  // a second copy, a missing file, and the deployed artifact with VERCEL=1.
+  {
+    const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
+    const tmp = mkdtempSync(pathJoin(tmpdir(), 'cy2027-parity-'));
+    let gateError = null;
+    try {
+      const vercelignore = readFileSync(pathJoin(REPO_ROOT, '.vercelignore'), 'utf8');
+      // The scripts/ files the artifact keeps: exactly the "!scripts/…" exceptions.
+      const shipped = vercelignore.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^!scripts\/[\w.-]+$/.test(l)).map((l) => l.slice(1));
+      const fullTree = pathJoin(tmp, 'full');
+      const artifact = pathJoin(tmp, 'artifact');
+      for (const [root, withDocs] of [[fullTree, true], [artifact, false]]) {
+        mkdirSync(pathJoin(root, 'scripts'), { recursive: true });
+        for (const d of ['api', 'src']) cpSync(pathJoin(REPO_ROOT, d), pathJoin(root, d), { recursive: true });
+        for (const f of ['index.html', 'package.json', '.vercelignore', ...shipped]) {
+          if (existsSync(pathJoin(REPO_ROOT, f))) cpSync(pathJoin(REPO_ROOT, f), pathJoin(root, f));
+        }
+        if (withDocs) cpSync(pathJoin(REPO_ROOT, 'docs', 'compliance'), pathJoin(root, 'docs', 'compliance'), { recursive: true });
+      }
+      const runGate = (root, env = {}) => {
+        const clean = { ...process.env };
+        for (const k of ['VERCEL', 'VERCEL_ENV', 'VERCEL_URL']) delete clean[k];
+        const r = spawnSync(process.execPath, [pathJoin(root, 'scripts', 'check-cy2027-parity.mjs')], { cwd: root, encoding: 'utf8', env: { ...clean, ...env } });
+        return { status: r.status, out: String(r.stdout || '') + String(r.stderr || '') };
+      };
+      const edit = (root, rel, fn) => {
+        const p = pathJoin(root, rel);
+        const before = readFileSync(p, 'utf8');
+        const after = fn(before);
+        if (after === before) throw new Error('the test edit did not change ' + rel);
+        writeFileSync(p, after);
+        return () => writeFileSync(p, before);
+      };
+      const DV = 'src/lib/disclaimerVersion.ts';
+      const BOT = 'src/components/CustomerServiceBot.tsx';
+      const passNote = 'contact-consent wording v' + SHOWN.version + ' matches its scope registry (' + (entry && entry.scope) + ')';
+
+      const control = runGate(fullTree);
+      ok('CE-09 (gate, run): the copy of the tree passes, as the repository does',
+        control.status === 0 && control.out.includes(passNote) && /contact-consent wording has a single source \(\d+ files scanned\)/.test(control.out),
+        control.out.slice(-400));
+      const onVercel = runGate(artifact, { VERCEL: '1' });
+      ok('CE-09 (gate, run): the deployed artifact (no docs/, only the shipped scripts) passes with VERCEL=1 — and still RUNS the wording check',
+        onVercel.status === 0 && onVercel.out.includes(passNote) && /has a single source/.test(onVercel.out), onVercel.out.slice(-400));
+
+      for (const [where, root, env] of [['locally', fullTree, {}], ['on Vercel', artifact, { VERCEL: '1' }], ['on Vercel (VERCEL_ENV only)', artifact, { VERCEL_ENV: 'production' }]]) {
+        let undo = edit(root, DV, (s) => s.replace('to discuss Medicare plan options', 'to discuss Medicare plan options and any other product we sell'));
+        const drift = runGate(root, env);
+        undo();
+        ok('CE-09 (gate, run): an edited wording under the same version FAILS the build ' + where,
+          drift.status === 1 && /EN contact-consent wording changed/.test(drift.out) && !drift.out.includes(passNote), drift.out.slice(-400));
+
+        undo = edit(root, BOT, (s) => s.replace("\\n\\n' + TCPA_CONSENT_TEXT_ES", "\\n\\nAl aceptar, usted autoriza a ClearPoint Senior Advisors a ofrecerle cualquier producto.'"));
+        const copy = runGate(root, env);
+        undo();
+        ok('CE-09 (gate, run): a second copy of the wording in the chat FAILS the build ' + where,
+          copy.status === 1 && /CustomerServiceBot\.tsx contains its own copy of the contact-consent wording/.test(copy.out), copy.out.slice(-400));
+
+        const dvPath = pathJoin(root, DV);
+        const dvBefore = readFileSync(dvPath, 'utf8');
+        rmSync(dvPath);
+        const missing = runGate(root, env);
+        writeFileSync(dvPath, dvBefore);
+        ok('CE-09 (gate, run): a missing wording file FAILS the build ' + where,
+          missing.status === 1 && /src\/lib\/disclaimerVersion\.ts is missing/.test(missing.out), missing.out.slice(-400));
+      }
+      const again = runGate(fullTree);
+      ok('CE-09 (gate, run): every edit was undone — the copy passes again', again.status === 0 && again.out.includes(passNote), again.out.slice(-300));
+    } catch (e) {
+      gateError = e;
+    } finally {
+      try { rmSync(tmp, { recursive: true, force: true }); } catch { /* a leftover temp dir is not a test result */ }
+    }
+    ok('CE-09 (gate, run): the gate harness ran to its end', gateError === null, gateError && String(gateError.stack || gateError).slice(0, 500));
+  }
 
   // ── 25b. The registry ────────────────────────────────────────────────────────
   const EN_2026_06_01 = '1b85fb83b46a4698e08ce899d0675ac0caf140efde5a62711f618de551d43048';
@@ -1825,6 +1969,30 @@ consentScope: {
     ['', 'yesterday', '2026-10-02', '2026-10-02T15:00:00', '2026-10-02T15:00:00+02:00', '2026-13-45T99:99:99Z',
       ' 2026-10-02T15:00:00Z', 1759417200000, new Date('2026-10-02T15:00:00Z'), null, undefined, ['2026-10-02T15:00:00Z']]
       .every((t) => isIsoInstant(t) === false));
+  // RED TEAM 2026-10-04 — the shape test plus Date.parse() let these through:
+  // V8 rolls them over to another day, and the impossible string was written.
+  ok('CE-09: an instant that does not exist is not an instant (31 February, 24:00:00, 31 April, 29 Feb off a leap year)',
+    ['2026-02-31T00:00:00Z', '2026-02-30T12:00:00.000Z', '2026-10-04T24:00:00Z', '2026-04-31T10:00:00Z', '2026-02-29T00:00:00Z', '2026-10-02T15:00:60Z']
+      .every((t) => isIsoInstant(t) === false) &&
+    ['2028-02-29T00:00:00Z', '2026-10-02T23:59:59.999Z', '2026-10-02T15:00:00.1Z', '2026-10-02T15:00:00.12Z', '2026-12-31T00:00:00.000Z']
+      .every((t) => isIsoInstant(t) === true));
+  ok('CE-09: an instant in the future is not one a record may carry — judged against the clock it is given', (() => {
+    const NOW = Date.UTC(2026, 9, 2, 15, 0, 0);
+    const iso = (ms) => new Date(ms).toISOString();
+    return isRecordableInstant(iso(NOW), NOW) === true &&
+      isRecordableInstant(iso(NOW - 1), NOW) === true &&
+      isRecordableInstant('1990-01-01T00:00:00Z', NOW) === true &&          // no lower bound is invented
+      isRecordableInstant(iso(NOW + CONSENT_CLOCK_TOLERANCE_MS), NOW) === true &&
+      isRecordableInstant(iso(NOW + CONSENT_CLOCK_TOLERANCE_MS + 1), NOW) === false &&
+      isRecordableInstant('2099-01-01T00:00:00Z', NOW) === false &&
+      isRecordableInstant('2026-02-31T00:00:00Z', NOW) === false &&
+      isRecordableInstant('yesterday', NOW) === false &&
+      isRecordableInstant(iso(NOW), NaN) === false &&
+      CONSENT_CLOCK_TOLERANCE_MS === 5 * 60 * 1000 &&
+      // and against THIS machine's clock when none is given
+      isRecordableInstant(new Date().toISOString()) === true &&
+      isRecordableInstant(new Date(Date.now() + 24 * 3600 * 1000).toISOString()) === false;
+  })());
 
   // ── 25c. The consent object ──────────────────────────────────────────────────
   const AT = '2026-10-02T15:00:00.000Z';
@@ -1886,8 +2054,12 @@ consentScope: {
   ok('CE-09: the timestamp is required, not defaulted',
     [undefined, null, ''].every((t) => refusal({ at: t }).reason === 'CONSENT_TIMESTAMP_MISSING'));
   ok('CE-09: and it has to be an instant',
-    ['yesterday', '2026-10-02', 1759417200000, new Date(AT), '2026-13-45T99:99:99Z', [AT]]
+    ['yesterday', '2026-10-02', 1759417200000, new Date(AT), '2026-13-45T99:99:99Z', [AT], '2026-02-31T00:00:00Z', '2026-10-04T24:00:00Z']
       .every((t) => refusal({ at: t }).reason === 'CONSENT_TIMESTAMP_INVALID'));
+  ok('CE-09: a consent dated in the future is refused by name, and yields no object',
+    ['2099-01-01T00:00:00Z', new Date(Date.now() + 3600 * 1000).toISOString()]
+      .every((t) => refusal({ at: t }).reason === 'CONSENT_TIMESTAMP_IN_THE_FUTURE' && refusal({ at: t }).consent === null) &&
+    !!refusal({ at: new Date().toISOString() }).consent);
   ok('CE-09: no refusal carries a consent object',
     [{ consentGiven: false }, { disclaimerVersion: 'x' }, { consentTextSha256: 'zz' }, { consentTextSha256: sha('other') },
       { receiptHash: 'a'.repeat(64) }, { at: '' }, { at: 'yesterday' }].every((o) => refusal(o).consent === null));
@@ -1919,29 +2091,169 @@ consentScope: {
   ok('CRM-15: without ids nothing is sent and all three are reported',
     buildCustomFields(flat, {}).fields.length === 0 && buildCustomFields(flat, {}).unmapped.length === 3);
   ok('CRM-15: the scope is a confirmed-only field', CONFIRMED_ONLY_FIELDS.includes('CALLBACK_CONSENT_SCOPE'));
+  // AUDIT 2026-10-04 (CE-09 / CRM-15) — these three blocks used to hand the
+  // mapping a scope with NOTHING beside it, and the positive control asserted
+  // that a lone scope is written. A lone scope is now refused by the unit rule
+  // (it would re-scope an earlier grant), which would have left the provenance
+  // and allow-list cases below passing for the wrong reason. Each case therefore
+  // travels beside a revocation — a status and its instant that are valid on
+  // their own — so that ONLY the scope's own rule decides, and the control
+  // proves the same carrier does write a scope that is confirmed and registered.
+  const withScope = (scope) => buildCustomFields({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: scope }, IDS);
+  const onlyTheScopeRefused = (r) => r.refused.join() === 'CALLBACK_CONSENT_SCOPE' && r.withheld.length === 0 &&
+    r.fields.map((f) => f.id + '=' + f.value).join() === 'cbS=REVOKED,cbA=' + AT;
   for (const src of ['AI_INFERRED', 'ai_inferred', 'INFERRED_FROM_LEAD', 'GUESS', '', null, undefined]) {
     // The VALUE is the registered scope, so only the provenance rule can refuse it.
-    const r = buildCustomFields({ CALLBACK_CONSENT_SCOPE: { value: entry.scope, source: src } }, IDS);
-    ok('CRM-15: provenance ' + JSON.stringify(src) + ' may not write the scope',
-      r.refused.join() === 'CALLBACK_CONSENT_SCOPE' && r.fields.length === 0);
+    const r = withScope({ value: entry.scope, source: src });
+    ok('CRM-15: provenance ' + JSON.stringify(src) + ' may not write the scope', onlyTheScopeRefused(r), JSON.stringify(r));
   }
   ok('CRM-15: a confirmed, registered scope is written',
-    buildCustomFields({ CALLBACK_CONSENT_SCOPE: { value: entry.scope, source: 'BENEFICIARY_CONFIRMED' } }, IDS).mapped === 1 &&
-    buildCustomFields({ CALLBACK_CONSENT_SCOPE: entry.scope }, IDS).mapped === 1);
+    [{ value: entry.scope, source: 'BENEFICIARY_CONFIRMED' }, { value: entry.scope, source: 'SYSTEM' }, entry.scope].every((scope) => {
+      const r = withScope(scope);
+      return r.mapped === 3 && r.refused.length === 0 && byId(r, 'cbX') === entry.scope && byId(r, 'cbS') === 'REVOKED';
+    }));
   for (const bad of ['ANY_PRODUCT', 'discuss_medicare_plan_options', ' ' + entry.scope, 'this request', 'constructor',
     [entry.scope], { toString() { return entry.scope; } }, 7, true]) {
     // The PROVENANCE is acceptable both times, so only the allow-list of stated scopes can refuse it.
     const shownAs = typeof bad === 'string' ? JSON.stringify(bad) : Object.prototype.toString.call(bad);
-    const plain = buildCustomFields({ CALLBACK_CONSENT_SCOPE: bad }, IDS);
-    const confirmed = buildCustomFields({ CALLBACK_CONSENT_SCOPE: { value: bad, source: 'BENEFICIARY_CONFIRMED' } }, IDS);
+    const plain = withScope(bad);
+    const confirmed = withScope({ value: bad, source: 'BENEFICIARY_CONFIRMED' });
     ok('CRM-15: ' + shownAs + ' is not a scope any registered wording states, so it is not written',
-      plain.refused.join() === 'CALLBACK_CONSENT_SCOPE' && plain.fields.length === 0 &&
-      confirmed.refused.join() === 'CALLBACK_CONSENT_SCOPE' && confirmed.fields.length === 0);
+      onlyTheScopeRefused(plain) && onlyTheScopeRefused(confirmed), JSON.stringify(plain));
   }
   ok('CRM-15: a consent object assembled by hand does not get its scope into the CRM', (() => {
     const forged = { type: 'CALLBACK_CONTACT_PERMISSION', status: 'GRANTED', at: AT, scope: 'ANY_PRODUCT', revokedAt: null };
     const r = buildCustomFields(consentsToFields({ callbackConsent: forged }), IDS);
     return r.refused.includes('CALLBACK_CONSENT_SCOPE') && !r.fields.some((f) => f.id === 'cbX');
+  })());
+
+  // RED TEAM 2026-10-04 — the assertion above passed while GRANTED and its
+  // timestamp were still in r.fields: the scope was dropped ALONE, which is
+  // "granted, scope unknown". The callback consent is a unit at the write stage.
+  const unit = (values, env = IDS) => {
+    const r = buildCustomFields(values, env);
+    return { sent: r.fields.map((f) => f.id + '=' + f.value).join(), refused: r.refused.slice().sort().join(), withheld: r.withheld.join(), unmapped: r.unmapped.join() };
+  };
+  const ALL3 = 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_SCOPE,CALLBACK_CONSENT_STATUS';
+  ok('CRM-15 (write stage): a whole callback consent is sent whole', (() => {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope });
+    return u.sent === 'cbS=GRANTED,cbA=' + AT + ',cbX=' + entry.scope && u.refused === '' && u.withheld === '' && u.unmapped === '';
+  })());
+  for (const [label, callbackConsent] of [
+    ['a hand-built object with an unregistered scope', { type: 'CALLBACK_CONTACT_PERMISSION', status: 'GRANTED', at: AT, scope: 'ANY_PRODUCT', revokedAt: null }],
+    ['the voice script\'s scope ("this request")', createConsent({ type: 'CALLBACK_CONTACT_PERMISSION', status: CONSENT_STATUS.GRANTED, language: 'es', channel: 'VOICE', scriptVersion: 'base-layer-a-v1', scope: 'this request', at: AT })],
+  ]) {
+    const u = unit(consentsToFields({ callbackConsent }));
+    ok('CRM-15 (write stage): GRANTED never leaves without its scope — ' + label + ' sends NOTHING and names all three',
+      u.sent === '' && u.refused === ALL3, JSON.stringify(u));
+  }
+  for (const [label, values, refused] of [
+    ['a rehydrated object with no scope at all', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT }, 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_STATUS'],
+    ['a bare GRANTED', { CALLBACK_CONSENT_STATUS: 'GRANTED' }, 'CALLBACK_CONSENT_STATUS'],
+    ['GRANTED with a scope and no timestamp', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_SCOPE: entry.scope }, 'CALLBACK_CONSENT_SCOPE,CALLBACK_CONSENT_STATUS'],
+    ['GRANTED with an empty scope', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: '' }, 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_STATUS'],
+    ['GRANTED with a timestamp that is not an instant', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: 'yesterday', CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['GRANTED with a timestamp that does not exist', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: '2026-02-31T00:00:00Z', CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['GRANTED dated in the future', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: '2099-01-01T00:00:00Z', CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a status outside the vocabulary', { CALLBACK_CONSENT_STATUS: 'granted (assumed)', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a status in the wrong case', { CALLBACK_CONSENT_STATUS: 'granted', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a status that is an array', { CALLBACK_CONSENT_STATUS: ['GRANTED'], CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a status that is a prototype key', { CALLBACK_CONSENT_STATUS: 'constructor', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a status an inference declared', { CALLBACK_CONSENT_STATUS: { value: 'GRANTED', source: 'AI_INFERRED' }, CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a timestamp an inference declared', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: { value: AT, source: 'AI_INFERRED' }, CALLBACK_CONSENT_SCOPE: entry.scope }, ALL3],
+    ['a scope an inference declared', { CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: { value: entry.scope, source: 'AI_INFERRED' } }, ALL3],
+    ['a timestamp with no status (it would read as a grant time)', { CALLBACK_CONSENT_AT: AT }, 'CALLBACK_CONSENT_AT'],
+    ['a timestamp and a scope with no status', { CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_SCOPE'],
+  ]) {
+    const u = unit(values);
+    ok('CRM-15 (write stage): ' + label + ' → nothing of the callback consent is written', u.sent === '' && u.refused === refused && u.withheld === '', JSON.stringify(u));
+  }
+  ok('CRM-15 (write stage): the timestamp is a confirmed-only field', CONFIRMED_ONLY_FIELDS.includes('CALLBACK_CONSENT_AT'));
+  for (const [label, map, withheld, unmapped] of [
+    ['the scope has no id', { CALLBACK_CONSENT_STATUS: 'cbS', CALLBACK_CONSENT_AT: 'cbA' }, 'CALLBACK_CONSENT_STATUS,CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_SCOPE'],
+    ['only the scope has an id', { CALLBACK_CONSENT_SCOPE: 'cbX' }, 'CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_STATUS,CALLBACK_CONSENT_AT'],
+    ['the status has no id', { CALLBACK_CONSENT_AT: 'cbA', CALLBACK_CONSENT_SCOPE: 'cbX' }, 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_STATUS'],
+  ]) {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, { CY2027_CRM_FIELD_IDS: JSON.stringify(map) });
+    ok('CRM-15 (write stage): under a partial id map (' + label + ') a granted consent sends nothing, and says which values were withheld',
+      u.sent === '' && u.refused === '' && u.withheld === withheld && u.unmapped === unmapped, JSON.stringify(u));
+  }
+  ok('CRM-15 (write stage): a revocation travels without a scope, and a non-stated scope beside it is refused alone', (() => {
+    const plain = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: AT });
+    const withBad = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: 'ANY_PRODUCT' });
+    const statusOnly = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED' });
+    return plain.sent === 'cbS=REVOKED,cbA=' + AT && plain.refused === '' &&
+      withBad.sent === 'cbS=REVOKED,cbA=' + AT && withBad.refused === 'CALLBACK_CONSENT_SCOPE' &&
+      statusOnly.sent === 'cbS=REVOKED' && statusOnly.refused === '';
+  })());
+  for (const [label, map, withheld, unmapped] of [
+    ['only the timestamp has an id', { CALLBACK_CONSENT_AT: 'cbA' }, 'CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_STATUS'],
+    ['only the status has an id', { CALLBACK_CONSENT_STATUS: 'cbS' }, 'CALLBACK_CONSENT_STATUS', 'CALLBACK_CONSENT_AT'],
+  ]) {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: AT }, { CY2027_CRM_FIELD_IDS: JSON.stringify(map) });
+    ok('CE-09 (write stage): under a partial id map (' + label + ') a revocation sends neither value',
+      u.sent === '' && u.withheld === withheld && u.unmapped === unmapped, JSON.stringify(u));
+  }
+  // AUDIT 2026-10-04 (CE-09 / CRM-15) — the unit rule covered the status and the
+  // instant and left the SCOPE able to leave on its own: with no status at all,
+  // and beside a status that was not sent for want of an id. A lone scope on a
+  // contact rewrites what an earlier grant is read as covering.
+  ok('CRM-15 (write stage): a scope with no status is not written — alone it would re-scope whatever grant the contact already has', (() => {
+    const alone = unit({ CALLBACK_CONSENT_SCOPE: entry.scope });
+    const emptyStatus = unit({ CALLBACK_CONSENT_STATUS: '', CALLBACK_CONSENT_SCOPE: entry.scope });
+    return alone.sent === '' && alone.refused === 'CALLBACK_CONSENT_SCOPE' && alone.withheld === '' && alone.unmapped === '' &&
+      emptyStatus.sent === '' && emptyStatus.refused === 'CALLBACK_CONSENT_SCOPE';
+  })(), JSON.stringify(unit({ CALLBACK_CONSENT_SCOPE: entry.scope })));
+  for (const [label, map, sent, withheld, unmapped] of [
+    ['only the scope has an id', { CALLBACK_CONSENT_SCOPE: 'cbX' }, '', 'CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_STATUS,CALLBACK_CONSENT_AT'],
+    ['the status has no id', { CALLBACK_CONSENT_AT: 'cbA', CALLBACK_CONSENT_SCOPE: 'cbX' }, '', 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_STATUS'],
+    ['the timestamp has no id', { CALLBACK_CONSENT_STATUS: 'cbS', CALLBACK_CONSENT_SCOPE: 'cbX' }, '', 'CALLBACK_CONSENT_STATUS,CALLBACK_CONSENT_SCOPE', 'CALLBACK_CONSENT_AT'],
+    ['the scope has no id', { CALLBACK_CONSENT_STATUS: 'cbS', CALLBACK_CONSENT_AT: 'cbA' }, 'cbS=REVOKED,cbA=' + AT, '', 'CALLBACK_CONSENT_SCOPE'],
+  ]) {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }, { CY2027_CRM_FIELD_IDS: JSON.stringify(map) });
+    ok('CRM-15 (write stage): a revoked consent carrying its scope, under a partial id map (' + label + '), never sends the scope without its status — and a missing scope id never holds back the revocation',
+      u.sent === sent && u.refused === '' && u.withheld === withheld && u.unmapped === unmapped, JSON.stringify(u));
+  }
+  ok('CRM-15 (write stage): a status that is not GRANTED may carry its scope when the status itself is sent', (() => {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'DECLINED', CALLBACK_CONSENT_SCOPE: entry.scope });
+    return u.sent === 'cbS=DECLINED,cbX=' + entry.scope && u.refused === '' && u.withheld === '' && u.unmapped === '';
+  })());
+  // The rule "a refused status or instant takes the rest of the unit with it" was
+  // only ever exercised with GRANTED, where two other rules reach the same
+  // verdict. With a status that needs neither scope nor instant it stands alone.
+  for (const [label, at] of [['is not an instant', 'yesterday'], ['does not exist', '2026-02-31T00:00:00Z'], ['is in the future', '2099-01-01T00:00:00Z'], ['an inference declared', { value: AT, source: 'AI_INFERRED' }]]) {
+    const u = unit({ CALLBACK_CONSENT_STATUS: 'REVOKED', CALLBACK_CONSENT_AT: at });
+    ok('CE-09 (write stage): a revocation whose instant ' + label + ' is not written as a bare REVOKED — the refused instant takes the status with it',
+      u.sent === '' && u.refused === 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_STATUS' && u.withheld === '' && u.unmapped === '', JSON.stringify(u));
+  }
+  ok('CE-09 (write stage): and a status outside the vocabulary takes a valid instant with it',
+    unit({ CALLBACK_CONSENT_STATUS: 'revoked', CALLBACK_CONSENT_AT: AT }).sent === '' &&
+    unit({ CALLBACK_CONSENT_STATUS: 'revoked', CALLBACK_CONSENT_AT: AT }).refused === 'CALLBACK_CONSENT_AT,CALLBACK_CONSENT_STATUS');
+  ok('CE-09 (write stage): the other two consent statuses take the same vocabulary',
+    buildCustomFields({ RECORDING_NOTICE_STATUS: 'granted (assumed)', AI_OUTBOUND_CONSENT_STATUS: ['GRANTED'] },
+      { CY2027_CRM_FIELD_IDS: '{"RECORDING_NOTICE_STATUS":"rn","AI_OUTBOUND_CONSENT_STATUS":"ao"}' }).refused.join() === 'RECORDING_NOTICE_STATUS,AI_OUTBOUND_CONSENT_STATUS' &&
+    buildCustomFields({ RECORDING_NOTICE_STATUS: 'DECLINED', AI_OUTBOUND_CONSENT_STATUS: 'NOT_ASKED' },
+      { CY2027_CRM_FIELD_IDS: '{"RECORDING_NOTICE_STATUS":"rn","AI_OUTBOUND_CONSENT_STATUS":"ao"}' }).fields.map((f) => f.value).join() === 'DECLINED,NOT_ASKED');
+  ok('CRM-15 (write stage): a field outside the unit is untouched by a broken unit', (() => {
+    const r = buildCustomFields({ SOA_STATE: 'NY', CALLBACK_CONSENT_STATUS: 'GRANTED' }, { CY2027_CRM_FIELD_IDS: '{"SOA_STATE":"s1","CALLBACK_CONSENT_STATUS":"cbS"}' });
+    return r.fields.map((f) => f.id + '=' + f.value).join() === 's1=NY' && r.refused.join() === 'CALLBACK_CONSENT_STATUS';
+  })());
+  // Each slot of consentsToFields() takes its own consent type (§6 cross-inference).
+  const soaGranted = createConsent({ type: 'SCOPE_OF_APPOINTMENT', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'WEB', scriptVersion: 'v1', scope: entry.scope, at: AT });
+  const recGranted = createConsent({ type: 'RECORDING_NOTICE', status: CONSENT_STATUS.GRANTED, language: 'en', channel: 'VOICE', scriptVersion: 'v1', scope: 'recording', at: AT });
+  throws('CE-09: a granted SCOPE_OF_APPOINTMENT object is not a callback consent, whatever slot it is put in',
+    () => consentsToFields({ callbackConsent: soaGranted }), /callbackConsent must be a CALLBACK_CONTACT_PERMISSION/);
+  throws('CE-09: nor is a recording notice', () => consentsToFields({ callbackConsent: recGranted }), /callbackConsent must be a CALLBACK_CONTACT_PERMISSION/);
+  throws('CE-09: an object with no type is not a callback consent',
+    () => consentsToFields({ callbackConsent: { status: 'GRANTED', at: AT, scope: entry.scope } }), /callbackConsent must be a CALLBACK_CONTACT_PERMISSION/);
+  throws('CE-09: a callback consent is not AI-outbound consent', () => consentsToFields({ aiOutboundConsent: good.consent }), /aiOutboundConsent must be a AI_OUTBOUND_VOICE_CONSENT/);
+  throws('CE-09: nor a recording notice', () => consentsToFields({ recordingNotice: good.consent }), /recordingNotice must be a RECORDING_NOTICE/);
+  ok('CE-09: each object in its own slot is still flattened',
+    JSON.stringify(consentsToFields({ recordingNotice: recGranted, callbackConsent: good.consent })) ===
+    JSON.stringify({ RECORDING_NOTICE_STATUS: 'GRANTED', CALLBACK_CONSENT_STATUS: 'GRANTED', CALLBACK_CONSENT_AT: AT, CALLBACK_CONSENT_SCOPE: entry.scope }));
+  ok('CE-09: a revoked callback consent maps to REVOKED, its revocation instant and the scope that was revoked', (() => {
+    const u = unit(consentsToFields({ callbackConsent: revokeConsent(good.consent, { at: '2026-10-03T09:00:00.000Z', via: 'WEB_CHAT' }) }));
+    return u.sent === 'cbS=REVOKED,cbA=2026-10-03T09:00:00.000Z,cbX=' + entry.scope && u.refused === '';
   })());
 
   // The revocation side.
@@ -2049,9 +2361,9 @@ consentScope: {
     CALLBACK_CONSENT_UNAVAILABLE.consent === null && CALLBACK_CONSENT_UNAVAILABLE.reason === 'CALLBACK_CONSENT_BUILD_FAILED' &&
     CALLBACK_CONSENT_UNAVAILABLE.fields.length === 0 && CALLBACK_CONSENT_UNAVAILABLE.flag === 'CALLBACK_CONSENT_NOT_RECORDED' &&
     CALLBACK_CONSENT_UNAVAILABLE.receiptBit === 'callback_consent=NOT_RECORDED(CALLBACK_CONSENT_BUILD_FAILED)');
-  ok('CE-09: the record function is server-only, and consent.js brings no Node API into the shared barrel',
-    !('recordWebCallbackConsent' in barrelModule) && 'webCallbackConsent' in barrelModule &&
-    !/\bfrom\s+['"]node:/.test(strip(readFileSync(new URL('../api/_lib/cy2027/consent.js', import.meta.url), 'utf8'))));
+  // ("consent.js brings no Node API into the shared barrel" is asserted in 25e-5
+  //  below, over the whole import graph: the regex that stood here matched only
+  //  `from 'node:…'` and let `from 'crypto'`, import('…') and `import '…'` pass.)
   ok('CE-09: the record cannot be edited between being built and being written', (() => {
     const r = recordWebCallbackConsent(goodIn, IDS);
     try { r.fields[2].value = 'ANY_PRODUCT'; } catch { /* frozen */ }
@@ -2060,6 +2372,325 @@ consentScope: {
     return Object.isFrozen(r) && Object.isFrozen(r.fields) && r.fields.every(Object.isFrozen) && r.fields.length === 3 &&
       byId(r, 'cbX') === entry.scope && r.receiptBit === 'scope=' + entry.scope;
   })());
+
+  // The claims go in AS RECEIVED (red team 2026-10-04): the handler used to strip
+  // them first, so these rules never saw live input. Function level here, handler
+  // level in 25f.
+  ok('CE-09: a receipt hash that is present and is not the digest is a mismatch — whatever its type',
+    [12345, false, 0, true, ['x'], { a: 1 }, 'ZZZZ-NOT-HEX', 'GHIJKLMNOP', sha(SHOWN.en).toUpperCase(), ' ' + sha(SHOWN.en), 'xx' + sha(SHOWN.en) + '!!']
+      .every((h) => recordWebCallbackConsent({ ...goodIn, receiptHash: h }, IDS).reason === 'CONSENT_RECEIPT_HASH_MISMATCH'));
+  ok('CE-09: a version label is matched as received — padding, a stray character or a look-alike is another label',
+    [' 2026-06-01\n', '2026/-06-01', '20 26-06-01', '2026-06-01\u0000', '<b>2026-06-01</b>', '２０２６-06-01', SHOWN.version + ' ']
+      .every((v) => recordWebCallbackConsent({ ...goodIn, disclaimerVersion: v }, IDS).reason === 'CONSENT_TEXT_VERSION_UNKNOWN') &&
+    [20260601, ['2026-06-01'], { v: 1 }, true]
+      .every((v) => recordWebCallbackConsent({ ...goodIn, disclaimerVersion: v }, IDS).reason === 'CONSENT_TEXT_VERSION_MISSING'));
+  ok('CE-09: a record dated in the future is refused by name',
+    recordWebCallbackConsent({ ...goodIn, at: '2099-01-01T00:00:00Z' }, IDS).reason === 'CONSENT_TIMESTAMP_IN_THE_FUTURE' &&
+    recordWebCallbackConsent({ ...goodIn, at: '2026-02-31T00:00:00Z' }, IDS).reason === 'CONSENT_TIMESTAMP_INVALID');
+
+  // ── 25e-2. The receipt line (red team 2026-10-04, HIGH) ──────────────────────
+  // One line, the server's statement FIRST, and no client claim able to spell a
+  // separator or a key. Tested by calling the function that writes it.
+  const partsOf = (line) => line.replace(/^— TCPA Receipt — /, '').split(' · ');
+  const statements = (text) => text.match(/(?:scope|callback_consent)[A-Za-z_]*\s*=/g) || [];
+  const PARTS = { at: AT, ip: '198.51.100.7', receiptHash: sha(SHOWN.en), disclaimerVersion: SHOWN.version, page: '/contact', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0' };
+  const refusedRec = recordWebCallbackConsent({ ...goodIn, consentText: SHOWN.en + ' and more', receiptHash: '' }, IDS);
+  ok('CRM-15 (receipt): the line is the header, then the server statement, its instant, the address, and only then the client claims',
+    tcpaReceiptLine(rec, PARTS) === '— TCPA Receipt — scope=' + entry.scope + ' · at=' + AT + ' · ip=198.51.100.7 · sha256=' + sha(SHOWN.en) +
+      ' · disclaimer=' + SHOWN.version + ' · page=/contact · ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140.0', tcpaReceiptLine(rec, PARTS));
+  ok('CRM-15 (receipt): a refusal reads NOT_RECORDED with its reason first, and no scope anywhere', (() => {
+    const line = tcpaReceiptLine(refusedRec, PARTS);
+    return partsOf(line)[0] === 'callback_consent=NOT_RECORDED(CONSENT_TEXT_NOT_THE_REGISTERED_VERSION)' && !/scope=/.test(line) && statements(line).length === 1;
+  })());
+  for (const ua of [
+    'M · scope=ANY_PRODUCT_TELEMARKETING', 'x · scope=ANY_PRODUCT_WE_SELL · page=/everything', 'M\n— TCPA Receipt — scope=ANY_PRODUCT',
+    'M · callback_consent=RECORDED', 'M · at=1999-01-01T00:00:00Z · ip=10.0.0.1 · sha256=' + 'f'.repeat(64), 'M scope​=ANY', 'M scope＝ANY', 'M\tscope = ANY',
+  ]) {
+    const granted = tcpaReceiptLine(rec, { ...PARTS, userAgent: ua });
+    const refused = tcpaReceiptLine(refusedRec, { ...PARTS, userAgent: ua });
+    ok('CRM-15 (receipt): a user agent of ' + JSON.stringify(ua) + ' cannot add, move or fake a statement',
+      statements(granted).length === 1 && partsOf(granted)[0] === 'scope=' + entry.scope &&
+      statements(refused).length === 1 && /^callback_consent=NOT_RECORDED\(/.test(partsOf(refused)[0]) && !/scope=/.test(refused) &&
+      [granted, refused].every((l) => !/[\r\n]/.test(l) && l.split('=').length === partsOf(l).length + 1 &&
+        partsOf(l).filter((p) => /^(?:at|ip|sha256|disclaimer|page)=/.test(p)).length === 5 &&
+        partsOf(l)[1] === 'at=' + AT && partsOf(l)[2] === 'ip=198.51.100.7'),
+      granted + '\n        ' + refused);
+  }
+  ok('CRM-15 (receipt): a client claim keeps only characters that cannot form receipt syntax',
+    receiptClaim('M · scope=ANY_PRODUCT_TELEMARKETING') === 'M scope ANY_PRODUCT_TELEMARKETING' &&
+    receiptClaim('Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101, like+this-one:1', 100) === 'Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101, like+this-one:1' &&
+    receiptClaim('a=b·c—d\ne f<g>"h"') === 'a b c d e f g h' &&
+    receiptClaim('x'.repeat(200)).length === 60 && receiptClaim('x'.repeat(200), 10).length === 10 && receiptClaim('abc', -1) === 'abc' &&
+    [undefined, null, 7, ['M'], { toString() { return 'M'; } }].every((v) => receiptClaim(v) === '') &&
+    !/[^A-Za-z0-9 ./;:(),_+-]/.test(receiptClaim(String.fromCharCode(...Array.from({ length: 0x250 }, (_, i) => i)), 480)));
+  ok('CRM-15 (receipt): a client claim that is not exactly well-formed is not printed — never repaired', (() => {
+    const line = tcpaReceiptLine(rec, { at: AT, ip: 'not an ip', receiptHash: sha(SHOWN.en).toUpperCase(), disclaimerVersion: ' 2026-06-01\n', page: 'contact · scope=X', userAgent: 7 });
+    const short = tcpaReceiptLine(rec, { ...PARTS, receiptHash: 'abc', disclaimerVersion: 'v 1', page: '/a?b=1' });
+    return line === '— TCPA Receipt — scope=' + entry.scope + ' · at=' + AT + ' · ip=unavailable' &&
+      short === '— TCPA Receipt — scope=' + entry.scope + ' · at=' + AT + ' · ip=198.51.100.7 · ua=' + PARTS.userAgent;
+  })());
+  ok('CRM-15 (receipt): a recorded consent prints ITS instant, whatever the caller passes; a refusal prints the server instant given', (() => {
+    const other = '2026-10-01T00:00:00.000Z';
+    return partsOf(tcpaReceiptLine(rec, { ...PARTS, at: other }))[1] === 'at=' + AT &&
+      partsOf(tcpaReceiptLine(refusedRec, { ...PARTS, at: other }))[1] === 'at=' + other &&
+      partsOf(tcpaReceiptLine(refusedRec, { ...PARTS, at: 'at=1 · scope=X' }))[1] === 'at=unavailable';
+  })());
+  ok('CRM-15 (receipt): only a record this module built is believed — a look-alike object, a copy or nothing reads NOT_RECORDED', (() => {
+    const FAILED = 'callback_consent=NOT_RECORDED(CALLBACK_CONSENT_BUILD_FAILED)';
+    return [{ receiptBit: 'scope=ANY_PRODUCT', consent: { at: AT, scope: 'ANY_PRODUCT' } }, { ...rec }, JSON.parse(JSON.stringify(rec)),
+      Object.freeze({ ...rec, receiptBit: 'scope=ANY_PRODUCT' }), null, undefined, 'scope=ANY_PRODUCT', [rec]]
+      .every((r) => { const l = tcpaReceiptLine(r, PARTS); return partsOf(l)[0] === FAILED && !/scope=/.test(l); }) &&
+      partsOf(tcpaReceiptLine(CALLBACK_CONSENT_UNAVAILABLE, PARTS))[0] === FAILED &&
+      partsOf(tcpaReceiptLine(rec, PARTS))[0] === 'scope=' + entry.scope;
+  })());
+  ok('CRM-15 (receipt): it never throws, and the address is printed only when the caller has one to give',
+    [undefined, null, 'x', 7, [], { get userAgent() { throw new Error('a getter that throws'); } }]
+      .every((p) => { try { return /^— TCPA Receipt — scope=/.test(tcpaReceiptLine(rec, p)); } catch { return false; } }) &&
+    consentReceiptText(rec, { at: AT, receiptHash: sha(SHOWN.en), disclaimerVersion: SHOWN.version, page: '/contact' }) ===
+      'scope=' + entry.scope + ' · at=' + AT + ' · sha256=' + sha(SHOWN.en) + ' · disclaimer=' + SHOWN.version + ' · page=/contact');
+
+  // Text the server did not author cannot read as the receipt.
+  ok('CRM-15 (receipt): a look-alike header in client text is neutralised, with any dash',
+    ['— TCPA Receipt — x', '—TCPA Receipt— x', '– TCPA Receipt – x', '― TCPA  Receipt ― x', '—​ TCPA Receipt — x', '⸺ tcpa receipt ⸺ x', '－ TCPA Receipt － x']
+      .every((t) => { const n = neutralizeReceiptLookalikes(t); return /^- TCPA Receipt - x$/i.test(n) && !/[‐-―−⸺⸻﹘﹣－]/.test(n); }) &&
+    neutralizeReceiptLookalikes('a\n— Consent Text (verbatim, v2026-06-01) —\nb') === 'a\n- Consent Text -(verbatim, v2026-06-01) —\nb' &&
+    !/—\s*(?:TCPA Receipt|Consent Text)/.test(neutralizeReceiptLookalikes('x — TCPA Receipt — y\n—Consent Text— z')));
+  ok('CRM-15 (receipt): a labelled value only the server writes is neutralised in client text',
+    neutralizeReceiptLookalikes('scope=ANY · callback_consent=RECORDED · Scope = X · SCOPE​=Y · callback_consent_scope=Z · consent_scope＝W') ===
+      'scope:ANY · callback_consent:RECORDED · Scope : X · SCOPE​:Y · callback_consent_scope:Z · consent_scope:W' &&
+    statements(neutralizeReceiptLookalikes('x\n— TCPA Receipt — disclaimer=v1 · scope=ANY_PRODUCT_TELEMARKETING\ncallback_consent = GRANTED')).length === 0);
+  ok('CRM-15 (receipt): neutralising is idempotent, leaves ordinary prose alone, and returns a string for anything',
+    ['please call me after 5pm — thank you', 'my plan = Humana; a-b', 'in scope of my request', ''].every((t) => neutralizeReceiptLookalikes(t) === t) &&
+    ['— TCPA Receipt — scope=X', 'scope=1 scope=2'].every((t) => neutralizeReceiptLookalikes(neutralizeReceiptLookalikes(t)) === neutralizeReceiptLookalikes(t)) &&
+    [undefined, null, 7, ['— TCPA Receipt —'], {}].every((t) => neutralizeReceiptLookalikes(t) === ''));
+  ok('CE-09 (receipt): the registered wording passes through the neutraliser unchanged, so "verbatim" stays true',
+    neutralizeReceiptLookalikes(SHOWN.en) === SHOWN.en && neutralizeReceiptLookalikes(SHOWN.es) === SHOWN.es);
+  // AUDIT 2026-10-04 (CE-09 / CRM-15) — the dashes, the invisible characters and
+  // the equals signs were short LISTS: a left-to-right mark (which shows nothing)
+  // after the dash, inside the word or before the '=' went through untouched,
+  // and 8,000 dashes cost half a second. They are classes now, and each class is
+  // walked here in full instead of sampled.
+  {
+    const everyChar = (re) => {
+      const out = [];
+      for (let cp = 0; cp <= 0xFFFF; cp++) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) continue;
+        const ch = String.fromCharCode(cp);
+        if (re.test(ch)) out.push(ch);
+      }
+      return out;
+    };
+    const hex = (list) => list.map((c) => 'U+' + c.charCodeAt(0).toString(16).toUpperCase()).join();
+    const dashes = everyChar(/\p{Pd}/u).filter((d) => d !== '-').concat(['−', '─', '━']);
+    const formats = everyChar(/\p{Cf}/u).concat(['\u{E0001}', '\u{E0020}', '\u{1D173}']);   // and three beyond the BMP
+    const HEADER = '— TCPA Receipt — ';
+    const notADash = dashes.filter((d) => neutralizeReceiptLookalikes(d + ' TCPA Receipt ' + d + ' x') !== '- TCPA Receipt - x' ||
+      neutralizeReceiptLookalikes('a\n' + d + d + 'Consent Text' + d + ' x') !== 'a\n- Consent Text - x');
+    ok('CRM-15 (receipt): EVERY dash Unicode defines is a header dash — bar the ASCII hyphen, which is what a neutralised header is written with',
+      dashes.length >= 20 && ['—', '–', '֊', '⸺', '〜', '－', '−', '─'].every((d) => dashes.includes(d)) && notADash.length === 0 &&
+      neutralizeReceiptLookalikes('- TCPA Receipt - x') === '- TCPA Receipt - x' && neutralizeReceiptLookalikes('-— TCPA Receipt — x') === '-- TCPA Receipt - x',
+      'dashes=' + dashes.length + ' not neutralised: ' + hex(notADash));
+    const notAGap = formats.filter((c) => {
+      const h = neutralizeReceiptLookalikes('—' + c + ' T' + c + 'CPA' + c + ' Rec' + c + 'eipt' + c + '— x');
+      const l = neutralizeReceiptLookalikes('sc' + c + 'ope' + c + '=X call' + c + 'back_consent ' + c + '= Y');
+      return h !== '- TCPA Receipt - x' || l.includes('=') || l.split(':').length !== 3;
+    });
+    ok('CRM-15 (receipt): EVERY format character (zero-width, bidi mark, soft hyphen…) is a gap — after the dash, between and INSIDE the words, before the equals sign',
+      formats.length >= 30 && ['​', '‍', '‎', '‮', '­', '⁠', '﻿', '؜'].every((c) => formats.includes(c)) && notAGap.length === 0,
+      'formats=' + formats.length + ' not treated as a gap: ' + hex(notAGap));
+    ok('CRM-15 (receipt): the compatibility and look-alike equals signs are equals signs',
+      ['=', '＝', '﹦', '⁼', '₌', '꞊', '═', '≡'].every((e) => neutralizeReceiptLookalikes('scope' + e + 'ANY callback_consent ' + e + ' X') === 'scope:ANY callback_consent : X'));
+    // The exact promise, for ANY text: afterwards no line starts with the
+    // server's header, neither server label occurs, and a second pass changes nothing.
+    ok('CRM-15 (receipt): for any text — 4,000 generated here — no line starts with the server header afterwards and neither server label occurs', (() => {
+      const atoms = [HEADER, '— TCPA Receipt —', 'TCPA Receipt', 'Consent Text', '—', '–', '-', '─', '‎', '​', '­', ' ', '\n', '\t',
+        'scope', 'SCOPE', 'callback_consent', '_', '=', '＝', '⁼', ':', ' · ', 'x', 'TC', 'PA', 'Rec', 'eipt', 'sc', 'ope'];
+      let seed = 20261004;
+      const next = () => { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed; };
+      for (let i = 0; i < 4000; i++) {
+        let t = '';
+        for (let k = 1 + (next() % 14); k > 0; k--) t += atoms[next() % atoms.length];
+        const n = neutralizeReceiptLookalikes(t);
+        if (n.split('\n').some((l) => l.startsWith(HEADER)) || /(?:scope|callback_consent)[A-Za-z_]*\s*=/i.test(n) || neutralizeReceiptLookalikes(n) !== n) return false;
+      }
+      return true;
+    })());
+    ok('CRM-15 (receipt): a long hostile text is neutralised in linear time — a run of dashes used to be scanned from each of its dashes', (() => {
+      const t0 = process.hrtime.bigint();
+      for (const t of ['—'.repeat(30000), '—' + '​'.repeat(30000), 'scope'.repeat(1600), 's' + '​'.repeat(30000), 'scope' + ' '.repeat(30000) + 'x', ('— TCPA ' + 'scope ').repeat(2000)]) {
+        neutralizeReceiptLookalikes(t);
+      }
+      return Number(process.hrtime.bigint() - t0) / 1e6 < 1500;
+    })());
+  }
+
+  // ── 25e-3. One retry policy for a refused CRM write ──────────────────────────
+  ok('CE-09 (retry policy): a transient failure is never a reason to drop a field',
+    [429, 500, 502, 503, 504, 599].every((s) => crmRefusalStep(s, 3) === 'TRANSIENT' && crmRefusalStep(s, 0) === 'TRANSIENT'));
+  ok('CE-09 (retry policy): a dead token is not retried in any shape', crmRefusalStep(401, 3) === 'AUTH' && crmRefusalStep(401, 0) === 'AUTH');
+  ok('CE-09 (retry policy): any other refusal with the entries attached is retried once without them — not only 400/422',
+    [400, 403, 404, 409, 410, 413, 422, 499].every((s) => crmRefusalStep(s, 3) === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(s, 1) === 'RETRY_WITHOUT_FIELDS'));
+  ok('CE-09 (retry policy): with nothing attached there is nothing to drop',
+    [400, 403, 404, 409, 422].every((s) => [0, -1, undefined, null, '3', NaN, 1.5].every((n) => crmRefusalStep(s, n) === 'REFUSED')));
+  ok('CE-09 (retry policy): an accepted write is not a refusal, and anything that is not an HTTP status is not retried',
+    [200, 201, 204].every((s) => crmRefusalStep(s, 3) === 'ACCEPTED') &&
+    [0, 100, 301, 399, 600, -1, NaN, '422', null, undefined, 422.5].every((s) => crmRefusalStep(s, 3) === 'REFUSED'));
+
+  // ── 25e-4. The revocation, as a record ───────────────────────────────────────
+  const fieldsOf = (r) => r.fields.map((f) => f.id + '=' + f.value).join();
+  const STATUS_ONLY_IDS = { CY2027_CRM_FIELD_IDS: '{"CALLBACK_CONSENT_STATUS":"cbS"}' };
+  const contactWith = (...customFields) => ({ id: 'C1', customFields });
+  ok('CE-09 (revocation): a contact that reads anything but REVOKED gets REVOKED and this instant', (() => {
+    const r = recordCallbackRevocation({ at: REVOKED_AT, state: 'NOT_REVOKED' }, IDS);
+    return r.mode === 'REVOKED_WITH_INSTANT' && fieldsOf(r) === 'cbS=REVOKED,cbA=' + REVOKED_AT && r.at === REVOKED_AT &&
+      r.withheld.length === 0 && r.unmapped.length === 0 && r.warnings.length === 0 &&
+      r.fields.every((f) => /^contact\.callback_consent_(status|at)$/.test(f.key));
+  })());
+  ok('CE-09 (revocation): a contact that already reads REVOKED is not rewritten — the instant of the earlier revocation stands', (() => {
+    const r = recordCallbackRevocation({ at: REVOKED_AT, state: 'REVOKED' }, IDS);
+    return r.mode === 'ALREADY_REVOKED' && r.fields.length === 0 && r.warnings.length === 0;
+  })());
+  for (const state of [undefined, null, 'UNKNOWN', 'revoked', 'GRANTED', ['NOT_REVOKED'], { toString() { return 'NOT_REVOKED'; } }, true]) {
+    const r = recordCallbackRevocation({ at: REVOKED_AT, state }, IDS);
+    ok('CE-09 (revocation): a state that was not positively read (' + (typeof state === 'string' ? JSON.stringify(state) : Object.prototype.toString.call(state)) +
+      ') writes REVOKED and leaves the instant alone',
+      r.mode === 'REVOKED_STATUS_ONLY' && fieldsOf(r) === 'cbS=REVOKED' && r.withheld.join() === 'CALLBACK_CONSENT_AT' &&
+      r.warnings.length === 1 && /could not be read/.test(r.warnings[0]), JSON.stringify(r));
+  }
+  for (const [label, map, withheld, unmapped] of [
+    ['only the timestamp has an id', { CALLBACK_CONSENT_AT: 'cbA' }, 'CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_STATUS'],
+    ['the status id is missing beside two others', { CALLBACK_CONSENT_AT: 'cbA', CALLBACK_CONSENT_SCOPE: 'cbX' }, 'CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_STATUS'],
+    ['only the status has an id', { CALLBACK_CONSENT_STATUS: 'cbS' }, 'CALLBACK_CONSENT_STATUS', 'CALLBACK_CONSENT_AT'],
+    ['the status key is misspelled', { callback_consent_status: 'cbS', CALLBACK_CONSENT_AT: 'cbA' }, 'CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_STATUS'],
+    ['no id at all', {}, '', 'CALLBACK_CONSENT_STATUS,CALLBACK_CONSENT_AT'],
+  ]) {
+    for (const state of ['NOT_REVOKED', 'REVOKED', 'UNKNOWN']) {
+      const r = recordCallbackRevocation({ at: REVOKED_AT, state }, { CY2027_CRM_FIELD_IDS: JSON.stringify(map) });
+      ok('CE-09 (revocation): without BOTH ids nothing is written (' + label + ', contact ' + state + '), and the gap is named',
+        r.mode === 'NO_FIELD_IDS' && r.fields.length === 0 && r.withheld.join() === withheld && r.unmapped.join() === unmapped &&
+        r.warnings.length === (withheld ? 2 : 1) && /could not be written/.test(r.warnings[0]) &&
+        (!withheld || r.warnings[1].includes(withheld + ' not written either')), JSON.stringify(r));
+    }
+  }
+  ok('CE-09 (revocation): the record is frozen, carries no scope, and nothing the caller passes becomes a field', (() => {
+    const r = recordCallbackRevocation({ at: REVOKED_AT, state: 'NOT_REVOKED', scope: 'ANY_PRODUCT', CALLBACK_CONSENT_SCOPE: 'X', CALLBACK_CONSENT_STATUS: 'GRANTED', fields: [{ id: 'x' }] }, IDS);
+    try { r.fields.push({ id: 'x' }); } catch { /* frozen */ }
+    try { r.fields[0].value = 'GRANTED'; } catch { /* frozen */ }
+    return Object.isFrozen(r) && Object.isFrozen(r.fields) && r.fields.every(Object.isFrozen) && fieldsOf(r) === 'cbS=REVOKED,cbA=' + REVOKED_AT &&
+      !/scope|GRANTED|ANY_PRODUCT/i.test(JSON.stringify(r));
+  })());
+  ok('CE-09 (revocation): no usable instant, no field — and it never throws',
+    [undefined, null, 'x', 7, [], {}, { at: '' }, { at: 'yesterday' }, { at: '2026-02-31T00:00:00Z' }, { at: '2099-01-01T00:00:00Z' }, { at: 1759482000000 },
+      { get at() { throw new Error('a getter that throws'); } }]
+      .every((i) => { try { const r = recordCallbackRevocation(i, IDS); return r === CALLBACK_REVOCATION_UNAVAILABLE; } catch { return false; } }) &&
+    recordCallbackRevocation({ at: REVOKED_AT, state: 'NOT_REVOKED' }, null) === CALLBACK_REVOCATION_UNAVAILABLE &&
+    CALLBACK_REVOCATION_UNAVAILABLE.mode === 'NOT_BUILT' && CALLBACK_REVOCATION_UNAVAILABLE.fields.length === 0 && Object.isFrozen(CALLBACK_REVOCATION_UNAVAILABLE));
+  ok('CE-09 (revocation): the modes and states are closed vocabularies',
+    Object.isFrozen(CALLBACK_REVOCATION_MODE) && Object.isFrozen(CALLBACK_CONSENT_STATE) &&
+    Object.keys(CALLBACK_REVOCATION_MODE).join() === 'REVOKED_WITH_INSTANT,REVOKED_STATUS_ONLY,ALREADY_REVOKED,NO_FIELD_IDS,NOT_BUILT' &&
+    Object.keys(CALLBACK_CONSENT_STATE).join() === 'REVOKED,NOT_REVOKED,UNKNOWN');
+
+  // What the contact says today, read by the configured id.
+  ok('CE-09 (revocation): the state is REVOKED only when the status field is listed once and reads exactly REVOKED',
+    callbackConsentStateOf(contactWith({ id: 'cbS', value: 'REVOKED' }, { id: 'cbA', value: REVOKED_AT }), IDS) === 'REVOKED' &&
+    callbackConsentStateOf(contactWith({ id: 'cbS', field_value: 'REVOKED' }), IDS) === 'REVOKED' &&
+    callbackConsentStateOf(contactWith({ id: 'cbS', fieldValue: 'REVOKED' }), IDS) === 'REVOKED');
+  ok('CE-09 (revocation): the state is NOT_REVOKED when custom fields are listed and the status is another value, or not among them',
+    ['GRANTED', 'DECLINED', 'revoked', 'REVOKED ', ''].every((v) => callbackConsentStateOf(contactWith({ id: 'cbS', value: v }), IDS) === 'NOT_REVOKED') &&
+    callbackConsentStateOf(contactWith({ id: 'someOtherField', value: 'REVOKED' }), IDS) === 'NOT_REVOKED');
+  ok('CE-09 (revocation): everything else is UNKNOWN — nothing is inferred from silence',
+    [undefined, null, 'x', 7, [], {}, { customFields: null }, { customFields: 'REVOKED' }, { customFields: {} },
+      contactWith(),                                                                    // an EMPTY list: indistinguishable from a payload that carries none
+      contactWith({ id: 'cbS', value: 'REVOKED' }, { id: 'cbS', value: 'GRANTED' }),      // listed twice
+      contactWith({ id: 'cbS', value: ['REVOKED'] }), contactWith({ id: 'cbS', value: null }), contactWith({ id: 'cbS' }),
+      contactWith({ id: 'cbS', value: { toString() { return 'REVOKED'; } } }),
+      { get customFields() { throw new Error('a getter that throws'); } },
+    ].every((c) => callbackConsentStateOf(c, IDS) === 'UNKNOWN') &&
+    // with no status id configured, no payload can be read
+    callbackConsentStateOf(contactWith({ id: 'cbS', value: 'REVOKED' }), {}) === 'UNKNOWN' &&
+    callbackConsentStateOf(contactWith({ id: 'cbS', value: 'REVOKED' }), { CY2027_CRM_FIELD_IDS: '{"CALLBACK_CONSENT_AT":"cbA"}' }) === 'UNKNOWN' &&
+    callbackConsentStateOf(contactWith({ id: 'cbS', value: 'REVOKED' }), null) === 'UNKNOWN' &&
+    callbackConsentStateOf(contactWith({ id: 'cbS', value: 'REVOKED' }), STATUS_ONLY_IDS) === 'REVOKED');
+
+  // The note never claims more than was applied.
+  const NOT_REV = recordCallbackRevocation({ at: REVOKED_AT, state: 'NOT_REVOKED' }, IDS);
+  const UNK = recordCallbackRevocation({ at: REVOKED_AT, state: 'UNKNOWN' }, IDS);
+  ok('CE-09 (revocation note): written means written, with the instant',
+    callbackRevocationNoteLine(NOT_REV, 'WRITTEN') === 'Callback consent fields in the CRM: CALLBACK_CONSENT_STATUS=REVOKED and CALLBACK_CONSENT_AT=' + REVOKED_AT + ' written.');
+  ok('CE-09 (revocation note): a status-only write says the instant was left alone, and why',
+    /^Callback consent fields in the CRM: CALLBACK_CONSENT_STATUS=REVOKED written\. CALLBACK_CONSENT_AT was left as it was/.test(callbackRevocationNoteLine(UNK, 'WRITTEN')));
+  ok('CE-09 (revocation note): fields the CRM refused, or an update that failed, are NOT written — and the note says so',
+    [NOT_REV, UNK].every((r) => /NOT written — the CRM refused the update with them attached/.test(callbackRevocationNoteLine(r, 'DROPPED')) &&
+      ['UPDATE_FAILED', 'NOTHING_TO_WRITE', undefined, null, 'written', 7].every((o) => /NOT written — the CRM did not accept the update/.test(callbackRevocationNoteLine(r, o)))));
+  ok('CE-09 (revocation note): an already-revoked contact, missing ids and a failed build each have their own sentence — whatever outcome is claimed',
+    ['WRITTEN', 'DROPPED', 'UPDATE_FAILED', undefined].every((o) =>
+      /unchanged — the contact already read CALLBACK_CONSENT_STATUS=REVOKED/.test(callbackRevocationNoteLine(recordCallbackRevocation({ at: REVOKED_AT, state: 'REVOKED' }, IDS), o)) &&
+      /NOT written — CALLBACK_CONSENT_STATUS and CALLBACK_CONSENT_AT do not both have a GoHighLevel field id/.test(callbackRevocationNoteLine(recordCallbackRevocation({ at: REVOKED_AT, state: 'NOT_REVOKED' }, {}), o)) &&
+      [CALLBACK_REVOCATION_UNAVAILABLE, null, undefined, 'x', {}, { mode: 'toString', fields: [1] }, { mode: 'REVOKED_WITH_INSTANT', fields: [] }]
+        .every((r) => /NOT written — the values could not be built/.test(callbackRevocationNoteLine(r, o)))));
+  ok('CE-09 (revocation note): every sentence is one line and never says GRANTED',
+    [[NOT_REV, 'WRITTEN'], [UNK, 'WRITTEN'], [NOT_REV, 'DROPPED'], [NOT_REV, 'UPDATE_FAILED'], [null, 'WRITTEN']]
+      .every(([r, o]) => { const l = callbackRevocationNoteLine(r, o); return !/[\r\n]/.test(l) && !/GRANTED/.test(l) && l.startsWith('Callback consent fields in the CRM: '); }));
+
+  // ── 25e-5. consent.js stays importable by the client (red team 2026-10-04) ──
+  // The old scan matched only `from 'node:…'`, so `from 'crypto'`, a dynamic
+  // import and a side-effect import all passed. The rule is an ALLOW-LIST over
+  // every module the shared barrel reaches: each import is relative, literal,
+  // stays inside api/_lib/cy2027/, and is not one of the server-only modules.
+  {
+    const importSpecifiers = (source) => {
+      const code = strip(String(source));
+      const found = [];
+      for (const m of code.matchAll(/\b(?:import|export)\b[^;'"`()]*?\bfrom\s*(['"`])([^'"`]*)\1/g)) found.push(m[2]);
+      for (const m of code.matchAll(/\bimport\s*(['"`])([^'"`]*)\1/g)) found.push(m[2]);
+      for (const m of code.matchAll(/\b(?:import|require)\s*\(\s*(?:(['"`])([^'"`]*)\1\s*\)|([^)]*)\))/g)) found.push(m[1] ? m[2] : '<not a literal: ' + String(m[3]).trim() + '>');
+      return found;
+    };
+    ok('CE-09: the import scanner sees every way a module can be pulled in',
+      JSON.stringify(importSpecifiers("import { a } from './a.js';\nimport b from \"node:fs\";\nimport * as c from 'crypto';\nimport 'node:path';\n" +
+        "export * from './d.js';\nexport { e } from '../e.js';\nconst f = await import('node:os');\nconst g = () => import(`./g.js`);\n" +
+        "const h = require('fs');\nconst i = import(name);\n// import x from 'in-a-comment';\n/* import('also-a-comment') */\n")) ===
+      JSON.stringify(['./a.js', 'node:fs', 'crypto', './d.js', '../e.js', 'node:path', 'node:os', './g.js', 'fs', '<not a literal: name>']));
+    const LIB = fileURLToPath(new URL('../api/_lib/cy2027/', import.meta.url));
+    const SERVER_ONLY = ['crm-fields.js', 'callback-consent.js', 'evidence.js', 'evidence-store.js', 'secure-link.js'];
+    const offences = (entryFile, readSource = (f) => readFileSync(pathJoin(LIB, f), 'utf8')) => {
+      const seen = new Set();
+      const bad = [];
+      const visit = (file) => {
+        if (seen.has(file)) return;
+        seen.add(file);
+        for (const spec of importSpecifiers(readSource(file))) {
+          if (!/^\.\/[\w.-]+\.js$/.test(spec)) { bad.push(file + ' imports ' + spec); continue; }
+          const target = spec.slice(2);
+          if (SERVER_ONLY.includes(target)) { bad.push(file + ' imports the server-only ' + target); continue; }
+          visit(target);
+        }
+      };
+      visit(entryFile);
+      return { bad, seen: [...seen] };
+    };
+    const graph = offences('index.js');
+    ok('CE-09: nothing the shared barrel reaches imports a Node API, a package, a file outside the layer or a server-only module',
+      graph.bad.length === 0 && graph.seen.includes('consent.js') && graph.seen.length >= 9, graph.bad.join(' | '));
+    ok('CE-09: the record function is server-only', !('recordWebCallbackConsent' in barrelModule) && !('tcpaReceiptLine' in barrelModule) &&
+      !('recordCallbackRevocation' in barrelModule) && 'webCallbackConsent' in barrelModule && 'isIsoInstant' in barrelModule);
+    // The same walk, over a consent.js made up here: each form is seen to be caught.
+    const realConsent = readFileSync(pathJoin(LIB, 'consent.js'), 'utf8');
+    for (const [label, addition] of [
+      ['a static import of a Node builtin without the node: prefix', "import { createHash as _unused } from 'crypto';\n"],
+      ['a static import with the node: prefix', "import { createHash } from 'node:crypto';\n"],
+      ['a dynamic import', "export const _lazy = () => import('node:crypto');\n"],
+      ['a side-effect import', "import 'node:fs';\n"],
+      ['a require call', "const fs = require('fs');\n"],
+      ['a package', "import x from 'left-pad';\n"],
+      ['a file outside the layer', "import { scrubPHI } from '../phi-scrub.js';\n"],
+      ['a server-only module of the layer', "import { buildCustomFields } from './crm-fields.js';\n"],
+      ['a dynamic import that is not a literal', 'export const _l = (n) => import(n);\n'],
+    ]) {
+      const r = offences('index.js', (f) => (f === 'consent.js' ? addition + realConsent : readFileSync(pathJoin(LIB, f), 'utf8')));
+      ok('CE-09: ' + label + ' in consent.js would be caught', r.bad.length === 1 && r.bad[0].startsWith('consent.js imports '), r.bad.join(' | '));
+    }
+  }
 
   // ── 25f. The two handlers, run for real against a laboratory CRM ─────────────
   {
@@ -2084,8 +2715,12 @@ consentScope: {
       let CALLS = [];
       let ROUTE = null;
       const resp = (status, body) => new Response(body == null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+      // The lead-enrichment model, as a second laboratory double. Off (null) unless
+      // a case turns it on: the suite has no key, so the handler does not call it.
+      let LLM = null;
       globalThis.fetch = async (url, opts = {}) => {
         const u = String(url);
+        if (LLM && u === 'https://api.anthropic.com/v1/messages') return LLM(opts);
         // Nothing leaves this machine: any host but the double's is an error.
         if (!u.startsWith(GHL + '/')) throw new Error('the suite must not reach ' + u.slice(0, 60));
         let body = null;
@@ -2097,6 +2732,9 @@ consentScope: {
       const route = (o = {}) => (call) => {
         if (call.method === 'POST' && call.path === '/contacts/') return o.contact ? o.contact(call) : resp(201, { contact: { id: 'C_NEW' } });
         if (call.method === 'GET' && call.path.startsWith('/contacts/?')) return o.search ? o.search(call) : resp(200, { contacts: [] });
+        // One contact, read by id (api/opt-out.js reads the consent state this way
+        // when the search payload does not carry it).
+        if (call.method === 'GET' && /^\/contacts\/[^/?]+$/.test(call.path)) return o.get ? o.get(call) : resp(404, { error: 'no such contact in the double' });
         if (call.method === 'POST' && /\/notes$/.test(call.path)) return resp(200, { note: { id: 'N1' } });
         if (call.method === 'GET' && call.path.startsWith('/opportunities/search')) return resp(200, { opportunities: [] });
         if (call.method === 'POST' && call.path === '/opportunities/') return resp(201, { opportunity: { id: 'O1' } });
@@ -2147,6 +2785,28 @@ consentScope: {
       const cbFields = (c) => ((c && c.body && c.body.customFields) || []).filter((f) => /callback_consent/.test(String(f.key)));
       const ACK = '{"ok":true,"received":true}';
 
+      // The server's receipt line, PARSED — not grepped. RED TEAM 2026-10-04:
+      // /— TCPA Receipt — [^\n]*scope=X/ matched a line in which the SENDER had
+      // written 'scope=X' through the user agent, and a line stating two scopes.
+      const RECEIPT = '— TCPA Receipt — ';
+      const receiptLines = (text) => String(text).split('\n').filter((l) => l.startsWith(RECEIPT));
+      const receiptOf = (r) => { const all = r.notes.flatMap(receiptLines); return all.length === 1 ? all[0].slice(RECEIPT.length).split(' · ') : []; };
+      const stmts = (text) => String(text).match(/(?:scope|callback_consent)[a-z_]*\s*=/gi) || [];
+      // True only when (1) the notes hold exactly ONE receipt line, (2) its first
+      // value is `first`, and (3) that line — once in the note, once in each
+      // create body's copy of it — is the ONLY place in everything this request
+      // wrote to the CRM where a 'scope=' / 'callback_consent=' statement appears.
+      const onlyServerStatement = (r, first) => {
+        const parts = receiptOf(r);
+        if (parts.length < 2 || parts[0] !== first) return false;
+        const line = RECEIPT + parts.join(' · ');
+        const everything = JSON.stringify(r.calls.map((c) => c.body));
+        return stmts(line).length === 1 && everything.split(line).length - 1 === r.notes.length + r.creates.length &&
+          stmts(everything.split(line).join('')).length === 0;
+      };
+      const SCOPE_BIT = 'scope=DISCUSS_MEDICARE_PLAN_OPTIONS';
+      const notRecordedBit = (reason) => 'callback_consent=NOT_RECORDED(' + reason + ')';
+
       // A clock that never returns the same instant twice: two values can only
       // agree under it if they were written from ONE reading of it.
       let tick = 0;
@@ -2168,8 +2828,17 @@ consentScope: {
           r.logs.some((l) => /\[CY2027-CRM\] 3 field\(s\) could not be written/.test(l) && /CALLBACK_CONSENT_SCOPE/.test(l)));
         ok('CRM-15 (lead handler): the note receipt carries the scope as its own labelled value',
           r.notes.some((n) => /— TCPA Receipt — [^\n]*scope=DISCUSS_MEDICARE_PLAN_OPTIONS/.test(n)), r.notes.join('|').slice(0, 300));
+        ok('CRM-15 (lead handler): that statement is FIRST on the one receipt line, and the only one written anywhere',
+          onlyServerStatement(r, SCOPE_BIT), r.notes.join('|').slice(0, 400));
+        ok('CRM-15 (lead handler): the line is the server statement, its instant and the address — and only then the client claims', (() => {
+          const p = receiptOf(r);
+          return p.length === 7 && /^at=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(p[1]) && /^ip=198\.51\.100\.\d+$/.test(p[2]) &&
+            p[3] === 'sha256=' + sha(SHOWN.en) && p[4] === 'disclaimer=' + SHOWN.version && p[5] === 'page=/contact' && p[6] === 'ua=Mozilla/5.0 probe';
+        })(), receiptOf(r).join(' | '));
         ok('CE-09 (lead handler): the verbatim text in the note is the text whose digest is registered',
           r.notes.some((n) => n.includes(SHOWN.en)));
+        ok('CE-09 (lead handler): and it is labelled verbatim with the version the SERVER verified it against',
+          r.notes.some((n) => n.includes('\n— Consent Text (verbatim, v' + SHOWN.version + ') —\n' + SHOWN.en)));
         ok('CE-09 (lead handler): a genuine lead is not flagged',
           !/CALLBACK_CONSENT_NOT_RECORDED/.test(JSON.stringify(c && c.body)) && !r.notes.some((n) => /NOT_RECORDED/.test(n)));
         ok('CE-09 (lead handler): the four channel flags are still written',
@@ -2256,6 +2925,136 @@ consentScope: {
           bare.status === 200 && bare.creates.length === 1 && cbFields(bare.creates[0]).length === 0 &&
           /CALLBACK_CONSENT_NOT_RECORDED/.test(String(cf(bare.creates[0], 'contact.lead_quality_flags'))) &&
           bare.logs.some((l) => /CONSENT_TEXT_VERSION_MISSING/.test(l)));
+        // RED TEAM 2026-10-04 — and it had NO server line in the note at all:
+        // the receipt was written only when a hash or a version label came in.
+        ok('CE-09 (lead handler): no receipt at all → the note still carries the server line, with the named reason',
+          onlyServerStatement(bare, notRecordedBit('CONSENT_TEXT_VERSION_MISSING')) && receiptOf(bare).length === 5 &&
+          !receiptOf(bare).some((p) => /^(?:sha256|disclaimer)=/.test(p)), bare.notes.join('|').slice(0, 400));
+
+        // The claims are judged AS RECEIVED (red team 2026-10-04). The handler
+        // used to strip characters out of them first, so every case below was
+        // recorded as a clean GRANTED with the registered scope.
+        for (const h of [12345, false, 0, ['x'], { a: 1 }, 'ZZZZ-NOT-HEX', 'GHIJKLMNOP', sha(SHOWN.en).toUpperCase(), 'xx' + sha(SHOWN.en) + '!!']) {
+          const r = await run(submitLead, lead({ consent_receipt_hash: h }), route());
+          ok('CE-09 (lead handler): a receipt hash of ' + JSON.stringify(h).slice(0, 24) + ' beside the genuine text is a mismatch, not "no hash sent"',
+            r.status === 200 && r.creates.length === 1 && cbFields(r.creates[0]).length === 0 &&
+            onlyServerStatement(r, notRecordedBit('CONSENT_RECEIPT_HASH_MISMATCH')) && !receiptOf(r).some((p) => p.startsWith('sha256=')) &&
+            /CALLBACK_CONSENT_NOT_RECORDED/.test(String(cf(r.creates[0], 'contact.lead_quality_flags'))), r.notes.join('|').slice(0, 300));
+        }
+        for (const v of [' 2026-06-01\n', '2026/-06-01', '20 26-06-01', '2026-06-01\u0000', '<b>2026-06-01</b>']) {
+          const r = await run(submitLead, lead({ disclaimer_version: v }), route());
+          ok('CE-09 (lead handler): a version label of ' + JSON.stringify(v) + ' is not repaired into the registered one',
+            r.status === 200 && cbFields(r.creates[0]).length === 0 &&
+            onlyServerStatement(r, notRecordedBit('CONSENT_TEXT_VERSION_UNKNOWN')) && !receiptOf(r).some((p) => p.startsWith('disclaimer=')),
+            r.notes.join('|').slice(0, 300));
+        }
+        // The digest is the server's, over the RAW text. Swapping in the stored
+        // (stringified, capped) copy made a one-element array read as the wording.
+        for (const t of [[SHOWN.en], 7, { toString() { return SHOWN.en; } }, { text: SHOWN.en }, true]) {
+          const r = await run(submitLead, lead({ consent_text: t }), route());
+          ok('CE-09 (lead handler): a consent_text that is ' + Object.prototype.toString.call(t) + ' is no text — nothing is recorded and nothing is stored as "the text"',
+            r.status === 200 && r.creates.length === 1 && cbFields(r.creates[0]).length === 0 &&
+            onlyServerStatement(r, notRecordedBit('CONSENT_TEXT_MISSING')) && !r.notes.some((n) => /Consent Text \(/.test(n) || n.includes(SHOWN.en)),
+            r.notes.join('|').slice(0, 300));
+        }
+        // AUDIT 2026-10-04 (CE-09) — the red team's mutant (hash the STORED copy
+        // instead of the raw text) was live because the stored copy of a
+        // one-element array WAS the wording. That divergence is closed at its
+        // root (a non-string is stored as nothing — the cases just above), which
+        // leaves the mutant with no input that tells it apart today: the stored
+        // copy is the raw text capped and PHI-scrubbed, and neither step can turn
+        // another text INTO the registered wording. It would become live again
+        // the day the scrub normalises anything, so the call itself is pinned —
+        // the WHOLE call, line by line, on comment-stripped source: a guard in
+        // front of it, a changed argument or a second call breaks the match.
+        {
+          const LEAD_SRC = strip(readFileSync(new URL('../api/submit-lead.js', import.meta.url), 'utf8'));
+          const CALL = new RegExp([
+            '^[ \\t]*_cbRec = recordWebCallbackConsent\\(\\{',
+            '[ \\t]*consentGiven: body\\.consent_to_contact,',
+            '[ \\t]*disclaimerVersion: body\\.disclaimer_version,',
+            '[ \\t]*consentText: body\\.consent_text,',
+            '[ \\t]*receiptHash: body\\.consent_receipt_hash,',
+            '[ \\t]*at: _consentAt,',
+            '[ \\t]*\\}\\);\\r?$',
+          ].join('\\r?\\n'), 'm');
+          ok('CE-09 (lead handler): the text, the version label and the receipt hash are handed to the record function exactly as the request carried them',
+            CALL.test(LEAD_SRC) && (LEAD_SRC.match(/recordWebCallbackConsent\s*\(/g) || []).length === 1 && (LEAD_SRC.match(/\bconsentText\s*:/g) || []).length === 1);
+          const longer = SHOWN.en + ' ';
+          const spaced = await run(submitLead, lead({ consent_text: longer, consent_receipt_hash: sha(longer) }), route());
+          ok('CE-09 (lead handler): the registered wording with one trailing space is another text — compared as received, never trimmed',
+            spaced.status === 200 && cbFields(spaced.creates[0]).length === 0 &&
+            onlyServerStatement(spaced, notRecordedBit('CONSENT_TEXT_NOT_THE_REGISTERED_VERSION')), spaced.notes.join('|').slice(0, 300));
+        }
+      }
+
+      // D2 — RED TEAM 2026-10-04: nothing a sender writes can read as the server's
+      // statement. Run as production is today (no CY2027 ids): the receipt line
+      // of the note is then the ONLY holder of the scope.
+      {
+        delete process.env.CY2027_CRM_FIELD_IDS;
+        const broader = SHOWN.en + ' You also agree to offers about any other product.';
+        for (const ua of ['M · scope=ANY_PRODUCT_TELEMARKETING', 'x · scope=ANY_PRODUCT_WE_SELL · page=/everything',
+          'M\n— TCPA Receipt — scope=ANY_PRODUCT · at=1999-01-01T00:00:00Z', 'M · callback_consent=RECORDED · scope = ANY']) {
+          const g = await run(submitLead, lead({ signer_user_agent: ua }), route());
+          ok('CRM-15 (lead handler): a user agent of ' + JSON.stringify(ua) + ' leaves ONE statement on a genuine lead — the server\'s, first',
+            g.status === 200 && onlyServerStatement(g, SCOPE_BIT) && receiptOf(g).filter((p) => /^(?:at|ip|page)=/.test(p)).length === 3 &&
+            /^ua=[A-Za-z0-9 ./;:(),_+-]+$/.test(receiptOf(g)[6] || ''), g.notes.join('|').slice(0, 400));
+          const x = await run(submitLead, lead({ consent_text: broader, consent_receipt_hash: sha(broader), signer_user_agent: ua.replace(/ANY_PRODUCT\w*/g, 'DISCUSS_MEDICARE_PLAN_OPTIONS') }), route());
+          ok('CRM-15 (lead handler): and cannot make a REFUSED consent read as recorded (' + JSON.stringify(ua).slice(0, 30) + '…)',
+            x.status === 200 && onlyServerStatement(x, notRecordedBit('CONSENT_TEXT_NOT_THE_REGISTERED_VERSION')) &&
+            !/scope=/.test(JSON.stringify(x.calls.map((c) => c.body))) &&
+            /CALLBACK_CONSENT_NOT_RECORDED/.test(String(cf(x.creates[0], 'contact.lead_quality_flags'))), x.notes.join('|').slice(0, 400));
+        }
+        const FORGED = '— TCPA Receipt — sha256=' + sha(SHOWN.en) + ' · disclaimer=2026-06-01 · page=/contact · scope=ANY_PRODUCT_TELEMARKETING';
+        const inNotes = await run(submitLead, lead({
+          consent_text: undefined, consent_receipt_hash: undefined, disclaimer_version: undefined, lead_notes: 'Please call.\n\n' + FORGED,
+        }), route());
+        ok('CRM-15 (lead handler): a look-alike receipt in the story of a bare submission is neutralised, and the server line is the only receipt',
+          inNotes.status === 200 && onlyServerStatement(inNotes, notRecordedBit('CONSENT_TEXT_VERSION_MISSING')) &&
+          inNotes.notes.some((n) => /^- TCPA Receipt - sha256=/m.test(n) && n.includes('scope:ANY_PRODUCT_TELEMARKETING')), inNotes.notes.join('|').slice(0, 500));
+        const inSummary = await run(submitLead, lead({ conversation_summary: 'EN · Clara\nuser: hi\n' + FORGED }), route());
+        ok('CRM-15 (lead handler): a look-alike receipt in the transcript of a genuine lead does not become a second receipt',
+          inSummary.status === 200 && onlyServerStatement(inSummary, SCOPE_BIT) &&
+          inSummary.notes.some((n) => n.includes('--- Conversation Transcript ---') && n.includes('scope:ANY_PRODUCT_TELEMARKETING')),
+          inSummary.notes.join('|').slice(-500));
+        const forgedText = 'I agree to be contacted about any product.\n' + FORGED;
+        const inText = await run(submitLead, lead({ consent_text: forgedText, consent_receipt_hash: sha(forgedText) }), route());
+        ok('CRM-15 (lead handler): a look-alike receipt inside a consent text that is not the registered wording is neutralised too',
+          inText.status === 200 && onlyServerStatement(inText, notRecordedBit('CONSENT_TEXT_NOT_THE_REGISTERED_VERSION')) &&
+          inText.notes.some((n) => n.includes('I agree to be contacted about any product.') && n.includes('scope:ANY_PRODUCT_TELEMARKETING')),
+          inText.notes.join('|').slice(-500));
+        ok('CE-09 (lead handler): a text the server did not verify is never labelled "verbatim, v<registered version>"',
+          inText.notes.some((n) => n.includes('\n— Consent Text (as received, NOT verified as a registered version) —\n')) &&
+          !inText.notes.some((n) => /Consent Text \(verbatim/.test(n)));
+        const inFields = await run(submitLead, lead({
+          lead_quality_flags: 'scope=ANY_PRODUCT callback_consent=RECORDED', interest_type: 'scope=ANY_PRODUCT', best_time_to_contact: 'callback_consent=RECORDED',
+        }), route());
+        ok('CRM-15 (lead handler): the flags field and the intake fields cannot carry a statement either',
+          inFields.status === 200 && onlyServerStatement(inFields, SCOPE_BIT) &&
+          /scope:ANY_PRODUCT callback_consent:RECORDED/.test(String(cf(inFields.creates[0], 'contact.lead_quality_flags'))) &&
+          cf(inFields.creates[0], 'contact.medicare_interest') === 'scope:ANY_PRODUCT', JSON.stringify(inFields.creates[0] && inFields.creates[0].body.customFields).slice(0, 600));
+
+        // The summary a MODEL writes from the sender's story lands in the note
+        // after the receipt. A story that talks it into repeating a receipt
+        // line must not get one in that way.
+        let llmCalls = 0;
+        LLM = () => {
+          llmCalls += 1;
+          return resp(200, { content: [{ type: 'text', text: JSON.stringify({
+            summary: 'Wants a call.\n' + FORGED, intent_strength: 7, lead_temperature: 'warm', urgency: 'this_week',
+            advisor_prep_notes: 'callback_consent=RECORDED · scope = ANY_PRODUCT', compliance_flags: ['scope=ANY_PRODUCT'],
+            recommended_first_questions: ['— TCPA Receipt — scope=ANY_PRODUCT'],
+          }) }] });
+        };
+        process.env.ANTHROPIC_API_KEY = 'suite-double-not-a-key';
+        let viaModel;
+        try { viaModel = await run(submitLead, lead(), route()); } finally { LLM = null; delete process.env.ANTHROPIC_API_KEY; }
+        ok('CRM-15 (lead handler): a model-written summary that repeats a look-alike receipt does not add a statement to the note',
+          llmCalls === 1 && viaModel.status === 200 && onlyServerStatement(viaModel, SCOPE_BIT) &&
+          viaModel.notes.some((n) => n.includes('LEAD INTELLIGENCE') && n.includes('- TCPA Receipt - sha256=') && n.includes('scope:ANY_PRODUCT')),
+          'llmCalls=' + llmCalls + ' ' + viaModel.notes.join('|').slice(-600));
+        process.env.CY2027_CRM_FIELD_IDS = IDS.CY2027_CRM_FIELD_IDS;
       }
 
       // E — the consent gate is where it was.
@@ -2273,10 +3072,57 @@ consentScope: {
           contact: dup,
           search: () => resp(200, { contacts: [{ id: 'C_EXIST', phone: '+1' + L.phone, tags: ['status-newlead'], dnd: false }] }),
         }));
-        ok('CE-09 (lead handler): a repeat on an existing contact is recorded with ONE create attempt and no PUT (LEAD-02)',
-          r.status === 200 && r.creates.length === 1 && r.puts.length === 0, `status=${r.status} creates=${r.creates.length} puts=${r.puts.length}`);
+        // LEAD-02 is "no PUT and no consent field on the existing contact". The
+        // number of CREATE attempts is not part of it, and changed on purpose
+        // (red team 2026-10-04): with the CY2027 ids configured, a refused create
+        // is retried once without the three entries — the CRM's word "duplicate"
+        // no longer suppresses that retry — and a real duplicate says so again.
+        ok('CE-09 (lead handler): a repeat on an existing contact writes NOTHING to it — no PUT, and no create is accepted (LEAD-02)',
+          r.status === 200 && r.puts.length === 0 && r.creates.length === 2 &&
+          cbFields(r.creates[0]).length === 3 && cbFields(r.creates[1]).length === 0 &&
+          !r.logs.some((l) => /cy2027_fields_dropped|\[CY2027-CRM\] contact create refused/.test(l)),
+          `status=${r.status} creates=${r.creates.length} puts=${r.puts.length}`);
         ok('CRM-15 (lead handler): the repeat note carries the scope of the new consent',
           r.notes.some((n) => /New consent receipt on this submission — [^\n]*scope=DISCUSS_MEDICARE_PLAN_OPTIONS/.test(n)), r.notes.join('|').slice(0, 400));
+        const REPEAT = 'New consent receipt on this submission — ';
+        const repeatReceipt = (x) => {
+          const all = x.notes.join('\n').split('\n').filter((l) => l.startsWith(REPEAT));
+          return all.length === 1 ? all[0].slice(REPEAT.length).split(' · ') : [];
+        };
+        ok('CRM-15 (lead handler): in the repeat note too the server statement is first, and it is the only statement in the note',
+          JSON.stringify(repeatReceipt(r).map((p) => p.replace(/^at=.*/, 'at=…'))) ===
+            JSON.stringify([SCOPE_BIT, 'at=…', 'sha256=' + sha(SHOWN.en), 'disclaimer=' + SHOWN.version, 'page=/contact']) &&
+          stmts(r.notes.join('\n')).length === 1, r.notes.join('|').slice(0, 400));
+        // RED TEAM 2026-10-04 — a repeat with no hash and no version label left
+        // NOTHING on the contact: LEAD-02 writes no flag, and the receipt line was
+        // conditional on one of the two having been sent.
+        const L0 = lead({ consent_text: undefined, consent_receipt_hash: undefined, disclaimer_version: undefined });
+        const r0 = await run(submitLead, L0, route({
+          contact: dup,
+          search: () => resp(200, { contacts: [{ id: 'C_EXIST0', phone: '+1' + L0.phone, tags: ['status-newlead'], dnd: false }] }),
+        }));
+        ok('CE-09 (lead handler): a repeat that sent no receipt at all still leaves the named reason on the contact, in the repeat note',
+          r0.status === 200 && r0.puts.length === 0 && repeatReceipt(r0)[0] === notRecordedBit('CONSENT_TEXT_VERSION_MISSING') &&
+          repeatReceipt(r0).length === 3 && stmts(r0.notes.join('\n')).length === 1, r0.notes.join('|').slice(0, 400));
+        const one = await withTickingClock(() => run(submitLead, lead(), route({
+          contact: dup,
+          search: (call) => resp(200, { contacts: [{ id: 'C_EXIST3', phone: '+1' + decodeURIComponent(call.path).replace(/\D/g, '').slice(-10), tags: [], dnd: false }] }),
+        })));
+        ok('CE-09 (lead handler): the repeat receipt carries the instant of the consent — the clock is not read a second time for it', (() => {
+          const at = (repeatReceipt(one)[1] || '').slice(3);
+          // On a clock that never repeats, the first value read by this request is its consent instant.
+          return isIsoInstant(at) && one.creates.length === 2 && cf(one.creates[0], 'contact.callback_consent_at') === at;
+        })(), JSON.stringify(repeatReceipt(one)));
+        delete process.env.CY2027_CRM_FIELD_IDS;
+        const Ln = lead();
+        const noIds = await run(submitLead, Ln, route({
+          contact: dup,
+          search: () => resp(200, { contacts: [{ id: 'C_EXIST4', phone: '+1' + Ln.phone, tags: ['status-newlead'], dnd: false }] }),
+        }));
+        ok('CE-09 (lead handler): with no CY2027 id configured (production today) a repeat is still exactly ONE create attempt and no PUT',
+          noIds.status === 200 && noIds.creates.length === 1 && noIds.puts.length === 0 && repeatReceipt(noIds)[0] === SCOPE_BIT,
+          `status=${noIds.status} creates=${noIds.creates.length} puts=${noIds.puts.length}`);
+        process.env.CY2027_CRM_FIELD_IDS = IDS.CY2027_CRM_FIELD_IDS;
         const L2 = lead({ consent_text: undefined, consent_receipt_hash: 'a'.repeat(64) });
         const r2 = await run(submitLead, L2, route({
           contact: dup,
@@ -2307,8 +3153,47 @@ consentScope: {
         ok('CE-09 (lead handler): a refusal that persists is still an honest failure, after exactly one retry',
           dead.status === 502 && dead.creates.length === 2, `status=${dead.status} creates=${dead.creates.length}`);
         const auth = await run(submitLead, lead(), route({ contact: () => resp(401, { message: 'unauthorized' }) }));
-        ok('CE-09 (lead handler): only a 400/422 is retried without the fields — a 401 is not',
-          auth.creates.length === 1 && auth.status !== 200, `status=${auth.status} creates=${auth.creates.length}`);
+        ok('CE-09 (lead handler): a dead token (401) is not retried in any shape',
+          auth.creates.length === 1 && auth.status === 502 && !!auth.payload && auth.payload.error === 'CRM_AUTH', `status=${auth.status} creates=${auth.creates.length}`);
+        ok('CE-09 (lead handler): a refusal that persists is not reported as "fields dropped" — nothing was kept by dropping them',
+          !dead.logs.some((l) => /cy2027_fields_dropped|\[CY2027-CRM\] contact create refused/.test(l)));
+
+        // RED TEAM 2026-10-04 — the retry depended on the CRM's status code AND on
+        // its wording: only 400/422, and only when the message did not contain
+        // "duplicat". Each of these lost a lead the same body without the three
+        // entries would have created (the 400 was even answered 409
+        // DUPLICATE_LEAD, which the client shows as success).
+        for (const [status, message] of [
+          [422, 'customFields: duplicate custom field id'],
+          [400, 'customFields contains a duplicated id'],
+          [403, 'custom field not accessible for this location'],
+          [404, 'custom field not found'],
+          [409, 'conflict on custom field'],
+        ]) {
+          const refuse = (call) => (cbFields(call).length ? resp(status, { message }) : resp(201, { contact: { id: 'C_KEPT' } }));
+          const k = await run(submitLead, lead(), route({ contact: refuse }));
+          ok('CE-09 (lead handler): a create refused with HTTP ' + status + ' "' + message + '" over the new fields is retried once without them, and the lead is kept',
+            k.status === 200 && k.creates.length === 2 && cbFields(k.creates[0]).length === 3 && cbFields(k.creates[1]).length === 0 &&
+            !!k.payload && k.payload.contact_id === 'C_KEPT' &&
+            JSON.stringify({ ...k.creates[1].body, customFields: k.creates[1].body.customFields.length + 3 }) === JSON.stringify({ ...k.creates[0].body, customFields: k.creates[0].body.customFields.length }) &&
+            k.logs.some((l) => l.includes('[CY2027-CRM] contact create refused (HTTP ' + status + ')')) &&
+            k.logs.some((l) => l.includes('"outcome":"cy2027_fields_dropped"') && l.includes('"upstream_status":' + status)) &&
+            onlyServerStatement(k, SCOPE_BIT), `status=${k.status} creates=${k.creates.length} ${JSON.stringify(k.payload).slice(0, 120)}`);
+        }
+        // A transient failure is the CRM's, not the fields': the SAME body is what
+        // gets retried, and no field is dropped for it.
+        for (const status of [500, 503, 429]) {
+          let n = 0;
+          const flaky = await run(submitLead, lead(), route({ contact: () => (++n === 1 ? resp(status, { message: 'try again' }) : resp(201, { contact: { id: 'C_FLAKY' } })) }));
+          ok('CE-09 (lead handler): one transient HTTP ' + status + ' is retried with the SAME body — the three fields still land',
+            flaky.status === 200 && flaky.creates.length === 2 && cbFields(flaky.creates[1]).length === 3 &&
+            JSON.stringify(flaky.creates[1].body) === JSON.stringify(flaky.creates[0].body) &&
+            !flaky.logs.some((l) => /cy2027_fields_dropped/.test(l)), `status=${flaky.status} creates=${flaky.creates.length}`);
+        }
+        const down = await run(submitLead, lead(), route({ contact: () => resp(500, { message: 'down' }) }));
+        ok('CE-09 (lead handler): a CRM that stays down is never "fixed" by dropping the fields — every attempt carries them',
+          down.status === 502 && down.creates.length === 3 && down.creates.every((c) => cbFields(c).length === 3) &&
+          !down.logs.some((l) => /cy2027_fields_dropped/.test(l)), `status=${down.status} creates=${down.creates.length}`);
         delete process.env.CY2027_CRM_FIELD_IDS;
         const plain = await run(submitLead, lead(), route({ contact: () => resp(422, { message: 'nope' }) }));
         ok('CE-09 (lead handler): with no ids configured there is nothing to drop, so a 422 is not retried',
@@ -2318,8 +3203,9 @@ consentScope: {
       // H — the revocation mirror in api/opt-out.js.
       {
         const p0 = '7182013344';
-        const known = () => resp(200, { contacts: [{ id: 'C_OPT', phone: '+1' + p0, tags: ['Consent Captured'] }] });
-        const r0 = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known }));
+        // A search payload that carries no custom fields at all.
+        const knownBare = () => resp(200, { contacts: [{ id: 'C_OPT', phone: '+1' + p0, tags: ['Consent Captured'] }] });
+        const r0 = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: knownBare }));
         ok('CE-09 (opt-out handler): with no id configured the suppression is what it was — one PUT, dnd:true, four consent fields',
           r0.status === 200 && JSON.stringify(r0.payload) === ACK && r0.puts.length === 1 && r0.puts[0].body.dnd === true &&
           r0.puts[0].body.customFields.length === 4 && cbFields(r0.puts[0]).length === 0);
@@ -2327,7 +3213,20 @@ consentScope: {
         ok('CE-09 (opt-out handler): the note records that the callback permission was revoked',
           r0.notes.some((n) => /^Callback contact permission: REVOKED$/m.test(n)));
 
+        ok('CE-09 (opt-out handler): with no id configured there is no extra CRM read, and the note says the fields were NOT written',
+          r0.calls.filter((c) => c.method === 'GET').length === 1 &&
+          r0.notes.some((n) => /^Callback consent fields in the CRM: NOT written — CALLBACK_CONSENT_STATUS and CALLBACK_CONSENT_AT do not both have a GoHighLevel field id/m.test(n)) &&
+          r0.logs.some((l) => /\[OPTOUT\] applied dnd=true note=true evidence=chat_optout callback_consent=NO_FIELD_IDS\/NOTHING_TO_WRITE/.test(l)));
+
         process.env.CY2027_CRM_FIELD_IDS = IDS.CY2027_CRM_FIELD_IDS;
+        // RED TEAM 2026-10-04 — what is written now depends on what the contact
+        // reads TODAY, so the double has to say: this contact was GRANTED on
+        // 1 October (the search payload carries its custom fields).
+        const GRANT_AT = '2026-10-01T09:00:00.000Z';
+        const contactNow = (...customFields) => ({ id: 'C_OPT', phone: '+1' + p0, tags: ['Consent Captured'], customFields });
+        const granted = () => resp(200, { contacts: [contactNow({ id: 'cbS', value: 'GRANTED' }, { id: 'cbA', value: GRANT_AT }, { id: 'cbX', value: 'DISCUSS_MEDICARE_PLAN_OPTIONS' })] });
+        const known = () => granted();
+        const cbOf = (c) => cbFields(c).map((f) => f.id + '=' + f.value).join();
         const r1 = await withTickingClock(() => run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known })));
         const put = r1.puts[0];
         const at = ((put && put.body.customFields.find((f) => f.id === 'cbA')) || {}).value;
@@ -2339,15 +3238,129 @@ consentScope: {
           !!put && cbFields(put).length === 2 && !put.body.customFields.some((f) => /scope/i.test(f.key + ' ' + f.id)) &&
           !/DISCUSS_MEDICARE_PLAN_OPTIONS/.test(JSON.stringify(r1.calls)));
         ok('CE-09 (opt-out handler): it still only suppresses — dnd:true, nothing GRANTED, no consent value set true',
-          !!put && put.body.dnd === true && !/GRANTED/.test(JSON.stringify(r1.calls)) && !/"value":"true"/.test(JSON.stringify(put.body)));
+          !!put && put.body.dnd === true && !/GRANTED/.test(JSON.stringify(r1.calls.map((c) => c.body))) && !/"value":"true"/.test(JSON.stringify(put.body)));
+        ok('CE-09 (opt-out handler): a contact that read GRANTED gets both values, the state came from the search payload (no extra read), and the note says what was written',
+          cbOf(put) === 'cbS=REVOKED,cbA=' + at && r1.calls.filter((c) => c.method === 'GET').length === 1 &&
+          r1.notes.some((n) => n.includes('\nCallback consent fields in the CRM: CALLBACK_CONSENT_STATUS=REVOKED and CALLBACK_CONSENT_AT=' + at + ' written.\n')) &&
+          r1.logs.some((l) => /callback_consent=REVOKED_WITH_INSTANT\/WRITTEN/.test(l)), cbOf(put));
 
+        // ── A revocation that is in force keeps its instant ──
+        const REVOKED_EARLIER = '2026-09-01T10:00:00.000Z';
+        const already = () => resp(200, { contacts: [{ ...contactNow({ id: 'cbS', value: 'REVOKED' }, { id: 'cbA', value: REVOKED_EARLIER }), dnd: true, tags: ['Consent Revoked', 'cp-dnc'] }] });
+        const rep = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: already }));
+        ok('CE-09 (opt-out handler): a repeat opt-out on a contact ALREADY revoked does not move the revocation instant — neither callback field is rewritten',
+          rep.puts.length === 1 && cbFields(rep.puts[0]).length === 0 && rep.puts[0].body.dnd === true && rep.puts[0].body.customFields.length === 4 &&
+          !JSON.stringify(rep.puts[0].body).includes('callback_consent') &&
+          rep.notes.some((n) => /^Callback consent fields in the CRM: unchanged — the contact already read CALLBACK_CONSENT_STATUS=REVOKED/m.test(n)) &&
+          rep.logs.some((l) => /callback_consent=ALREADY_REVOKED\/NOTHING_TO_WRITE/.test(l)), cbOf(rep.puts[0]));
+
+        // ── The search payload does not carry the state: ONE read, by id ──
+        const viaGet = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({
+          search: knownBare, get: () => resp(200, { contact: contactNow({ id: 'cbS', value: 'REVOKED' }, { id: 'cbA', value: REVOKED_EARLIER }) }),
+        }));
+        ok('CE-09 (opt-out handler): when the search payload carries no custom fields the contact is read once by id — and an earlier revocation found there stands',
+          viaGet.calls.filter((c) => c.method === 'GET' && c.path === '/contacts/C_OPT').length === 1 &&
+          viaGet.puts.length === 1 && cbFields(viaGet.puts[0]).length === 0 && viaGet.logs.some((l) => /callback_consent=ALREADY_REVOKED/.test(l)));
+        const viaGetGranted = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({
+          search: knownBare, get: () => resp(200, { contact: contactNow({ id: 'cbS', value: 'GRANTED' }, { id: 'cbA', value: GRANT_AT }) }),
+        }));
+        ok('CE-09 (opt-out handler): and a grant found there is revoked with this instant',
+          viaGetGranted.puts.length === 1 && /^cbS=REVOKED,cbA=\d{4}-/.test(cbOf(viaGetGranted.puts[0])) && viaGetGranted.logs.some((l) => /REVOKED_WITH_INSTANT\/WRITTEN/.test(l)));
+        for (const [label, get] of [
+          ['the read fails (HTTP 500)', () => resp(500, { message: 'down' })],
+          ['the read is refused (HTTP 404)', undefined],
+          ['the read carries no custom fields either', () => resp(200, { contact: { id: 'C_OPT' } })],
+          ['the read lists none', () => resp(200, { contact: contactNow() })],
+          ['the read throws', () => { throw new Error('socket hang up'); }],
+        ]) {
+          const u = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: knownBare, get }));
+          ok('CE-09 (opt-out handler): when the current state cannot be read (' + label + ') REVOKED is written and the instant on the contact is left alone',
+            JSON.stringify(u.payload) === ACK && u.puts.length === 1 && cbOf(u.puts[0]) === 'cbS=REVOKED' && u.puts[0].body.dnd === true &&
+            u.notes.some((n) => /^Callback consent fields in the CRM: CALLBACK_CONSENT_STATUS=REVOKED written\. CALLBACK_CONSENT_AT was left as it was/m.test(n)) &&
+            u.logs.some((l) => /callback_consent=REVOKED_STATUS_ONLY\/WRITTEN/.test(l)) && u.logs.some((l) => /could not be read/.test(l)), cbOf(u.puts[0]));
+        }
+
+        // ── A partial id map: both values, or neither ──
+        for (const map of [{ CALLBACK_CONSENT_AT: 'cbA' }, { CALLBACK_CONSENT_AT: 'cbA', CALLBACK_CONSENT_SCOPE: 'cbX' }, { CALLBACK_CONSENT_STATUS: 'cbS' },
+          { callback_consent_status: 'cbS', CALLBACK_CONSENT_AT: 'cbA' }]) {
+          process.env.CY2027_CRM_FIELD_IDS = JSON.stringify(map);
+          const part = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known }));
+          ok('CE-09 (opt-out handler): under the id map ' + JSON.stringify(map) + ' a revocation writes neither callback field, names the gap, and still suppresses',
+            part.puts.length === 1 && cbFields(part.puts[0]).length === 0 && part.puts[0].body.dnd === true && part.puts[0].body.customFields.length === 4 &&
+            part.calls.filter((c) => c.method === 'GET').length === 1 &&
+            part.logs.some((l) => /not written either: a revocation is sent to the CRM with its status AND its timestamp, or not at all/.test(l)) &&
+            part.notes.some((n) => /^Callback consent fields in the CRM: NOT written — /m.test(n)) && JSON.stringify(part.payload) === ACK, cbOf(part.puts[0]));
+        }
+        process.env.CY2027_CRM_FIELD_IDS = IDS.CY2027_CRM_FIELD_IDS;
+
+        // ── A refused or failed update: what is retried, and with what ──
         const refuse = (call) => (cbFields(call).length ? resp(422, { message: 'bad id' }) : resp(200, { contact: { id: 'C_OPT' } }));
         const r2 = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known, put: refuse }));
         ok('CE-09 (opt-out handler): an update refused over the new fields is re-sent in its previous shape',
           r2.puts.length === 2 && cbFields(r2.puts[0]).length === 2 && r2.puts[1].body.dnd === true &&
           r2.puts[1].body.customFields.length === 4 && cbFields(r2.puts[1]).length === 0);
+        // RED TEAM 2026-10-04 — "previous shape" was asserted as three loose
+        // facts; a retry that lost the per-channel DND or the revocation tags passed.
+        ok('CE-09 (opt-out handler): the re-sent update is the first one minus the two callback entries, and nothing else',
+          r2.puts.length === 2 &&
+          JSON.stringify(r2.puts[1].body) === JSON.stringify({ ...r2.puts[0].body, customFields: r2.puts[0].body.customFields.filter((f) => !/callback_consent/.test(f.key)) }) &&
+          ['Call', 'SMS', 'Email'].every((ch) => r2.puts[1].body.dndSettings[ch].status === 'active') &&
+          ['cp-dnc', 'dnc-web-chat', 'Consent Revoked'].every((t) => r2.puts[1].body.tags.includes(t)) && !r2.puts[1].body.tags.includes('Consent Captured'));
         ok('CE-09 (opt-out handler): and the suppression is reported applied, with the same acknowledgement',
           r2.logs.some((l) => /\[OPTOUT\] applied dnd=true/.test(l)) && JSON.stringify(r2.payload) === ACK);
+        ok('CE-09 (opt-out handler): the fields that were dropped are said to be NOT written — in the log and in the note',
+          r2.logs.some((l) => l.includes('[OPTOUT] update refused status=422 with the CALLBACK_CONSENT_* fields attached')) &&
+          r2.logs.some((l) => l.includes('[OPTOUT] callback_consent REVOKED NOT written to the CRM fields (DROPPED)')) &&
+          r2.logs.some((l) => /callback_consent=REVOKED_WITH_INSTANT\/DROPPED/.test(l)) &&
+          r2.notes.some((n) => /^Callback consent fields in the CRM: NOT written — the CRM refused the update with them attached/m.test(n) && /^Channels blocked: call, sms, email$/m.test(n)));
+        for (const status of [403, 404, 409, 400]) {
+          const rs = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({
+            search: known, put: (call) => (cbFields(call).length ? resp(status, { message: 'duplicate custom field id' }) : resp(200, { contact: { id: 'C_OPT' } })),
+          }));
+          ok('CE-09 (opt-out handler): a refusal with HTTP ' + status + ' over the new fields never costs the suppression',
+            rs.puts.length === 2 && cbFields(rs.puts[1]).length === 0 && rs.logs.some((l) => /\[OPTOUT\] applied dnd=true/.test(l)));
+        }
+        // RED TEAM 2026-10-04 — the retry fired on ANY failed PUT: a transient 500
+        // stripped the REVOKED fields, the second PUT succeeded, and the contact
+        // read GRANTED beside DND while the note said REVOKED.
+        for (const status of [500, 503, 429]) {
+          let n = 0;
+          const flaky = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({
+            search: known, put: () => (++n === 1 ? resp(status, { message: 'transient' }) : resp(200, { contact: { id: 'C_OPT' } })),
+          }));
+          ok('CE-09 (opt-out handler): one transient HTTP ' + status + ' is retried with the SAME update — REVOKED and its instant are still written',
+            flaky.puts.length === 2 && JSON.stringify(flaky.puts[1].body) === JSON.stringify(flaky.puts[0].body) && cbFields(flaky.puts[1]).length === 2 &&
+            flaky.logs.some((l) => /REVOKED_WITH_INSTANT\/WRITTEN/.test(l)) && !flaky.logs.some((l) => /NOT written|retrying the suppression without them/.test(l)) &&
+            flaky.notes.some((n2) => / written\.$/m.test(n2)), `puts=${flaky.puts.length}`);
+        }
+        const stillDown = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known, put: () => resp(500, { message: 'down' }) }));
+        ok('CE-09 (opt-out handler): a CRM that stays down gets the same update twice and never a field-less one — and the note says the suppression was NOT applied',
+          stillDown.puts.length === 2 && stillDown.puts.every((c) => cbFields(c).length === 2) && JSON.stringify(stillDown.payload) === ACK &&
+          stillDown.logs.some((l) => l.includes('[OPTOUT] DND update failed status=500')) &&
+          stillDown.logs.some((l) => l.includes('[OPTOUT] callback_consent REVOKED NOT written to the CRM fields (UPDATE_FAILED)')) &&
+          stillDown.notes.some((n) => /^\*\*\* NOT APPLIED — the CRM did not accept the do-not-contact update \(HTTP 500\)\. Set DND on this contact by hand\. \*\*\*$/m.test(n) &&
+            /^Channels requested to be blocked: call, sms, email$/m.test(n) && !/^Channels blocked:/m.test(n) &&
+            /^Callback consent fields in the CRM: NOT written — the CRM did not accept the update/m.test(n)), `puts=${stillDown.puts.length}`);
+        const deadToken = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: known, put: () => resp(401, { message: 'unauthorized' }) }));
+        ok('CE-09 (opt-out handler): a dead token (401) is not retried in any shape, and nothing is reported as written',
+          deadToken.puts.length === 1 && cbFields(deadToken.puts[0]).length === 2 && JSON.stringify(deadToken.payload) === ACK &&
+          deadToken.logs.some((l) => l.includes('[OPTOUT] DND update failed status=401')) && deadToken.logs.some((l) => /applied dnd=false/.test(l)) &&
+          deadToken.notes.some((n) => /NOT APPLIED — the CRM did not accept the do-not-contact update \(HTTP 401\)/.test(n)), `puts=${deadToken.puts.length}`);
+        {
+          let n = 0;
+          const both = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({
+            search: known, put: (call) => (++n === 1 ? resp(503, {}) : cbFields(call).length ? resp(422, { message: 'bad id' }) : resp(200, { contact: { id: 'C_OPT' } })),
+          }));
+          ok('CE-09 (opt-out handler): transient, then refused over the fields → three updates at most: same, same, then without the two entries',
+            both.puts.length === 3 && cbFields(both.puts[0]).length === 2 && cbFields(both.puts[1]).length === 2 && cbFields(both.puts[2]).length === 0 &&
+            both.logs.some((l) => /REVOKED_WITH_INSTANT\/DROPPED/.test(l)) && both.logs.some((l) => /applied dnd=true/.test(l)), `puts=${both.puts.length}`);
+        }
+        delete process.env.CY2027_CRM_FIELD_IDS;
+        const plainDown = await run(optOut, { phone: p0, evidence: 'chat_optout' }, route({ search: knownBare, put: () => resp(422, { message: 'nope' }) }));
+        ok('CE-09 (opt-out handler): with no ids configured there is nothing to drop — a refused update is not re-sent, and the note says it was NOT applied',
+          plainDown.puts.length === 1 && plainDown.logs.some((l) => /applied dnd=false/.test(l)) &&
+          plainDown.notes.some((n) => /NOT APPLIED — the CRM did not accept the do-not-contact update \(HTTP 422\)/.test(n)), `puts=${plainDown.puts.length}`);
+        process.env.CY2027_CRM_FIELD_IDS = IDS.CY2027_CRM_FIELD_IDS;
         const open = await run(optOut, { phone: p0, evidence: 'chat_optout', channels: { email: 'ALLOWED' } }, route({ search: known }));
         ok('CE-09 (opt-out handler): leaving email open still revokes the callback permission',
           open.puts.length === 1 && open.puts[0].body.customFields.some((f) => f.id === 'cbS' && f.value === 'REVOKED') &&

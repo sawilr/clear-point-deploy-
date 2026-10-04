@@ -1478,6 +1478,15 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       : 'Perfect. So a licensed Clear Point advisor can reach out, what is your full name?'), 300);
   }
 
+  // AUDIT 2026-10-04 (CE-09, red team) — the three phone-ask prompts
+  // below (here and twice in handleAIdentitySubmit) carried SIX hard-coded copies
+  // of the contact-consent wording. They were byte-identical to
+  // TCPA_CONSENT_TEXT_EN/ES, but nothing kept them so: the build gate reads
+  // src/lib/disclaimerVersion.ts, so a copy edited here would have been SHOWN
+  // while the receipt kept attesting to the unchanged constant, and the server
+  // would have recorded a scope the person never read. They now use the
+  // constants (same text, character for character), and check-cy2027-parity
+  // fails the build if the wording reappears anywhere outside that file.
   // Path C opt-in handler.
   async function handleCOptin(optIn: boolean) {
     const isEs = outerState.language === 'es';
@@ -1493,8 +1502,8 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
     }
     setOuterState((s) => ({ ...s, step: 'C_optin_capture' }));
     setTimeout(() => pushBotTyped(isEs
-      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
-      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply."), 300);
+      ? 'Con gusto. Para que un asesor pueda revisar su caso, ¿me puede compartir su nombre completo, un teléfono donde le podamos llamar, y una breve descripción del tema?\n\n' + TCPA_CONSENT_TEXT_ES
+      : "Of course. So an advisor can review your case, may I have your full name, a phone number where we can reach you, and a brief description of the topic?\n\n" + TCPA_CONSENT_TEXT_EN), 300);
   }
 
   // Path A identity capture: parses single text input "Name | last4" or split flow.
@@ -1546,16 +1555,16 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
       } else {
         setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
         pushBotMessageDirect(isEs
-          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
-          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply.");
+          ? 'No pude encontrarle automáticamente en nuestro sistema, pero no se preocupe, esto sucede a veces. Para proteger su privacidad, prefiero que un asesor licenciado de Clear Point revise su caso personalmente y le devuelva la llamada. ¿Me podría compartir un teléfono donde le podamos contactar, junto con un resumen breve del tema?\n\n' + TCPA_CONSENT_TEXT_ES
+          : "I couldn't find you automatically in our system, but don't worry, this happens sometimes. To protect your privacy, I'd rather have a licensed Clear Point advisor review your case personally and call you back. Could you share a phone number where we can reach you, along with a brief summary of the topic?\n\n" + TCPA_CONSENT_TEXT_EN);
       }
     } catch {
       clearTimeout(timer);
       setIsTyping(false);
       setOuterState((s) => ({ ...s, step: 'A_unmatched_collect_topic' }));
       pushBotMessageDirect(isEs
-        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\nAl aceptar, usted autoriza a ClearPoint Senior Advisors (un broker independiente licenciado de Medicare) a contactarle por teléfono, mensaje de texto o correo electrónico al número que proporcionó para discutir opciones de planes de Medicare. Usted entiende que las llamadas/textos pueden hacerse usando un sistema telefónico automático de marcado, que el consentimiento no es requerido para comprar, y que puede revocar el consentimiento en cualquier momento respondiendo STOP o llamando al 1-855-720-8555. Pueden aplicar tarifas estándar de mensajes y datos.'
-        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\nBy agreeing, you authorize ClearPoint Senior Advisors (a licensed independent Medicare broker) to contact you by phone, text message, or email at the number you provided to discuss Medicare plan options. You understand calls/texts may be made using an automatic telephone dialing system, that consent is not required to purchase, and that you can revoke consent at any time by replying STOP or calling 1-855-720-8555. Standard message and data rates may apply.");
+        ? 'No pude verificar su caso en este momento, pero no se preocupe, un asesor licenciado lo revisará personalmente. ¿Me podría compartir un teléfono donde le podamos contactar y un resumen breve del tema?\n\n' + TCPA_CONSENT_TEXT_ES
+        : "I couldn't verify your case right now, but don't worry, a licensed advisor will review it personally. Could you share a phone number where we can reach you and a brief summary of the topic?\n\n" + TCPA_CONSENT_TEXT_EN);
     }
   }
 

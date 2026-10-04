@@ -29,7 +29,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { languageWasElected } from './soa-instance.js';
-import { CONSENT_STATUS, isStatedConsentScope, isIsoInstant } from './consent.js';
+import { CONSENT_STATUS, isStatedConsentScope, isRecordableInstant } from './consent.js';
 
 /**
  * The CY2027 additions from spec §18, with the CRM key each one should use.
@@ -129,7 +129,52 @@ export const CONFIRMED_ONLY_FIELDS = Object.freeze([
   // the caller "probably wants a plan review" could have widened what a consent
   // covers without touching whether it exists.
   'CALLBACK_CONSENT_SCOPE',
+  // AUDIT 2026-10-04 (CE-09, red team) — and the WHEN. A timestamp declared
+  // AI_INFERRED was written: an inferred instant on a consent is an invented one.
+  'CALLBACK_CONSENT_AT',
 ]);
+
+/**
+ * AUDIT 2026-10-04 (CE-09 / CRM-15, red team) — THE CALLBACK CONSENT IS A UNIT.
+ *
+ * The first version of this fix applied "status, timestamp AND scope, or none"
+ * only inside recordWebCallbackConsent(). Here, where the values actually leave,
+ * a refused scope was dropped ALONE: GRANTED and its timestamp went out without
+ * it ("granted, scope unknown" — the exact record the finding is about), a
+ * status outside the vocabulary and a timestamp reading 'yesterday' were written
+ * as given, and under a partial id map a revocation wrote a bare timestamp.
+ * The rule is now enforced at the write stage, for every caller:
+ *
+ *   • the status is one of CONSENT_STATUS, exactly; the instant is a real UTC
+ *     instant that is not in the future;
+ *   • a refused status or instant takes the rest of the unit with it;
+ *   • GRANTED is never sent without a stated scope AND its instant;
+ *   • an instant is never sent without the status it dates;
+ *   • a scope is never sent without the status it limits;
+ *   • what the unit needs is sent whole or not at all: if one of the values it
+ *     needs has no GoHighLevel id, the ones that do are WITHHELD (and named).
+ *
+ * A status other than GRANTED may travel without a scope (a revocation never
+ * restates one) and without an instant (see recordCallbackRevocation()).
+ *
+ * AUDIT 2026-10-04 (CE-09 / CRM-15) — the unit rule covered the status and the
+ * instant and left the SCOPE able to leave on its own: `{ CALLBACK_CONSENT_SCOPE }`
+ * with no status was written, and under an id map that had only the scope's id a
+ * REVOKED + instant + scope sent the scope ALONE (status and instant "unmapped").
+ * A lone scope on a contact rewrites what an EARLIER grant is read as covering.
+ * The scope now follows its status: no status accepted → the scope is refused;
+ * the status not sent for want of an id → the scope is withheld with it. The
+ * reverse stays as it was: a missing SCOPE id never holds back a revocation.
+ */
+const CALLBACK_UNIT = Object.freeze(['CALLBACK_CONSENT_STATUS', 'CALLBACK_CONSENT_AT', 'CALLBACK_CONSENT_SCOPE']);
+
+/** The three §18 fields that carry a consent status, and so take only the §15 vocabulary. */
+const CONSENT_STATUS_FIELDS = Object.freeze(['RECORDING_NOTICE_STATUS', 'CALLBACK_CONSENT_STATUS', 'AI_OUTBOUND_CONSENT_STATUS']);
+
+/** Exactly one of the CONSENT_STATUS values — a string, matched as written. */
+function isConsentStatus(value) {
+  return typeof value === 'string' && Object.keys(CONSENT_STATUS).some((k) => CONSENT_STATUS[k] === value);
+}
 
 export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED']);
 
@@ -147,15 +192,23 @@ export const CONFIRMING_PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SY
  *
  * A value may be a plain scalar (treated as SYSTEM) or `{ value, source }`.
  *
- * @returns {{ fields, unmapped, refused, mapped }}
+ * @returns {{ fields, unmapped, refused, withheld, mapped }}
  *   `refused` — values rejected because an inference tried to overwrite a field
- *   only the beneficiary may set. Logged by the caller; never silently dropped.
+ *   only the beneficiary may set, because the value is not one the field may
+ *   hold, or because the callback-consent unit it belongs to is not whole.
+ *   Logged by the caller; never silently dropped.
+ *   `withheld` — callback-consent values that are valid AND have an id, and were
+ *   still not sent because another value of the same unit has no id yet.
  */
 export function buildCustomFields(values, env = process.env) {
   const ids = fieldIdMap(env);
   const fields = [];
   const unmapped = [];
   const refused = [];
+  const withheld = [];
+  // Pass 1 — each value on its own. Nothing is emitted yet: whether a callback
+  // value may leave depends on the other two.
+  const accepted = [];
   for (const [name, raw] of Object.entries(values || {})) {
     if (!Object.prototype.hasOwnProperty.call(CY2027_FIELD_KEYS, name)) continue;
     const isWrapped = raw && typeof raw === 'object' && !Array.isArray(raw) && 'value' in raw;
@@ -185,11 +238,53 @@ export function buildCustomFields(values, env = process.env) {
       refused.push(name);
       continue;
     }
+    // An allow-list, not "anything truthy": 'granted (assumed)' and ['GRANTED']
+    // are not statuses.
+    if (CONSENT_STATUS_FIELDS.includes(name) && !isConsentStatus(value)) {
+      refused.push(name);
+      continue;
+    }
+    if (name === 'CALLBACK_CONSENT_AT' && !isRecordableInstant(value)) {
+      refused.push(name);
+      continue;
+    }
+    accepted.push([name, value]);
+  }
+
+  // Pass 2 — the callback consent as a unit (see CALLBACK_UNIT above).
+  const has = (n) => accepted.some(([k]) => k === n);
+  const valueOf = (n) => (accepted.find(([k]) => k === n) || [])[1];
+  const [STATUS, AT, SCOPE] = CALLBACK_UNIT;
+  const notSent = [];
+  const broken =
+    refused.includes(STATUS) || refused.includes(AT) ||
+    (has(STATUS) && valueOf(STATUS) === CONSENT_STATUS.GRANTED && !(has(AT) && has(SCOPE))) ||
+    ((has(AT) || has(SCOPE)) && !has(STATUS));
+  if (broken) {
+    for (const n of CALLBACK_UNIT) {
+      if (has(n)) { refused.push(n); notSent.push(n); }
+    }
+  } else if (has(STATUS)) {
+    const needs = valueOf(STATUS) === CONSENT_STATUS.GRANTED ? [STATUS, AT, SCOPE] : (has(AT) ? [STATUS, AT] : [STATUS]);
+    if (needs.some((n) => !ids[n])) {
+      // A scope beside a status that is not GRANTED is not NEEDED (so a missing
+      // scope id never blocks a revocation), but it does not leave without it.
+      const held = has(SCOPE) && !needs.includes(SCOPE) ? [...needs, SCOPE] : needs;
+      for (const n of held) {
+        notSent.push(n);
+        if (ids[n]) withheld.push(n); else unmapped.push(n);
+      }
+    }
+  }
+
+  // Pass 3 — what is left, with a real id or reported as unmapped.
+  for (const [name, value] of accepted) {
+    if (notSent.includes(name)) continue;
     const id = ids[name];
     if (!id) { unmapped.push(name); continue; }
     fields.push({ id, key: CY2027_FIELD_KEYS[name], field_value: String(value), value: String(value) });
   }
-  return { fields, unmapped, refused, mapped: fields.length };
+  return { fields, unmapped, refused, withheld, mapped: fields.length };
 }
 
 /** Flatten a completed SOA instance into the §18 field names. */
@@ -225,11 +320,41 @@ export function soaInstanceToFields(instance, extra = {}) {
 /**
  * Flatten the four consent objects into their §18 fields — status, timestamp
  * and scope as QUERYABLE values, not prose in a note (audit CRM-14/CRM-16).
+ *
+ * This only flattens. Whether the values may be WRITTEN is buildCustomFields()'
+ * decision, and for a callback consent that decision is all-or-none.
+ *
+ * OPEN POINT, DECIDED FAIL-CLOSED (red team 2026-10-04) — the only scopes this
+ * layer can write are the ones a REGISTERED wording states
+ * (CONTACT_CONSENT_TEXT_VERSIONS, i.e. the web/chat text). The voice script's
+ * scope ("regarding this request", Base Layer A) is not registered: no voice
+ * script version, wording digest or scope code has been approved for it. So a
+ * granted callback consent carrying that scope is refused WHOLE at the write
+ * stage (status, timestamp and scope all named in `refused`) instead of being
+ * written as "granted, scope unknown". No live endpoint writes a voice callback
+ * consent today; registering a voice script version with its scope is an owner
+ * decision that has to precede one.
  */
 export function consentsToFields({ recordingNotice, callbackConsent, aiOutboundConsent } = {}) {
+  // AUDIT 2026-10-04 (CE-09, red team) — the slot did not check the object put
+  // in it: a granted SCOPE_OF_APPOINTMENT passed as `callbackConsent` was written
+  // as CALLBACK_CONSENT_STATUS=GRANTED. That is the cross-inference this layer
+  // exists to prevent (§6), arriving through the mapping instead of through
+  // isAffirmative(). Each slot takes its own type and nothing else — and, like
+  // assertNoCrossInference(), it throws rather than quietly dropping the value.
+  const typed = (slot, consent, expected) => {
+    if (consent === null || typeof consent !== 'object' || consent.type !== expected) {
+      throw new Error(`crm-fields: ${slot} must be a ${expected} consent object`);
+    }
+  };
   const out = {};
-  if (recordingNotice) out.RECORDING_NOTICE_STATUS = recordingNotice.status;
+  if (recordingNotice) {
+    typed('recordingNotice', recordingNotice, 'RECORDING_NOTICE');
+    out.RECORDING_NOTICE_STATUS = recordingNotice.status;
+  }
+  if (aiOutboundConsent) typed('aiOutboundConsent', aiOutboundConsent, 'AI_OUTBOUND_VOICE_CONSENT');
   if (callbackConsent) {
+    typed('callbackConsent', callbackConsent, 'CALLBACK_CONTACT_PERMISSION');
     out.CALLBACK_CONSENT_STATUS = callbackConsent.status;
     out.CALLBACK_CONSENT_AT = callbackConsent.revokedAt || callbackConsent.at;
     out.CALLBACK_CONSENT_SCOPE = callbackConsent.scope;
@@ -257,7 +382,7 @@ export function consentsToFields({ recordingNotice, callbackConsent, aiOutboundC
  */
 export function callbackRevocationToFields(input) {
   const at = input !== null && typeof input === 'object' ? input.at : undefined;
-  if (!isIsoInstant(at)) throw new Error('crm-fields: a revocation needs its timestamp (a UTC ISO instant)');
+  if (!isRecordableInstant(at)) throw new Error('crm-fields: a revocation needs its timestamp (a real UTC ISO instant, not in the future)');
   return Object.freeze({ CALLBACK_CONSENT_STATUS: CONSENT_STATUS.REVOKED, CALLBACK_CONSENT_AT: at });
 }
 

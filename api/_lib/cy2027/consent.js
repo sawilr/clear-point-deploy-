@@ -227,11 +227,37 @@ export function isStatedConsentScope(scope) {
  * A UTC instant exactly as Date#toISOString() writes it (the milliseconds are
  * optional). "Yesterday", a number, a Date object or a date with no time are
  * not a timestamp a consent record can carry.
+ *
+ * AUDIT 2026-10-04 (CE-09, red team) — the shape test plus Date.parse() accepted
+ * instants that do not exist: V8 rolls '2026-02-31T00:00:00Z' over to 3 March
+ * and '…T24:00:00Z' to the next day, and the impossible STRING was what got
+ * written. The value now has to survive a round trip through the clock's own
+ * writer: what toISOString() would never print is not an instant.
  */
 export function isIsoInstant(value) {
-  return typeof value === 'string'
-    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)
-    && Number.isFinite(Date.parse(value));
+  if (typeof value !== 'string') return false;
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,3}))?Z$/.exec(value);
+  if (!m) return false;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return false;
+  return new Date(ms).toISOString() === m[1] + '.' + (m[2] || '').padEnd(3, '0') + 'Z';
+}
+
+/** How far ahead of this machine's clock an instant may read before it is "not yet". */
+export const CONSENT_CLOCK_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * True for an instant a consent record may carry NOW: a real UTC instant that is
+ * not in the future.
+ *
+ * AUDIT 2026-10-04 (CE-09, red team) — a consent or a revocation "at 2099" was
+ * accepted and written. Nothing can have been consented to tomorrow. There is
+ * deliberately NO lower bound: this layer has no registered date on which each
+ * wording version went live, and inventing one would be a silent default. (If
+ * the owner supplies those dates, the bound belongs in the registry entry.)
+ */
+export function isRecordableInstant(value, nowMs = Date.now()) {
+  return isIsoInstant(value) && Number.isFinite(nowMs) && Date.parse(value) <= nowMs + CONSENT_CLOCK_TOLERANCE_MS;
 }
 
 /**
@@ -276,6 +302,7 @@ export function webCallbackConsent(input) {
   if (receiptPresent && receiptHash !== consentTextSha256) return refuse('CONSENT_RECEIPT_HASH_MISMATCH');
   if (at === undefined || at === null || at === '') return refuse('CONSENT_TIMESTAMP_MISSING');
   if (!isIsoInstant(at)) return refuse('CONSENT_TIMESTAMP_INVALID');
+  if (!isRecordableInstant(at)) return refuse('CONSENT_TIMESTAMP_IN_THE_FUTURE');
 
   return Object.freeze({
     consent: Object.freeze(createConsent({

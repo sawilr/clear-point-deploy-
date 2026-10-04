@@ -14,6 +14,11 @@
 //      runtime undefined that TypeScript swore was there).
 //   5. The approved category wording is copy-pasted somewhere else, which is
 //      how the TPMO disclaimer ended up in three divergent versions.
+//   6. The TPMO (e)(41) disclaimer exists outside its canonical module.
+//   7. The contact-consent wording in src/lib/disclaimerVersion.ts is not,
+//      byte for byte, the wording registered with its scope in
+//      api/_lib/cy2027/consent.js — or a second copy of that wording exists
+//      anywhere under src/, api/ or in index.html (CE-09 / CRM-15).
 //
 // Why a build guard and not a comment: the pre-existing comment in
 // src/lib/soaContent.ts said the three TPMO sources "must be unified first",
@@ -27,7 +32,7 @@ import { dirname, join } from 'node:path';
 // A STATIC import on purpose: scripts/check-vercel-config.mjs follows static
 // relative imports to verify that every scripts/ file the build needs has its
 // "!scripts/…" exception in .vercelignore. A dynamic import would hide this one.
-import { consentWordingProblems } from './consent-wording-gate.mjs';
+import { consentWordingProblems, consentWordingCopyProblems } from './consent-wording-gate.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -384,6 +389,26 @@ if (tpmoCopies.length) {
     const wording = consentWordingProblems({ source: dv, registry: consentMod.CONTACT_CONSENT_TEXT_VERSIONS });
     if (wording.problems.length) problems.push(...wording.problems);
     else notes.push(`contact-consent wording v${wording.version} matches its scope registry (${wording.scope})`);
+
+    // RED TEAM 2026-10-04 — the check above reads ONE file, and the chat carried
+    // six hard-coded copies of the wording outside it: a widened copy was shown
+    // while the registered constant was attested, and this gate stayed green.
+    // Every source file under src/ and api/, plus the static shell, is scanned
+    // for a second copy. All of them are part of the deployed artifact.
+    const { readdirSync, statSync } = await import('node:fs');
+    const walkSources = (dir, out = []) => {
+      for (const name of readdirSync(join(ROOT, dir))) {
+        const rel = dir + '/' + name;
+        if (statSync(join(ROOT, rel)).isDirectory()) walkSources(rel, out);
+        else if (/\.(?:ts|tsx|js|jsx|mjs|html)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(rel);
+      }
+      return out;
+    };
+    const sources = [...walkSources('src'), ...walkSources('api'), 'index.html'];
+    const copies = consentWordingCopyProblems({ files: sources.map((p) => ({ path: p, source: read(p) })) });
+    if (copies.scanned < 50) problems.push(`contact-consent single-source scan read only ${copies.scanned} files — the walk is broken`);
+    if (copies.problems.length) problems.push(...copies.problems);
+    else notes.push(`contact-consent wording has a single source (${copies.scanned} files scanned)`);
   }
 }
 

@@ -56,6 +56,77 @@ export function readShownConsentWording(tsSource) {
 }
 
 /**
+ * The clause that makes a text the contact-consent wording, per language. A
+ * second place that contains one of these is a second copy of the wording.
+ * They are checked against the canonical text itself, so a wording change that
+ * drops one fails the build here instead of quietly blinding the scan.
+ */
+export const CONSENT_WORDING_PROBES = Object.freeze({
+  en: 'you authorize ClearPoint Senior Advisors',
+  es: 'usted autoriza a ClearPoint Senior Advisors',
+});
+
+// What a browser would end up showing, as far as a scan can tell: comments gone,
+// adjacent string pieces joined ('a ' + 'b'), every run of whitespace one space.
+const shownForm = (src) => stripComments(String(src == null ? '' : src))
+  .replace(/['"`]\s*\+\s*['"`]/g, '')
+  .replace(/\s+/g, ' ')
+  .toLowerCase();
+
+/**
+ * AUDIT 2026-10-04 (CE-09, red team) — ONE SOURCE FOR THE WORDING.
+ *
+ * consentWordingProblems() below reads ONE file. The chat component carried six
+ * hard-coded copies of the same wording; widening all six ("…and any other
+ * insurance product we sell…") left this gate green, the chat showing the wider
+ * text, and the server recording the narrower scope as verified — because the
+ * receipt attests to the constant, not to what was on screen.
+ *
+ * @param {{ files: Array<{ path: string, source: string }>, canonicalPath?: string }} input
+ *   files  every source file that can put text in front of a person; it must
+ *          include the canonical file
+ * @returns {{ problems: string[], scanned: number }}
+ */
+export function consentWordingCopyProblems(input) {
+  const { files, canonicalPath = 'src/lib/disclaimerVersion.ts' } = input !== null && typeof input === 'object' ? input : {};
+  const problems = [];
+  const norm = (p) => String(p == null ? '' : p).replace(/\\/g, '/');
+  const list = Array.isArray(files) ? files.filter((f) => f !== null && typeof f === 'object') : [];
+  const canonical = list.filter((f) => norm(f.path) === canonicalPath);
+  if (canonical.length !== 1) {
+    problems.push(`The single-source scan was not given ${canonicalPath} (exactly once) — it has nothing to compare against.`);
+    return { problems, scanned: 0 };
+  }
+  const shown = readShownConsentWording(canonical[0].source);
+  const probes = [];
+  for (const lang of ['en', 'es']) {
+    const probe = CONSENT_WORDING_PROBES[lang];
+    if (typeof shown[lang] !== 'string' || !shown[lang].toLowerCase().includes(probe.toLowerCase())) {
+      problems.push(
+        `The ${lang.toUpperCase()} contact-consent wording no longer contains "${probe}", the clause the single-source scan looks for.\n` +
+          '      Update CONSENT_WORDING_PROBES in scripts/consent-wording-gate.mjs to a clause of the new wording.',
+      );
+    } else {
+      probes.push(probe.toLowerCase());
+    }
+  }
+  let scanned = 0;
+  for (const f of list) {
+    if (norm(f.path) === canonicalPath) continue;
+    scanned += 1;
+    const text = shownForm(f.source);
+    if (probes.some((p) => text.includes(p))) {
+      problems.push(
+        `${norm(f.path)} contains its own copy of the contact-consent wording.\n` +
+          `      Use TCPA_CONSENT_TEXT_EN / TCPA_CONSENT_TEXT_ES from ${canonicalPath}: the consent receipt attests to those\n` +
+          '      constants, so a copy that drifts is shown to the person while a different text is recorded.',
+      );
+    }
+  }
+  return { problems, scanned };
+}
+
+/**
  * @param {{ source: string, registry: object }} input
  *   source    the text of src/lib/disclaimerVersion.ts
  *   registry  CONTACT_CONSENT_TEXT_VERSIONS

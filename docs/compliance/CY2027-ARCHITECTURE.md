@@ -33,6 +33,7 @@ api/_lib/cy2027/
   soa-instance.js    appointment-specific instance + marketing gate             [shared]
   consent.js         the four distinct consent objects                          [shared]
   callback-consent.js the web callback consent as a record: digest, scope, CRM   [SERVER ONLY]
+                     + its receipt line, its revocation, the CRM retry policy
   trust.js           lead trust state, anti-abuse, human confirmation gate      [shared]
   retention.js       retention by record class + legal hold                     [shared]
   carrier-overlay.js private carrier registry (licensed workspace only)         [shared]
@@ -154,19 +155,84 @@ builds a `CALLBACK_CONTACT_PERMISSION` object with `webCallbackConsent()`. The s
 never derived from the lead: `CONTACT_CONSENT_TEXT_VERSIONS` (`consent.js`) maps each
 consent-text version to the scope that wording states, and a submission earns it only
 when the server's own SHA-256 of the text received equals the registered digest (the
-client's `consent_receipt_hash` is compared, never trusted). Otherwise no object exists,
-no `CALLBACK_CONSENT_*` value is written, the lead is still captured, and it carries a
-`CALLBACK_CONSENT_NOT_RECORDED` flag plus a named reason in the log and in the receipt.
-The same rule is applied again where the value leaves: `buildCustomFields()` refuses a
-`CALLBACK_CONSENT_SCOPE` that no registered wording states, or whose provenance is not
-confirming. `GRANTED` is never sent without its scope: if any of the three fields has no
-GoHighLevel id, none is sent. `api/opt-out.js` writes `CALLBACK_CONSENT_STATUS=REVOKED`
-and the revocation instant through the same mapping and never rewrites the scope.
+client's `consent_receipt_hash` and version label are passed in **as received** and
+compared, never trusted and never repaired). Otherwise no object exists, no
+`CALLBACK_CONSENT_*` value is written, and the lead is still captured. Where the refusal
+shows up — corrected after the 2026-10-04 red team, which found the earlier sentence
+("a flag plus a named reason in the log and in the receipt") untrue on two paths:
+
+| Where | New contact | Repeat on an existing contact (LEAD-02) |
+|---|---|---|
+| Serverless log (`[CALLBACK-CONSENT] not recorded …: <reason>`) | yes | yes |
+| Note, server line: `callback_consent=NOT_RECORDED(<reason>)` | always, first value of `— TCPA Receipt —` | always, first value of `New consent receipt on this submission —` |
+| `CALLBACK_CONSENT_NOT_RECORDED` in `contact.lead_quality_flags` | yes (part of the create body) | **no** — a repeat writes no field on the existing contact |
+
+**The receipt line.** `tcpaReceiptLine()` writes it, and the handler no longer assembles
+it: the server's statement (`scope=<SCOPE>` or `callback_consent=NOT_RECORDED(<reason>)`)
+is the **first** value, then the server's instant and the proxy-chain address; client
+claims (hash, version label, page, user agent) come after, are printed only when exactly
+well-formed, and the user agent is reduced to characters that cannot spell a separator or
+a key. Every text the server did not author — story, transcript, consent text as
+received, intake values, the flags field, the model-written summary — goes through
+`neutralizeReceiptLookalikes()`, so a note holds exactly one `— TCPA Receipt —` line and
+one `scope=` / `callback_consent=` statement. The neutraliser works on character
+*classes*, not lists: every Unicode dash except the ASCII hyphen, every format character
+(zero-width, bidi marks, soft hyphen) as a gap — also inside the words — and the
+look-alike equals signs. Its promise is exact and holds for any text: afterwards no line
+starts with the server's header and neither server label occurs. It does **not** promise
+that no eye is ever fooled (homoglyph letters cannot be enumerated), which is why the
+server's statement is also first on its line. A consent text is labelled
+`verbatim, v<version>` only when the server verified it against that registered version.
+
+**The write stage.** The same rules are applied again where the values leave:
+`buildCustomFields()` treats status, timestamp and scope as a unit. The status must be one
+of `CONSENT_STATUS`; the timestamp a real UTC instant that is not in the future; the scope
+one a registered wording states; all three confirmed, never inferred. `GRANTED` is never
+sent without its scope and its instant, a timestamp or a scope is never sent without its
+status (a lone scope would re-scope whatever grant the contact already has), and if one of
+the values a unit needs has no GoHighLevel id, none of that unit is sent (the others are
+reported as `withheld`). A missing scope id never holds back a revocation. `consentsToFields()` throws when a slot is handed a
+consent object of another type. **Open point, decided fail-closed:** only the web wording
+is registered. A callback consent carrying the voice script's scope ("regarding this
+request") is refused whole at the write stage; no live endpoint writes one, and
+registering a voice script version with its scope is an owner decision that must precede
+one.
+
+**Revocation.** `api/opt-out.js` calls `recordCallbackRevocation()`. Both field ids, or
+nothing is written. What is written depends on what the contact reads *now* (from the
+search payload, or from one `GET /contacts/{id}` when that payload carries no custom
+fields and the ids are configured): already `REVOKED` → nothing, the instant of the
+earlier revocation stands; any other readable state → `REVOKED` + this instant;
+unreadable → `REVOKED` only. After a revocation `CALLBACK_CONSENT_AT` therefore holds the
+**revocation** instant; the instant of the grant survives only in the receipt line of the
+original note. The scope is never rewritten. The revocation note states what was
+*applied*: which of the two fields were written, and — if the CRM did not accept the
+update — that DND was **not** applied and must be set by hand.
+
+**When the CRM refuses a write** (`crmRefusalStep()`, one policy for both handlers):
+`429`/`5xx` → the same body is retried, a field is never dropped for it; `401` → no retry;
+any other `4xx` with the `CALLBACK_CONSENT_*` entries attached → one retry without them.
+On the lead side a create that only succeeds without them is logged and audited as
+`cy2027_fields_dropped` (the lead is kept; the scope is in the note). On the opt-out side
+the log says `callback_consent REVOKED NOT written` and the note says so too.
+
+**What a maintainer has to know.**
+- A workflow that filters on `CALLBACK_CONSENT_STATUS` sees only contacts **created** after
+  the three ids were configured. Contacts that already existed, and every repeat
+  submission, never receive the three fields (LEAD-02): their record is the note.
+- A lead can show the `Consent Captured` tag and `consent_calls=true` next to
+  `CALLBACK_CONSENT_NOT_RECORDED`. That is not a contradiction: the person ticked the
+  consent box (the channel flags), but the server could not tie the consent to a
+  registered wording, so there is no scope on record. **What an advisor should do with
+  such a lead is an owner/compliance decision and is not encoded anywhere in this layer.**
+
 Changing the wording in `src/lib/disclaimerVersion.ts` requires a new `DISCLAIMER_VERSION`
 **and a new registry entry**; `scripts/consent-wording-gate.mjs` (run by
-`check-cy2027-parity`) fails the build otherwise. The three fields need GoHighLevel ids
-(`CY2027_CRM_FIELD_IDS`, owner action); until then the scope is held in the
-`— TCPA Receipt —` line of the contact note as `scope=<SCOPE>`.
+`check-cy2027-parity`) fails the build otherwise, and also fails it when a second copy of
+the wording exists anywhere under `src/`, `api/` or in `index.html` (the chat component
+carried six). The three fields need GoHighLevel ids (`CY2027_CRM_FIELD_IDS`, owner
+action); until then the scope is held in the `— TCPA Receipt —` line of the contact note,
+as its first value, `scope=<SCOPE>`.
 
 ### 2.5 Retention
 

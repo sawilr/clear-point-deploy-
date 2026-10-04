@@ -36,7 +36,16 @@ import { enforceKill } from './_lib/kill-switch.js';
 import { readJsonBody } from './_lib/read-body.js';
 // AUDIT 2026-10-02 (CE-09 / CRM-15) — the callback consent is now a queryable
 // CRM value on the grant side (api/submit-lead.js), so its revocation is too.
-import { buildCustomFields, callbackRevocationToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+//
+// RED TEAM 2026-10-04 — this handler called the field mapping directly and so
+// had none of the rules the grant side has (all-or-none, an instant that is in
+// force is never moved, a transient failure is not a reason to drop a field).
+// Every one of those decisions now lives in callback-consent.js as a function
+// that the suite calls; what is left here is the I/O.
+import {
+  recordCallbackRevocation, callbackConsentStateOf, callbackRevocationNoteLine, crmRefusalStep,
+  CALLBACK_REVOCATION_UNAVAILABLE, CALLBACK_REVOCATION_MODE,
+} from './_lib/cy2027/callback-consent.js';
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 const GHL_VERSION = '2021-07-28';
@@ -171,16 +180,53 @@ export default async function handler(req, res) {
     // the consent it revokes (see callbackRevocationToFields).
     // Built in its own try so that nothing here can stand between a person and
     // their suppression.
+    //
+    // RED TEAM 2026-10-04 — three defects in what used to be one line here:
+    //   • every repeat opt-out (the endpoint is unauthenticated) overwrote
+    //     CALLBACK_CONSENT_AT, so a contact made between the true revocation and
+    //     the repeat read as made BEFORE the revocation;
+    //   • under a partial id map a bare timestamp was written (it reads as a
+    //     grant time), or REVOKED beside the grant's instant;
+    //   • the handler never looked at the contact it was about to write.
+    // recordCallbackRevocation() decides what is written from the contact's
+    // CURRENT state: already REVOKED → nothing (the instant stands); anything
+    // else → REVOKED + this instant; unreadable → REVOKED only. The state is read
+    // from the search payload, and from ONE extra GET only when that payload
+    // does not carry it and the answer would change what is written — so with no
+    // CY2027 ids configured (production today) this adds no CRM call.
     const revokedAt = new Date().toISOString();
-    let cbRevocation = { fields: [], unmapped: [] };
+    let cbRevocation = CALLBACK_REVOCATION_UNAVAILABLE;
     try {
-      cbRevocation = buildCustomFields(callbackRevocationToFields({ at: revokedAt }));
-      const cbWarn = unmappedFieldsWarning(cbRevocation.unmapped);
-      if (cbWarn) console.warn(cbWarn);
+      cbRevocation = recordCallbackRevocation({ at: revokedAt, state: callbackConsentStateOf(match) });
+      if (cbRevocation.mode === CALLBACK_REVOCATION_MODE.REVOKED_STATUS_ONLY) {
+        let current = null;
+        try {
+          const gres = await fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, { headers: H });
+          if (gres.ok) {
+            const gjson = await gres.json();
+            current = gjson && typeof gjson === 'object' ? gjson.contact : null;
+          } else {
+            console.warn('[OPTOUT] contact read for the consent state failed status=' + gres.status);
+          }
+        } catch (e) {
+          console.warn('[OPTOUT] contact read for the consent state failed: ' + String(e).slice(0, 120));
+        }
+        cbRevocation = recordCallbackRevocation({ at: revokedAt, state: callbackConsentStateOf(current) });
+      }
+      // Field names and fixed strings only.
+      for (const w of cbRevocation.warnings) console.warn(w);
     } catch (e) {
-      cbRevocation = { fields: [], unmapped: [] };
+      cbRevocation = CALLBACK_REVOCATION_UNAVAILABLE;
       console.error('[OPTOUT] callback-consent revocation fields not built: ' + String(e).slice(0, 120));
     }
+    // The four flags this endpoint has always cleared. Same field ids
+    // submit-lead.js writes.
+    const consentFlagFields = [
+      { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: 'false' },
+      { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: 'false' },
+      { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: 'false' },
+      ...(blockEmail ? [{ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: 'false' }] : []),
+    ];
     const update = {
       dnd: true,
       dndSettings: {
@@ -194,31 +240,56 @@ export default async function handler(req, res) {
       // AUDIT 2026-09-12 (TCPA-04, P2) — a revocation must also clear the recorded
       // consent flags; DND alone left contact.consent_* = 'true' next to a DNC tag,
       // an internally contradictory record. Same field ids submit-lead.js writes.
-      customFields: [
-        { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: 'false' },
-        { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: 'false' },
-        { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: 'false' },
-        ...(blockEmail ? [{ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: 'false' }] : []),
-        ...cbRevocation.fields,
-      ],
+      customFields: [...consentFlagFields, ...cbRevocation.fields],
     };
     const putContact = (payload) => fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, {
       method: 'PUT', headers: H, body: JSON.stringify(payload),
     });
-    let ures = await putContact(update);
     // AUDIT 2026-10-02 (CE-09 / CRM-15) — FAIL-SAFE. The CALLBACK_CONSENT_* ids
     // are the only ones in this body that come from owner-supplied configuration.
     // If the CRM refuses the update with them attached, the suppression is sent
     // again in its exact previous shape: a field id must never cost a revocation.
-    if (!ures.ok && cbRevocation.fields.length > 0) {
-      console.error('[OPTOUT] update refused status=' + ures.status + ' with the CALLBACK_CONSENT_* fields attached — retrying the suppression without them');
-      ures = await putContact({
-        ...update,
-        customFields: update.customFields.filter((f) => !cbRevocation.fields.includes(f)),
-      });
+    //
+    // RED TEAM 2026-10-04 — that retry fired on ANY failed PUT. A transient
+    // 500/429 (or a dead token) stripped the REVOKED fields, the second PUT
+    // succeeded, and the contact read CALLBACK_CONSENT_STATUS=GRANTED beside
+    // DND while the log blamed the fields and the note said REVOKED. The step
+    // is now crmRefusalStep() (one policy, shared with api/submit-lead.js):
+    //   • 429 / 5xx → the SAME body once more. A field is never dropped for it.
+    //   • 401       → no retry: no body would be accepted.
+    //   • other 4xx with the entries attached → once more without them.
+    // At most three PUTs, and whatever was NOT written is said so, in the log
+    // and in the note.
+    let payload = update;
+    let cbDropped = false;
+    let transientRetried = false;
+    let ures = await putContact(payload);
+    for (let extra = 0; extra < 2 && !ures.ok; extra++) {
+      const step = crmRefusalStep(ures.status, cbDropped ? 0 : cbRevocation.fields.length);
+      if (step === 'TRANSIENT' && !transientRetried) {
+        transientRetried = true;
+        console.warn('[OPTOUT] transient status=' + ures.status + ' — retrying the SAME update once');
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        ures = await putContact(payload);
+      } else if (step === 'RETRY_WITHOUT_FIELDS') {
+        cbDropped = true;
+        console.error('[OPTOUT] update refused status=' + ures.status + ' with the CALLBACK_CONSENT_* fields attached — retrying the suppression without them');
+        payload = { ...update, customFields: consentFlagFields };
+        ures = await putContact(payload);
+      } else {
+        break;
+      }
     }
     const dndApplied = ures.ok;
     if (!ures.ok) console.error('[OPTOUT] DND update failed status=' + ures.status);
+    // What became of the two callback fields — never left to be inferred from
+    // "applied dnd=true".
+    const cbOutcome = cbRevocation.fields.length === 0 ? 'NOTHING_TO_WRITE'
+      : !ures.ok ? 'UPDATE_FAILED'
+        : cbDropped ? 'DROPPED' : 'WRITTEN';
+    if (cbOutcome === 'DROPPED' || cbOutcome === 'UPDATE_FAILED') {
+      console.error('[OPTOUT] callback_consent REVOKED NOT written to the CRM fields (' + cbOutcome + ') — the revocation note is the record');
+    }
 
     // ── 3. Audit note. Category + timestamp only — never the raw message. ────
     const noteBody = [
@@ -226,10 +297,19 @@ export default async function handler(req, res) {
       'Evidence category: ' + evidence,
       // AUDIT 2026-10-02 (CE-09 / CRM-15) — the same instant as CALLBACK_CONSENT_AT.
       'Timestamp (UTC): ' + revokedAt,
-      'Channels blocked: call, sms' + (blockEmail ? ', email' : ' (email left open at the consumer\'s request)'),
+      // RED TEAM 2026-10-04 — the note said "Channels blocked" and "REVOKED"
+      // whatever the CRM had answered. It now says what was APPLIED: a failed
+      // update is stated as a failure, with the action a human has to take.
+      ...(dndApplied
+        ? ['Channels blocked: call, sms' + (blockEmail ? ', email' : ' (email left open at the consumer\'s request)')]
+        : [
+          'Channels requested to be blocked: call, sms' + (blockEmail ? ', email' : ' (email left open at the consumer\'s request)'),
+          '*** NOT APPLIED — the CRM did not accept the do-not-contact update (HTTP ' + ures.status + '). Set DND on this contact by hand. ***',
+        ]),
       // Stated in the note as well, so the revocation of the callback permission
       // is on the record while the two fields have no GoHighLevel id.
       'Callback contact permission: REVOKED',
+      callbackRevocationNoteLine(cbRevocation, cbOutcome),
       'Applied by: automated suppression endpoint (api/opt-out)',
       'NOTE: this record must be retained as evidence of the revocation. Do not',
       'delete it, and do not clear DND without a NEW documented consent.',
@@ -249,7 +329,8 @@ export default async function handler(req, res) {
     // consent_* custom fields (same ids as submit-lead.js) and drops the
     // 'Consent Captured' tag; DND remains the authoritative platform-level
     // suppression.
-    console.warn('[OPTOUT] applied dnd=' + dndApplied + ' note=' + noteApplied + ' evidence=' + evidence);
+    console.warn('[OPTOUT] applied dnd=' + dndApplied + ' note=' + noteApplied + ' evidence=' + evidence
+      + ' callback_consent=' + cbRevocation.mode + '/' + cbOutcome);
     return ack(res);
   } catch (e) {
     console.error('[OPTOUT] unexpected: ' + String(e).slice(0, 200));
