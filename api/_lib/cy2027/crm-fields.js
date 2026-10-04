@@ -28,6 +28,8 @@
 //      nothing is lost while the fields are missing.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { languageWasElected } from './soa-instance.js';
+
 /**
  * The CY2027 additions from spec §18, with the CRM key each one should use.
  * Keys follow the existing `contact.<snake_case>` convention in submit-lead.js
@@ -126,6 +128,15 @@ export const CONFIRMED_ONLY_FIELDS = Object.freeze([
 export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED']);
 
 /**
+ * RED TEAM 2026-10-03 (G08/CRM-28) — the guard refused only the exact token
+ * 'AI_INFERRED', so 'ai_inferred' and 'INFERRED_FROM_LEAD' (the layer's own word
+ * for an inference) were both WRITTEN to a confirmed-only field. A deny-list of
+ * one spelling is not a guard. A confirmed-only field now accepts an ALLOW-LIST
+ * of provenances, matched exactly; everything else is refused and reported.
+ */
+export const CONFIRMING_PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM']);
+
+/**
  * Build the customFields array for a GoHighLevel upsert.
  *
  * A value may be a plain scalar (treated as SYSTEM) or `{ value, source }`.
@@ -143,9 +154,18 @@ export function buildCustomFields(values, env = process.env) {
     if (!Object.prototype.hasOwnProperty.call(CY2027_FIELD_KEYS, name)) continue;
     const isWrapped = raw && typeof raw === 'object' && !Array.isArray(raw) && 'value' in raw;
     const value = isWrapped ? raw.value : raw;
-    const source = isWrapped && raw.source ? raw.source : 'SYSTEM';
+    // A wrapped value always declares its provenance; only a plain scalar is
+    // treated as SYSTEM. (`raw.source ? … : 'SYSTEM'` promoted an empty or
+    // falsy declared source to SYSTEM.)
+    const source = isWrapped ? raw.source : 'SYSTEM';
     if (value === undefined || value === null || value === '') continue;
-    if (source === 'AI_INFERRED' && CONFIRMED_ONLY_FIELDS.includes(name)) {
+    if (CONFIRMED_ONLY_FIELDS.includes(name) && !CONFIRMING_PROVENANCE.includes(source)) {
+      refused.push(name);
+      continue;
+    }
+    // The stored election must itself be an election: 'SYSTEM_DEFAULT' written
+    // beside SOA_LANGUAGE would state, in the CRM, a choice nobody made.
+    if (name === 'SOA_LANGUAGE_SOURCE' && !languageWasElected(value)) {
       refused.push(name);
       continue;
     }

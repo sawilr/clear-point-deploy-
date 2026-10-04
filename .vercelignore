@@ -27,6 +27,11 @@ scripts/*
 # ve en el script "build"; el propio prerender-body falla si falta.
 !scripts/prerender-body.mjs
 !scripts/ssr-entry.tsx
+# 2026-10-03 — la regla TPMO es un módulo que prerender-body.mjs IMPORTA. Sin
+# esta línea el build local pasa y el de Vercel muere con "Cannot find module".
+# check-vercel-config.mjs sigue ahora los import relativos de cada script del
+# build y falla localmente si falta la excepción de alguno.
+!scripts/tpmo-gate.mjs
 # RONDA 8 (SEO-T7) — fechas reales por página para el sitemap; en el clon
 # superficial de Vercel build-sitemap.mjs las lee de aquí.
 !scripts/sitemap-dates.json

@@ -55,6 +55,7 @@ export {
   SOA_METHOD,
   LANGUAGE_SOURCE,
   languageWasElected,
+  languageElectionLabel,
   methodIsWritten,
   partitionSelection,
   marketingGate,

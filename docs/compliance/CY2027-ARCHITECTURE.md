@@ -78,6 +78,7 @@ reason — never a bare boolean:
 | `SOA_INCOMPLETE` | nothing was authorized |
 | `SOA_SUPERSEDED` / `SOA_REVOKED` / `SOA_NOT_COMPLETED` | not a live authorization |
 | `SOA_EVIDENCE_MISSING` | hash or evidence reference absent → gate stays locked (§26) |
+| `SOA_LANGUAGE_NOT_ELECTED` | the record cannot say the signer chose the language it was read in (G08) |
 | `NO_APPOINTMENT` / `SOA_FOR_DIFFERENT_APPOINTMENT` | scope is per-appointment |
 | `SOA_PLAN_YEAR_MISMATCH` | plan year changed; no silent reuse (§7) |
 | `SOA_STATE_MISMATCH` | jurisdiction changed |
@@ -198,13 +199,54 @@ exists" as an immediate-fail.
 
 ---
 
+### 2.1a The document language is an election (G08)
+
+The language of a signed SOA is the language its disclosures were **read** in. It
+used to come from `lead?.language || 'es'` on the client and a coalesce-to-`'es'`
+on the server, so a record could not tell "chose Spanish" from "defaulted to
+Spanish". It is now two fields, and only an election is signable:
+
+| `languageSource` | Signable | Meaning |
+|---|---|---|
+| `BENEFICIARY_ELECTED` | yes | chosen on the bilingual election screen by the beneficiary |
+| `REPRESENTATIVE_ELECTED` | yes | chosen by a representative — the record must also carry `representativeRelationship` |
+| `SYSTEM_DEFAULT` | **no** | exists so the gap can be named and refused |
+| `INFERRED_FROM_LEAD` | **no** | idem |
+
+Where it is enforced — every layer, not only the constructor:
+
+- `readLanguageElection(body)` — the only place the handler reads it; reasons
+  `LANGUAGE_NOT_SUPPLIED` / `ELECTION_NOT_RECORDED` / `NOT_AN_ELECTION`. `api/sign-soa.js`
+  answers `400 SOA_LANGUAGE_ELECTION_REQUIRED` with that reason and emits the audit
+  action `SOA_REFUSED` (reason only — never the raw submitted strings).
+- `createSoaInstance()` — `election_required`, `not_an_election`, and the attribution
+  cross-check `representative_required` / `election_attribution_mismatch`: who elected
+  must agree with who signed.
+- `completeSoaInstance()`, `buildEvidenceRecord()`, `renderTextSnapshot()` and
+  `marketingGate()` each refuse a record without an election
+  (`SOA_LANGUAGE_NOT_ELECTED`), so a rehydrated or hand-built instance cannot slip
+  past the constructor.
+- `languageElectionLabel()` — one function for the read-back screen and the PDF; it
+  throws rather than print a default.
+- The form withdraws both acknowledgements and the typed signature whenever the
+  language is changed: an affirmation given against one language's text is not an
+  affirmation of the other's (spec §9, no prechecked boxes).
+
+**Not done — owner decision:** the approved template keeps its title and opening
+paragraph in English in both language versions (`SOA_TEXT.es.title` / `.intro`).
+The election screen therefore promises only what is true (categories, statements
+and signature section in the elected language). Approving a Spanish title and intro
+means editing `soa-text.js` and re-pinning `APPROVED_TEXT_DIGEST`.
+
 ## 5. Evidence
 
 `buildEvidenceRecord()` stores the **exact wording the beneficiary saw**, in their
 language — not just the checkbox codes — so the record is self-explaining years later
 without this repository at this version. The SHA-256 integrity hash covers the rendered
-text, the selections and the identifiers; it deliberately excludes `context` (IP, user
-agent) so a proxy change can never look like tampering with the agreement.
+text, the selections, the identifiers and **the language election** (`languageSource`);
+it deliberately excludes `context` (IP, user agent) so a proxy change can never look
+like tampering with the agreement. Flipping or deleting the stored election makes
+`verifyEvidence()` return `HASH_MISMATCH`.
 
 `auditEvent()` requires actor, result, source and correlation id, and redacts
 SSN/MBI/bank/card/DOB/token values from `details` before they reach a log line.
@@ -223,7 +265,7 @@ Stated plainly rather than implied:
 | ZIP→county dataset | Not installed; the form asks the beneficiary instead. `parseCountyCsv()` turns a two-column `zip,county` CSV into the dataset, so installing real data is a file drop. Malformed rows are skipped, never guessed. |
 | `ENROLLMENT_RECORD` retention period | Unconfirmed; that class cannot be purged at all until the owner supplies it. |
 | Recording-notice all-party positions | Carried as the project's existing position of record, flagged `complianceReview: OWNER_COUNSEL`. Not re-determined by this code. |
-| GoHighLevel custom fields | **OWNER ACTION.** `node scripts/cy2027-provision-crm-fields.mjs` reports what is missing; `--apply` creates them and prints the `CY2027_CRM_FIELD_IDS` map. It reuses an existing field rather than duplicating it, and never runs on its own. The ~32 §18 fields do not exist in the sub-account, and `api/sign-soa.js` was passing field *names* where GHL expects opaque IDs, so SOA fields never landed (CRM-27). The mapping now sends only fields with a configured ID and logs the rest on every signature. Create the fields, then set `CY2027_CRM_FIELD_IDS`. |
+| GoHighLevel custom fields | **OWNER ACTION.** `node scripts/cy2027-provision-crm-fields.mjs` reports what is missing; `--apply` creates them and prints the `CY2027_CRM_FIELD_IDS` map. It reuses an existing field rather than duplicating it, and never runs on its own. The §18 fields (the script counts them from `CY2027_FIELD_KEYS`; do not rely on a number written here) do not exist in the sub-account, and `api/sign-soa.js` was passing field *names* where GHL expects opaque IDs, so SOA fields never landed (CRM-27). The mapping now sends only fields with a configured ID and logs the rest on every signature. Create the fields, then set `CY2027_CRM_FIELD_IDS`. |
 | Confirmation copy to the beneficiary | **BUILT, FLAG OFF.** `CY2027_SEND_BENEFICIARY_COPY` plus a configured channel plus a recorded `CALLBACK_CONTACT_PERMISSION` — all three required, none assumed. The message carries no name, ZIP, categories or appointment detail, and a marketing phrase throws. Previously: It is an outbound message, so it needs a channel, a consent check and owner authorization before it is wired. |
 | Quarantine STOPPING the lead workflow | **BUILT, FLAG OFF.** `CY2027_QUARANTINE_STOP` gates it; unset in production, so behaviour is unchanged today. When on, a flagged lead still creates the contact and the note — only the automated opportunity is withheld. Previously stated as owner-gated: §13 asks that a high-risk lead halt the automated workflow before appointment confirmation. The trust engine is wired into `api/submit-lead.js` and attaches `TRUST_*` flags plus a `[SECURITY-REVIEW]` task, but it deliberately changes NO routing: that is the live lead pipeline, and altering the opportunity/dialing control flow without end-to-end exercise would risk the core business function. Wiring the stop is a follow-up to run with the owner. |
 | In-person appointment gate in practice | `marketingGate()` refuses an in-person appointment without a written, non-superseded, evidenced SOA for that exact appointment. There is no booking endpoint in this repository — appointments are created by the advisor in GoHighLevel — so the process half (the advisor consulting the gate) is an owner workflow item. |
@@ -237,8 +279,9 @@ Stated plainly rather than implied:
 - `npm run build` — 46/46 routes prerendered; the parity guard runs inside the build.
 - `tsc -b` clean; `eslint .` clean.
 - `npm test` — 44/44 suites.
-- `scripts/test-cy2027-2026-10-01.mjs` — 223 assertions covering every gate in both
-  directions (blocks what it must block, still permits what must keep working).
+- `scripts/test-cy2027-2026-10-01.mjs` — covers every gate in both directions (blocks
+  what it must block, still permits what must keep working). The count grows with every
+  finding; run the suite for the current figure rather than trusting one written here.
 - **Independent red team (2026-10-02)** — 6 attack lenses, every claimed break
   re-run from scratch by a different agent before it counted. **37 findings
   reproduced: 9 critical, 22 high, 4 medium, 2 low. All 37 are fixed and pinned
@@ -260,7 +303,15 @@ Stated plainly rather than implied:
 - **Mutation-tested**, because a suite does not verify its own author's control:
   removing the in-person→written rule, admitting a prohibited trust signal, and marking
   one carrier overlay `VERIFIED_CURRENT` each make the suite fail. Files restored; the
-  suite returns to 223/223.
+  suite returns to green.
+- **Second independent red team (2026-10-03), on G08 and TPY-09.** Both commits were
+  broken as first written: the election was outside the evidence hash; a representative
+  signing produced a self-contradicting PDF; acknowledgements arrived pre-ticked after a
+  language change; the TPMO gate passed any page whose footer was correct; and eleven
+  G08 mutants plus four TPY-09 mutants passed the author's assertions, which were
+  source greps. Fixed as described in §2.1a and §8.1a. The rules are now functions
+  tested by calling them, and a 46-mutant run (handler, model, evidence, CRM, gate,
+  form) is killed 46/46.
 - Prerendered HTML verified to carry the CY2027 TPMO sentence (no SHIP reference) in
   both EN and ES, with zero occurrences of the CY2026 sentence remaining in `dist/`.
 
@@ -293,6 +344,29 @@ and which the render-time variant resolution no longer reaches.
 does not correct itself when the calendar rolls over — it needs a rebuild AND a
 promote. That is an owner decision; whether one day of stale wording is material
 is a compliance judgement for the owner or their counsel, not for this code.
+
+### 8.1a What the gates can and cannot see
+
+`scripts/tpmo-gate.mjs` is the one rule, used in two places:
+
+| Where | Compares | Catches | Cannot catch |
+|---|---|---|---|
+| `npm run build` (`prerender-body.mjs`) | each rendered page vs. the variant in force at build time | a stale **hand-written** sentence on a page; a wrong-language disclaimer; a non-canonical disclaimer | a stale **deploy** — at build time the page and the expectation come from the same clock |
+| `npm run preflight` | already-built `dist/` vs. the variant in force **now** | a build made before the cut-over | — |
+| `npm run preflight -- --url <origin>` | every page in that origin's sitemap (GET only) vs. the variant in force **now** | what is actually being **served** | — |
+
+Re-run on 2026-10-03 against production with `--url`: **still serving CY2026**
+(71 problems across the sitemap). It stays that way until a fresh build is promoted.
+
+Also found by the stricter gate and fixed: the chat assistant closed every advisor
+handoff with a TPMO disclaimer written by hand, eight times, still naming the SHIP.
+It now renders `tpmoDisclaimerText()`. The single-source check in
+`check-cy2027-parity.mjs` used to read a fixed list of four files; it now walks all
+of `src/` and `api/`.
+
+Promote sequence: `npm run build` → `npm run preflight` → push (Preview) →
+`npm run preflight -- --url <preview-url>` → `vercel promote` (owner) →
+`npm run preflight -- --url https://clearpointsenioradvisors.com`.
 
 ### 8.2 The SOA gate holds in production
 

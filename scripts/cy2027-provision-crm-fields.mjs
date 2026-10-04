@@ -5,7 +5,7 @@
 //
 // WHY THIS EXISTS: GoHighLevel addresses a custom field by its opaque ID, and
 // api/_lib/cy2027/crm-fields.js can only write fields it has an ID for. Creating
-// ~32 fields by hand in the UI and transcribing their IDs is error-prone busywork
+// dozens of fields by hand in the UI and transcribing their IDs is error-prone busywork
 // that would also produce exactly the "duplicate fields with slightly different
 // names" the spec forbids (§18).
 //

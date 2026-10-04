@@ -25,7 +25,8 @@ import {
 import {
   SOA_STATUS, SOA_METHOD, methodIsWritten, partitionSelection, createSoaInstance, completeSoaInstance,
   superseded, revokeSoaInstance, coversCategory, requiresScopeUpdate, marketingGate, requiresNewInstance,
-  LANGUAGE_SOURCE, languageWasElected,
+  LANGUAGE_SOURCE, languageWasElected, isSoaLanguage, languageElectionLabel, readLanguageElection,
+  electionAttributionError,
 } from '../api/_lib/cy2027/soa-instance.js';
 import {
   CONSENT_STATUS, createConsent, revokeConsent, classifyReply, isAffirmative, assertNoCrossInference, mayPlaceOutbound,
@@ -37,7 +38,10 @@ import {
 import { RECORD_CLASS, mayPurge, applyHold, releaseHold, callRetentionRequirement } from '../api/_lib/cy2027/retention.js';
 import { canDiscussCarrier, overlayInventory, assertPrivateContext, OVERLAY_STATUS } from '../api/_lib/cy2027/carrier-overlay.js';
 import { tpmoDisclaimerText, activeContractYearVariant, hasVerifiedTpmoCounts, assertDisclaimerSignable, TPMO_DISCLAIMER_CONFIG } from '../api/_lib/cy2027/tpmo.js';
-import { integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, emitAudit, redactForLog, renderTextSnapshot } from '../api/_lib/cy2027/evidence.js';
+import {
+  integrityHash, buildEvidenceRecord, verifyEvidence, auditEvent, emitAudit, redactForLog, renderTextSnapshot, AUDIT_ACTIONS,
+} from '../api/_lib/cy2027/evidence.js';
+import { checkTpmo, htmlToText, canonicalTpmoSentence } from './tpmo-gate.mjs';
 import {
   issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
 } from '../api/_lib/cy2027/secure-link.js';
@@ -56,7 +60,7 @@ import {
 } from '../api/_lib/cy2027/beneficiary-copy.js';
 import { parseCountyCsv } from '../api/_lib/cy2027/state-rules.js';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 let passed = 0;
 const failures = [];
@@ -308,8 +312,8 @@ const baseInput = {
     createSoaInstance({ ...baseInput, languageSource: 'SYSTEM_DEFAULT' }).errors?.languageSource === 'not_an_election');
   ok('G08: an inference from the lead is explicitly NOT signable',
     createSoaInstance({ ...baseInput, languageSource: 'INFERRED_FROM_LEAD' }).errors?.languageSource === 'not_an_election');
-  ok('G08: a representative may elect it',
-    createSoaInstance({ ...baseInput, soaId: 'soa_rep', languageSource: 'REPRESENTATIVE_ELECTED' }).ok === true);
+  ok('G08: a representative may elect it — when the record names the representative',
+    createSoaInstance({ ...baseInput, soaId: 'soa_rep', languageSource: 'REPRESENTATIVE_ELECTED', representativeRelationship: 'Daughter, power of attorney' }).ok === true);
   ok('G08: the election is carried on the instance',
     createSoaInstance(baseInput).instance.languageSource === 'BENEFICIARY_ELECTED');
   ok('G08: languageWasElected separates a choice from a fallback',
@@ -1382,22 +1386,11 @@ const baseInput = {
     !/Only covers NY, NJ, CT, FL service areas/.test(ZIPSRC));
   ok('SJ-11: it says what the code actually does', /the only authorized SERVICE areas/.test(ZIPSRC));
 
-  // TPY-09 — the prerender gate must check the YEAR, not just the presence of a
-  // TPMO-ish sentence. Production on 2026-10-02 passed the old check while
-  // serving the CY2026 wording on all 46 routes: the sentence was there, and it
-  // was last year's. A presence-only guard cannot see that.
-  const PRE = readFileSync(new URL('./prerender-body.mjs', import.meta.url), 'utf8');
-  ok('TPY-09: the gate imports the canonical disclaimer source',
-    /from '\.\.\/api\/_lib\/cy2027\/tpmo\.js'/.test(PRE) &&
-    /tpmoDisclaimerText/.test(PRE) && /activeContractYearVariant/.test(PRE));
-  ok('TPY-09: it compares the exact sentence, not a loose pattern',
-    /includes\(norm\(TPMO_EXPECT_EN\)\)/.test(PRE) && /includes\(norm\(TPMO_EXPECT_ES\)\)/.test(PRE));
-  ok('TPY-09: a wrong-year page is reported as a problem',
-    /problems\.push\([^)]*declaración TPMO/.test(PRE));
-  ok('TPY-09: it names the previous-year wording specifically',
-    /TPMO_WRONG_YEAR_RE/.test(PRE) && /State Health Insurance/.test(PRE));
-  // And the canonical source must actually differ year over year, or the check
-  // above would be comparing a constant to itself.
+  // ── TPY-09 — tested by CALLING the gate with synthetic pages ────────────────
+  // RED TEAM 2026-10-03: the first seven TPY-09 assertions were source greps. A
+  // full revert of the check plus ONE comment line passed all of them, and so
+  // did three half-reverts. The rule is now a pure function and every case
+  // below runs it; the few structural checks that remain go through strip().
   const pin = (v) => ({ pinContractYearVariant: true, contractYearVariant: v });
   ok('TPY-09: the two contract-year variants are not the same string',
     tpmoDisclaimerText('en', pin('CY2026')) !== tpmoDisclaimerText('en', pin('CY2027')));
@@ -1408,57 +1401,278 @@ const baseInput = {
     /Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2026'))) &&
     !/Programa Estatal de Asistencia/i.test(tpmoDisclaimerText('es', pin('CY2027'))));
 
-  // ── G08, end to end: client election → server refusal → stored evidence ────
+  const S27 = { en: canonicalTpmoSentence('en', 'CY2027'), es: canonicalTpmoSentence('es', 'CY2027') };
+  const S26 = { en: canonicalTpmoSentence('en', 'CY2026'), es: canonicalTpmoSentence('es', 'CY2026') };
+  const page = (...parts) => 'Medicare plans explained. ' + parts.join(' Another paragraph of the page. ') + ' Footer links.';
+  const gate = (path, text, opts = {}) => checkTpmo({ path, text, variant: 'CY2027', ...opts });
+
+  ok('TPY-09: a page with this year\'s sentence passes', gate('/about', page(S27.en)).length === 0);
+  ok('TPY-09: a Spanish route with this year\'s Spanish sentence passes', gate('/es/about', page(S27.es)).length === 0);
+  ok('TPY-09: a bilingual shell passes on both kinds of route',
+    gate('/about', page(S27.en, S27.es)).length === 0 && gate('/es', page(S27.en, S27.es)).length === 0);
+  ok('TPY-09: a page with ONLY last year\'s sentence fails', gate('/about', page(S26.en)).length > 0);
+  ok('TPY-09: this year\'s footer does not excuse last year\'s sentence in the body',
+    gate('/about', page(S26.en, S27.en)).some((p) => /CY2026/.test(p)));
+  ok('TPY-09: nor in Spanish', gate('/es/about', page(S26.es, S27.es)).some((p) => /CY2026/.test(p)));
+  ok('TPY-09: an /es route whose only disclaimer is English fails',
+    gate('/es/about', page(S27.en)).some((p) => /español/.test(p)));
+  ok('TPY-09: an English route whose only disclaimer is Spanish fails',
+    gate('/about', page(S27.es)).some((p) => /inglés/.test(p)));
+  ok('TPY-09: a thin page may omit the disclaimer', gate('/support', 'Chat with us.', { thin: true }).length === 0);
+  ok('TPY-09: a normal page may not', gate('/about', 'Only prose here, and no disclaimer.').length === 1);
+  ok('TPY-09: a thin page that CARRIES last year\'s sentence still fails',
+    gate('/support', page(S26.en), { thin: true }).length > 0 &&
+    gate('/es/support', page(S26.es), { thin: true }).length > 0);
+  ok('TPY-09: a hand-written, abridged disclaimer fails even beside the canonical one',
+    gate('/terms', page('We do not offer every plan available in your area. Call us today.', S27.en))
+      .some((p) => /no coincide/.test(p)));
+  ok('TPY-09: prose that states the fact mid-sentence is not judged as a disclaimer',
+    gate('/', page('Unlike captive agents, we do not offer every plan available in your area, and the carrier pays us.', S27.en)).length === 0);
+  ok('TPY-09: the gate works in the other direction too',
+    checkTpmo({ path: '/about', text: page(S26.en), variant: 'CY2026' }).length === 0 &&
+    checkTpmo({ path: '/about', text: page(S27.en), variant: 'CY2026' }).length > 0);
+  ok('TPY-09: an unknown variant is a failure, not a pass',
+    checkTpmo({ path: '/about', text: page(S27.en), variant: 'CY2099' }).length === 1);
+  ok('TPY-09: markup and line breaks between the words do not hide the sentence',
+    gate('/about', htmlToText('<p>' + S27.en.replace('Medicare.gov', '<a href="https://www.medicare.gov">Medicare.gov</a>').replace(/ /g, '\n  ') + '</p>')).length === 0);
+  ok('TPY-09: a sentence inside a <script> does not satisfy the gate',
+    gate('/about', htmlToText('<script>var x = "' + S27.en + '";</script><p>Nothing else here.</p>')).length === 1);
+
+  const PRE = strip(readFileSync(new URL('./prerender-body.mjs', import.meta.url), 'utf8'));
+  ok('TPY-09: the build runs the gate on every page, thin or not',
+    // Anchored to the start of the line: `if (false) problems.push(…)` survived
+    // the unanchored form in the mutation run.
+    /^[ \t]*problems\.push\(\.\.\.checkTpmo\(\{ path: t\.path, text, thin, variant: TPMO_VARIANT \}\)\);/m.test(PRE));
+  ok('TPY-09: the build keeps no private copy of the rule',
+    !/TPMO_EXPECT_EN|TPMO_WRONG_YEAR_RE|TPMO_RE\b/.test(PRE));
+  const PREFLIGHT = strip(readFileSync(new URL('./cy2027-preflight.mjs', import.meta.url), 'utf8'));
+  ok('TPY-09: preflight checks what is BUILT against today\'s variant',
+    /^[ \t]*bad\.push\(\.\.\.checkTpmo\(\{ path: p\.path, text, thin: true, variant \}\)\);/m.test(PREFLIGHT) &&
+    /blocks\.push\(`dist\/ does not match contract year/.test(PREFLIGHT));
+  ok('TPY-09: and, with --url, what is SERVED',
+    /process\.argv\.indexOf\('--url'\)/.test(PREFLIGHT) &&
+    /^[ \t]*bad\.push\(\.\.\.checkTpmo\(\{ path, text, thin: true, variant \}\)\);/m.test(PREFLIGHT) &&
+    /is serving another contract year/.test(PREFLIGHT));
+  const VERCELIGNORE = readFileSync(new URL('../.vercelignore', import.meta.url), 'utf8');
+  ok('TPY-09: the gate module ships to the Vercel build', /^!scripts\/tpmo-gate\.mjs\r?$/m.test(VERCELIGNORE));
+
+  // The chat handoff carried eight hand-written disclaimers naming the SHIP.
+  const ENGINE = strip(readFileSync(new URL('../src/lib/customerServiceEngine.ts', import.meta.url), 'utf8'));
+  ok('TPY-09: the chat handoff no longer carries a hand-written disclaimer',
+    !/(?:do not offer every plan|no ofrecemos todos los planes)[^.,;:!?`'"]{0,40}\./i.test(ENGINE));
+  ok('TPY-09: it renders the canonical sentence in all eight places',
+    (ENGINE.match(/\$\{handoffTpmoLine\('en'\)\}/g) || []).length === 4 &&
+    (ENGINE.match(/\$\{handoffTpmoLine\('es'\)\}/g) || []).length === 4 &&
+    /\$\{_tpmoDisclaimerText\('es'\)\}/.test(ENGINE) && /\$\{_tpmoDisclaimerText\('en'\)\}/.test(ENGINE));
+  const SHELL = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  ok('TPY-09: the static shell carries the canonical sentence in both languages',
+    SHELL.includes(tpmoDisclaimerText('en')) && SHELL.includes(tpmoDisclaimerText('es')));
+
+  // ── G08 — tested by calling the rule ────────────────────────────────────────
+  // RED TEAM 2026-10-03: eleven mutants of the first G08 commit passed its
+  // assertions, including the handler reverted to the old coalesce. What can be
+  // a function is now a function and is exercised directly.
   ok('G08: every entry in the table is keyed by its own code',
     Object.entries(LANGUAGE_SOURCE).every(([k, v]) => v.code === k));
+  ok('G08: the rows of the deciding tables cannot be edited in place',
+    Object.values(LANGUAGE_SOURCE).every(Object.isFrozen) && Object.values(SOA_METHOD).every(Object.isFrozen));
+  ok('G08: an attempt to make a default signable changes nothing', (() => {
+    try { LANGUAGE_SOURCE.SYSTEM_DEFAULT.signable = true; } catch { /* frozen: assignment throws in a module */ }
+    return languageWasElected('SYSTEM_DEFAULT') === false;
+  })());
+  for (const bad of [['BENEFICIARY_ELECTED'], { toString() { return 'BENEFICIARY_ELECTED'; } }, 'constructor', '__proto__',
+    'toString', 'hasOwnProperty', 'beneficiary_elected', ' BENEFICIARY_ELECTED', 0, true, null, undefined]) {
+    const shown = typeof bad === 'string' ? JSON.stringify(bad) : Object.prototype.toString.call(bad);
+    ok('G08: ' + shown + ' is not an election',
+      languageWasElected(bad) === false &&
+      createSoaInstance({ ...baseInput, languageSource: bad }).errors?.languageSource === 'election_required');
+  }
+  ok('G08: only en and es are document languages',
+    isSoaLanguage('en') && isSoaLanguage('es') &&
+    ['EN', 'es ', 'fr', '', null, undefined, ['es'], { toString() { return 'es'; } }].every((v) => isSoaLanguage(v) === false));
+
+  const rd = readLanguageElection;
+  ok('G08: a complete election is read as given',
+    JSON.stringify(rd({ language: 'es', languageSource: 'BENEFICIARY_ELECTED' })) ===
+    JSON.stringify({ ok: true, language: 'es', languageSource: 'BENEFICIARY_ELECTED' }));
+  ok('G08: an absent language is NOT coalesced to Spanish',
+    rd({ languageSource: 'BENEFICIARY_ELECTED' }).reason === 'LANGUAGE_NOT_SUPPLIED');
+  ok('G08: nor is an unsupported, wrong-cased or padded one',
+    ['fr', 'ES', 'es ', '', 1, ['es']].every((l) => rd({ language: l, languageSource: 'BENEFICIARY_ELECTED' }).reason === 'LANGUAGE_NOT_SUPPLIED'));
+  ok('G08: a language with no recorded election is refused',
+    [undefined, '', '   ', ['BENEFICIARY_ELECTED'], 7, {}].every((s) => rd({ language: 'es', languageSource: s }).reason === 'ELECTION_NOT_RECORDED'));
+  ok('G08: a default or an inference is named as not an election',
+    ['SYSTEM_DEFAULT', 'INFERRED_FROM_LEAD', 'whatever', 'constructor'].every((s) => rd({ language: 'es', languageSource: s }).reason === 'NOT_AN_ELECTION'));
+  ok('G08: a body that is not an object does not throw', [null, undefined, 'x', 7, []].every((b) => rd(b).ok === false));
 
   const SIGN5 = strip(readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8'));
-  ok('G08: the server no longer coalesces a missing language to Spanish',
-    !/body\.language === 'en' \? 'en' : 'es'/.test(SIGN5));
-  ok('G08: it reads the election as its own field',
-    /body\.languageSource/.test(SIGN5));
-  ok('G08: it refuses a signature without an election',
-    /languageWasElected\(languageSource\)/.test(SIGN5) &&
-    /SOA_LANGUAGE_ELECTION_REQUIRED/.test(SIGN5));
-  ok('G08: the refusal is auditable', /action: 'SOA_REFUSED'/.test(SIGN5));
+  ok('G08: the handler takes the election from that function and nowhere else',
+    /var election = readLanguageElection\(body\);/.test(SIGN5) &&
+    !/body\.language\b/.test(SIGN5) && !/body\.languageSource/.test(SIGN5));
+  ok('G08: it refuses, with the named reason, when there is no election',
+    /if \(!election\.ok\) \{[\s\S]{0,500}?return res\.status\(400\)\.json\(\{ error: 'SOA_LANGUAGE_ELECTION_REQUIRED', reason: election\.reason \}\);/.test(SIGN5));
+  ok('G08: the refusal comes before any instance is built',
+    SIGN5.indexOf('if (!election.ok) {') > -1 && SIGN5.indexOf('if (!election.ok) {') < SIGN5.indexOf('createSoaInstance({'));
+  ok('G08: the refusal is audited without echoing attacker-controlled strings',
+    /action: 'SOA_REFUSED'/.test(SIGN5) && /details: \{ reason: election\.reason \},/.test(SIGN5));
   ok('G08: the election reaches the instance, the note and the PDF',
-    /languageSource: languageSource/.test(SIGN5) &&
+    /languageSource: languageSource,/.test(SIGN5) &&
     /'language_source: ' \+ instance\.languageSource/.test(SIGN5) &&
-    /languageSource: instance\.languageSource/.test(SIGN5));
+    /languageSource: instance\.languageSource,/.test(SIGN5));
+  {
+    const apiDir = new URL('../api/', import.meta.url);
+    const used = new Set();
+    for (const f of readdirSync(apiDir).filter((n) => n.endsWith('.js'))) {
+      const src = strip(readFileSync(new URL(f, apiDir), 'utf8'));
+      for (const m of src.matchAll(/emitAudit\(\{\s*action: '([A-Z_]+)'/g)) used.add(m[1]);
+    }
+    const unknown = [...used].filter((a) => !AUDIT_ACTIONS.includes(a));
+    ok('G08: every audit action a handler emits is a registered one', used.size >= 4 && unknown.length === 0, unknown.join(', '));
+  }
 
-  const FORM2 = strip(readFileSync(new URL('../src/components/SOAForm.tsx', import.meta.url), 'utf8'));
-  ok('G08: the form asks before it discloses anything',
-    /elected === null/.test(FORM2) && /Language \/ Idioma/.test(FORM2));
-  ok('G08: neither option is preselected',
-    /useState<'en' \| 'es' \| null>\(null\)/.test(FORM2));
-  ok('G08: the prompt itself is bilingual',
-    /Choose the language for this document/.test(FORM2) && /Elija el idioma de este documento/.test(FORM2));
-  ok('G08: it sends the shared election code, not a literal',
-    /LANGUAGE_SOURCE\.BENEFICIARY_ELECTED\.code/.test(FORM2) &&
-    /LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED\.code/.test(FORM2) &&
-    /languageSource: electionSource/.test(FORM2));
-  ok('G08: the way back to the election sits above the state question, not behind it',
-    // `strip` leaves an empty `{}` where the JSX comment was.
-    /\{Header\}\s*(?:\{\}\s*)?<div className="flex justify-end -mt-4">\{LangChange\}<\/div>\s*\{Tpmo\}/.test(FORM2));
-  ok('G08: each option is announced in its own language',
-    /onClick=\{\(\) => setElected\('en'\)\}\s*lang="en"/.test(FORM2) &&
-    /onClick=\{\(\) => setElected\('es'\)\}\s*lang="es"/.test(FORM2));
-  ok('G08: a representative signing is attributed to the representative',
-    /representativeAuthority\.trim\(\)\s*\?\s*LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED/.test(FORM2));
+  // Attribution: who elected has to agree with who signed.
+  ok('G08: "elected by representative" needs a representative on the record',
+    createSoaInstance({ ...baseInput, languageSource: 'REPRESENTATIVE_ELECTED' }).errors?.languageSource === 'representative_required' &&
+    createSoaInstance({ ...baseInput, languageSource: 'REPRESENTATIVE_ELECTED', representativeRelationship: '   ' }).errors?.languageSource === 'representative_required');
+  ok('G08: a representative on the record cannot be attributed to the beneficiary',
+    createSoaInstance({ ...baseInput, representativeRelationship: 'Daughter, power of attorney' }).errors?.languageSource === 'election_attribution_mismatch');
+  ok('G08: a consistent representative signing is accepted and stored trimmed', (() => {
+    const r = createSoaInstance({ ...baseInput, soaId: 'g08rep', languageSource: 'REPRESENTATIVE_ELECTED', representativeRelationship: '  Daughter, POA ' });
+    return r.ok === true && r.instance.representativeRelationship === 'Daughter, POA';
+  })());
+  ok('G08: electionAttributionError is silent when the two agree',
+    electionAttributionError('BENEFICIARY_ELECTED', null) === null &&
+    electionAttributionError('REPRESENTATIVE_ELECTED', 'Son') === null);
+  ok('G08: the handler reads the representative and hands it to the model',
+    /body\.representativeRelationship/.test(SIGN5) &&
+    /representativeRelationship: representativeRelationship \|\| null,/.test(SIGN5));
+  ok('G08: the SOA_SIGNED audit names who signed and how the language was chosen',
+    /actor: instance\.representativeRelationship \? 'representative:channel-verified' : 'beneficiary:channel-verified',/.test(SIGN5) &&
+    /language: instance\.language, languageSource: instance\.languageSource,/.test(SIGN5));
 
-  const SIGNPAGE = readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8');
-  ok('G08: the page default is documented as presentation-only',
-    /display default and must never become the language/.test(SIGNPAGE));
-  ok('G08: the page does not override what the form elected',
-    !/language: language/.test(SIGNPAGE));
+  // Evidence: the election is inside the hash.
+  const bare = createSoaInstance({ ...baseInput, soaId: 'g08ev' }).instance;
+  const evArgs = { stateName: 'New York', signature: 'Jane Q Public', signedAt: '2026-11-01T10:00:00Z' };
+  const evBen = buildEvidenceRecord(bare, evArgs);
+  ok('G08: the election is inside the evidence record', evBen.record.languageSource === 'BENEFICIARY_ELECTED');
+  ok('G08: an untouched record verifies', verifyEvidence(evBen.record).ok === true);
+  ok('G08: flipping the stored election is detected',
+    verifyEvidence({ ...evBen.record, languageSource: 'REPRESENTATIVE_ELECTED' }).reason === 'HASH_MISMATCH');
+  ok('G08: deleting it is detected too', (() => {
+    const rest = { ...evBen.record };
+    delete rest.languageSource;
+    return verifyEvidence(rest).reason === 'HASH_MISMATCH';
+  })());
+  for (const [label, inst] of [
+    ['no election', { ...bare, languageSource: undefined }],
+    ['a system default', { ...bare, languageSource: 'SYSTEM_DEFAULT' }],
+    ['an inference', { ...bare, languageSource: 'INFERRED_FROM_LEAD' }],
+    ['no language', { ...bare, language: undefined }],
+  ]) {
+    throws('G08: evidence cannot be built for an instance with ' + label, () => buildEvidenceRecord(inst, evArgs), /SOA_LANGUAGE_NOT_ELECTED/);
+    throws('G08: nor can it be completed (' + label + ')',
+      () => completeSoaInstance(inst, { integrityHash: 'sha256:x', evidenceReference: 'ev' }), /SOA_LANGUAGE_NOT_ELECTED/);
+  }
+  throws('G08: the text snapshot is never English by default',
+    () => renderTextSnapshot({ ...bare, language: undefined }, 'New York'), /SOA_LANGUAGE_NOT_ELECTED/);
+  throws('G08: evidence refuses a contradictory attribution',
+    () => buildEvidenceRecord({ ...bare, languageSource: 'REPRESENTATIVE_ELECTED' }, evArgs), /representative_required/);
 
+  // The marketing gate.
+  const signedG = completeSoaInstance(bare, { completedAt: '2026-11-10T14:00:00Z', integrityHash: 'sha256:x', evidenceReference: 'ev_1' });
+  const apptG = { appointmentId: 'appt_1', startsAt: '2026-11-10T15:00:00Z', state: 'NY', format: 'TELEPHONE' };
+  ok('G08: the gate opens for an elected language', marketingGate(signedG, apptG, CMS_RULESET_2027).allowed === true);
+  ok('G08: and stays shut for a record with no election',
+    marketingGate({ ...signedG, languageSource: undefined }, apptG, CMS_RULESET_2027).reason === 'SOA_LANGUAGE_NOT_ELECTED');
+  ok('G08: or with a default, or with no language',
+    marketingGate({ ...signedG, languageSource: 'SYSTEM_DEFAULT' }, apptG, CMS_RULESET_2027).reason === 'SOA_LANGUAGE_NOT_ELECTED' &&
+    marketingGate({ ...signedG, language: undefined }, apptG, CMS_RULESET_2027).reason === 'SOA_LANGUAGE_NOT_ELECTED');
+
+  // The label: one function for the screen and the PDF, and it never guesses.
+  ok('G08: the label reads the same on screen and on the PDF',
+    languageElectionLabel('BENEFICIARY_ELECTED', 'es') === 'Elegido por el beneficiario' &&
+    languageElectionLabel('REPRESENTATIVE_ELECTED', 'en') === 'Elected by representative');
+  for (const bad of [undefined, 'SYSTEM_DEFAULT', 'INFERRED_FROM_LEAD', 'x']) {
+    throws('G08: there is no label for ' + String(bad), () => languageElectionLabel(bad, 'en'), /SOA_LANGUAGE_NOT_ELECTED/);
+  }
+  throws('G08: nor in an unknown language', () => languageElectionLabel('BENEFICIARY_ELECTED', 'fr'), /unknown language/);
+  ok('G08: the PDF prints the label from that function, never a fallback',
+    /languageElectionLabel\(opts\.languageSource, L === 'es' \? 'es' : 'en'\)/.test(SIGN5) && !/Elected by beneficiary/.test(SIGN5));
+  ok('G08: the PDF signature heading names both possible signers',
+    /SOA_TEXT\[L === 'es' \? 'es' : 'en'\]\.fields\.signature/.test(SIGN5) && !/Beneficiary Electronic Signature/.test(SIGN5));
+
+  // The CRM.
+  const cf = (values) => buildCustomFields(values, {
+    CY2027_CRM_FIELD_IDS: JSON.stringify({ SOA_LANGUAGE: 'id1', SOA_LANGUAGE_SOURCE: 'id2', SOA_PLAN_YEAR: 'id3' }),
+  });
+  ok('G08: a confirmed election is written',
+    cf({ SOA_LANGUAGE: { value: 'es', source: 'BENEFICIARY_CONFIRMED' }, SOA_LANGUAGE_SOURCE: 'BENEFICIARY_ELECTED' }).mapped === 2);
+  for (const src of ['AI_INFERRED', 'ai_inferred', 'INFERRED_FROM_LEAD', 'GUESS', '', null, undefined]) {
+    ok('G08: provenance ' + JSON.stringify(src) + ' may not write a confirmed-only field',
+      cf({ SOA_LANGUAGE: { value: 'es', source: src } }).refused.join() === 'SOA_LANGUAGE');
+  }
+  ok('G08: a non-election is never written as the election',
+    cf({ SOA_LANGUAGE_SOURCE: 'SYSTEM_DEFAULT' }).refused.join() === 'SOA_LANGUAGE_SOURCE' &&
+    cf({ SOA_LANGUAGE_SOURCE: 'INFERRED_FROM_LEAD' }).refused.join() === 'SOA_LANGUAGE_SOURCE');
+  ok('G08: fields that are not confirmed-only keep their old rule',
+    cf({ SOA_PLAN_YEAR: { value: 2027, source: 'AI_INFERRED' } }).mapped === 1);
   ok('G08: the election is a queryable CRM field',
     CY2027_FIELD_KEYS.SOA_LANGUAGE_SOURCE === 'contact.soa_language_source');
-  ok('G08: and an inference may not overwrite it',
+  ok('G08: it is declared confirmed-only together with the language',
     CONFIRMED_ONLY_FIELDS.includes('SOA_LANGUAGE_SOURCE') && CONFIRMED_ONLY_FIELDS.includes('SOA_LANGUAGE'));
   ok('G08: it is flattened out of the instance',
     soaInstanceToFields(createSoaInstance({ ...baseInput, soaId: 'g08' }).instance).SOA_LANGUAGE_SOURCE
       === 'BENEFICIARY_ELECTED');
+
+  // The form. These are structural — a browser run is the behavioural check —
+  // but each is anchored so that disabling the behaviour breaks the match.
+  const FORM2 = strip(readFileSync(new URL('../src/components/SOAForm.tsx', import.meta.url), 'utf8'));
+  ok('G08: the election screen returns before the read-back and the form',
+    FORM2.indexOf('if (elected === null) {') > -1 &&
+    FORM2.indexOf('if (elected === null) {') < FORM2.indexOf("if (step === 'review') {") &&
+    FORM2.indexOf("if (step === 'review') {") < FORM2.indexOf('onSubmit={goToReview}'));
+  ok('G08: no document text is shown before the election',
+    /\{elected !== null && <p className="[^"]*">\{txt\.intro\}<\/p>\}/.test(FORM2));
+  ok('G08: neither option is preselected', /useState<'en' \| 'es' \| null>\(null\)/.test(FORM2));
+  ok('G08: the election changes in exactly three places — the two options and the way back',
+    (FORM2.match(/setElected\(/g) || []).length === 3 &&
+    /onClick=\{\(\) => setElected\('en'\)\}/.test(FORM2) && /onClick=\{\(\) => setElected\('es'\)\}/.test(FORM2));
+  ok('G08: the prompt is bilingual and promises only what the document does',
+    /Choose the language for this document\./.test(FORM2) && /Elija el idioma de este documento\./.test(FORM2) &&
+    !/Everything you sign will be in the language you pick/.test(FORM2) &&
+    !/Todo lo que firme estará en el idioma/.test(FORM2));
+  const CHANGE = (FORM2.match(/const changeLanguage = \(\) => \{([\s\S]*?)\n\s*\};/) || [])[1] || '';
+  ok('G08: changing language withdraws everything that was affirmed',
+    /setAckNoObl\(false\);/.test(CHANGE) && /setAckEsig\(false\);/.test(CHANGE) &&
+    /setSignature\(''\);/.test(CHANGE) && /setErrors\(\{\}\);/.test(CHANGE) && /setElected\(null\);/.test(CHANGE));
+  ok('G08: the way back uses that handler and exists on both steps',
+    /onClick=\{changeLanguage\}/.test(FORM2) && (FORM2.match(/\{LangChange\}/g) || []).length === 2);
+  ok('G08: the acknowledgements never start ticked',
+    /const \[ackNoObl, setAckNoObl\] = useState\(false\);/.test(FORM2) &&
+    /const \[ackEsig, setAckEsig\] = useState\(false\);/.test(FORM2));
+  ok('G08: focus follows the view instead of falling to the page',
+    /headingRef\.current\?\.focus\(\);\s*\}, \[elected, step\]\);/.test(FORM2) &&
+    /ref=\{headingRef\}\s*tabIndex=\{-1\}/.test(FORM2));
+  ok('G08: the elected document is marked with its language on both steps',
+    (FORM2.match(/noValidate lang=\{L\}/g) || []).length === 2);
+  ok('G08: each option is announced in its own language',
+    /onClick=\{\(\) => setElected\('en'\)\}\s*lang="en"/.test(FORM2) &&
+    /onClick=\{\(\) => setElected\('es'\)\}\s*lang="es"/.test(FORM2));
+  ok('G08: it sends the shared election code, not a literal',
+    /LANGUAGE_SOURCE\.BENEFICIARY_ELECTED\.code/.test(FORM2) &&
+    /LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED\.code/.test(FORM2) &&
+    /languageSource: electionSource,/.test(FORM2));
+  ok('G08: a representative signing is attributed to the representative',
+    /representativeAuthority\.trim\(\)\s*\?\s*LANGUAGE_SOURCE\.REPRESENTATIVE_ELECTED/.test(FORM2));
+  ok('G08: the read-back shows the label, not a raw code',
+    /value=\{languageElectionLabel\(electionSource, L\)\}/.test(FORM2));
+
+  const SIGNPAGE = strip(readFileSync(new URL('../src/pages/SignSOA.tsx', import.meta.url), 'utf8'));
+  ok('G08: the page never overrides what the form elected',
+    !/language: language/.test(SIGNPAGE) && /\{ \.\.\.formData, token, leadSource:/.test(SIGNPAGE));
+  ok('G08: after signing, the page speaks the elected language',
+    /const language: 'en' \| 'es' = electedLanguage \?\? lead\?\.language \?\? 'es';/.test(SIGNPAGE) &&
+    /if \(formData\.language === 'en' \|\| formData\.language === 'es'\) setElectedLanguage\(formData\.language\);/.test(SIGNPAGE));
 }
 
 if (failures.length) {

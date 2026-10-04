@@ -45,7 +45,9 @@ import { tpmoDisclaimerText, assertDisclaimerSignable, TPMO_DISCLAIMER_VERSION }
 // as a value to trust.
 import { resolveRuleset } from './_lib/cy2027/rulesets.js';
 import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
-import { createSoaInstance, completeSoaInstance, languageWasElected } from './_lib/cy2027/soa-instance.js';
+import {
+  createSoaInstance, completeSoaInstance, readLanguageElection, languageElectionLabel,
+} from './_lib/cy2027/soa-instance.js';
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
 import { buildEvidenceRecord, emitAudit } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
@@ -136,15 +138,22 @@ export default async function handler(req, res) {
   var address = typeof body.address === 'string' ? body.address.trim() : '';
   var ack = (body.acknowledgements && typeof body.acknowledgements === 'object') ? body.acknowledgements : {};
   var signature = typeof body.signature === 'string' ? body.signature.trim() : '';
-  // AUDIT 2026-10-02 (G08) — this used to be
-  //     var language = body.language === 'en' ? 'en' : 'es';
-  // which turns absent, malformed and "the beneficiary actually chose Spanish"
-  // into the same stored value. The language is the language the disclosures
-  // were READ in, so on a signed record it has to be an election, not a
-  // coalesce. Read the two fields separately and let createSoaInstance refuse
-  // anything that is not an election.
-  var language = body.language === 'en' || body.language === 'es' ? body.language : null;
-  var languageSource = typeof body.languageSource === 'string' ? body.languageSource.trim() : '';
+  // AUDIT 2026-10-02 (G08) — this used to coalesce anything that was not 'en'
+  // into 'es', which turns absent, malformed and "the beneficiary actually chose
+  // Spanish" into the same stored value. The language is the language the
+  // disclosures were READ in, so on a signed record it has to be an election.
+  // The rule lives in readLanguageElection() so it is tested by calling it.
+  var election = readLanguageElection(body);
+  var language = election.ok ? election.language : null;
+  var languageSource = election.ok ? election.languageSource : null;
+  // RED TEAM 2026-10-03 (G08, HIGH) — the form has always sent
+  // representativeRelationship and this handler dropped it, so a representative
+  // signing produced a PDF saying "(beneficiary signing)" next to "Elected by
+  // representative". It is read here and cross-checked against the election in
+  // createSoaInstance; the client's attribution is a claim to check, not a fact.
+  var representativeRelationship = typeof body.representativeRelationship === 'string'
+    ? body.representativeRelationship.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+    : '';
   var leadSource = body.leadSource === 'smart_review' ? 'smart_review' : 'customer_service';
 
   // CY2027 fields. The browser sends them; none of them is trusted.
@@ -168,16 +177,18 @@ export default async function handler(req, res) {
   // G08 — refuse before anything downstream can coalesce a missing election
   // into 'es'. The reason is named so a client bug is diagnosable from the log
   // rather than appearing as a signed Spanish document nobody chose.
-  if (!language || !languageWasElected(languageSource)) {
+  if (!election.ok) {
     emitAudit({
       action: 'SOA_REFUSED', actor: 'system:sign-soa', result: 'LANGUAGE_ELECTION_REQUIRED', source: 'WEB',
       correlationId: link.beneficiaryRef || 'unlinked',
-      details: { language: language || '(absent)', languageSource: languageSource || '(absent)' },
+      // The named reason only: the raw values are attacker-controlled strings
+      // and have no business in a log line.
+      details: { reason: election.reason },
     });
-    return res.status(400).json({
-      error: 'SOA_LANGUAGE_ELECTION_REQUIRED',
-      reason: !language ? 'LANGUAGE_NOT_SUPPLIED' : (languageSource ? 'NOT_AN_ELECTION' : 'ELECTION_NOT_RECORDED'),
-    });
+    return res.status(400).json({ error: 'SOA_LANGUAGE_ELECTION_REQUIRED', reason: election.reason });
+  }
+  if (representativeRelationship.length > 160) {
+    return res.status(400).json({ error: 'Invalid representative relationship' });
   }
 
   // ── CY2027 gates, server-side and fail-closed ──────────────────────────
@@ -227,6 +238,7 @@ export default async function handler(req, res) {
     county: county,
     language: language,
     languageSource: languageSource,
+    representativeRelationship: representativeRelationship || null,
     method: 'WEB_ELECTRONIC_SIGNATURE',
     beneficiaryName: fullName || record.fullName,
     selectedCategories: selectedCategories,
@@ -362,9 +374,12 @@ export default async function handler(req, res) {
     details: { uri: stored.uri, retentionYears: stored.retentionYears, integrityHash: instance.integrityHash },
   });
   emitAudit({
-    action: 'SOA_SIGNED', actor: 'beneficiary:channel-verified', result: 'OK', source: instance.source,
+    action: 'SOA_SIGNED',
+    actor: instance.representativeRelationship ? 'representative:channel-verified' : 'beneficiary:channel-verified',
+    result: 'OK', source: instance.source,
     correlationId: instance.soaId, soaId: instance.soaId,
     details: {
+      language: instance.language, languageSource: instance.languageSource,
       planYear: instance.planYear, state: instance.state, appointmentId: instance.appointmentId,
       method: instance.method, authorized: instance.authorizedCategories.join(','),
       declined: instance.declinedCategories.join(','),
@@ -636,7 +651,9 @@ function buildSoaPdf(opts) {
       doc.moveDown(0.6);
 
       // Signature
-      doc.font('Helvetica-Bold').fontSize(10).text(L === 'es' ? 'Firma Electrónica del Beneficiario' : 'Beneficiary Electronic Signature');
+      // The approved heading names both possible signers; "Beneficiary Electronic
+      // Signature" was wrong on every document a representative signed.
+      doc.font('Helvetica-Bold').fontSize(10).text(SOA_TEXT[L === 'es' ? 'es' : 'en'].fields.signature);
       doc.font('Helvetica-Oblique').fontSize(14).text(opts.signature);
       doc.font('Helvetica').fontSize(8).fillColor('#555').text((L === 'es' ? 'Firmado el ' : 'Signed on ') + opts.signedAt + ' UTC  ·  ' + (L === 'es' ? 'IP: ' : 'IP: ') + opts.signerIp);
       doc.fillColor('#000');
@@ -666,10 +683,11 @@ function buildSoaPdf(opts) {
       // G08 — the language of the document is also EVIDENCE: a reader has to be
       // able to tell that the beneficiary elected it rather than that a default
       // picked it for them.
+      // languageElectionLabel THROWS on anything that is not an election. The
+      // first version printed "Elected by beneficiary" for every value other
+      // than REPRESENTATIVE_ELECTED — undefined and SYSTEM_DEFAULT included.
       kv(doc, L === 'es' ? 'Elección de idioma' : 'Language election',
-        opts.languageSource === 'REPRESENTATIVE_ELECTED'
-          ? (L === 'es' ? 'Elegido por el representante' : 'Elected by representative')
-          : (L === 'es' ? 'Elegido por el beneficiario' : 'Elected by beneficiary'));
+        languageElectionLabel(opts.languageSource, L === 'es' ? 'es' : 'en'));
       kv(doc, L === 'es' ? 'Creado' : 'Created at', opts.signedAt + ' UTC');
       kv(doc, L === 'es' ? 'Completado' : 'Completed at', opts.signedAt + ' UTC');
       kv(doc, L === 'es' ? 'Origen' : 'Source', opts.source || 'WEB');

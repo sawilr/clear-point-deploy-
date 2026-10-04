@@ -24,6 +24,24 @@ import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailS
 import { TCPA_CONSENT_TEXT_EN as _TCPA_EN, TCPA_CONSENT_TEXT_ES as _TCPA_ES } from './disclaimerVersion.ts';
 import { hasSessionOptOut } from './optOutGuard.ts';
 import { SOA_ENABLED } from './soaContent.ts';
+import { tpmoDisclaimerText as _tpmoDisclaimerText } from './tpmoConfig.ts';
+
+// AUDIT 2026-10-03 (TPY-09 follow-up) — the advisor-handoff message closed with
+// a TPMO disclaimer that was WRITTEN BY HAND, eight times (four per language),
+// and it still named the SHIP: last year's wording, live in chat, after the
+// CY2027 cut-over. Nothing caught it because the single-source guard scanned a
+// fixed list of four files and the prerender gate only sees prerendered pages.
+// 42 CFR 422.2267(e)(41) requires the standardized disclaimer to be conveyed in
+// online chat, so this is the same defect as a stale page — in the channel a
+// beneficiary is actually reading. It now renders from the one canonical
+// function, which resolves the contract-year variant from the calendar.
+// The phone line is supplementary and deliberately kept OUTSIDE the standardized
+// sentence, which must stay verbatim.
+function handoffTpmoLine(lang: 'en' | 'es'): string {
+  return lang === 'es'
+    ? `*ClearPoint Senior Advisors es una agencia independiente. ${_tpmoDisclaimerText('es')}*\n\n*1-800-MEDICARE es el 1-800-633-4227 (TTY 1-877-486-2048), las 24 horas, con atención en español.*`
+    : `*ClearPoint Senior Advisors is an independent agency. ${_tpmoDisclaimerText('en')}*\n\n*1-800-MEDICARE is 1-800-633-4227 (TTY 1-877-486-2048), 24 hours a day, with Spanish available.*`;
+}
 
 export type Language = 'en' | 'es' | null;
 
@@ -8368,8 +8386,8 @@ function processMessageInner(
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiphelp.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiphelp.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n${handoffTpmoLine('es')}\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n${handoffTpmoLine('en')}\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
@@ -8409,8 +8427,8 @@ function processMessageInner(
             ? `That's okay${withName(newState.name)}, you don't have to share your ZIP.`
             : `Perfect${withName(newState.name)}.`;
           const outA = isSpanish
-            ? `${leadEs} Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiphelp.org.*\n\nGracias por su confianza.`
-            : `${leadEn} I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiphelp.org.*\n\nThank you for your trust.`;
+            ? `${leadEs} Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n${handoffTpmoLine('es')}\n\nGracias por su confianza.`
+            : `${leadEn} I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n${handoffTpmoLine('en')}\n\nThank you for your trust.`;
           newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
           return { response: outA, newState, needsHuman: true };
         }
@@ -8502,8 +8520,8 @@ function processMessageInner(
       newState.step = 'conversation';
       newState.needsHuman = true;
       const outA = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiphelp.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiphelp.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n${handoffTpmoLine('es')}\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n${handoffTpmoLine('en')}\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: outA, timestamp: Date.now() });
       return { response: outA, newState, needsHuman: true };
     }
@@ -10429,8 +10447,8 @@ function processMessageInner(
       }
       newState.needsHuman = true;
       const out = isSpanish
-        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors es una agencia independiente. No ofrecemos todos los planes disponibles en su área. Para ver todas sus opciones también puede contactar **Medicare.gov**, llamar al **1-800-MEDICARE** (1-800-633-4227, 24 horas, en español), o su programa **SHIP** local de consejería gratuita imparcial en shiphelp.org.*\n\nGracias por su confianza.`
-        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n*ClearPoint Senior Advisors is an independent agency. We do not offer every plan available in your area. To see all your options you can also contact **Medicare.gov**, call **1-800-MEDICARE** (1-800-633-4227, 24 hours, Spanish available), or your local **SHIP** program for free unbiased counseling at shiphelp.org.*\n\nThank you for your trust.`;
+        ? `Perfecto${withName(newState.name)}. Estoy preparando su caso para un asesor licenciado bilingüe de ClearPoint. Sin presión y sin costo. Le contactarán pronto, o si prefiere llamar ahora: **1-855-720-8555**.\n\n${handoffTpmoLine('es')}\n\nGracias por su confianza.`
+        : `Perfect${withName(newState.name)}. I'm preparing your case for a licensed bilingual ClearPoint advisor. No pressure, no cost. They will reach out soon, or call now: **1-855-720-8555**.\n\n${handoffTpmoLine('en')}\n\nThank you for your trust.`;
       newState.messages.push({ role: 'bot', content: out, timestamp: Date.now() });
       return { response: out, newState, needsHuman: true };
     }

@@ -8,6 +8,11 @@ import {
   detectCrisisLanguage,
   detectPHILeak,
 } from '../src/lib/customerServiceEngine.ts';
+// 2026-10-03 — CY2027 removed the SHIP reference from the standardized TPMO
+// disclaimer (effective 2026-10-01). The handoff now renders the canonical
+// sentence for the contract year in force, so these checks follow the calendar
+// instead of pinning last year's wording.
+import { tpmoDisclaimerText, activeContractYearVariant } from '../api/_lib/cy2027/tpmo.js';
 
 let pass = 0, total = 0;
 const fails = [];
@@ -94,8 +99,10 @@ const rT = processMessage('10001', s);
 check('TPMO: handoff mentions Medicare.gov', /medicare\.gov/i.test(rT.response));
 check('TPMO: handoff mentions 1-800-MEDICARE',
   /1-800-MEDICARE|1-800-633-4227/.test(rT.response));
-check('TPMO: handoff mentions SHIP',
-  /SHIP/.test(rT.response));
+check('TPMO: handoff carries the canonical sentence for the active contract year',
+  rT.response.includes(tpmoDisclaimerText('es')));
+check('TPMO: handoff names the SHIP only under CY2026',
+  /SHIP/.test(rT.response) === (activeContractYearVariant() === 'CY2026'));
 check('TPMO: handoff mentions "agencia independiente"',
   /agencia independiente|independent agency/i.test(rT.response));
 check('TPMO: handoff mentions "no ofrecemos todos los planes"',
@@ -110,7 +117,10 @@ s = processMessage('John', s).newState;
 const rTe = processMessage('10001', s);
 check('EN TPMO: mentions Medicare.gov', /medicare\.gov/i.test(rTe.response));
 check('EN TPMO: mentions 1-800-MEDICARE', /1-800-MEDICARE/.test(rTe.response));
-check('EN TPMO: mentions SHIP', /SHIP/.test(rTe.response));
+check('EN TPMO: carries the canonical sentence for the active contract year',
+  rTe.response.includes(tpmoDisclaimerText('en')));
+check('EN TPMO: names the SHIP only under CY2026',
+  /SHIP/.test(rTe.response) === (activeContractYearVariant() === 'CY2026'));
 check('EN TPMO: mentions independent agency', /independent agency/i.test(rTe.response));
 
 console.log('\n=== REGRESSION: All prior harnesses still pass ===');

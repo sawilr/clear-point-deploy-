@@ -28,16 +28,18 @@
 //   • Nothing is pre-checked and there is no countdown, scarcity or urgency
 //     device anywhere in the flow (spec §29).
 //
-// Every customer-facing string comes from api/_lib/cy2027/soa-text.js. None is
-// written here, so the approved wording has exactly one source and the build
-// guard can hash it.
+// The DOCUMENT wording (categories, acknowledgement, authorization, security
+// notice) comes from api/_lib/cy2027/soa-text.js, so the approved text has
+// exactly one source and the build guard can hash it. What IS written here is
+// navigation chrome only: the labels in `UI` below and the bilingual language
+// election prompt, which by definition cannot come from a single-language table.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
   STATE_RULESETS, SUPPORTED_STATES, resolveStateRuleset, readBackLines, partitionSelection,
-  LANGUAGE_SOURCE,
+  LANGUAGE_SOURCE, languageElectionLabel,
   type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
@@ -121,6 +123,19 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   const txt = SOA_TEXT[L];
 
   const [step, setStep] = useState<'form' | 'review'>('form');
+
+  // RED TEAM 2026-10-03 (G08, accessibility) — choosing a language, going to the
+  // read-back and changing language each swap the whole view, and the control
+  // that had focus unmounts. Focus fell to <body>: a screen-reader or keyboard
+  // user was left at the top of the page with no announcement. The heading of
+  // the new view takes focus instead. Skipped on first mount so the page's own
+  // focus order is not hijacked.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) { mounted.current = true; return; }
+    headingRef.current?.focus();
+  }, [elected, step]);
   const [residenceState, setResidenceState] = useState<SupportedState | 'OTHER' | ''>('');
   const [zip, setZip] = useState(lead.zip || '');
   const [county, setCounty] = useState('');
@@ -233,14 +248,40 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
 
   // ── Header + the two blocks that appear on every step ──────────────────────
   const Header = (
-    <header className="border-b border-cream-200 pb-6">
+    // The approved template keeps the organization, title and opening paragraph
+    // in English in BOTH language versions; the attribute says so, so assistive
+    // technology does not read English with Spanish pronunciation.
+    <header lang={txt.intro === SOA_TEXT.en.intro ? 'en' : L} className="border-b border-cream-200 pb-6">
       <p className="text-[11px] font-bold tracking-[0.2em] uppercase text-gold-600 mb-2">{txt.org}</p>
-      <h1 className="font-serif text-2xl sm:text-3xl text-earth-900 leading-snug">
+      <h1
+        ref={headingRef}
+        tabIndex={-1}
+        className="font-serif text-2xl sm:text-3xl text-earth-900 leading-snug focus:outline-none"
+      >
         {stateName ? txt.title.replace('{state}', stateName) : txt.title.replace(' - {state}', '')}
       </h1>
-      <p className="text-earth-600 text-sm mt-3 leading-relaxed">{txt.intro}</p>
+      {/* Not rendered before the election: it is document text, and a disclosure
+          shown before the person has chosen a language is the thing G08 removes. */}
+      {elected !== null && <p className="text-earth-600 text-sm mt-3 leading-relaxed">{txt.intro}</p>}
     </header>
   );
+
+  // Changing the document language is not a cosmetic switch. Whatever was
+  // AFFIRMED — the two acknowledgements and the typed signature — was affirmed
+  // against the text of the previous language, so it is withdrawn and has to be
+  // given again against the new text (spec §9: the digital SOA never uses
+  // prechecked boxes). The red team reached a Spanish review screen with both
+  // boxes already ticked and the name already typed, one click from a record
+  // saying the person agreed in Spanish. Answers that are merely FACTS (state,
+  // ZIP, date, categories) are kept: the read-back step re-confirms them.
+  const changeLanguage = () => {
+    setAckNoObl(false);
+    setAckEsig(false);
+    setSignature('');
+    setErrors({});
+    setStep('form');
+    setElected(null);
+  };
 
   const Tpmo = (
     <section className="bg-cream-50 rounded-xl p-5 border border-cream-200">
@@ -268,9 +309,13 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             Language / Idioma
           </h2>
           <p className="text-earth-600 text-sm leading-relaxed">
-            <span lang="en">Choose the language for this document. Everything you sign will be in the language you pick.</span>
+            {/* Worded to what the system actually does. The approved template keeps
+                its title and opening paragraph in English in both versions, so
+                "everything will be in your language" was a promise the Spanish
+                document did not keep. */}
+            <span lang="en">Choose the language for this document. The product categories, the statements you confirm and the signature section will be shown in the language you pick.</span>
             <br />
-            <span lang="es">Elija el idioma de este documento. Todo lo que firme estará en el idioma que elija.</span>
+            <span lang="es">Elija el idioma de este documento. Las categorías de productos, las declaraciones que usted confirma y la sección de firma se mostrarán en el idioma que elija.</span>
           </p>
           <div className="grid sm:grid-cols-2 gap-3">
             <button
@@ -300,8 +345,8 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   const LangChange = (
     <button
       type="button"
-      onClick={() => { setElected(null); setStep('form'); }}
-      className="text-xs text-earth-500 underline hover:text-earth-700"
+      onClick={changeLanguage}
+      className="inline-flex items-center min-h-[44px] px-3 text-sm font-medium text-earth-700 underline rounded-lg hover:bg-cream-50 focus:outline-none focus:ring-2 focus:ring-gold-500"
     >
       {UI.langChange[L]}
     </button>
@@ -310,8 +355,9 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   // ── Step 2: read-back ──────────────────────────────────────────────────────
   if (step === 'review') {
     return (
-      <form onSubmit={handleSign} method="post" action="#" noValidate className="space-y-8">
+      <form onSubmit={handleSign} method="post" action="#" noValidate lang={L} className="space-y-8">
         {Header}
+        <div className="flex justify-end -mt-4">{LangChange}</div>
         {Tpmo}
 
         <section aria-labelledby="soa-readback">
@@ -431,7 +477,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             <EvidenceRow label={txt.fields.language} value={L === 'es' ? 'ES' : 'EN'} />
             <EvidenceRow
               label={L === 'es' ? 'Elección de idioma' : 'Language election'}
-              value={electionSource}
+              value={languageElectionLabel(electionSource, L)}
             />
             <EvidenceRow label={txt.fields.planYear} value="2027" />
             <EvidenceRow label="SOURCE" value="WEB" />
@@ -472,7 +518,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
 
   // ── Step 1: the form ───────────────────────────────────────────────────────
   return (
-    <form onSubmit={goToReview} method="post" action="#" noValidate className="space-y-8">
+    <form onSubmit={goToReview} method="post" action="#" noValidate lang={L} className="space-y-8">
       {Header}
       {/* Always reachable, including before a state is chosen: a mis-tap on the
           election screen must not trap someone in a language they cannot read. */}

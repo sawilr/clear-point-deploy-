@@ -8,6 +8,13 @@
 // public SOA endpoint launches (SEC-TOK-13).
 //
 //   node scripts/cy2027-preflight.mjs
+//   node scripts/cy2027-preflight.mjs --url https://<preview-or-production-origin>
+//
+// With --url it also fetches every page in that origin's sitemap (GET only) and
+// checks the TPMO disclaimer actually being SERVED against today's contract
+// year. That is the only check that can see a stale deploy: a build made before
+// the 1 October cut-over passes its own build gate and keeps serving last
+// year's sentence until someone rebuilds.
 //
 // It is READ-ONLY: it inspects, it never changes configuration, never deploys
 // and never writes to GoHighLevel. Exit code 1 means something listed as BLOCK
@@ -20,7 +27,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -31,6 +38,7 @@ import { fieldIdMap, CY2027_FIELD_KEYS } from '../api/_lib/cy2027/crm-fields.js'
 import { overlayInventory } from '../api/_lib/cy2027/carrier-overlay.js';
 import { hasCountyDataset } from '../api/_lib/cy2027/state-rules.js';
 import { activePlanYear } from '../api/_lib/cy2027/rulesets.js';
+import { checkTpmo, htmlToText, TPMO_ANY } from './tpmo-gate.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const blocks = [];
@@ -73,8 +81,72 @@ if (year >= 2027 && shipMentioned) blocks.push('CY2027 is in force but the rende
 else oks.push(`plan year ${year}, TPMO variant ${variant} — rendered text matches`);
 if (/\[X\]|\[Y\]/.test(en)) blocks.push('the rendered TPMO disclaimer contains a bracketed placeholder');
 
-// IMPORTANT: the prerendered HTML freezes this at BUILD time.
-warns.push('the TPMO text is frozen into the prerendered HTML at build time — a promote without a fresh build serves the previous year\'s wording');
+// ── 3b. What is BUILT and what is SERVED, judged against the clock NOW ────────
+// RED TEAM 2026-10-03 (TPY-09) — the build gate compares a page to the module
+// that rendered it, at the moment it rendered it. It cannot see the condition
+// production was actually found in on 2026-10-02: HTML built before the cut-over
+// and served after it. Only already-built HTML checked against TODAY'S variant
+// shows that, so it is done here — on dist/, and with --url on a live origin.
+const carriesTpmo = (text) => (text.match(TPMO_ANY) || []).length > 0;
+{
+  const dist = join(ROOT, 'dist');
+  if (!existsSync(join(dist, 'index.html'))) {
+    warns.push('no dist/ build to inspect — the contract year of the BUILT pages was not checked (run `npm run build` first)');
+  } else {
+    const pages = [];
+    const walk = (dir, route) => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          if (name !== 'assets' && name !== 'fonts' && name !== 'carriers') walk(full, route === '/' ? '/' + name : route + '/' + name);
+        } else if (name === 'index.html') pages.push({ path: route, file: full });
+      }
+    };
+    walk(dist, '/');
+    let carrying = 0;
+    const bad = [];
+    for (const p of pages) {
+      const text = htmlToText(readFileSync(p.file, 'utf8'));
+      if (carriesTpmo(text)) carrying += 1;
+      // thin:true — a page may legitimately omit the disclaimer (noindex, per-user
+      // routes); what it may not do is carry another year's.
+      bad.push(...checkTpmo({ path: p.path, text, thin: true, variant }));
+    }
+    if (!carrying) blocks.push(`dist/: none of ${pages.length} built page(s) carries a TPMO disclaimer — nothing to check, which is itself a failure`);
+    else if (bad.length) blocks.push(`dist/ does not match contract year ${variant}: ${bad.length} problem(s), first: ${bad[0]} — rebuild before promoting`);
+    else oks.push(`dist/: ${carrying} built page(s) carry the ${variant} TPMO sentence, none carries another year's`);
+  }
+}
+{
+  const i = process.argv.indexOf('--url');
+  const origin = i > -1 ? String(process.argv[i + 1] || '').replace(/\/+$/, '') : '';
+  if (i > -1 && !/^https:\/\/[^/\s]+$|^http:\/\/localhost(:\d+)?$/.test(origin)) {
+    blocks.push('--url needs an https origin (or http://localhost:<port>), e.g. --url https://clearpoint-xyz.vercel.app');
+  } else if (origin) {
+    try {
+      const sm = await fetch(origin + '/sitemap.xml', { redirect: 'follow' });
+      if (!sm.ok) throw new Error('sitemap.xml answered ' + sm.status);
+      const paths = [...(await sm.text()).matchAll(/<loc>\s*https?:\/\/[^/<\s]+([^<\s]*)\s*<\/loc>/g)].map((m) => m[1] || '/');
+      if (!paths.length) throw new Error('sitemap.xml lists no pages');
+      let carrying = 0;
+      const bad = [];
+      for (const path of paths) {
+        const r = await fetch(origin + path, { redirect: 'follow' });
+        if (!r.ok) { bad.push(`${path}: answered ${r.status}`); continue; }
+        const text = htmlToText(await r.text());
+        if (carriesTpmo(text)) carrying += 1;
+        bad.push(...checkTpmo({ path, text, thin: true, variant }));
+      }
+      if (!carrying) blocks.push(`${origin}: none of ${paths.length} served page(s) carries a TPMO disclaimer`);
+      else if (bad.length) blocks.push(`${origin} is serving another contract year (expected ${variant}): ${bad.length} problem(s), first: ${bad[0]}`);
+      else oks.push(`${origin}: ${carrying}/${paths.length} served page(s) carry the ${variant} TPMO sentence, none carries another year's`);
+    } catch (e) {
+      blocks.push(`${origin} could not be inspected: ${e && e.message ? e.message : String(e)}`);
+    }
+  } else {
+    warns.push('what is being SERVED was not checked — pass --url <origin> (the preview you are about to promote, then production) to verify the deployed TPMO sentence');
+  }
+}
 
 // ── 4. What blocks enabling the SOA workflow ─────────────────────────────────
 const blockers = soaBlockers();

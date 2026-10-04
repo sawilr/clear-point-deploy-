@@ -17,6 +17,7 @@ import crypto from 'node:crypto';
 
 import { SOA_TEXT, SOA_SCRIPT_VERSION, categoryText, soaTitle, SOA_AGENT_LINE } from './soa-text.js';
 import { RECORD_CLASS } from './retention.js';
+import { isSoaLanguage, languageWasElected, electionAttributionError } from './soa-instance.js';
 
 /** Stable key ordering so the same logical object always hashes the same. */
 function canonical(value) {
@@ -41,7 +42,14 @@ export function integrityHash(payload) {
  * not need this repository at that version to know what the person agreed to.
  */
 export function renderTextSnapshot(instance, stateName) {
-  const lang = instance.language === 'es' ? 'es' : 'en';
+  // RED TEAM 2026-10-03 (G08) — this was `instance.language === 'es' ? 'es' : 'en'`:
+  // an instance with no language produced an ENGLISH snapshot and a valid hash.
+  // The snapshot claims to be exactly what the person was shown; it cannot be
+  // built for a language nobody recorded.
+  if (!instance || !isSoaLanguage(instance.language)) {
+    throw new Error('evidence: the instance has no document language (SOA_LANGUAGE_NOT_ELECTED)');
+  }
+  const lang = instance.language;
   const t = SOA_TEXT[lang];
   const shown = (codes) =>
     codes.map((code) => {
@@ -75,6 +83,18 @@ export function renderTextSnapshot(instance, stateName) {
 export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null }) {
   if (!instance) throw new Error('evidence: no instance');
   if (!signature) throw new Error('evidence: signature/affirmation is required');
+  // RED TEAM 2026-10-03 (G08, HIGH) — the election reached the PDF, the note and
+  // a CRM field, but NOT this record: hash(BENEFICIARY_ELECTED) equalled
+  // hash(SYSTEM_DEFAULT) equalled hash(no election at all), so the one field
+  // G08 exists to make legible could be swapped with verifyEvidence() still ok.
+  // It is now inside the hashed core, and a record cannot be built without it.
+  if (!isSoaLanguage(instance.language) || !languageWasElected(instance.languageSource)) {
+    throw new Error('evidence: refusing to evidence an instance whose language was not elected (SOA_LANGUAGE_NOT_ELECTED)');
+  }
+  const attribution = electionAttributionError(instance.languageSource, instance.representativeRelationship);
+  if (attribution) {
+    throw new Error('evidence: the election and the signer disagree (' + attribution + ')');
+  }
 
   const textSnapshot = renderTextSnapshot(instance, stateName);
   const core = {
@@ -87,6 +107,7 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     zip: instance.zip,
     county: instance.county,
     language: instance.language,
+    languageSource: instance.languageSource,
     method: instance.method,
     source: instance.source,
     beneficiaryName: instance.beneficiaryName,

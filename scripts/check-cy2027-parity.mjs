@@ -172,7 +172,25 @@ if (STATE_DIGEST !== PINNED_STATE_DIGEST) {
   let doc;
   try { doc = read('docs/compliance/CY2027-ARCHITECTURE.md'); } catch { doc = null; }
   if (!doc) {
-    problems.push('docs/compliance/CY2027-ARCHITECTURE.md is missing — the state table has nothing to check against.');
+    // 2026-10-03 — .vercelignore excludes docs/ from the deployed artifact, and
+    // this gate runs inside `npm run build`. As written, the FIRST Vercel build
+    // of this branch would have failed here: locally the document exists, so the
+    // defect was invisible until deploy. On Vercel the document is absent by
+    // design and the comparison is skipped WITH A NOTE; anywhere else a missing
+    // document is still a failure, so the check keeps its teeth where the
+    // document is supposed to be.
+    let docsExcludedOnVercel = false;
+    try {
+      docsExcludedOnVercel = read('.vercelignore').split(/\r?\n/).some((l) => /^docs\/?$/.test(l.trim()));
+    } catch { /* no .vercelignore: nothing is excluded */ }
+    // Any of Vercel's own build-time variables counts: VERCEL=1 is only present
+    // when system variables are exposed to the build, which is a project setting.
+    const onVercel = !!(process.env.VERCEL || process.env.VERCEL_ENV || process.env.VERCEL_URL);
+    if (onVercel && docsExcludedOnVercel) {
+      notes.push('state table vs docs: skipped on Vercel (docs/ is not part of the deployed artifact)');
+    } else {
+      problems.push('docs/compliance/CY2027-ARCHITECTURE.md is missing — the state table has nothing to check against.');
+    }
   } else {
     const missing = [];
     for (const s of Object.values(stateMod.STATE_RULESETS)) {
@@ -206,18 +224,23 @@ if (STATE_DIGEST !== PINNED_STATE_DIGEST) {
   } else if (!shell.includes('do not offer every plan available in your area')) {
     problems.push('index.html no longer carries the (e)(41) disclaimer in its <noscript> block.');
   } else {
-    const expected = tpmo.tpmoDisclaimerText('en');
-    if (!shell.includes(expected)) {
-      const shown = (shell.match(/We do not offer every plan[^<]{0,200}/) || ['(not found)'])[0];
+    // 2026-10-03 — both languages. The shell is served for /es routes too, and
+    // for the routes that are not body-prerendered (/es/soa, /es/thank-you) this
+    // block is the ONLY disclaimer in the HTML: it was English on a Spanish page.
+    let bad = 0;
+    for (const [lang, opening] of [['en', /We do not offer every plan[^<]{0,200}/], ['es', /No ofrecemos todos los planes[^<]{0,220}/]]) {
+      const expected = tpmo.tpmoDisclaimerText(lang);
+      if (shell.includes(expected)) continue;
+      bad += 1;
+      const shown = (shell.match(opening) || ['(not found)'])[0];
       problems.push(
-        'index.html\'s <noscript> disclaimer does not match the canonical sentence for the active plan year.\n' +
+        `index.html's <noscript> disclaimer (${lang}) does not match the canonical sentence for the active plan year.\n` +
           `      expected: ${expected}\n` +
           `      found:    ${shown}\n` +
           '      A visitor without JavaScript sees only this copy. Update the literal in index.html.',
       );
-    } else {
-      notes.push('index.html noscript disclaimer matches the active plan-year wording');
     }
+    if (!bad) notes.push('index.html noscript disclaimer matches the active plan-year wording (en + es)');
   }
 }
 
@@ -281,6 +304,32 @@ for (const f of TPMO_CANDIDATES) {
   let txt;
   try { txt = read(f); } catch { continue; }
   if (txt.includes(TPMO_FRAGMENT) && !TPMO_ALLOWED.has(f)) tpmoCopies.push(f);
+}
+// 2026-10-03 — the list above is four files. The chat engine carried EIGHT
+// hand-written disclaimers (naming the SHIP, after the CY2027 cut-over) in a
+// file that was never on the list, so "TPMO disclaimer has a single source"
+// printed green while a fifth source was live. Every source file under src/ and
+// api/ is now scanned, comments stripped, for the SENTENCE form of the
+// disclaimer in either language. Prose that mentions the fact mid-sentence is
+// not a disclaimer and does not match.
+{
+  const { readdirSync, statSync } = await import('node:fs');
+  const SENTENCE_RE = /(?:do not offer every plan|no ofrecemos todos los planes)[^.,;:!?`'"]{0,40}\./i;
+  const walk = (dir, out = []) => {
+    for (const name of readdirSync(join(ROOT, dir))) {
+      const rel = dir + '/' + name;
+      if (statSync(join(ROOT, rel)).isDirectory()) walk(rel, out);
+      else if (/\.(?:ts|tsx|js|mjs)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(rel);
+    }
+    return out;
+  };
+  let scanned = 0;
+  for (const f of [...walk('src'), ...walk('api')]) {
+    if (TPMO_ALLOWED.has(f)) continue;
+    scanned += 1;
+    if (SENTENCE_RE.test(stripComments(read(f))) && !tpmoCopies.includes(f)) tpmoCopies.push(f);
+  }
+  if (scanned < 50) problems.push(`TPMO single-source scan read only ${scanned} files — the walk is broken`);
 }
 // RED TEAM 2026-10-02 (PG-01, HIGH) — the fragment check only caught a copy that
 // reused the exact opening sentence. A fourth copy written with a different

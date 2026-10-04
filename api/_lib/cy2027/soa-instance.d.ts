@@ -70,14 +70,25 @@ export interface GateDecision {
 
 export declare const SOA_STATUS: Readonly<Record<string, SoaStatus>>;
 export declare const SOA_METHOD: Readonly<
-  Record<SoaMethodCode, { code: SoaMethodCode; written: boolean; source: string }>
+  Record<SoaMethodCode, Readonly<{ code: SoaMethodCode; written: boolean; source: string }>>
 >;
 
 export declare const LANGUAGE_SOURCE: Readonly<
-  Record<LanguageSourceCode, { code: LanguageSourceCode; signable: boolean }>
+  Record<LanguageSourceCode, Readonly<{ code: LanguageSourceCode; signable: boolean }>>
 >;
 
-export declare function languageWasElected(source: string | null | undefined): boolean;
+export declare function languageWasElected(source: unknown): boolean;
+export declare function isSoaLanguage(value: unknown): value is SoaLang;
+export declare function languageElectionLabel(source: unknown, lang: unknown): string;
+export declare function readLanguageElection(
+  body: unknown,
+):
+  | { ok: true; language: SoaLang; languageSource: LanguageSourceCode }
+  | { ok: false; reason: 'LANGUAGE_NOT_SUPPLIED' | 'ELECTION_NOT_RECORDED' | 'NOT_AN_ELECTION' };
+export declare function electionAttributionError(
+  languageSource: unknown,
+  representativeRelationship: unknown,
+): 'representative_required' | 'election_attribution_mismatch' | null;
 export declare function methodIsWritten(methodCode: string): boolean;
 export declare function partitionSelection(selectedCodes: readonly string[] | null | undefined): {
   authorized: SoaCategoryCode[];

@@ -61,12 +61,15 @@ export const SOA_STATUS = Object.freeze({
  * CY2027 in-person personal marketing appointments require a WRITTEN SOA, and
  * a voice-only record must never unlock one (spec §10, §11, §33).
  */
+// Entries are frozen individually: Object.freeze is shallow, and a table whose
+// rows any importer can edit in place does not decide anything (the same
+// reasoning as EF-07 for TPMO_DISCLAIMER_CONFIG).
 export const SOA_METHOD = Object.freeze({
-  WEB_ELECTRONIC_SIGNATURE: { code: 'WEB_ELECTRONIC_SIGNATURE', written: true, source: 'WEB' },
-  SMS_LINK_ELECTRONIC: { code: 'SMS_LINK_ELECTRONIC', written: true, source: 'SMS_LINK' },
-  EMAIL_LINK_ELECTRONIC: { code: 'EMAIL_LINK_ELECTRONIC', written: true, source: 'EMAIL_LINK' },
-  APPROVED_WRITTEN_METHOD: { code: 'APPROVED_WRITTEN_METHOD', written: true, source: 'APPROVED_WRITTEN_METHOD' },
-  VOICE_RECORDED: { code: 'VOICE_RECORDED', written: false, source: 'WEB' },
+  WEB_ELECTRONIC_SIGNATURE: Object.freeze({ code: 'WEB_ELECTRONIC_SIGNATURE', written: true, source: 'WEB' }),
+  SMS_LINK_ELECTRONIC: Object.freeze({ code: 'SMS_LINK_ELECTRONIC', written: true, source: 'SMS_LINK' }),
+  EMAIL_LINK_ELECTRONIC: Object.freeze({ code: 'EMAIL_LINK_ELECTRONIC', written: true, source: 'EMAIL_LINK' }),
+  APPROVED_WRITTEN_METHOD: Object.freeze({ code: 'APPROVED_WRITTEN_METHOD', written: true, source: 'APPROVED_WRITTEN_METHOD' }),
+  VOICE_RECORDED: Object.freeze({ code: 'VOICE_RECORDED', written: false, source: 'WEB' }),
 });
 
 /**
@@ -78,16 +81,88 @@ export const SOA_METHOD = Object.freeze({
  * auditor unable to tell a choice from a fallback.
  */
 export const LANGUAGE_SOURCE = Object.freeze({
-  BENEFICIARY_ELECTED: { code: 'BENEFICIARY_ELECTED', signable: true },
-  REPRESENTATIVE_ELECTED: { code: 'REPRESENTATIVE_ELECTED', signable: true },
-  SYSTEM_DEFAULT: { code: 'SYSTEM_DEFAULT', signable: false },
-  INFERRED_FROM_LEAD: { code: 'INFERRED_FROM_LEAD', signable: false },
+  BENEFICIARY_ELECTED: Object.freeze({ code: 'BENEFICIARY_ELECTED', signable: true }),
+  REPRESENTATIVE_ELECTED: Object.freeze({ code: 'REPRESENTATIVE_ELECTED', signable: true }),
+  SYSTEM_DEFAULT: Object.freeze({ code: 'SYSTEM_DEFAULT', signable: false }),
+  INFERRED_FROM_LEAD: Object.freeze({ code: 'INFERRED_FROM_LEAD', signable: false }),
 });
+
+/**
+ * RED TEAM 2026-10-03 (G08) — the first version looked the value up with a bare
+ * LANGUAGE_SOURCE[source]. That walks the prototype chain and coerces: an array
+ * ['BENEFICIARY_ELECTED'] and an object with a toString() were accepted as
+ * elections and then STORED as an array / as {}, so the election vanished on
+ * persistence; and the rows were mutable, so one assignment anywhere made
+ * SYSTEM_DEFAULT signable process-wide. Only an own, string key counts.
+ */
+function languageSourceEntry(source) {
+  if (typeof source !== 'string') return null;
+  if (!Object.prototype.hasOwnProperty.call(LANGUAGE_SOURCE, source)) return null;
+  return LANGUAGE_SOURCE[source];
+}
 
 /** True only for a language the beneficiary (or their representative) picked. */
 export function languageWasElected(source) {
-  const s = LANGUAGE_SOURCE[source];
+  const s = languageSourceEntry(source);
   return !!s && s.signable === true;
+}
+
+const SOA_LANGUAGES = Object.freeze(['en', 'es']);
+
+/** A document language is exactly 'en' or 'es' — never coerced, never defaulted. */
+export function isSoaLanguage(value) {
+  return typeof value === 'string' && SOA_LANGUAGES.includes(value);
+}
+
+/**
+ * The human-readable form of an election, for the PDF and the read-back screen.
+ * Throws on anything that is not an election: the first version printed
+ * "Elected by beneficiary" for undefined, SYSTEM_DEFAULT and INFERRED_FROM_LEAD
+ * alike — the same binary coalesce G08 exists to remove, on the signed artifact.
+ */
+const ELECTION_LABELS = Object.freeze({
+  BENEFICIARY_ELECTED: Object.freeze({ en: 'Elected by beneficiary', es: 'Elegido por el beneficiario' }),
+  REPRESENTATIVE_ELECTED: Object.freeze({ en: 'Elected by representative', es: 'Elegido por el representante' }),
+});
+
+export function languageElectionLabel(source, lang) {
+  if (!languageWasElected(source)) throw new Error('soa: no language election to label (SOA_LANGUAGE_NOT_ELECTED)');
+  if (!isSoaLanguage(lang)) throw new Error('soa: unknown language for the election label');
+  return ELECTION_LABELS[source][lang];
+}
+
+/**
+ * Read the election out of an untrusted request body. Pure, so the rule is
+ * TESTED BY CALLING IT — the first G08 assertions were source greps, and the
+ * red team showed the handler could be reverted to the old coalesce with every
+ * one of them still passing.
+ *
+ * Returns { ok: true, language, languageSource } or { ok: false, reason } with
+ * reason LANGUAGE_NOT_SUPPLIED | ELECTION_NOT_RECORDED | NOT_AN_ELECTION.
+ */
+export function readLanguageElection(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  if (!isSoaLanguage(b.language)) return { ok: false, reason: 'LANGUAGE_NOT_SUPPLIED' };
+  if (typeof b.languageSource !== 'string' || !b.languageSource.trim()) {
+    return { ok: false, reason: 'ELECTION_NOT_RECORDED' };
+  }
+  const source = b.languageSource.trim();
+  if (!languageWasElected(source)) return { ok: false, reason: 'NOT_AN_ELECTION' };
+  return { ok: true, language: b.language, languageSource: source };
+}
+
+/**
+ * Who elected the language has to agree with who signed. A record that says
+ * "elected by representative" while naming no representative — or names one and
+ * attributes the election to the beneficiary — contradicts itself on the signed
+ * artifact (spec §25: record relationship and authority basis, never guess).
+ * Returns null when consistent, otherwise the named error.
+ */
+export function electionAttributionError(languageSource, representativeRelationship) {
+  const hasRep = typeof representativeRelationship === 'string' && representativeRelationship.trim().length > 0;
+  if (languageSource === 'REPRESENTATIVE_ELECTED' && !hasRep) return 'representative_required';
+  if (languageSource === 'BENEFICIARY_ELECTED' && hasRep) return 'election_attribution_mismatch';
+  return null;
 }
 
 export function methodIsWritten(methodCode) {
@@ -153,7 +228,7 @@ export function createSoaInstance(input) {
   if (!Number.isInteger(planYear)) errors.planYear = 'required';
   if (!state) errors.state = 'required';
   if (!/^\d{5}$/.test(String(zip || ''))) errors.zip = 'invalid_zip';
-  if (language !== 'en' && language !== 'es') errors.language = 'required';
+  if (!isSoaLanguage(language)) errors.language = 'required';
   // AUDIT 2026-10-02 (G08) — the language of a signed document was inferred:
   // `lead?.language || 'es'` on the client and `body.language === 'en' ? 'en' : 'es'`
   // on the server. Both are silent defaults, so a reader of the signed record
@@ -161,8 +236,13 @@ export function createSoaInstance(input) {
   // produced no lead and the page defaulted to Spanish". The language is the
   // language the disclosures were READ in; it has to be an election, recorded
   // as one. A default is not signable.
-  if (!LANGUAGE_SOURCE[languageSource]) errors.languageSource = 'election_required';
-  else if (!LANGUAGE_SOURCE[languageSource].signable) errors.languageSource = 'not_an_election';
+  const sourceEntry = languageSourceEntry(languageSource);
+  if (!sourceEntry) errors.languageSource = 'election_required';
+  else if (!sourceEntry.signable) errors.languageSource = 'not_an_election';
+  else {
+    const attribution = electionAttributionError(languageSource, representativeRelationship);
+    if (attribution) errors.languageSource = attribution;
+  }
   if (!SOA_METHOD[method]) errors.method = 'invalid_method';
   if (!beneficiaryName || String(beneficiaryName).trim().length < 2) errors.beneficiaryName = 'required';
   if (!stateRulesetVersion) errors.stateRulesetVersion = 'required';
@@ -189,7 +269,10 @@ export function createSoaInstance(input) {
       method,
       source: SOA_METHOD[method].source,
       beneficiaryName: String(beneficiaryName).trim(),
-      representativeRelationship,
+      representativeRelationship:
+        typeof representativeRelationship === 'string' && representativeRelationship.trim()
+          ? representativeRelationship.trim()
+          : null,
       authorizedCategories: parts.authorized,
       declinedCategories: parts.declined,
       nonAuthorizingSelections: parts.nonAuthorizing,
@@ -214,6 +297,12 @@ export function completeSoaInstance(instance, { completedAt = new Date().toISOSt
   if (instance.status === SOA_STATUS.INCOMPLETE) {
     // Spec §10: if the beneficiary is confused, do not force completion.
     throw new Error('soa: cannot complete an instance with no authorized category (SOA_INCOMPLETE)');
+  }
+  // RED TEAM 2026-10-03 (G08) — "no default is signable" lived only in the
+  // constructor. A rehydrated or hand-built instance without an election was
+  // completed, evidenced and let through the marketing gate.
+  if (!isSoaLanguage(instance.language) || !languageWasElected(instance.languageSource)) {
+    throw new Error('soa: cannot complete an instance whose language was not elected (SOA_LANGUAGE_NOT_ELECTED)');
   }
   if (!integrityHash) throw new Error('soa: integrityHash required to complete');
   if (!evidenceReference) throw new Error('soa: evidenceReference required to complete');
@@ -315,6 +404,11 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
   if (!instance.integrityHash || !instance.evidenceReference) {
     // Spec §26: "SOA evidence write failure -> marketing gate stays locked."
     return { allowed: false, reason: 'SOA_EVIDENCE_MISSING' };
+  }
+  // G08 — a COMPLETED status on a record that cannot say the signer chose the
+  // language it was read in does not open the gate.
+  if (!isSoaLanguage(instance.language) || !languageWasElected(instance.languageSource)) {
+    return { allowed: false, reason: 'SOA_LANGUAGE_NOT_ELECTED' };
   }
   if (!appointment) return { allowed: false, reason: 'NO_APPOINTMENT' };
   if (instance.appointmentId !== appointment.appointmentId) {

@@ -112,7 +112,32 @@ if (problemas.length) {
   const excluyeScripts = vi.some((l) => l === 'scripts/*' || l === 'scripts/' || l === 'scripts');
   if (excluyeScripts && invocados.length) {
     const permitidos = new Set(vi.filter((l) => l.startsWith('!')).map((l) => l.slice(1)));
-    const faltan = invocados.filter((s) => !permitidos.has(s));
+    // 2026-10-03 — un script del build puede IMPORTAR otro archivo de scripts/
+    // (prerender-body.mjs importa tpmo-gate.mjs). Ese archivo no aparece en el
+    // comando de build, así que la comprobación de arriba no lo veía y el
+    // despliegue habría fallado exactamente como el 26 de septiembre. Se siguen
+    // los import estáticos relativos, de forma transitiva, y cada uno que caiga
+    // dentro de scripts/ necesita su excepción.
+    const importados = new Set();
+    const cola = [...invocados];
+    while (cola.length) {
+      const actual = cola.pop();
+      let src = '';
+      try { src = readFileSync(actual, 'utf8'); } catch { continue; }
+      for (const m of src.matchAll(/^\s*import\s[^'"]*['"](\.\.?\/[^'"]+)['"]/gm)) {
+        const dir = actual.slice(0, actual.lastIndexOf('/') + 1);
+        const partes = [];
+        for (const seg of (dir + m[1]).split('/')) {
+          if (seg === '..') partes.pop(); else if (seg && seg !== '.') partes.push(seg);
+        }
+        const destino = partes.join('/');
+        if (destino.startsWith('scripts/') && !importados.has(destino) && !invocados.includes(destino)) {
+          importados.add(destino);
+          cola.push(destino);
+        }
+      }
+    }
+    const faltan = [...invocados, ...importados].filter((s) => !permitidos.has(s));
     if (faltan.length) {
       console.error('[vercel-config] FALLO — .vercelignore excluye scripts/* pero el build invoca scripts sin excepción; en Vercel fallará con "Cannot find module":\n');
       for (const s of faltan) console.error(`  falta la línea:  !${s}`);

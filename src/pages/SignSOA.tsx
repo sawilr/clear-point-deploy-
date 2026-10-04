@@ -54,6 +54,8 @@ export default function SignSOA() {
   // EV-14 — whether a confirmation copy actually went out. The page may not
   // promise one otherwise.
   const [copySent, setCopySent] = useState(false);
+  // The language the signer ELECTED on the form, once they have submitted it.
+  const [electedLanguage, setElectedLanguage] = useState<'en' | 'es' | null>(null);
 
   // ── Second factor: exchange the link + factor for the prefill ───────────
   const submitFactor = async (ev: React.FormEvent) => {
@@ -126,16 +128,21 @@ export default function SignSOA() {
     return () => { cancelled = true; };
   }, [token, reloadKey]);
 
-  // AUDIT 2026-10-02 (G08) — this is the language the PAGE CHROME is drawn in
-  // (loading, link-expired, challenge, error), while the signer's own election
-  // is not yet known. It is a display default and must never become the language
-  // recorded on a signed document: SOAForm asks explicitly, in both languages,
-  // and sends `language` together with `languageSource` so the record says which
-  // it was. Do not reuse this value as the document language.
-  const language: 'en' | 'es' = lead?.language || 'es';
+  // AUDIT 2026-10-02 (G08) — the language the PAGE CHROME is drawn in (loading,
+  // link-expired, challenge, error). Until the signer has elected one it is a
+  // display default, and it must never become the language recorded on a signed
+  // document: SOAForm asks explicitly and sends `language` with `languageSource`.
+  //
+  // RED TEAM 2026-10-03 — the flow of information is one-way. Chrome must not
+  // decide the document language, but the ELECTION does decide the chrome that
+  // follows it: a person who elected English was being told "Su firma quedó
+  // registrada… No la firme de nuevo." in Spanish, the one instruction on the
+  // page they most need to understand.
+  const language: 'en' | 'es' = electedLanguage ?? lead?.language ?? 'es';
 
   // ── Submit handler ─────────────────────────────────────────────────────
   const handleSubmit = async (formData: Record<string, unknown>) => {
+    if (formData.language === 'en' || formData.language === 'es') setElectedLanguage(formData.language);
     setPhase('submitting');
     // PHASE 6 — abort after 20s (PDF gen + GHL post can be slow on cold start).
     const controller = new AbortController();
