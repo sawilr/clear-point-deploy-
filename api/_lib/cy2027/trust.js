@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { redactProhibitedForScoring } from './prohibited-signals.js';
+import { humanActorProblem } from './actors.js';
 
 export const LEAD_TRUST_STATE = Object.freeze({
   VERIFIED_REQUEST: 'VERIFIED_REQUEST',
@@ -244,10 +245,13 @@ export function resolveSecurityReview(task, { actor, decision, reasonCode, at = 
   // the §13 line this exists to enforce. An allowlist of shapes is no better,
   // so the rule is now: the actor must look like a named human account and must
   // not contain any automation token anywhere in it.
+  // 2026-10-04 — the test itself now lives in ./actors.js, shared with the
+  // ruleset lifecycle (§22) and controlled learning (§23), so the three
+  // human-only decisions cannot drift apart. Same rule, same messages.
   const who = String(actor || '').trim();
-  if (!who) throw new Error('trust: security review requires a human reviewer (spec §13 forbids AI self-approval)');
-  if (/(^|[^a-z])(ai|bot|svc|service|system|sys|automation|auto|agent|robot|daemon|cron|job|worker|script|workflow|assistant|claude|gpt|llm|machine|api)([^a-z]|$)/i.test(who)
-      || /^[^a-z]*$/i.test(who)) {
+  const actorProblem = humanActorProblem(who);
+  if (actorProblem === 'ACTOR_MISSING') throw new Error('trust: security review requires a human reviewer (spec §13 forbids AI self-approval)');
+  if (actorProblem) {
     throw new Error(
       `trust: "${who}" is not a human reviewer. Spec §13 forbids AI self-approval of quarantined cases — ` +
       'record the named person who made the decision.',

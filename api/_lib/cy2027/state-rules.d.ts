@@ -20,6 +20,12 @@ export interface StateRuleset {
   readonly effectiveFrom: string;
   readonly effectiveTo: string | null;
   readonly status: string;
+  /** All three are null when no human promotion is on record (see ruleset-lifecycle.js). */
+  readonly promotion: {
+    readonly promotedBy: string | null;
+    readonly promotedAt: string | null;
+    readonly evidenceReference: string | null;
+  };
   readonly recordingNotice: RecordingNoticePosition;
 }
 
@@ -54,6 +60,7 @@ export declare function resolveStateRuleset(
   planYear?: number | null,
   now?: Date,
 ): StateResolution;
+export declare function evaluateStateRuleset(ruleset: unknown, planYear: number, now?: Date | string): StateResolution;
 export declare function zipStateConsistency(
   zip: string | null | undefined,
   state: string | null | undefined,

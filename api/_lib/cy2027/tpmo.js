@@ -40,6 +40,20 @@ export function activeContractYearVariant(now = new Date()) {
 }
 
 /**
+ * The newest plan year this module holds standardized wording for.
+ *
+ * AUDIT 2026-10-04 (SPEC-22) — activeContractYearVariant() answers 'CY2027' for
+ * every instant from 1 October 2026 on, with no upper bound. For the public
+ * site that is deliberate: the disclaimer must keep rendering, and the newest
+ * verified sentence is the best available one. But it means that from
+ * 1 October 2027 the site serves CY2027 wording during CY2028 marketing without
+ * anyone having checked that CMS left it unchanged. The site is not switched
+ * off for that; scripts/cy2027-preflight.mjs BLOCKS promotion when the plan
+ * year in force is newer than this constant, so the reuse cannot be silent.
+ */
+export const LATEST_TPMO_VARIANT_PLAN_YEAR = 2027;
+
+/**
  * Owner-controlled counts configuration.
  * NEVER fill organizationCount / productCount from inference, memory or a
  * carrier website — only from the FMO/carrier appointment records, approved by

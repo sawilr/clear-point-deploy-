@@ -144,6 +144,18 @@ export const SOA_PRECONDITIONS = {
   /** api/sign-soa.js validates planYear + state ruleset server-side and builds a
    *  CY2027 SOA instance, instead of trusting the browser. */
   serverEnforcesCy2027: true,
+  // AUDIT 2026-10-04 (SPEC-22) — "No AI self-promotion of a new ruleset." The
+  // CY2027 CMS ruleset and the NY/NJ/CT state rulesets are PRODUCTION_ACTIVE
+  // because the code that introduced them says so; no person is on record as
+  // having reviewed the sources and promoted them (their `promotion` records
+  // are null, and api/_lib/cy2027/ruleset-lifecycle.js lists them as
+  // grandfathered with the attestation PENDING). That is tolerable while the
+  // SOA workflow is off and must not survive turning it on. To close it: a
+  // named person reviews the sources listed in CMS_RULESET_2027.sourceReviews,
+  // fills in `promotion` (name, UTC instant, evidence reference) and the
+  // verification dates there and in state-rules.js, then flips this.
+  /** A named person is on record as having promoted the active CMS and state rulesets. */
+  rulesetPromotionAttested: false,
 } as const;
 
 /** Names of every precondition still unmet. Empty array = safe to enable. */

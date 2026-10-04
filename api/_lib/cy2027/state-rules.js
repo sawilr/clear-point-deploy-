@@ -21,13 +21,14 @@
  * code path that promotes a ruleset automatically: "No AI self-promotion of a
  * new ruleset."
  */
-export const RULESET_LIFECYCLE = Object.freeze([
-  'PENDING_REVIEW',
-  'VERIFIED',
-  'STAGING_TESTED',
-  'PRODUCTION_ACTIVE',
-  'SUPERSEDED',
-]);
+export { RULESET_LIFECYCLE } from './ruleset-lifecycle.js';
+import { rulesetActivationProblem } from './ruleset-lifecycle.js';
+import { activePlanYear } from './rulesets.js';
+
+// No human promotion was recorded for the three state rulesets either. The
+// fields are null because that is the truth; ruleset-lifecycle.js lists them as
+// grandfathered and reports the owner's attestation as pending.
+const NO_PROMOTION_ON_RECORD = Object.freeze({ promotedBy: null, promotedAt: null, evidenceReference: null });
 
 /**
  * Per-state rulesets. The version strings are taken verbatim from the
@@ -52,6 +53,7 @@ export const STATE_RULESETS = Object.freeze({
     effectiveFrom: '2026-10-01',
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
+    promotion: NO_PROMOTION_ON_RECORD,
     recordingNotice: Object.freeze({
       allPartyConsent: false,
       basis: 'Project compliance position of record (one-party). Not re-determined here.',
@@ -69,6 +71,7 @@ export const STATE_RULESETS = Object.freeze({
     effectiveFrom: '2026-10-01',
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
+    promotion: NO_PROMOTION_ON_RECORD,
     recordingNotice: Object.freeze({
       allPartyConsent: false,
       basis: 'Project compliance position of record (one-party). Not re-determined here.',
@@ -86,6 +89,7 @@ export const STATE_RULESETS = Object.freeze({
     effectiveFrom: '2026-10-01',
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
+    promotion: NO_PROMOTION_ON_RECORD,
     recordingNotice: Object.freeze({
       allPartyConsent: true,
       basis:
@@ -122,15 +126,38 @@ export function resolveStateRuleset(state, planYear, now = new Date()) {
   if (!US_STATE_CODE_RE.test(code)) {
     return { ok: false, reason: 'INVALID_STATE', humanReview: true };
   }
-  const rs = STATE_RULESETS[code];
+  const rs = Object.prototype.hasOwnProperty.call(STATE_RULESETS, code) ? STATE_RULESETS[code] : null;
   if (!rs) {
     return { ok: false, reason: 'STATE_NOT_SUPPORTED', state: code, humanReview: false };
   }
-  if (planYear != null && rs.planYear !== planYear) {
-    return { ok: false, reason: 'RULESET_MISSING', state: code, planYear, humanReview: true };
+  // AUDIT 2026-10-04 (SPEC-22) — an omitted plan year used to SKIP the year
+  // check, and the state rulesets never expire, so a caller that passed nothing
+  // would have been handed the 2027 ruleset in 2028 and beyond. An omitted year
+  // now means "the year in force at `now`", and a year with no state ruleset is
+  // a refusal.
+  let year = planYear;
+  if (planYear == null) {
+    year = activePlanYear(now);
+    if (!Number.isInteger(year)) return { ok: false, reason: 'CLOCK_UNREADABLE', state: code, humanReview: true };
   }
-  if (rs.status !== 'PRODUCTION_ACTIVE') {
-    return { ok: false, reason: 'RULESET_NOT_ACTIVE', state: code, status: rs.status, humanReview: true };
+  return evaluateStateRuleset(rs, year, now);
+}
+
+/**
+ * Judge one state ruleset for one plan year at `now`. Split from the lookup so
+ * the rule can be exercised with rulesets that are not registered — the three
+ * registered ones all pass today, and a rule only ever shown passing inputs has
+ * not been tested.
+ */
+export function evaluateStateRuleset(rs, year, now = new Date()) {
+  if (!rs || typeof rs !== 'object') return { ok: false, reason: 'STATE_NOT_SUPPORTED', humanReview: false };
+  const code = rs.code;
+  if (rs.planYear !== year) {
+    return { ok: false, reason: 'RULESET_MISSING', state: code, planYear: year, humanReview: true };
+  }
+  const activation = rulesetActivationProblem(rs);
+  if (activation) {
+    return { ok: false, reason: activation, state: code, status: rs.status, humanReview: true };
   }
   // RED TEAM 2026-10-02 (JR-04, MEDIUM) — an unparseable `now` produced NaN, and
   // every NaN comparison is false, so an EXPIRED or NOT_YET_EFFECTIVE ruleset

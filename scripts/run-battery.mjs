@@ -57,6 +57,9 @@ const SUITES = [
   // CY2027 compliance layer (SOA instance model, state engine, consent objects,
   // trust/quarantine, retention, carrier overlays, canonical TPMO, evidence).
   'test-cy2027-2026-10-01.mjs',
+  // Yearly regulatory engine (spec §22, Phase 12): the plan-year clock on both
+  // sides of a rollover, the ruleset lifecycle, promotion records, source review.
+  'test-cy2027-yearly-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

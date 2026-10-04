@@ -38,6 +38,7 @@ import { fieldIdMap, CY2027_FIELD_KEYS } from '../api/_lib/cy2027/crm-fields.js'
 import { overlayInventory } from '../api/_lib/cy2027/carrier-overlay.js';
 import { hasCountyDataset } from '../api/_lib/cy2027/state-rules.js';
 import { activePlanYear } from '../api/_lib/cy2027/rulesets.js';
+import { yearlyReadiness } from '../api/_lib/cy2027/yearly-readiness.js';
 import { checkTpmo, htmlToText, TPMO_ANY } from './tpmo-gate.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,6 +81,20 @@ const shipMentioned = /State Health Insurance/i.test(en);
 if (year >= 2027 && shipMentioned) blocks.push('CY2027 is in force but the rendered TPMO text still names the SHIP');
 else oks.push(`plan year ${year}, TPMO variant ${variant} — rendered text matches`);
 if (/\[X\]|\[Y\]/.test(en)) blocks.push('the rendered TPMO disclaimer contains a bracketed placeholder');
+
+// ── 3a. The yearly engine (spec §22, Phase 12) ───────────────────────────────
+// AUDIT 2026-10-04 (SPEC-22) — nothing announced a plan-year rollover. The clock
+// used to answer "2027" forever, so the day CY2028 marketing opened the system
+// would have kept applying CY2027 rules and wording without a sound. The clock
+// is fixed; api/_lib/cy2027/yearly-readiness.js says what that leaves a person
+// to do, and it is a pure function so the suite can run it on either side of a
+// rollover instead of only "today".
+{
+  const yearly = yearlyReadiness();
+  blocks.push(...yearly.blocks);
+  warns.push(...yearly.warns);
+  oks.push(...yearly.oks);
+}
 
 // ── 3b. What is BUILT and what is SERVED, judged against the clock NOW ────────
 // RED TEAM 2026-10-03 (TPY-09) — the build gate compares a page to the module

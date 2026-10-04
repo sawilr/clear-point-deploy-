@@ -21,6 +21,7 @@ import {
   SOA_SCRIPT_VERSION,
   categoryByCode,
 } from './soa-text.js';
+import { rulesetVouchProblem } from './rulesets.js';
 
 /**
  * RED TEAM 2026-10-02 (SOA-01, CRITICAL, reproduced) — in-person detection was
@@ -395,6 +396,14 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
     // A fabricated ruleset with an empty soa block used to pass straight through.
     return { allowed: false, reason: 'RULESET_INCOMPLETE' };
   }
+  // AUDIT 2026-10-04 (SPEC-22) — the checks above look at the SHAPE of whatever
+  // object is handed in. A complete, well-formed object saying
+  // { planYear: 2028, status: 'PRODUCTION_ACTIVE', soa: {…} } has the right
+  // shape and no standing: nobody promoted it. The gate now vouches only for the
+  // registered ruleset of that plan year, and only if that ruleset may be
+  // treated as active (see ruleset-lifecycle.js).
+  const vouch = rulesetVouchProblem(ruleset);
+  if (vouch) return { allowed: false, reason: vouch };
 
   if (!instance) return { allowed: false, reason: 'NO_SOA' };
   if (instance.status === SOA_STATUS.INCOMPLETE) return { allowed: false, reason: 'SOA_INCOMPLETE' };

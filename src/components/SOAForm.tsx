@@ -39,7 +39,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
   STATE_RULESETS, SUPPORTED_STATES, resolveStateRuleset, readBackLines, partitionSelection,
-  LANGUAGE_SOURCE, languageElectionLabel,
+  LANGUAGE_SOURCE, languageElectionLabel, activePlanYear,
   type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
@@ -80,6 +80,14 @@ const UI = {
   stateUnsupported: {
     en: 'We are licensed in New York, New Jersey and Connecticut. We can still help you by phone — please call 1-855-720-8555 and a licensed advisor will point you to the right place.',
     es: 'Tenemos licencia en Nueva York, Nueva Jersey y Connecticut. Aun así podemos ayudarle por teléfono — llame al 1-855-720-8555 y un asesor licenciado le orientará.',
+  },
+  // Shown when a supported state has no ruleset in force for the current plan
+  // year (for example between a plan-year rollover and the new rules being
+  // approved). The form must not look broken and must not fall back to last
+  // year's rules; it sends the person to a human.
+  rulesUnavailable: {
+    en: 'We cannot complete this form online right now. A licensed advisor can help you by phone: ',
+    es: 'En este momento no podemos completar este formulario en línea. Un asesor licenciado puede ayudarle por teléfono: ',
   },
   countyHelp: {
     en: 'If you are not sure of your county, leave it blank and the advisor will confirm it with you.',
@@ -155,12 +163,18 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
     ? LANGUAGE_SOURCE.REPRESENTATIVE_ELECTED.code
     : LANGUAGE_SOURCE.BENEFICIARY_ELECTED.code;
 
+  // AUDIT 2026-10-04 (SPEC-22) — the plan year was the literal 2027 in four
+  // places in this file. After 1 October 2027 the form would have gone on
+  // presenting, and submitting, a CY2027 document for CY2028 appointments. It is
+  // read from the calendar once, and a year with no ruleset stops the form.
+  const planYear = useMemo(() => activePlanYear(), []);
   const stateResolution = useMemo(
-    () => (residenceState && residenceState !== 'OTHER' ? resolveStateRuleset(residenceState, 2027) : null),
-    [residenceState],
+    () => (residenceState && residenceState !== 'OTHER' ? resolveStateRuleset(residenceState, planYear) : null),
+    [residenceState, planYear],
   );
   const ruleset = stateResolution?.ok ? stateResolution.ruleset : null;
   const unsupported = residenceState === 'OTHER';
+  const rulesUnavailable = !!stateResolution && !stateResolution.ok;
   const stateName = ruleset ? (L === 'es' ? ruleset.nameEs : ruleset.name) : '';
 
   const parts = useMemo(() => partitionSelection(categories), [categories]);
@@ -226,7 +240,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
       residenceState: ruleset.code,
       zip: zip.trim(),
       county: county.trim() || null,
-      planYear: 2027,
+      planYear,
       appointmentAt: appointmentDate,
       appointmentFormat,
       representativeRelationship: representativeAuthority.trim() || null,
@@ -391,7 +405,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             value={APPOINTMENT_FORMATS.filter((f) => f.code === appointmentFormat).map((f) => (L === 'es' ? f.es : f.en))[0] || '—'}
             compact
           />
-          <RoField label={txt.fields.planYear} value="2027" compact />
+          <RoField label={txt.fields.planYear} value={String(planYear)} compact />
           <RoField
             label={txt.fields.language}
             value={(L === 'es' ? 'Español' : 'English') + (L === 'es' ? ' (elegido por usted)' : ' (elected by you)')}
@@ -479,7 +493,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
               label={L === 'es' ? 'Elección de idioma' : 'Language election'}
               value={languageElectionLabel(electionSource, L)}
             />
-            <EvidenceRow label={txt.fields.planYear} value="2027" />
+            <EvidenceRow label={txt.fields.planYear} value={String(planYear)} />
             <EvidenceRow label="SOURCE" value="WEB" />
             <EvidenceRow label={txt.fields.soaInstanceId} value={systemGenerated} />
             <EvidenceRow label={L === 'es' ? 'Hash de integridad' : 'Integrity hash'} value={systemGenerated} />
@@ -568,6 +582,11 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
         {unsupported && (
           <p role="status" className="mt-4 text-earth-700 text-sm leading-relaxed bg-cream-50 border border-cream-200 rounded-lg p-4">
             {t('stateUnsupported', L)}
+          </p>
+        )}
+        {rulesUnavailable && (
+          <p role="status" className="mt-4 text-earth-700 text-sm leading-relaxed bg-cream-50 border border-cream-200 rounded-lg p-4">
+            {t('rulesUnavailable', L)}{AGENT.agencyPhone}
           </p>
         )}
       </section>

@@ -28,6 +28,7 @@ export declare const TPMO_DISCLAIMER_VERSION: string;
 export declare const TPMO_DISCLAIMER_CONFIG: TpmoDisclaimerConfig;
 
 export declare function activeContractYearVariant(now?: Date): 'CY2026' | 'CY2027';
+export declare const LATEST_TPMO_VARIANT_PLAN_YEAR: number;
 export declare function hasVerifiedTpmoCounts(cfg?: TpmoDisclaimerConfig): boolean;
 export declare function tpmoDisclaimerText(lang: 'en' | 'es', cfg?: TpmoDisclaimerConfig): string;
 export declare function assertDisclaimerSignable(text: string): boolean;

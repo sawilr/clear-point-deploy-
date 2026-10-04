@@ -105,6 +105,46 @@ CY2027 encodes: `advanceWaitHours: 0` (the 48-hour wait is **removed**),
 Kill switch: `CY2027_REGULATORY_KILL=1` in the environment disables the marketing
 workflow immediately, without a deploy (§22).
 
+#### 2.2a The yearly engine (added 2026-10-04)
+
+**The defect that prompted it.** `activePlanYear()` was `t >= CY2027_START ? 2027 : 2026`:
+it answered 2027 forever. On 1 October 2027 the system would have gone on applying the
+CY2027 ruleset — and the form the literal year 2027 — to CY2028 appointments, silently.
+That is the §33 immediate fail "old-year rules … silently reused for new plan year". The
+year is now computed from the calendar for any date (`marketingStartUtc(year)` = 1 October
+of the year before, 00:00 Eastern), and a year with no usable ruleset fails closed.
+
+| Piece | Where | What it guarantees |
+|---|---|---|
+| Plan-year clock | `rulesets.js` `activePlanYear`, `marketingStartUtc` | the year in force for any instant; `NaN` (a refusal) when the clock is unreadable |
+| Lifecycle | `ruleset-lifecycle.js` `recordRulesetTransition` | one step at a time, forward only, by a named person, with an instant and an evidence reference |
+| Promotion record | `promotion` on every CMS and state ruleset | who made it active — or `null`, truthfully, when nobody is on record |
+| Grandfathering | `GRANDFATHERED_RULESET_VERSIONS` (closed, pinned by the suite) | the five rulesets activated before the lifecycle existed are usable but report `GRANDFATHERED_PENDING_OWNER`; no other ruleset can be active without a human promotion record |
+| Source review | `sourceReviews` + `sourceReviewStatus` | each required source's verification and review-by dates; `null` = not on record, reported, never invented; a **stated** review-by date that has passed locks the workflow (`RULE_SOURCE_REVIEW_OVERDUE`) |
+| Registered-object check | `rulesetVouchProblem`, called by `marketingGate` | the gate relies only on THE registered ruleset of that year, not on an object that resembles one |
+| CY2028 placeholder | `CMS_RULESET_2028`, `PENDING_REVIEW` | the next year has a named state; every rule value is `null` — nothing was copied from 2027 |
+| Readiness | `yearly-readiness.js` → `npm run preflight` | says what a person must do and when: warns a year out, **blocks** inside 120 days of a rollover with no ready ruleset, and blocks a promote when the plan year in force is newer than the TPMO wording on file |
+
+**What a refusal affects.** `resolveRuleset()` governs the SOA/marketing workflow only.
+Nothing on the public site or in lead capture calls it, so none of the above can take the
+site down. The public TPMO sentence is deliberately never switched off: after a rollover
+the newest verified wording keeps rendering and preflight blocks the next promote until a
+person confirms the new year's sentence (`LATEST_TPMO_VARIANT_PLAN_YEAR`).
+
+**Stated plainly — the open attestation.** The CY2027 CMS ruleset and the NY/NJ/CT state
+rulesets are `PRODUCTION_ACTIVE` because the code that introduced them said so. No person
+is on record as having reviewed the sources and promoted them; their `promotion` records
+are `null` and no reviewer was invented. This is carried as the SOA precondition
+`rulesetPromotionAttested` (false), so the SOA workflow cannot be enabled until the owner
+attests. To attest: review the five sources in `CMS_RULESET_2027.sourceReviews`, fill in
+`verifiedOn` / `verifiedBy` / `reviewBy` and the `promotion` record (name, UTC instant,
+evidence reference) in `rulesets.js` and `state-rules.js`, then flip the precondition.
+
+**Preparing CY2028** (Phase 12): fill the placeholder's rule values from the CY2028 final
+rule, record each lifecycle step with `recordRulesetTransition`, add the CY2028 TPMO
+variant if the standardized sentence changes, and add the 2028 state rulesets. Until then
+the workflow fails closed on 1 October 2027 by design.
+
 ### 2.3 Lead trust
 
 ```
@@ -357,6 +397,8 @@ Stated plainly rather than implied:
 | Quarantine STOPPING the lead workflow | **BUILT, FLAG OFF.** `CY2027_QUARANTINE_STOP` gates it; unset in production, so behaviour is unchanged today. When on, a flagged lead still creates the contact and the note — only the automated opportunity is withheld. Previously stated as owner-gated: §13 asks that a high-risk lead halt the automated workflow before appointment confirmation. The trust engine is wired into `api/submit-lead.js` and attaches `TRUST_*` flags plus a `[SECURITY-REVIEW]` task, but it deliberately changes NO routing: that is the live lead pipeline, and altering the opportunity/dialing control flow without end-to-end exercise would risk the core business function. Wiring the stop is a follow-up to run with the owner. |
 | In-person appointment gate in practice | `marketingGate()` refuses an in-person appointment without a written, non-superseded, evidenced SOA for that exact appointment. There is no booking endpoint in this repository — appointments are created by the advisor in GoHighLevel — so the process half (the advisor consulting the gate) is an owner workflow item. |
 | SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of six preconditions now closed; `tpmoCountsVerifiedEverywhere` and `signedPdfPersisted` remain. |
+| Human promotion of the active rulesets | **OWNER ATTESTATION.** No named person is on record as having promoted `CMS_RULESET_2027` or the three state rulesets, and no source has a verification date. Carried as the SOA precondition `rulesetPromotionAttested`; see §2.2a for the exact steps. |
+| CY2028 ruleset | **NOT STARTED — by design.** `CMS_RULESET_2028` is a `PENDING_REVIEW` placeholder with no rule values. `npm run preflight` counts down to 1 October 2027 and blocks inside 120 days. |
 | Production deploy | Not done. Requires owner GO. |
 
 ---
