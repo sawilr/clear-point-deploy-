@@ -60,6 +60,8 @@ const SUITES = [
   // Yearly regulatory engine (spec §22, Phase 12): the plan-year clock on both
   // sides of a rollover, the ruleset lifecycle, promotion records, source review.
   'test-cy2027-yearly-2026-10-04.mjs',
+  // Controlled learning (spec §23) and the no-self-modification build gate (§33).
+  'test-cy2027-learning-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

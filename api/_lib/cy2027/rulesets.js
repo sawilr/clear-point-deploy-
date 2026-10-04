@@ -66,7 +66,9 @@ export function activePlanYear(now = new Date()) {
 const CY2027_RETENTION = Object.freeze({
   marketingSalesCallMinYears: 6,
   audioRequiredFirstYears: 3,
-  audioOrCompleteTranscriptYears: [4, 6],
+  // Frozen too: Object.freeze is shallow, and this array sat mutable inside two
+  // frozen rulesets until scripts/check-no-self-modification.mjs walked them.
+  audioOrCompleteTranscriptYears: Object.freeze([4, 6]),
   note:
     'Enrollment records may carry different or longer obligations; retention is assigned by record class using the longest applicable period (spec §19).',
 });
