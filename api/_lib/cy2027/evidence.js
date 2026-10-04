@@ -95,6 +95,13 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
   if (attribution) {
     throw new Error('evidence: the election and the signer disagree (' + attribution + ')');
   }
+  // AUDIT 2026-10-04 (red team, SPEC-22) — spec §22: "Every live SOA/call points
+  // to the exact ruleset version used at that date/time." The record named the
+  // state ruleset and the form and not the CMS ruleset. It is inside the hashed
+  // core below, and a record cannot be built without it.
+  if (typeof instance.cmsRulesetVersion !== 'string' || !instance.cmsRulesetVersion) {
+    throw new Error('evidence: the instance does not name the CMS ruleset version it was signed under (SOA_CMS_RULESET_VERSION_MISSING)');
+  }
 
   const textSnapshot = renderTextSnapshot(instance, stateName);
   const core = {
@@ -115,6 +122,7 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     authorizedCategories: instance.authorizedCategories,
     declinedCategories: instance.declinedCategories,
     nonAuthorizingSelections: instance.nonAuthorizingSelections,
+    cmsRulesetVersion: instance.cmsRulesetVersion,
     stateRulesetVersion: instance.stateRulesetVersion,
     soaFormVersion: instance.soaFormVersion,
     scriptVersion: instance.scriptVersion,

@@ -24,6 +24,10 @@ scripts/*
 !scripts/check-cy2027-parity.mjs
 # 2026-10-04 — puerta de "ninguna auto-modificación en producción" (spec §23/§33).
 !scripts/check-no-self-modification.mjs
+# 2026-10-04 — las reglas de esa puerta viven en un módulo que la puerta IMPORTA
+# (el archivo de comando ya no tiene ninguna condición). Sin esta línea el build
+# de Vercel muere con "Cannot find module"; check-vercel-config.mjs lo exige.
+!scripts/no-self-modification-lib.mjs
 # SEO 2026-09-27 — prerender del cuerpo de cada ruta. La entrada .tsx la carga
 # prerender-body.mjs en tiempo de ejecución, así que check-vercel-config no la
 # ve en el script "build"; el propio prerender-body falla si falta.

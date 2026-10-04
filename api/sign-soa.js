@@ -43,8 +43,11 @@ import { tpmoDisclaimerText, assertDisclaimerSignable, TPMO_DISCLAIMER_VERSION }
 // Client-side enforcement is not enforcement. The server now resolves the
 // rulesets itself and treats the browser's versions as a claim to CHECK, never
 // as a value to trust.
-import { resolveRuleset } from './_lib/cy2027/rulesets.js';
-import { resolveStateRuleset } from './_lib/cy2027/state-rules.js';
+// AUDIT 2026-10-04 (red team, SPEC-22) — the two resolutions used to be two
+// statements here, which the suite could only grep; a fallback line added under
+// them went unnoticed. They are one function now, tested by calling it, and this
+// file names no ruleset, no registry and no plan year of its own.
+import { resolveSigningRulesets } from './_lib/cy2027/state-rules.js';
 import {
   createSoaInstance, completeSoaInstance, readLanguageElection, languageElectionLabel,
 } from './_lib/cy2027/soa-instance.js';
@@ -195,21 +198,19 @@ export default async function handler(req, res) {
   // The plan year is resolved from the server clock, never read from the body:
   // a client that sends planYear 2026 must not be able to sign under last
   // year's rules (spec §33, "old-year rules silently reused for new plan year").
-  var rulesetRes = resolveRuleset(null);
-  if (!rulesetRes.ok) {
-    console.error('[sign-soa] ruleset unavailable:', rulesetRes.reason);
-    return res.status(503).json({ error: 'SOA_RULESET_UNAVAILABLE', reason: rulesetRes.reason });
+  var rules = resolveSigningRulesets(residenceState);
+  if (!rules.ok && rules.stage === 'CMS_RULESET') {
+    console.error('[sign-soa] ruleset unavailable:', rules.reason);
+    return res.status(503).json({ error: 'SOA_RULESET_UNAVAILABLE', reason: rules.reason });
   }
-  var ruleset = rulesetRes.ruleset;
-
-  var stateRes = resolveStateRuleset(residenceState, ruleset.planYear);
-  if (!stateRes.ok) {
+  if (!rules.ok) {
     // Named reason, not a generic 400 — the UI must distinguish "we are not
     // licensed in your state" from "something failed".
-    return res.status(stateRes.reason === 'STATE_NOT_SUPPORTED' ? 409 : 400)
-      .json({ error: 'SOA_STATE_GATE', reason: stateRes.reason });
+    return res.status(rules.reason === 'STATE_NOT_SUPPORTED' ? 409 : 400)
+      .json({ error: 'SOA_STATE_GATE', reason: rules.reason });
   }
-  var stateRuleset = stateRes.ruleset;
+  var ruleset = rules.ruleset;
+  var stateRuleset = rules.stateRuleset;
 
   // The browser's version strings are a CLAIM. Compare them with what the
   // server resolved and refuse on any mismatch rather than recording theirs.
@@ -242,6 +243,8 @@ export default async function handler(req, res) {
     method: 'WEB_ELECTRONIC_SIGNATURE',
     beneficiaryName: fullName || record.fullName,
     selectedCategories: selectedCategories,
+    // Spec §22 — the exact CMS ruleset version this signature is taken under.
+    cmsRulesetVersion: ruleset.version,
     stateRulesetVersion: stateRuleset.stateRulesetVersion,
     soaFormVersion: stateRuleset.soaFormVersion,
   });
@@ -302,6 +305,7 @@ export default async function handler(req, res) {
       declined: instance.declinedCategories,
       soaFormVersion: instance.soaFormVersion,
       stateRulesetVersion: instance.stateRulesetVersion,
+      cmsRulesetVersion: instance.cmsRulesetVersion,
       scriptVersion: instance.scriptVersion,
       source: instance.source,
       appointmentId: instance.appointmentId,
@@ -384,6 +388,7 @@ export default async function handler(req, res) {
       method: instance.method, authorized: instance.authorizedCategories.join(','),
       declined: instance.declinedCategories.join(','),
       stateRulesetVersion: instance.stateRulesetVersion, soaFormVersion: instance.soaFormVersion,
+      cmsRulesetVersion: instance.cmsRulesetVersion,
     },
   });
 
@@ -434,6 +439,7 @@ export default async function handler(req, res) {
     'appointment_id: ' + instance.appointmentId,
     'appointment_at: ' + (instance.appointmentAt || '(not supplied)'),
     'appointment_format: ' + instance.appointmentFormat,
+    'cms_ruleset_version: ' + instance.cmsRulesetVersion,
     'state_ruleset_version: ' + instance.stateRulesetVersion,
     'soa_form_version: ' + instance.soaFormVersion,
     'soa_script_version: ' + instance.scriptVersion,
@@ -678,6 +684,8 @@ function buildSoaPdf(opts) {
       kv(doc, 'SOA_ID', opts.soaId);
       kv(doc, 'SOA_FORM_VERSION', opts.soaFormVersion || '—');
       kv(doc, 'STATE_RULESET_VERSION', opts.stateRulesetVersion || '—');
+      // Spec §22 — the signed artefact names the CMS ruleset version too.
+      kv(doc, 'CMS_RULESET_VERSION', opts.cmsRulesetVersion || '—');
       kv(doc, 'SOA_SCRIPT_VERSION', opts.scriptVersion || '—');
       kv(doc, L === 'es' ? 'Idioma' : 'Language', L === 'es' ? 'ES' : 'EN');
       // G08 — the language of the document is also EVIDENCE: a reader has to be

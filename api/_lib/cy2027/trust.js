@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { redactProhibitedForScoring } from './prohibited-signals.js';
-import { humanActorProblem } from './actors.js';
+import { reviewerProblem } from './actors.js';
 
 export const LEAD_TRUST_STATE = Object.freeze({
   VERIFIED_REQUEST: 'VERIFIED_REQUEST',
@@ -248,13 +248,22 @@ export function resolveSecurityReview(task, { actor, decision, reasonCode, at = 
   // 2026-10-04 — the test itself now lives in ./actors.js, shared with the
   // ruleset lifecycle (§22) and controlled learning (§23), so the three
   // human-only decisions cannot drift apart. Same rule, same messages.
+  // AUDIT 2026-10-04 (red team) — "looks like a person" let 'Sofía', 'Emely',
+  // 'ChatGPT' and 'Copilot' through. The decision now needs an AUTHORISED
+  // reviewer (CY2027_REVIEWERS), and with nobody authorised it refuses everyone.
   const who = String(actor || '').trim();
-  const actorProblem = humanActorProblem(who);
+  const actorProblem = reviewerProblem(who);
   if (actorProblem === 'ACTOR_MISSING') throw new Error('trust: security review requires a human reviewer (spec §13 forbids AI self-approval)');
-  if (actorProblem) {
+  if (actorProblem === 'ACTOR_NOT_HUMAN') {
     throw new Error(
       `trust: "${who}" is not a human reviewer. Spec §13 forbids AI self-approval of quarantined cases — ` +
       'record the named person who made the decision.',
+    );
+  }
+  if (actorProblem) {
+    throw new Error(
+      `trust: this reviewer is not authorised to decide (${actorProblem}). Spec §13 forbids AI self-approval of quarantined cases — ` +
+      'the decision is recorded only for a person the owner has named in CY2027_REVIEWERS.',
     );
   }
   if (!['CONFIRMED', 'REJECTED_DUPLICATE', 'REJECTED_INVALID', 'NEEDS_FURTHER_VERIFICATION'].includes(decision)) {

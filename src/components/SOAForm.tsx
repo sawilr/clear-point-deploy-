@@ -38,8 +38,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
-  STATE_RULESETS, SUPPORTED_STATES, resolveStateRuleset, readBackLines, partitionSelection,
-  LANGUAGE_SOURCE, languageElectionLabel, activePlanYear,
+  STATE_RULESETS, SUPPORTED_STATES, soaFormRules, readBackLines, partitionSelection,
+  LANGUAGE_SOURCE, languageElectionLabel,
   type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
@@ -167,14 +167,10 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   // places in this file. After 1 October 2027 the form would have gone on
   // presenting, and submitting, a CY2027 document for CY2028 appointments. It is
   // read from the calendar once, and a year with no ruleset stops the form.
-  const planYear = useMemo(() => activePlanYear(), []);
-  const stateResolution = useMemo(
-    () => (residenceState && residenceState !== 'OTHER' ? resolveStateRuleset(residenceState, planYear) : null),
-    [residenceState, planYear],
-  );
-  const ruleset = stateResolution?.ok ? stateResolution.ruleset : null;
-  const unsupported = residenceState === 'OTHER';
-  const rulesUnavailable = !!stateResolution && !stateResolution.ok;
+  // AUDIT 2026-10-04 (red team) — the decision is soaFormRules(), a pure function
+  // the suite calls on both sides of a rollover. `ruleset` has this one source:
+  // there is no fallback to the registry when the resolution fails.
+  const { planYear, ruleset, unsupported, rulesUnavailable } = useMemo(() => soaFormRules(residenceState), [residenceState]);
   const stateName = ruleset ? (L === 'es' ? ruleset.nameEs : ruleset.name) : '';
 
   const parts = useMemo(() => partitionSelection(categories), [categories]);

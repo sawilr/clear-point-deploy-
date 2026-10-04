@@ -51,15 +51,10 @@ import { verifyMedicareFigures, MEDICARE_FIGURES_YEAR } from './_lib/medicare-fi
 // something went wrong with a reply; it may not change anything because of it.
 import { observationLogLine } from './_lib/cy2027/learning.js';
 
-// The one observation this endpoint makes, in full. Every value is fixed here:
-// the summary is this sentence and never anything a caller typed or the model
-// wrote, and the surface is the shared endpoint because Clara and Zara both use
-// it and the server is not told which one is asking.
-const FILTER_CORRECTION_OBSERVATION = Object.freeze({
-  kind: 'FAILED_PHRASE',
-  surface: 'WEB_CHAT',
-  summary: 'The compliance post-filter had to correct the assistant reply before it was sent.',
-});
+// The one observation this endpoint makes is a CODE from a closed table in
+// learning.js (AUTOMATED_OBSERVATIONS). AUDIT 2026-10-04 (red team): this file
+// used to hand the learning module a kind, a surface and a sentence of its own;
+// an automated surface now has no way to hand it text — or an id — at all.
 
 // ── CARRIER FIREWALL COPY + DETECTOR (CY2027 §20/§21/§33) ─────────────────
 // Deliberately names no carrier and no plan, so the refusal itself can never
@@ -1138,7 +1133,7 @@ export default async function handler(req, res) {
       // no message, no reply). The language is the one the correction was made
       // in. It changes no reply text and no routing, and nothing reads it back:
       // a person collects these from the log and decides (learning.js).
-      var _learningLine = observationLogLine({ ...FILTER_CORRECTION_OBSERVATION, language: lang === 'en' ? 'en' : 'es' });
+      var _learningLine = observationLogLine({ observation: 'FILTER_CORRECTED_REPLY', language: lang === 'en' ? 'en' : 'es' });
       if (_learningLine) console.warn(_learningLine);
     }
     // Legacy in-file compliance pass (defense-in-depth) + USTED normalization.

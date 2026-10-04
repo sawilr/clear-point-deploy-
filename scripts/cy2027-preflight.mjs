@@ -89,12 +89,14 @@ if (/\[X\]|\[Y\]/.test(en)) blocks.push('the rendered TPMO disclaimer contains a
 // is fixed; api/_lib/cy2027/yearly-readiness.js says what that leaves a person
 // to do, and it is a pure function so the suite can run it on either side of a
 // rollover instead of only "today".
-{
-  const yearly = yearlyReadiness();
-  blocks.push(...yearly.blocks);
-  warns.push(...yearly.warns);
-  oks.push(...yearly.oks);
-}
+// AUDIT 2026-10-04 (red team) — these four statements sat in a bare block, and
+// the suite matched them as text: `if (false) {` on the line above left every
+// assertion green. They are top-level statements now and the suite checks that
+// with the parser — inside any block, branch or function they are not found.
+const yearly = yearlyReadiness();
+blocks.push(...yearly.blocks);
+warns.push(...yearly.warns);
+oks.push(...yearly.oks);
 
 // ── 3b. What is BUILT and what is SERVED, judged against the clock NOW ────────
 // RED TEAM 2026-10-03 (TPY-09) — the build gate compares a page to the module

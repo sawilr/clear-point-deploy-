@@ -24,7 +24,7 @@ import {
 } from '../api/_lib/cy2027/rulesets.js';
 import {
   SOA_STATUS, SOA_METHOD, methodIsWritten, partitionSelection, createSoaInstance, completeSoaInstance,
-  superseded, revokeSoaInstance, coversCategory, requiresScopeUpdate, marketingGate, requiresNewInstance,
+  superseded, revokeSoaInstance, coversCategory, requiresScopeUpdate, marketingGate as marketingGateAtClock, requiresNewInstance,
   LANGUAGE_SOURCE, languageWasElected, isSoaLanguage, languageElectionLabel, readLanguageElection,
   electionAttributionError,
 } from '../api/_lib/cy2027/soa-instance.js';
@@ -70,13 +70,27 @@ import { scrubPHI } from '../api/_lib/phi-scrub.js';
 import {
   sendingEnabled, maySendCopy, buildCopyMessage, assertNotMarketing,
 } from '../api/_lib/cy2027/beneficiary-copy.js';
-import { parseCountyCsv } from '../api/_lib/cy2027/state-rules.js';
+import { parseCountyCsv, resolveSigningRulesets } from '../api/_lib/cy2027/state-rules.js';
+import { stripComments } from './no-self-modification-lib.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from 'node:path';
+
+// AUDIT 2026-10-04 (red team) — two things this suite used to get from the
+// ambient world are now pinned here, so that it says the same thing on any day:
+//   • the marketing gate reads the clock (it refuses a ruleset that is not in
+//     force NOW). Every assertion below is about CY2027, so the gate is asked at
+//     an instant inside CY2027 unless a test passes its own `now`; the rollover
+//     is exercised in scripts/test-cy2027-yearly-2026-10-04.mjs.
+//   • a human-only decision needs an AUTHORISED reviewer (CY2027_REVIEWERS).
+//     The two identities the quarantine tests decide as are the configured ones.
+const IN_CY2027 = new Date('2026-11-01T12:00:00Z');
+const marketingGate = (instance, appointment, ruleset, opts = {}) =>
+  marketingGateAtClock(instance, appointment, ruleset, { now: IN_CY2027, ...opts });
+process.env.CY2027_REVIEWERS = 'sawil, Sawil Reyes';
 
 let passed = 0;
 const failures = [];
@@ -223,7 +237,12 @@ const throws = (label, fn, re) => {
  * COMMENT that quoted the very string the scan forbade, so every scan here
  * strips comments first.
  */
-const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+// AUDIT 2026-10-04 (red team) — this was a block-comment regex followed by a
+// line-comment regex. A `//` comment containing `api/*.js` opened a "block
+// comment" that swallowed real code up to the next `*/`, so a scan for the
+// ABSENCE of something could pass on code it never saw. The comment boundaries
+// now come from the parser (see scripts/no-self-modification-lib.mjs).
+const strip = (src) => stripComments(src);
 
 const baseInput = {
   soaId: 'soa_1', appointmentId: 'appt_1', appointmentAt: '2026-11-10T15:00:00Z',
@@ -231,6 +250,7 @@ const baseInput = {
   language: 'en', languageSource: 'BENEFICIARY_ELECTED',
   method: 'WEB_ELECTRONIC_SIGNATURE', beneficiaryName: 'Jane Q Public',
   selectedCategories: ['MA_WITH_RX'], stateRulesetVersion: 'NY-CY2027-v1.0', soaFormVersion: 'CP-SOA-NY-CY2027-v1.0',
+  cmsRulesetVersion: 'CMS_RULESET_2027-v1.0',
 };
 {
   const p = partitionSelection(['MA_WITH_RX', 'UNSURE_DISCUSS_PROCESS', 'NOT_A_CODE']);
@@ -688,15 +708,25 @@ const baseInput = {
 {
   const SRC = readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8');
 
-  ok('server imports the ruleset resolver', /import \{[^}]*resolveRuleset[^}]*\} from '\.\/_lib\/cy2027\/rulesets\.js'/.test(SRC));
-  ok('server imports the state resolver', /import \{[^}]*resolveStateRuleset[^}]*\} from '\.\/_lib\/cy2027\/state-rules\.js'/.test(SRC));
+  // AUDIT 2026-10-04 (red team) — the two resolutions are ONE function now
+  // (resolveSigningRulesets), so the rule is exercised by calling it — here for
+  // CY2027, and on both sides of a rollover in the yearly suite — and the handler
+  // is pinned to calling exactly that.
+  ok('server imports the ruleset resolver', /import \{[^}]*resolveSigningRulesets[^}]*\} from '\.\/_lib\/cy2027\/state-rules\.js'/.test(SRC));
+  ok('server imports the state resolver', (() => {
+    const r = resolveSigningRulesets('NY', IN_CY2027, {});
+    return r.ok === true && r.ruleset === CMS_RULESET_2027 && r.stateRuleset === STATE_RULESETS.NY;
+  })());
   ok('server imports the instance builder', /createSoaInstance/.test(SRC) && /completeSoaInstance/.test(SRC));
   ok('server imports the evidence builder', /buildEvidenceRecord/.test(SRC));
 
   ok('server resolves the plan year from its own clock, not the body',
-    /resolveRuleset\(null\)/.test(SRC), 'resolveRuleset(null) not found');
+    /^[ \t]*var rules = resolveSigningRulesets\(residenceState\);/m.test(strip(SRC)), 'resolveSigningRulesets(residenceState) not found');
   ok('server fails closed when no ruleset governs', /SOA_RULESET_UNAVAILABLE/.test(SRC));
-  ok('server gates on the state ruleset', /resolveStateRuleset\(residenceState/.test(SRC));
+  ok('server gates on the state ruleset', (() => {
+    const r = resolveSigningRulesets('FL', IN_CY2027, {});
+    return r.ok === false && r.stage === 'STATE_RULESET' && r.reason === 'STATE_NOT_SUPPORTED';
+  })());
   ok('server returns a named state reason', /SOA_STATE_GATE/.test(SRC));
   ok('server treats the browser versions as a claim to check', /SOA_VERSION_MISMATCH/.test(SRC));
   ok('server refuses an SOA that authorizes nothing', /SOA_INCOMPLETE/.test(SRC));

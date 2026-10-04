@@ -20,7 +20,17 @@
 // that happened — and says "unknown" where nobody recorded it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { rulesetActivationProblem, rulesetAttestation, requiredSourceExpired, nextRulesetStatus } from './ruleset-lifecycle.js';
+import { rulesetActivationProblem, rulesetAttestation, sourceReviewProblem, nextRulesetStatus } from './ruleset-lifecycle.js';
+
+/**
+ * The instant `now` denotes, in milliseconds — or NaN. A clock is a Date, an ISO
+ * string or a number of milliseconds; null, a boolean or an object is not a
+ * clock (`new Date(null)` is 1970, which is an answer nobody asked for).
+ */
+function instantOf(now) {
+  if (now instanceof Date) return now.getTime();
+  return typeof now === 'string' || typeof now === 'number' ? new Date(now).getTime() : NaN;
+}
 
 /**
  * Instant at which marketing for a plan year may begin: 1 October of the year
@@ -52,7 +62,7 @@ export const CY2027_MARKETING_START_UTC = Date.UTC(2026, 9, 1, 4, 0, 0);
  * refusal (resolveRuleset does, with CLOCK_UNREADABLE).
  */
 export function activePlanYear(now = new Date()) {
-  const t = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const t = instantOf(now);
   if (!Number.isFinite(t)) return NaN;
   const calendarYear = new Date(t).getUTCFullYear();
   return t >= marketingStartUtc(calendarYear + 1) ? calendarYear + 1 : calendarYear;
@@ -77,10 +87,21 @@ const CY2027_RETENTION = Object.freeze({
  * No human promotion was recorded for the rulesets that predate the lifecycle.
  * The fields are null because that is the truth; ./ruleset-lifecycle.js lists
  * these rulesets as grandfathered and reports the attestation as pending.
- * To attest, the owner replaces the three nulls of a ruleset with the reviewer's
- * name, the UTC instant and a reference to what was reviewed.
+ * To attest, the owner replaces a ruleset's `promotion` with
+ *   { rulesetVersion, promotedBy, promotedAt, evidenceReference }
+ * — the version being attested, an authorised reviewer (CY2027_REVIEWERS), the
+ * UTC instant and a reference to what was reviewed. The record is bound to the
+ * version it names: pasted onto another ruleset it attests nothing.
  */
 const NO_PROMOTION_ON_RECORD = Object.freeze({ promotedBy: null, promotedAt: null, evidenceReference: null });
+
+/**
+ * No lifecycle step is on record for the rulesets that predate the lifecycle,
+ * and none exists yet for the one in preparation. A ruleset added from now on
+ * carries here the frozen records recordRulesetTransition() returns, one per
+ * step, and may not be used without all of them (ruleset-lifecycle.js).
+ */
+const NO_TRANSITIONS_ON_RECORD = Object.freeze([]);
 
 export const CMS_RULESET_2026 = Object.freeze({
   planYear: 2026,
@@ -105,6 +126,7 @@ export const CMS_RULESET_2026 = Object.freeze({
   sources: Object.freeze(['Superseded — retained for historical explainability only.']),
   sourceReviews: Object.freeze([]),
   promotion: NO_PROMOTION_ON_RECORD,
+  transitions: NO_TRANSITIONS_ON_RECORD,
 });
 
 /** One source a human must verify each cycle. Dates are YYYY-MM-DD or null = not on record. */
@@ -159,6 +181,7 @@ export const CMS_RULESET_2027 = Object.freeze({
       'https://www.ecfr.gov/current/title-42/chapter-IV/subchapter-B/part-423/subpart-V'),
   ]),
   promotion: NO_PROMOTION_ON_RECORD,
+  transitions: NO_TRANSITIONS_ON_RECORD,
 });
 
 /**
@@ -190,6 +213,7 @@ export const CMS_RULESET_2028 = Object.freeze({
   sources: Object.freeze([]),
   sourceReviews: Object.freeze([]),
   promotion: NO_PROMOTION_ON_RECORD,
+  transitions: NO_TRANSITIONS_ON_RECORD,
 });
 
 const RULESETS = Object.freeze({ 2026: CMS_RULESET_2026, 2027: CMS_RULESET_2027, 2028: CMS_RULESET_2028 });
@@ -202,18 +226,61 @@ export function isRegisteredRuleset(ruleset, registry = RULESETS) {
 }
 
 /**
- * Why a ruleset OBJECT handed to a gate may not be relied on — or null.
- *   RULESET_NOT_REGISTERED          it merely resembles a ruleset
- *   RULESET_NOT_ACTIVE              registered, but not PRODUCTION_ACTIVE
- *   RULESET_PROMOTION_NOT_RECORDED  registered and "active", with nobody on
- *                                   record as having made it so
- * `registry` exists so the last case can be exercised: every ruleset registered
- * today is either inactive or grandfathered, so without it that branch could
- * only ever be read, never run.
+ * THE one judgement of "may this ruleset govern live work at `now`?" — or null.
+ *
+ * AUDIT 2026-10-04 (red team) — this was two judgements that had drifted apart.
+ * The resolver checked activation and source expiry; the marketing gate checked
+ * registration and activation only, so it opened under a ruleset whose required
+ * source had expired (the §22 kill condition) and for a March-2029 appointment
+ * under CMS_RULESET_2027. And neither looked at the calendar when the year was
+ * given explicitly: CMS_RULESET_2027 resolved in 2029, before its own start,
+ * and against a clock nobody could read. Both callers now come through here.
+ *
+ *   RULESET_UNRESOLVED              not a ruleset, or it names no plan year
+ *   CLOCK_UNREADABLE                `now` is not an instant
+ *   RULESET_NOT_ACTIVE              not PRODUCTION_ACTIVE
+ *   RULESET_PROMOTION_NOT_RECORDED  "active" with no lifecycle on record, and
+ *                                   not one of the registered grandfathered ones
+ *   RULESET_NOT_YET_EFFECTIVE       marketing for its plan year has not opened
+ *   RULESET_NOT_IN_FORCE            marketing for the NEXT plan year has opened.
+ *                                   The window is derived from the plan year: a
+ *                                   null `effectiveTo` does not keep a ruleset
+ *                                   alive for ever
+ *   RULE_SOURCES_MISSING / RULE_SOURCE_REVIEW_OVERDUE / RULE_SOURCE_NOT_VERIFIED
+ *                                   see sourceReviewProblem()
+ *
+ * Grandfathering is decided HERE and against the real registry only: a ruleset
+ * is grandfathered if it IS one of the objects this module registers. No
+ * argument — not even the registry the suite may inject elsewhere — can make
+ * another object grandfathered.
  */
-export function rulesetVouchProblem(ruleset, registry = RULESETS) {
+function rulesetUseProblem(rs, now) {
+  if (!rs || typeof rs !== 'object') return 'RULESET_UNRESOLVED';
+  const t = instantOf(now);
+  if (!Number.isFinite(t)) return 'CLOCK_UNREADABLE';
+  const standing = { registered: isRegisteredRuleset(rs, RULESETS), now };
+  const activation = rulesetActivationProblem(rs, standing);
+  if (activation) return activation;
+  if (!Number.isInteger(rs.planYear)) return 'RULESET_UNRESOLVED';
+  if (t < marketingStartUtc(rs.planYear)) return 'RULESET_NOT_YET_EFFECTIVE';
+  if (t >= marketingStartUtc(rs.planYear + 1)) return 'RULESET_NOT_IN_FORCE';
+  return sourceReviewProblem(rs, standing);
+}
+
+/**
+ * Why a ruleset OBJECT handed to a gate may not be relied on at `now` — or null.
+ *   RULESET_NOT_REGISTERED  it merely resembles a ruleset
+ *   …and every reason rulesetUseProblem() gives: the gate refuses whenever the
+ *   resolver would.
+ * `registry` exists so those cases can be exercised: every ruleset registered
+ * today is either inactive or grandfathered, so without it they could only ever
+ * be read, never run. It decides ONLY whether the object counts as registered
+ * for this call; a ruleset registered that way still has to show its whole
+ * lifecycle and verified sources — it is never grandfathered.
+ */
+export function rulesetVouchProblem(ruleset, registry = RULESETS, now = new Date()) {
   if (!isRegisteredRuleset(ruleset, registry)) return 'RULESET_NOT_REGISTERED';
-  return rulesetActivationProblem(ruleset);
+  return rulesetUseProblem(ruleset, now);
 }
 
 // ── Regulatory kill switch (spec §22) ────────────────────────────────────────
@@ -235,12 +302,19 @@ export function regulatoryKillEngaged(env = process.env) {
  *   RULESET_NOT_ACTIVE              exists but is not PRODUCTION_ACTIVE
  *   RULESET_PROMOTION_NOT_RECORDED  active in name, but nobody is on record as
  *                                   having promoted it and it is not grandfathered
- *   RULE_SOURCE_REVIEW_OVERDUE      a stated source review date has passed
+ *   RULESET_NOT_YET_EFFECTIVE / RULESET_NOT_IN_FORCE
+ *                                   an explicit year that is not the year in
+ *                                   force at `now`
+ *   RULE_SOURCES_MISSING / RULE_SOURCE_REVIEW_OVERDUE / RULE_SOURCE_NOT_VERIFIED
+ *                                   a required source expired or cannot be validated
  *
  * This governs the SOA / marketing workflow only. Nothing on the public site or
  * in lead capture calls it, so a refusal here never takes the site down.
+ *
+ * `registry` is for the suite (see rulesetVouchProblem); production callers
+ * never pass it, and it cannot make anything grandfathered.
  */
-export function resolveRuleset(planYear, now = new Date(), env = process.env) {
+export function resolveRuleset(planYear, now = new Date(), env = process.env, registry = RULESETS) {
   if (regulatoryKillEngaged(env)) {
     return { ok: false, reason: 'REGULATORY_KILL_ENGAGED', humanReview: true };
   }
@@ -254,7 +328,7 @@ export function resolveRuleset(planYear, now = new Date(), env = process.env) {
     year = typeof planYear === 'number' || (typeof planYear === 'string' && /^\d{4}$/.test(planYear)) ? Number(planYear) : NaN;
     if (!Number.isInteger(year)) return { ok: false, reason: 'RULESET_MISSING', humanReview: true };
   }
-  const rs = Object.prototype.hasOwnProperty.call(RULESETS, year) ? RULESETS[year] : null;
+  const rs = Object.prototype.hasOwnProperty.call(registry, year) ? registry[year] : null;
   if (!rs) return { ok: false, reason: 'RULESET_MISSING', planYear: year, humanReview: true };
   return evaluateRuleset(rs, now);
 }
@@ -263,17 +337,15 @@ export function resolveRuleset(planYear, now = new Date(), env = process.env) {
  * Judge one ruleset: may it be used as the active rules at `now`?
  * Separate from the registry lookup so the rule can be exercised with rulesets
  * that are not registered (and must not be), instead of being trusted because
- * the two registered ones happen to pass.
+ * the two registered ones happen to pass. A ruleset that is not THE object this
+ * module registers is never grandfathered, whatever version string it carries.
  */
 export function evaluateRuleset(rs, now = new Date()) {
   const planYear = rs && typeof rs === 'object' ? rs.planYear : undefined;
   const status = rs && typeof rs === 'object' ? rs.status : undefined;
-  const problem = rulesetActivationProblem(rs);
+  const problem = rulesetUseProblem(rs, now);
   if (problem) return { ok: false, reason: problem, planYear, status, humanReview: true };
-  if (requiredSourceExpired(rs, now)) {
-    return { ok: false, reason: 'RULE_SOURCE_REVIEW_OVERDUE', planYear, status, humanReview: true };
-  }
-  return { ok: true, ruleset: rs, attestation: rulesetAttestation(rs) };
+  return { ok: true, ruleset: rs, attestation: rulesetAttestation(rs, { registered: isRegisteredRuleset(rs, RULESETS), now }) };
 }
 
 /**
@@ -286,7 +358,7 @@ export function rulesetForAudit(planYear) {
 }
 
 /** Every known ruleset version, newest first. For the final report/inventory. */
-export function rulesetInventory() {
+export function rulesetInventory(now = new Date()) {
   return Object.values(RULESETS)
     .slice()
     .sort((a, b) => b.planYear - a.planYear)
@@ -296,7 +368,7 @@ export function rulesetInventory() {
       status: r.status,
       effectiveFrom: r.effectiveFrom,
       effectiveTo: r.effectiveTo,
-      attestation: rulesetAttestation(r),
+      attestation: rulesetAttestation(r, { registered: true, now }),
       nextStatus: nextRulesetStatus(r.status),
     }));
 }
@@ -304,14 +376,19 @@ export function rulesetInventory() {
 /**
  * Where the calendar stands relative to the next plan year — for preflight, so
  * the rollover is announced in advance instead of discovered on 1 October.
+ *
+ * AUDIT 2026-10-04 (red team) — "ready" was judged with the activation rule
+ * alone, at today's date. It is now the question the rollover will actually
+ * ask: would resolveRuleset() hand this ruleset out at the instant marketing
+ * for that year opens? Same function, the clock set to that instant.
  */
-export function rolloverStatus(now = new Date()) {
+export function rolloverStatus(now = new Date(), registry = RULESETS) {
   const planYear = activePlanYear(now);
   if (!Number.isInteger(planYear)) return { ok: false, reason: 'CLOCK_UNREADABLE' };
-  const t = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const t = instantOf(now);
   const nextPlanYear = planYear + 1;
   const nextStart = marketingStartUtc(nextPlanYear);
-  const next = rulesetForAudit(nextPlanYear);
+  const next = Object.prototype.hasOwnProperty.call(registry, nextPlanYear) ? registry[nextPlanYear] : null;
   return {
     ok: true,
     planYear,
@@ -320,6 +397,6 @@ export function rolloverStatus(now = new Date()) {
     daysUntilRollover: Math.ceil((nextStart - t) / 86_400_000),
     nextRulesetVersion: next ? next.version : null,
     nextRulesetStatus: next ? next.status : 'MISSING',
-    nextRulesetReady: !!next && rulesetActivationProblem(next) === null,
+    nextRulesetReady: !!next && rulesetUseProblem(next, new Date(nextStart)) === null,
   };
 }

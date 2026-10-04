@@ -42,6 +42,8 @@ export interface SoaInstance {
   authorizedCategories: SoaCategoryCode[];
   declinedCategories: SoaCategoryCode[];
   nonAuthorizingSelections: SoaCategoryCode[];
+  /** The CMS ruleset version the SOA was signed under (spec §22). */
+  cmsRulesetVersion: string;
   stateRulesetVersion: string;
   soaFormVersion: string;
   scriptVersion: string;
@@ -114,7 +116,8 @@ export declare function requiresScopeUpdate(instance: SoaInstance | null, code: 
 export declare function marketingGate(
   instance: SoaInstance | null,
   appointment: SoaAppointment | null,
-  ruleset?: { planYear: number; soa?: { mustPrecedeAppointment?: boolean; inPersonRequiresWritten?: boolean } } | null,
+  ruleset?: { planYear: number; version?: string; soa?: { mustPrecedeAppointment?: boolean; inPersonRequiresWritten?: boolean } } | null,
+  opts?: { env?: Record<string, string | undefined>; now?: Date | string; registry?: Record<number, unknown> },
 ): GateDecision;
 export declare function requiresNewInstance(
   instance: SoaInstance | null,

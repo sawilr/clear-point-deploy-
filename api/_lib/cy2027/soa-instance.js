@@ -21,7 +21,7 @@ import {
   SOA_SCRIPT_VERSION,
   categoryByCode,
 } from './soa-text.js';
-import { rulesetVouchProblem } from './rulesets.js';
+import { rulesetVouchProblem, rulesetForAudit, activePlanYear } from './rulesets.js';
 
 /**
  * RED TEAM 2026-10-02 (SOA-01, CRITICAL, reproduced) — in-person detection was
@@ -211,6 +211,7 @@ export function createSoaInstance(input) {
     beneficiaryName,
     representativeRelationship = null,
     selectedCategories,
+    cmsRulesetVersion,
     stateRulesetVersion,
     soaFormVersion,
     scriptVersion = SOA_SCRIPT_VERSION,
@@ -248,6 +249,18 @@ export function createSoaInstance(input) {
   if (!beneficiaryName || String(beneficiaryName).trim().length < 2) errors.beneficiaryName = 'required';
   if (!stateRulesetVersion) errors.stateRulesetVersion = 'required';
   if (!soaFormVersion) errors.soaFormVersion = 'required';
+  // AUDIT 2026-10-04 (red team, SPEC-22) — spec §22: "Every live SOA/call points
+  // to the exact ruleset version used at that date/time." The instance carried
+  // the plan year, the STATE ruleset version and the form version, and nothing
+  // that named the CMS ruleset: once a CMS_RULESET_2027-v1.1 exists, a 2027 SOA
+  // could not say which one it was signed under. It is required, and it is
+  // checked against the one thing in the same input it can be checked against:
+  // it must be the version of the ruleset registered for that plan year.
+  if (typeof cmsRulesetVersion !== 'string' || !cmsRulesetVersion) errors.cmsRulesetVersion = 'required';
+  else {
+    const registered = Number.isInteger(planYear) ? rulesetForAudit(planYear) : null;
+    if (!registered || registered.version !== cmsRulesetVersion) errors.cmsRulesetVersion = 'not_the_ruleset_of_that_plan_year';
+  }
 
   const parts = partitionSelection(selectedCategories);
   if (parts.invalid.length) errors.selectedCategories = 'unknown_category';
@@ -277,6 +290,7 @@ export function createSoaInstance(input) {
       authorizedCategories: parts.authorized,
       declinedCategories: parts.declined,
       nonAuthorizingSelections: parts.nonAuthorizing,
+      cmsRulesetVersion,
       stateRulesetVersion,
       soaFormVersion,
       scriptVersion,
@@ -368,11 +382,18 @@ export function requiresScopeUpdate(instance, code) {
  * The marketing gate. Returns { allowed, reason } — never a bare boolean, so
  * the refusal reason is logged and surfaced.
  *
- * Enforces, in order: completion, revocation, plan year, state, appointment
- * identity, the CY2027 ordering rule (SOA recorded BEFORE the appointment
- * begins) and the in-person written requirement.
+ * Enforces, in order: the ruleset's own standing AT `now`, completion,
+ * revocation, plan year and ruleset version, state, appointment identity, the
+ * appointment falling in the ruleset's plan year, the CY2027 ordering rule (SOA
+ * recorded BEFORE the appointment begins) and the in-person written requirement.
+ *
+ * `now` is the instant the gate is being asked; it defaults to the clock and
+ * is a parameter so the rule can be run on either side of a rollover.
+ * `registry` is for the suite only (see rulesetVouchProblem): every registered
+ * ruleset passes or is inactive today, so a registered ruleset with an expired
+ * source can only be shown to the gate through it. Production never passes it.
  */
-export function marketingGate(instance, appointment, ruleset, { env } = {}) {
+export function marketingGate(instance, appointment, ruleset, { env, now = new Date(), registry } = {}) {
   // RED TEAM 2026-10-02 (SOA-02, CRITICAL, reproduced) — `ruleset` was optional
   // and every rule that depended on it was written `ruleset && …` or
   // `ruleset?.soa?.…`. Omitting it, or passing `{soa:{}}`, or passing the
@@ -381,7 +402,7 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
   // regulatory kill switch at all. An optional governing ruleset is not a
   // ruleset. It is now mandatory and self-validated, and the gate fails closed
   // on anything it cannot vouch for (spec §26).
-  const e = env || (typeof process !== 'undefined' && process && process.env) || {};
+  const e = env || (typeof process !== 'undefined' && process.env) || {};
   const killed = String(e.CY2027_REGULATORY_KILL || '').trim().toLowerCase();
   if (killed === '1' || killed === 'true' || killed === 'on' || killed === 'yes') {
     return { allowed: false, reason: 'REGULATORY_KILL_ENGAGED' };
@@ -402,7 +423,12 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
   // shape and no standing: nobody promoted it. The gate now vouches only for the
   // registered ruleset of that plan year, and only if that ruleset may be
   // treated as active (see ruleset-lifecycle.js).
-  const vouch = rulesetVouchProblem(ruleset);
+  // AUDIT 2026-10-04 (red team) — and only if it may govern live work NOW. The
+  // vouch was registration + activation: the §22 kill condition (a required
+  // source expired) and the calendar lived in resolveRuleset() alone, so the
+  // gate opened where the resolver refused. It is the same judgement now, with
+  // the same clock.
+  const vouch = rulesetVouchProblem(ruleset, registry, now);
   if (vouch) return { allowed: false, reason: vouch };
 
   if (!instance) return { allowed: false, reason: 'NO_SOA' };
@@ -427,6 +453,11 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
     // Spec §7: "If the plan year changes, do not silently reuse the old instance."
     return { allowed: false, reason: 'SOA_PLAN_YEAR_MISMATCH' };
   }
+  // Spec §22 — the SOA must have been signed under THIS version of the ruleset,
+  // not merely under some ruleset of the same year.
+  if (typeof instance.cmsRulesetVersion !== 'string' || instance.cmsRulesetVersion !== ruleset.version) {
+    return { allowed: false, reason: 'SOA_RULESET_VERSION_MISMATCH' };
+  }
   // RED TEAM 2026-10-02 (SOA-06, HIGH) — guarded by `appointment.state &&`, so
   // an appointment with no state skipped the jurisdiction check entirely. State
   // drives the whole ruleset; not knowing it is a refusal, not a pass.
@@ -440,6 +471,16 @@ export function marketingGate(instance, appointment, ruleset, { env } = {}) {
   // entirely. The rule the spec keeps for CY2027 is precisely that the SOA is
   // recorded BEFORE the appointment begins; a missing timestamp means we cannot
   // show that, which is a refusal, not a pass.
+  //
+  // AUDIT 2026-10-04 (red team) — and the appointment itself has to fall in the
+  // plan year this ruleset governs: a March-2029 appointment opened the gate
+  // under CMS_RULESET_2027. The start time is therefore required whatever the
+  // ordering rule says, and an appointment in another plan year is refused.
+  const appointmentStart = Date.parse(appointment.startsAt);
+  if (!Number.isFinite(appointmentStart)) return { allowed: false, reason: 'APPOINTMENT_TIME_UNKNOWN' };
+  if (activePlanYear(new Date(appointmentStart)) !== ruleset.planYear) {
+    return { allowed: false, reason: 'APPOINTMENT_OUTSIDE_PLAN_YEAR' };
+  }
   if (rules.mustPrecedeAppointment) {
     const signedTs = Date.parse(instance.completedAt);
     const startTs = Date.parse(appointment.startsAt);

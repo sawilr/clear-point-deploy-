@@ -22,13 +22,37 @@
  * new ruleset."
  */
 export { RULESET_LIFECYCLE } from './ruleset-lifecycle.js';
-import { rulesetActivationProblem } from './ruleset-lifecycle.js';
-import { activePlanYear } from './rulesets.js';
+import { rulesetActivationProblem, sourceReviewProblem } from './ruleset-lifecycle.js';
+import { activePlanYear, marketingStartUtc, resolveRuleset } from './rulesets.js';
 
 // No human promotion was recorded for the three state rulesets either. The
 // fields are null because that is the truth; ruleset-lifecycle.js lists them as
 // grandfathered and reports the owner's attestation as pending.
 const NO_PROMOTION_ON_RECORD = Object.freeze({ promotedBy: null, promotedAt: null, evidenceReference: null });
+
+// Nor was any lifecycle step. A state ruleset added from now on carries here the
+// frozen records recordRulesetTransition() returns and may not be used without
+// all of them.
+const NO_TRANSITIONS_ON_RECORD = Object.freeze([]);
+
+/**
+ * AUDIT 2026-10-04 (red team) — the state rulesets carried no source record at
+ * all, so "a required rule source expires" (spec §22) had nothing to evaluate
+ * for them and evaluateStateRuleset() never asked. Each now names the one thing
+ * this file itself says a person must review — the recording-consent position,
+ * which is OWNER_COUNSEL territory — with every date null, because nobody is on
+ * record as having reviewed it. No statute address is given: none was supplied
+ * by the owner, and one is not invented here.
+ */
+const positionOfRecord = (stateName) => Object.freeze([
+  Object.freeze({
+    name: `Recording-consent position of record for ${stateName} (owner / counsel)`,
+    url: null,
+    verifiedOn: null,
+    verifiedBy: null,
+    reviewBy: null,
+  }),
+]);
 
 /**
  * Per-state rulesets. The version strings are taken verbatim from the
@@ -54,6 +78,8 @@ export const STATE_RULESETS = Object.freeze({
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
     promotion: NO_PROMOTION_ON_RECORD,
+    transitions: NO_TRANSITIONS_ON_RECORD,
+    sourceReviews: positionOfRecord('New York'),
     recordingNotice: Object.freeze({
       allPartyConsent: false,
       basis: 'Project compliance position of record (one-party). Not re-determined here.',
@@ -72,6 +98,8 @@ export const STATE_RULESETS = Object.freeze({
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
     promotion: NO_PROMOTION_ON_RECORD,
+    transitions: NO_TRANSITIONS_ON_RECORD,
+    sourceReviews: positionOfRecord('New Jersey'),
     recordingNotice: Object.freeze({
       allPartyConsent: false,
       basis: 'Project compliance position of record (one-party). Not re-determined here.',
@@ -90,6 +118,8 @@ export const STATE_RULESETS = Object.freeze({
     effectiveTo: null,
     status: 'PRODUCTION_ACTIVE',
     promotion: NO_PROMOTION_ON_RECORD,
+    transitions: NO_TRANSITIONS_ON_RECORD,
+    sourceReviews: positionOfRecord('Connecticut'),
     recordingNotice: Object.freeze({
       allPartyConsent: true,
       basis:
@@ -115,10 +145,17 @@ const US_STATE_CODE_RE = /^[A-Z]{2}$/;
  *   STATE_NOT_SUPPORTED — valid state, outside NY/NJ/CT. General service path.
  *   RULESET_MISSING     — supported state with no ruleset for that plan year.
  *   RULESET_NOT_ACTIVE  — exists but not PRODUCTION_ACTIVE.
- *   RULESET_EXPIRED     — past effectiveTo.
- *   RULESET_NOT_YET_EFFECTIVE — before effectiveFrom.
+ *   RULESET_EXPIRED     — past effectiveTo, or marketing for the next plan year has opened.
+ *   RULESET_NOT_YET_EFFECTIVE — before effectiveFrom, or before marketing for its plan year opens.
+ *   CLOCK_UNREADABLE    — `now` is not an instant.
+ *   RULESET_PROMOTION_NOT_RECORDED — "active" with no lifecycle on record.
+ *   RULE_SOURCES_MISSING / RULE_SOURCE_REVIEW_OVERDUE / RULE_SOURCE_NOT_VERIFIED
+ *                       — a required source expired or cannot be validated.
+ *
+ * `registry` is for the suite: the three registered rulesets all pass today. It
+ * decides only which object is looked up; it cannot make one grandfathered.
  */
-export function resolveStateRuleset(state, planYear, now = new Date()) {
+export function resolveStateRuleset(state, planYear, now = new Date(), registry = STATE_RULESETS) {
   if (!state || typeof state !== 'string') {
     return { ok: false, reason: 'NO_STATE', humanReview: true };
   }
@@ -126,7 +163,7 @@ export function resolveStateRuleset(state, planYear, now = new Date()) {
   if (!US_STATE_CODE_RE.test(code)) {
     return { ok: false, reason: 'INVALID_STATE', humanReview: true };
   }
-  const rs = Object.prototype.hasOwnProperty.call(STATE_RULESETS, code) ? STATE_RULESETS[code] : null;
+  const rs = Object.prototype.hasOwnProperty.call(registry, code) ? registry[code] : null;
   if (!rs) {
     return { ok: false, reason: 'STATE_NOT_SUPPORTED', state: code, humanReview: false };
   }
@@ -143,34 +180,97 @@ export function resolveStateRuleset(state, planYear, now = new Date()) {
   return evaluateStateRuleset(rs, year, now);
 }
 
+/** Is `rs` THE registered object for its state (not a look-alike)? */
+export function isRegisteredStateRuleset(rs, registry = STATE_RULESETS) {
+  if (!rs || typeof rs !== 'object' || typeof rs.code !== 'string') return false;
+  return Object.prototype.hasOwnProperty.call(registry, rs.code) && registry[rs.code] === rs;
+}
+
 /**
  * Judge one state ruleset for one plan year at `now`. Split from the lookup so
  * the rule can be exercised with rulesets that are not registered — the three
  * registered ones all pass today, and a rule only ever shown passing inputs has
  * not been tested.
+ *
+ * AUDIT 2026-10-04 (red team) — with an explicit year this never asked whether
+ * that year was the one in force: `effectiveTo` is null on all three, so
+ * NY-CY2027 resolved for 2027 in 2029. It never looked at sources, and a
+ * made-up object carrying a grandfathered version string passed. The window is
+ * now derived from the plan year as well, the source rule is the CMS one, and
+ * only the object THIS module registers can be grandfathered — no argument can
+ * make another one so.
  */
 export function evaluateStateRuleset(rs, year, now = new Date()) {
   if (!rs || typeof rs !== 'object') return { ok: false, reason: 'STATE_NOT_SUPPORTED', humanReview: false };
   const code = rs.code;
-  if (rs.planYear !== year) {
+  if (!Number.isInteger(rs.planYear) || rs.planYear !== year) {
     return { ok: false, reason: 'RULESET_MISSING', state: code, planYear: year, humanReview: true };
-  }
-  const activation = rulesetActivationProblem(rs);
-  if (activation) {
-    return { ok: false, reason: activation, state: code, status: rs.status, humanReview: true };
   }
   // RED TEAM 2026-10-02 (JR-04, MEDIUM) — an unparseable `now` produced NaN, and
   // every NaN comparison is false, so an EXPIRED or NOT_YET_EFFECTIVE ruleset
   // resolved ok:true. A clock we cannot read is not a clock.
-  const t = now instanceof Date ? now.getTime() : new Date(now).getTime();
+  const t = now instanceof Date ? now.getTime() : typeof now === 'string' || typeof now === 'number' ? new Date(now).getTime() : NaN;
   if (!Number.isFinite(t)) return { ok: false, reason: 'CLOCK_UNREADABLE', state: code, humanReview: true };
-  if (rs.effectiveFrom && t < Date.parse(rs.effectiveFrom + 'T00:00:00Z')) {
+  const standing = { registered: isRegisteredStateRuleset(rs, STATE_RULESETS), now };
+  const activation = rulesetActivationProblem(rs, standing);
+  if (activation) {
+    return { ok: false, reason: activation, state: code, status: rs.status, humanReview: true };
+  }
+  // A stated date that cannot be read is not "no limit".
+  const from = rs.effectiveFrom ? Date.parse(rs.effectiveFrom + 'T00:00:00Z') : -Infinity;
+  const to = rs.effectiveTo ? Date.parse(rs.effectiveTo + 'T23:59:59Z') : Infinity;
+  if (Number.isNaN(from) || t < from || t < marketingStartUtc(rs.planYear)) {
     return { ok: false, reason: 'RULESET_NOT_YET_EFFECTIVE', state: code, humanReview: true };
   }
-  if (rs.effectiveTo && t > Date.parse(rs.effectiveTo + 'T23:59:59Z')) {
+  if (Number.isNaN(to) || t > to || t >= marketingStartUtc(rs.planYear + 1)) {
     return { ok: false, reason: 'RULESET_EXPIRED', state: code, humanReview: true };
   }
+  const sources = sourceReviewProblem(rs, standing);
+  if (sources) return { ok: false, reason: sources, state: code, humanReview: true };
   return { ok: true, ruleset: rs };
+}
+
+/**
+ * The two rulesets a signature is taken under, resolved together and from the
+ * clock alone: the CMS ruleset for the plan year in force at `now`, then the
+ * state ruleset for THAT year. The year is never an argument.
+ *
+ * AUDIT 2026-10-04 (red team) — this was two statements in api/sign-soa.js that
+ * the suite could only grep. A line added underneath —
+ * `if (!rulesetRes.ok) rulesetRes = resolveRuleset(2027)` — fell back to last
+ * year's rules and every assertion stayed green. The decision is a function now,
+ * so it is tested by calling it on both sides of a rollover.
+ *
+ *   { ok: true, ruleset, stateRuleset }
+ *   { ok: false, stage: 'CMS_RULESET' | 'STATE_RULESET', reason }
+ */
+export function resolveSigningRulesets(residenceState, now = new Date(), env) {
+  const cms = env === undefined ? resolveRuleset(null, now) : resolveRuleset(null, now, env);
+  if (!cms.ok) return { ok: false, stage: 'CMS_RULESET', reason: cms.reason };
+  const state = resolveStateRuleset(residenceState, cms.ruleset.planYear, now);
+  if (!state.ok) return { ok: false, stage: 'STATE_RULESET', reason: state.reason };
+  return { ok: true, ruleset: cms.ruleset, stateRuleset: state.ruleset };
+}
+
+/**
+ * What the SOA form may present for a chosen residence state at `now`.
+ * `ruleset` is non-null ONLY when the state ruleset for the plan year in force
+ * resolved; there is no fallback to the registry (the red team's mutant was
+ * exactly that: "resolution failed, so use STATE_RULESETS[state] anyway").
+ * 'OTHER' is the form's own value for "not NY, NJ or CT".
+ */
+export function soaFormRules(residenceState, now = new Date()) {
+  const planYear = activePlanYear(now);
+  const unsupported = residenceState === 'OTHER';
+  const resolution = residenceState && !unsupported ? resolveStateRuleset(residenceState, null, now) : null;
+  const ok = !!resolution && resolution.ok === true;
+  return {
+    planYear,
+    unsupported,
+    ruleset: ok ? resolution.ruleset : null,
+    rulesUnavailable: !!resolution && !ok,
+    reason: resolution && !ok ? resolution.reason : null,
+  };
 }
 
 // ── ZIP ↔ state consistency ──────────────────────────────────────────────────

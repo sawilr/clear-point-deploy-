@@ -63,6 +63,10 @@ export const CY2027_FIELD_KEYS = Object.freeze({
   AI_OUTBOUND_CONSENT_STATUS: 'contact.ai_outbound_consent_status',
   RESIDENCE_STATE: 'contact.residence_state',
   STATE_RULESET_VERSION: 'contact.state_ruleset_version',
+  // AUDIT 2026-10-04 (SPEC-22) — spec §22: every SOA points to the exact ruleset
+  // version it was signed under. New key: it is reported as unmapped until the
+  // owner creates the field in GoHighLevel and adds its id to CY2027_CRM_FIELD_IDS.
+  CMS_RULESET_VERSION: 'contact.cms_ruleset_version',
   LEAD_TRUST_STATE: 'contact.lead_trust_state',
   CHANNEL_VERIFICATION_STATUS: 'contact.channel_verification_status',
   HUMAN_SECURITY_REVIEW_STATUS: 'contact.human_security_review_status',
@@ -312,6 +316,7 @@ export function soaInstanceToFields(instance, extra = {}) {
     SOA_INTEGRITY_HASH: instance.integrityHash,
     RESIDENCE_STATE: instance.state,
     STATE_RULESET_VERSION: instance.stateRulesetVersion,
+    CMS_RULESET_VERSION: instance.cmsRulesetVersion,
     RETENTION_CLASS: 'SOA_EVIDENCE',
     ...extra,
   };

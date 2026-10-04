@@ -23,23 +23,54 @@ export interface RetentionRules {
 
 export type RulesetStatus = 'PENDING_REVIEW' | 'VERIFIED' | 'STAGING_TESTED' | 'PRODUCTION_ACTIVE' | 'SUPERSEDED';
 
-/** Who made a ruleset active. All three are null when no human promotion is on record. */
+/**
+ * The owner's attestation of a GRANDFATHERED ruleset. All three are null when
+ * none is on record; a complete one also names the version it attests.
+ */
 export interface RulesetPromotion {
+  readonly rulesetVersion?: string | null;
   readonly promotedBy: string | null;
   readonly promotedAt: string | null;
   readonly evidenceReference: string | null;
 }
 
+/** One recorded lifecycle step, as recordRulesetTransition() returns it. */
+export interface RulesetTransition {
+  readonly rulesetVersion: string;
+  readonly from: RulesetStatus;
+  readonly to: RulesetStatus;
+  readonly actor: string;
+  readonly at: string;
+  readonly evidenceReference: string;
+}
+
 /** Dates are YYYY-MM-DD, or null when nothing is on record (unknown, never invented). */
 export interface RulesetSourceReview {
   readonly name: string;
-  readonly url: string;
+  readonly url: string | null;
   readonly verifiedOn: string | null;
   readonly verifiedBy: string | null;
   readonly reviewBy: string | null;
 }
 
-export type RulesetAttestation = 'ATTESTED' | 'GRANDFATHERED_PENDING_OWNER' | 'NOT_RECORDED' | 'NOT_APPLICABLE';
+export type RulesetAttestation =
+  | 'ATTESTED'
+  | 'GRANDFATHERED_OWNER_ATTESTED'
+  | 'GRANDFATHERED_PENDING_OWNER'
+  | 'NOT_RECORDED'
+  | 'NOT_APPLICABLE';
+
+/** Every reason a ruleset may not govern live work (rulesetUseProblem in rulesets.js). */
+export type RulesetUseProblem =
+  | 'RULESET_UNRESOLVED'
+  | 'CLOCK_UNREADABLE'
+  | 'RULESET_NOT_ACTIVE'
+  | 'RULESET_PROMOTION_NOT_RECORDED'
+  | 'RULESET_NOT_YET_EFFECTIVE'
+  | 'RULESET_NOT_IN_FORCE'
+  | 'RULE_SOURCES_MISSING'
+  | 'RULE_SOURCE_REVIEW_OVERDUE'
+  | 'RULE_SOURCE_NOT_VERIFIED';
 
 export interface CmsRuleset {
   readonly planYear: number;
@@ -53,6 +84,7 @@ export interface CmsRuleset {
   readonly sources: readonly string[];
   readonly sourceReviews: readonly RulesetSourceReview[];
   readonly promotion: RulesetPromotion;
+  readonly transitions: readonly RulesetTransition[];
 }
 
 /** A plan year in preparation: it carries NO rule values, only its place in the lifecycle. */
@@ -68,19 +100,14 @@ export interface CmsRulesetPlaceholder {
   readonly sources: readonly string[];
   readonly sourceReviews: readonly RulesetSourceReview[];
   readonly promotion: RulesetPromotion;
+  readonly transitions: readonly RulesetTransition[];
 }
 
 export type RulesetResolution =
   | { ok: true; ruleset: CmsRuleset; attestation: RulesetAttestation }
   | {
       ok: false;
-      reason:
-        | 'REGULATORY_KILL_ENGAGED'
-        | 'CLOCK_UNREADABLE'
-        | 'RULESET_MISSING'
-        | 'RULESET_NOT_ACTIVE'
-        | 'RULESET_PROMOTION_NOT_RECORDED'
-        | 'RULE_SOURCE_REVIEW_OVERDUE';
+      reason: 'REGULATORY_KILL_ENGAGED' | 'RULESET_MISSING' | RulesetUseProblem;
       planYear?: number;
       status?: string;
       humanReview: boolean;
@@ -98,16 +125,18 @@ export declare function isRegisteredRuleset(ruleset: unknown, registry?: Record<
 export declare function rulesetVouchProblem(
   ruleset: unknown,
   registry?: Record<number, unknown>,
-): 'RULESET_NOT_REGISTERED' | 'RULESET_UNRESOLVED' | 'RULESET_NOT_ACTIVE' | 'RULESET_PROMOTION_NOT_RECORDED' | null;
+  now?: Date | string,
+): 'RULESET_NOT_REGISTERED' | RulesetUseProblem | null;
 export declare function regulatoryKillEngaged(env?: Record<string, string | undefined>): boolean;
 export declare function resolveRuleset(
   planYear?: number | null,
   now?: Date,
   env?: Record<string, string | undefined>,
+  registry?: Record<number, unknown>,
 ): RulesetResolution;
 export declare function evaluateRuleset(ruleset: unknown, now?: Date | string): RulesetResolution;
 export declare function rulesetForAudit(planYear: number): CmsRuleset | CmsRulesetPlaceholder | null;
-export declare function rulesetInventory(): Array<{
+export declare function rulesetInventory(now?: Date | string): Array<{
   planYear: number;
   version: string;
   status: string;
@@ -116,7 +145,7 @@ export declare function rulesetInventory(): Array<{
   attestation: RulesetAttestation;
   nextStatus: string | null;
 }>;
-export declare function rolloverStatus(now?: Date | string):
+export declare function rolloverStatus(now?: Date | string, registry?: Record<number, unknown>):
   | { ok: false; reason: 'CLOCK_UNREADABLE' }
   | {
       ok: true;

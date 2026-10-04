@@ -19,7 +19,8 @@
 
 import { activePlanYear, resolveRuleset, rulesetInventory, rulesetForAudit, rolloverStatus } from './rulesets.js';
 import { sourceReviewStatus, rulesetAttestation } from './ruleset-lifecycle.js';
-import { STATE_RULESETS } from './state-rules.js';
+import { STATE_RULESETS, isRegisteredStateRuleset } from './state-rules.js';
+import { configuredReviewers, REVIEWERS_ENV } from './actors.js';
 import { LATEST_TPMO_VARIANT_PLAN_YEAR } from './tpmo.js';
 
 /** Inside this many days of a rollover with no ready ruleset, it stops being background information. */
@@ -50,6 +51,18 @@ export function yearlyReadiness(now = new Date(), env = process.env, inspect = {
     return { blocks, warns, oks };
   }
 
+  // 0. Who may decide. Every human-only decision (a quarantine review, a
+  //    ruleset step, a learning step, a source verification) is refused until
+  //    the owner has named the people who may make it.
+  const reviewers = configuredReviewers(env);
+  if (!reviewers.length) {
+    warns.push(
+      `no reviewer is configured (${REVIEWERS_ENV}) — every human-only decision is refused until the owner names who may decide`,
+    );
+  } else {
+    oks.push(`${reviewers.length} authorised reviewer(s) configured`);
+  }
+
   // 1. The public wording. It is never switched off, so a newer plan year must
   //    stop a promote instead: reuse is allowed to be necessary, never silent.
   if (year > LATEST_TPMO_VARIANT_PLAN_YEAR) {
@@ -66,33 +79,40 @@ export function yearlyReadiness(now = new Date(), env = process.env, inspect = {
       `no ruleset can be resolved for plan year ${year} (${active.reason}) — the SOA/marketing workflow is locked; ` +
         'the public site and lead capture are unaffected',
     );
-  } else if (active.attestation !== 'ATTESTED') {
+  } else if (active.attestation === 'ATTESTED') {
+    oks.push(`${active.ruleset.version} is active and every lifecycle step is on record`);
+  } else if (active.attestation === 'GRANDFATHERED_OWNER_ATTESTED') {
+    oks.push(`${active.ruleset.version} is active and attested by the owner (it predates the lifecycle: no earlier step is on record)`);
+  } else {
     warns.push(
       `${active.ruleset.version} is active with attestation ${active.attestation}: no named person is on record as ` +
         'having promoted it (spec §22 "No AI self-promotion of a new ruleset")',
     );
-  } else {
-    oks.push(`${active.ruleset.version} is active and its promotion is on record`);
   }
 
-  // 3. The state rulesets.
+  // 3. The state rulesets. Only the registered object can be grandfathered, so
+  //    whether one is registered is established here, by identity.
   for (const s of states) {
-    const a = rulesetAttestation(s);
-    if (a !== 'ATTESTED') warns.push(`state ruleset ${s.stateRulesetVersion}: attestation ${a}`);
+    const a = rulesetAttestation(s, { registered: isRegisteredStateRuleset(s), now });
+    if (a !== 'ATTESTED' && a !== 'GRANDFATHERED_OWNER_ATTESTED') warns.push(`state ruleset ${s.stateRulesetVersion}: attestation ${a}`);
   }
 
-  // 4. Source reviews, for every ruleset that is or will be in use.
-  for (const r of rulesets) {
+  // 4. Source reviews, for every ruleset that is or will be in use — CMS and state.
+  for (const r of [...rulesets, ...states]) {
     if (!r || r.status === 'SUPERSEDED') continue;
+    const label = r.version || r.stateRulesetVersion;
     const sr = sourceReviewStatus(r, now);
+    if (sr.unreadable) {
+      blocks.push(`${label}: source review overdue or unreadable — its source list cannot be read. The SOA/marketing workflow is locked until it is reviewed.`);
+    }
     if (sr.overdue.length || sr.malformed.length) {
       blocks.push(
-        `${r.version}: source review overdue or unreadable — ${[...new Set([...sr.overdue, ...sr.malformed])].join('; ')}. ` +
+        `${label}: source review overdue or unreadable — ${[...new Set([...sr.overdue, ...sr.malformed])].join('; ')}. ` +
           'The SOA/marketing workflow is locked until it is reviewed.',
       );
     }
     if (sr.unverified.length) {
-      warns.push(`${r.version}: ${sr.unverified.length} required source(s) have no verification on record — ${sr.unverified.join('; ')}`);
+      warns.push(`${label}: ${sr.unverified.length} required source(s) have no verification on record — ${sr.unverified.join('; ')}`);
     }
   }
 

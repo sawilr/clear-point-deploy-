@@ -117,11 +117,14 @@ of the year before, 00:00 Eastern), and a year with no usable ruleset fails clos
 | Piece | Where | What it guarantees |
 |---|---|---|
 | Plan-year clock | `rulesets.js` `activePlanYear`, `marketingStartUtc` | the year in force for any instant; `NaN` (a refusal) when the clock is unreadable |
-| Lifecycle | `ruleset-lifecycle.js` `recordRulesetTransition` | one step at a time, forward only, by a named person, with an instant and an evidence reference |
-| Promotion record | `promotion` on every CMS and state ruleset | who made it active — or `null`, truthfully, when nobody is on record |
-| Grandfathering | `GRANDFATHERED_RULESET_VERSIONS` (closed, pinned by the suite) | the five rulesets activated before the lifecycle existed are usable but report `GRANDFATHERED_PENDING_OWNER`; no other ruleset can be active without a human promotion record |
-| Source review | `sourceReviews` + `sourceReviewStatus` | each required source's verification and review-by dates; `null` = not on record, reported, never invented; a **stated** review-by date that has passed locks the workflow (`RULE_SOURCE_REVIEW_OVERDUE`) |
-| Registered-object check | `rulesetVouchProblem`, called by `marketingGate` | the gate relies only on THE registered ruleset of that year, not on an object that resembles one |
+| Who may decide | `actors.js` `reviewerProblem` + env `CY2027_REVIEWERS` | every human-only decision (quarantine review, ruleset step, source verification, learning step) is made by a person on the owner's allow-list; with no list configured **nobody** may decide. `humanActorProblem` additionally refuses automation identities, the assistants' own names (Emely, Sofía, Clara, Zara) and common AI products, and accepts names in any alphabet |
+| Lifecycle | `ruleset-lifecycle.js` `recordRulesetTransition`, `lifecycleChainProblem` | one step at a time, forward only, by an authorised reviewer, with an instant, an evidence reference and the ruleset version it promotes. The steps live ON the ruleset (`transitions`) and are re-checked every time it is judged: a `PRODUCTION_ACTIVE` ruleset that cannot show PENDING_REVIEW→VERIFIED→STAGING_TESTED→PRODUCTION_ACTIVE, in time order and not in the future, is refused (`RULESET_PROMOTION_NOT_RECORDED`) |
+| Owner attestation | `promotion` on every CMS and state ruleset | for the five grandfathered rulesets only: `{ rulesetVersion, promotedBy, promotedAt, evidenceReference }`, bound to the version it names, by an authorised reviewer, not dated in the future — or `null`s, truthfully, when nobody is on record. It reports `GRANDFATHERED_OWNER_ATTESTED`, never `ATTESTED`: no earlier step exists |
+| Grandfathering | `GRANDFATHERED_RULESET_VERSIONS` (closed, pinned by the suite) + identity with the registered object | the five rulesets activated before the lifecycle existed are usable but report `GRANDFATHERED_PENDING_OWNER`. A copy, or a made-up object carrying a listed version string, is not grandfathered |
+| Calendar | `rulesetUseProblem` in `rulesets.js`, `evaluateStateRuleset` | a ruleset governs only inside its plan year, derived from the year itself (`effectiveTo: null` does not keep it alive): `RULESET_NOT_YET_EFFECTIVE`, `RULESET_NOT_IN_FORCE` / `RULESET_EXPIRED`, `CLOCK_UNREADABLE` — also when the year is named explicitly |
+| Source review | `sourceReviews` + `sourceReviewStatus` / `sourceReviewProblem`, CMS **and** state rulesets | each required source's verification and review-by dates; `null` = not on record, reported, never invented. Locks the workflow: a passed review-by date, an unreadable record, a verification with no review-by date, by nobody / by automation / by someone not authorised, or dated in the future (`RULE_SOURCE_REVIEW_OVERDUE`); an unreadable list (`RULE_SOURCES_MISSING`). A ruleset that went through the lifecycle must also name at least one source and have every one verified (`RULE_SOURCES_MISSING`, `RULE_SOURCE_NOT_VERIFIED`). The one declared exception: for a **grandfathered** ruleset "nobody recorded a verification" is reported and does not lock |
+| One judgement | `rulesetVouchProblem` (called by `marketingGate`) and `evaluateRuleset` share `rulesetUseProblem` | the gate relies only on THE registered ruleset of that year **and refuses whenever the resolver would** — same clock (`now`), same source rule. The gate also refuses an appointment outside the ruleset's plan year (`APPOINTMENT_OUTSIDE_PLAN_YEAR`) |
+| Ruleset version on every SOA | `cmsRulesetVersion` on the instance, inside the integrity-hashed evidence record, on the signed PDF and text record, and as the CRM key `contact.cms_ruleset_version` | §22 "every live SOA points to the exact ruleset version": required at creation, checked against the ruleset registered for that plan year, and the gate refuses an SOA signed under another version (`SOA_RULESET_VERSION_MISMATCH`). The CRM field is reported **unmapped** until the owner creates it |
 | CY2028 placeholder | `CMS_RULESET_2028`, `PENDING_REVIEW` | the next year has a named state; every rule value is `null` — nothing was copied from 2027 |
 | Readiness | `yearly-readiness.js` → `npm run preflight` | says what a person must do and when: warns a year out, **blocks** inside 120 days of a rollover with no ready ruleset, and blocks a promote when the plan year in force is newer than the TPMO wording on file |
 
@@ -136,14 +139,30 @@ rulesets are `PRODUCTION_ACTIVE` because the code that introduced them said so. 
 is on record as having reviewed the sources and promoted them; their `promotion` records
 are `null` and no reviewer was invented. This is carried as the SOA precondition
 `rulesetPromotionAttested` (false), so the SOA workflow cannot be enabled until the owner
-attests. To attest: review the five sources in `CMS_RULESET_2027.sourceReviews`, fill in
-`verifiedOn` / `verifiedBy` / `reviewBy` and the `promotion` record (name, UTC instant,
-evidence reference) in `rulesets.js` and `state-rules.js`, then flip the precondition.
+attests. To attest: (1) name the reviewers in the `CY2027_REVIEWERS` environment variable
+(comma-separated; until it is set every human-only decision is refused); (2) review the
+five sources in `CMS_RULESET_2027.sourceReviews` and the recording-consent position each
+state ruleset names, and fill in `verifiedOn` / `verifiedBy` / `reviewBy` (all three — a
+verification with no review-by date is not accepted); (3) fill in the `promotion` record
+`{ rulesetVersion, promotedBy, promotedAt, evidenceReference }` in `rulesets.js` and
+`state-rules.js`; (4) flip the precondition. Note that a `reviewBy` date that passes
+locks the SOA/marketing workflow until the source is reviewed again — that is the §22
+kill condition working, not a fault.
 
 **Preparing CY2028** (Phase 12): fill the placeholder's rule values from the CY2028 final
-rule, record each lifecycle step with `recordRulesetTransition`, add the CY2028 TPMO
-variant if the standardized sentence changes, and add the 2028 state rulesets. Until then
-the workflow fails closed on 1 October 2027 by design.
+rule, record each lifecycle step with `recordRulesetTransition` and append the records to
+the ruleset's `transitions`, verify its sources, add the CY2028 TPMO variant if the
+standardized sentence changes, and add the 2028 state rulesets. `rolloverStatus()` reports
+the next ruleset as ready only if the resolver would hand it out at the instant its year
+opens. Until then the workflow fails closed on 1 October 2027 by design.
+
+**Open points that are the owner's to decide** (the code is fail-closed on each):
+after 1 October an appointment about the CURRENT year's plans (a special enrollment
+period) is refused by the gate, because the model is "one plan year in force by the
+calendar" — whether such appointments need their own path is a compliance reading;
+the reviewer list is server-side only, so a state ruleset that went through the lifecycle
+(none exists today) would be refused in the browser until that list is made available to
+the client build.
 
 #### 2.2b Controlled learning (spec §23, added 2026-10-04)
 
@@ -161,19 +180,29 @@ written the code that would break it. It is now a record, a pipeline and a build
 | `kind` | the six the spec names: `RECURRING_CALLER_CONFUSION`, `FAILED_PHRASE`, `MISSING_FAQ`, `ROUTING_ERROR`, `REPEATED_TRANSFER_CAUSE`, `PRONUNCIATION_ISSUE` |
 | `surface` | `VOICE_EMELY`, `VOICE_SOFIA`, `WEB_CLARA`, `WEB_ZARA`, `WEB_CHAT` (the shared endpoint `api/chat.js`, which is not told which web assistant is asking and does not guess), `WEB_FORM` |
 | `language` | `en` or `es` |
-| `summary`, `agentPhrase` | what the assistant did. Refused — not cleaned — if the scrubbers find an identifier, a date, a long number, clinical / benefit / financial detail or the common ways a person is named |
-| `occurrences`, `createdAt`, `candidateId` | a count, a UTC instant, an id of a fixed shape |
+| `summary`, `agentPhrase` | what the assistant did — for a candidate a PERSON enters by hand. Refused — not cleaned — if the text is not plain (invisible or look-alike characters), or if the scrubbers and the net find an identifier, a date in any order, a year, three or more digits in a row, an age, an address, clinical / benefit / financial detail, a third-person pronoun, or the common ways a person is named or introduces themselves |
+| `occurrences`, `createdAt` | a count, a UTC instant |
+| `candidateId` | **not an input.** A digest of the fields above, recomputed every time the record is judged: nobody chooses it, a supplied one is refused, and a record edited afterwards no longer matches its id |
 
-One limit is stated rather than hidden: no scrubber recognises a bare personal name, so
-the first human stage must reject a candidate that quotes or names a caller.
+An **automated** surface has no text field at all: it names a code from the closed table
+`AUTOMATED_OBSERVATIONS` (one entry today) plus the language, through
+`observationLogLine()`.
+
+The limits are stated rather than hidden: no pattern recognises a bare personal name, a
+medication no list knows, or a number spelled out in words — which is why the automated
+path carries no text, and why the first human stage must reject a candidate that quotes
+or describes a caller.
 
 **The pipeline.** `CANDIDATE → HUMAN_COMPLIANCE_REVIEW → SOURCE_VERIFICATION →
 VERSIONED_CHANGE → REGRESSION_TESTS → RED_TEAM → APPROVAL → DEPLOYMENT`, the spec's order.
-`advanceCandidate()` moves ONE stage and throws unless a named person decided it
-(`humanActorProblem()` in `actors.js` — the same check as quarantine review and ruleset
-promotion), with a real UTC instant no earlier than the previous step and a reference to
-what was reviewed. `rejectCandidate()` is terminal and is held to the same rules. Every
-function that uses a record first re-checks the whole record — its fields, its closed list
+`advanceCandidate()` moves ONE stage and throws unless an authorised reviewer decided it
+(`reviewerProblem()` in `actors.js` — the same check as quarantine review and ruleset
+promotion), with a real UTC instant no earlier than the previous step and a short,
+scrubbed reference to what was reviewed. `rejectCandidate()` is terminal, is held to the
+same rules, and takes its reason from a closed list of codes (`LEARNING_REJECTION_REASONS`).
+Every function that uses a record first takes ONE plain copy of its own data properties
+(`plain-record.js`) and judges, prints or advances only that copy — a getter, an inherited
+field, or a step with a key left out is not a record. It re-checks the whole record — its fields, its closed list
 of keys and its history (`candidateHistoryProblem()`): a record assembled by hand with an
 undefined kind, a caller's details in the summary, an extra field, a skipped stage or a
 step decided by automation is refused at every stage, not only where it is built
@@ -190,18 +219,22 @@ nothing, anywhere. A candidate exists as one log line until a person picks it up
 **The one emission point.** `api/chat.js`, at the signal it already had: the deterministic
 compliance post-filter had to correct what the model wrote. It logs one line —
 `[CANDIDATE-LEARNING] {candidateId, kind:"FAILED_PHRASE", surface:"WEB_CHAT", language, stage:"CANDIDATE", occurrences:1}` —
-built by `observationLogLine()` from a fixed summary sentence. The line carries no caller
+built by `observationLogLine({ observation: 'FILTER_CORRECTED_REPLY', language })` from the fixed table entry. The line carries no caller
 text, no model text, no rule tag (those quote the reply) and no address; the language is
 the one the correction was made in (`en`/`es`), never the string the browser sent. It
 changes no reply and no routing, nothing reads it back, and a refused observation produces
 no line and no exception. No other surface emits a candidate today.
 
-**The build gate** `scripts/check-no-self-modification.mjs` (in `npm run build`, shipped
-to the Vercel build by its `.vercelignore` exception):
+**The build gate** `scripts/check-no-self-modification.mjs` (in `npm run build`; its rules
+live in `scripts/no-self-modification-lib.mjs`; both are shipped to the Vercel build by
+their `.vercelignore` exceptions). It PARSES every file (TypeScript's parser) instead of
+matching text, so a comment, a string or a prompt's prose is never mistaken for code and
+code is never hidden by a comment; the command file has no condition, so running it always
+runs the gate:
 
 | It proves, on every build | It cannot prove |
 |---|---|
-| no file under `api/` imports `fs`, `fs/promises`, `child_process`, `worker_threads`, `vm` or `cluster`, uses `eval` / `new Function` / `process.binding`, or loads a module by a computed name — a function that cannot open a file cannot rewrite a prompt, a ruleset or a knowledge file | anything outside this repository. **Emely's and Sofía's prompts live in GoHighLevel**; whether they change only by a person's hand is an owner process (below) |
+| every file under `api/` (any code extension; a file that is not code is itself a failure) loads only string-literal modules from an **allow-list** — its own files under `api/`, `node:crypto`, `openai`, `pdfkit` — and never names `eval`, `Function`, `require`, `createRequire`, `getBuiltinModule`, `constructor`, the process internals, `globalThis`, or `process` other than as `process.env`, nor calls a member chosen at runtime — a function that cannot open a file cannot rewrite a prompt, a ruleset or a knowledge file | anything outside this repository. **Emely's and Sofía's prompts live in GoHighLevel**; whether they change only by a person's hand is an owner process (below). Nor the inside of an allow-listed package, nor a value carried through arbitrary data flow to a computed key and called through an alias |
 | the governing objects (CMS and state rulesets, lifecycle lists, approved SOA text and categories, TPMO configuration, the learning lists) are frozen all the way down | that a change made by a person through the reviewed route was a good one — that is review, not this gate |
 | no source file under `api/` or `src/` reassigns or mutates them | a write through a network API (a KV or CRM call that stores a prompt): the gate looks at filesystem and process capability, not at every outbound request. Today no code path fetches a prompt or a rule from a remote store, so there is nothing for such a write to feed |
 
@@ -466,6 +499,8 @@ Stated plainly rather than implied:
 | In-person appointment gate in practice | `marketingGate()` refuses an in-person appointment without a written, non-superseded, evidenced SOA for that exact appointment. There is no booking endpoint in this repository — appointments are created by the advisor in GoHighLevel — so the process half (the advisor consulting the gate) is an owner workflow item. |
 | SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of seven preconditions closed; `tpmoCountsVerifiedEverywhere`, `signedPdfPersisted` and (added 2026-10-04) `rulesetPromotionAttested` remain. |
 | Human promotion of the active rulesets | **OWNER ATTESTATION.** No named person is on record as having promoted `CMS_RULESET_2027` or the three state rulesets, and no source has a verification date. Carried as the SOA precondition `rulesetPromotionAttested`; see §2.2a for the exact steps. |
+| Reviewer allow-list | **OWNER CONFIGURATION.** `CY2027_REVIEWERS` is not set. Until the owner names who may decide, every human-only decision (quarantine review, ruleset step, source verification, learning step) is refused — by design. |
+| `contact.cms_ruleset_version` | **OWNER ACTION.** New CY2027 CRM key for the CMS ruleset version of an SOA (§22). Reported as unmapped until the field is created in GoHighLevel and its id added to `CY2027_CRM_FIELD_IDS`. The version is already in the instance, the hashed evidence record, the PDF and the text record. |
 | CY2028 ruleset | **NOT STARTED — by design.** `CMS_RULESET_2028` is a `PENDING_REVIEW` placeholder with no rule values. `npm run preflight` counts down to 1 October 2027 and blocks inside 120 days. |
 | Voice agents' learning loop (§23) | **OWNER PROCESS.** Emely's and Sofía's prompts live in GoHighLevel, outside this repository and outside its build gate. Keeping any auto-learning setting off and changing a voice prompt only through the reviewed pipeline is the owner's procedure; nothing in code verifies it. See §2.2b. |
 | Candidate-learning store and review queue | **NOT BUILT.** A candidate is one `[CANDIDATE-LEARNING]` log line; there is no database of candidates and no review screen. A person collects them from the function logs. Only `api/chat.js` emits one (when the compliance filter corrects a reply); the voice agents and the forms emit none. |

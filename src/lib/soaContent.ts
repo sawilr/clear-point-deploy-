@@ -151,9 +151,11 @@ export const SOA_PRECONDITIONS = {
   // are null, and api/_lib/cy2027/ruleset-lifecycle.js lists them as
   // grandfathered with the attestation PENDING). That is tolerable while the
   // SOA workflow is off and must not survive turning it on. To close it: a
-  // named person reviews the sources listed in CMS_RULESET_2027.sourceReviews,
-  // fills in `promotion` (name, UTC instant, evidence reference) and the
-  // verification dates there and in state-rules.js, then flips this.
+  // person the owner has authorised (CY2027_REVIEWERS) reviews the sources
+  // listed in CMS_RULESET_2027.sourceReviews and in each state ruleset, fills in
+  // `promotion` ({ rulesetVersion, promotedBy, promotedAt, evidenceReference })
+  // and the verification AND review-by dates there and in state-rules.js, then
+  // flips this.
   /** A named person is on record as having promoted the active CMS and state rulesets. */
   rulesetPromotionAttested: false,
 } as const;
