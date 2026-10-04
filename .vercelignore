@@ -32,6 +32,10 @@ scripts/*
 # check-vercel-config.mjs sigue ahora los import relativos de cada script del
 # build y falla localmente si falta la excepción de alguno.
 !scripts/tpmo-gate.mjs
+# 2026-10-03 (CE-09 / CRM-15) — la regla "el texto de consentimiento ↔ su alcance
+# registrado" es un módulo que check-cy2027-parity.mjs IMPORTA. Misma razón que
+# la línea de arriba: sin esta excepción el build de Vercel no lo encuentra.
+!scripts/consent-wording-gate.mjs
 # RONDA 8 (SEO-T7) — fechas reales por página para el sitemap; en el clon
 # superficial de Vercel build-sitemap.mjs las lee de aquí.
 !scripts/sitemap-dates.json

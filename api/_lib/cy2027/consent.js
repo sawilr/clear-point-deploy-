@@ -165,6 +165,134 @@ export function createConsent(input) {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUDIT 2026-10-02 (CE-09 / CRM-15) — THE SCOPE OF A WEB CONTACT CONSENT.
+//
+// The web and chat surfaces sent `consent_to_contact: true` and the server
+// turned it into four channel booleans. WHAT the person agreed to be contacted
+// about survived only as prose inside the verbatim text in a note, so a generic
+// callback consent could not be told apart from a broader one and §24's
+// "authorizes only the scope actually stated" had nothing to compare against.
+//
+// The scope is not chosen here and is not derived from the lead (its interest,
+// its language, its source). It is READ OFF the consent wording: each registered
+// text version carries the scope that text states, and a submission earns that
+// scope only when the text it attests to is byte-for-byte that version (SHA-256
+// computed by the SERVER over the text it received). Anything else — no
+// version, an unregistered version, no text, a text that is not the registered
+// one, a receipt hash that disagrees with the text, no usable timestamp —
+// yields NO consent object and a named reason. Nothing is inferred and nothing
+// defaults.
+//
+// This module stays free of Node APIs (the barrel re-exports it), so the caller
+// computes the digest and passes it in (see ./callback-consent.js).
+//
+// CHANGE CONTROL — editing the wording in src/lib/disclaimerVersion.ts requires
+// a new DISCLAIMER_VERSION and a NEW entry here; never edit an existing entry
+// (a cached bundle may still present the old text, and old receipts cite it).
+// scripts/consent-wording-gate.mjs fails the build when the two disagree, and
+// the suite pins the entry below value by value.
+// ─────────────────────────────────────────────────────────────────────────────
+export const CONTACT_CONSENT_TEXT_VERSIONS = Object.freeze({
+  '2026-06-01': Object.freeze({
+    // "…to contact you by phone, text message, or email at the number you
+    //  provided to discuss Medicare plan options."
+    scope: 'DISCUSS_MEDICARE_PLAN_OPTIONS',
+    statedAs: Object.freeze({
+      en: 'to discuss Medicare plan options',
+      es: 'para discutir opciones de planes de Medicare',
+    }),
+    sha256: Object.freeze({
+      en: '1b85fb83b46a4698e08ce899d0675ac0caf140efde5a62711f618de551d43048',
+      es: '3e102ce502965affa1a6df76c186f7cfe62375cea3382e3e18b66bc54954583f',
+    }),
+  }),
+});
+
+/**
+ * True only for a scope that some registered consent wording states.
+ *
+ * This is the rule the WRITE side re-checks (crm-fields.js): the registry is
+ * consulted when the consent object is built, and a rule enforced only where an
+ * object is built is no rule for an object somebody assembled by hand or read
+ * back from storage. An allow-list, matched exactly — no trimming, no case
+ * folding, strings only.
+ */
+export function isStatedConsentScope(scope) {
+  if (typeof scope !== 'string' || !scope) return false;
+  return Object.keys(CONTACT_CONSENT_TEXT_VERSIONS).some((v) => CONTACT_CONSENT_TEXT_VERSIONS[v].scope === scope);
+}
+
+/**
+ * A UTC instant exactly as Date#toISOString() writes it (the milliseconds are
+ * optional). "Yesterday", a number, a Date object or a date with no time are
+ * not a timestamp a consent record can carry.
+ */
+export function isIsoInstant(value) {
+  return typeof value === 'string'
+    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)
+    && Number.isFinite(Date.parse(value));
+}
+
+/**
+ * Build the CALLBACK_CONTACT_PERMISSION object for a web/chat submission.
+ *
+ * Returns a decision object, never a bare consent, so the reason is logged:
+ *   { consent, reason }   — `consent` is null on every refusal.
+ *
+ * The language recorded is the language of the text that was shown (the digest
+ * that matched), not the lead's preferred language. The relationship is
+ * NOT_STATED: no web surface asks whether the sender is the beneficiary, and
+ * createConsent()'s 'SELF' default would assert something nobody said.
+ *
+ * Both the decision and the consent inside it are frozen: the scope is the
+ * value this function exists to protect, and it must reach the CRM mapping as
+ * it left here.
+ */
+export function webCallbackConsent(input) {
+  const src = input !== null && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const { consentGiven, disclaimerVersion, consentTextSha256, receiptHash, at } = src;
+  const refuse = (reason) => Object.freeze({ consent: null, reason });
+
+  // Only the literal boolean counts — the same rule as the lead gate. A truthy
+  // string, a prechecked box or an inferred intent is not consent (§6).
+  if (consentGiven !== true) return refuse('NO_AFFIRMATIVE_CONSENT');
+  if (typeof disclaimerVersion !== 'string' || !disclaimerVersion) return refuse('CONSENT_TEXT_VERSION_MISSING');
+  // Own keys only: 'constructor' and '__proto__' are not text versions.
+  const entry = Object.prototype.hasOwnProperty.call(CONTACT_CONSENT_TEXT_VERSIONS, disclaimerVersion)
+    ? CONTACT_CONSENT_TEXT_VERSIONS[disclaimerVersion]
+    : null;
+  if (!entry) return refuse('CONSENT_TEXT_VERSION_UNKNOWN');
+  if (typeof consentTextSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(consentTextSha256)) {
+    return refuse('CONSENT_TEXT_MISSING');
+  }
+  const language = consentTextSha256 === entry.sha256.en ? 'en' : consentTextSha256 === entry.sha256.es ? 'es' : null;
+  if (!language) return refuse('CONSENT_TEXT_NOT_THE_REGISTERED_VERSION');
+  // A receipt whose own hash disagrees with the text beside it is not evidence.
+  // Absent means absent (a browser without SubtleCrypto sends none); anything
+  // else that is present has to BE the digest — `false`, 0 and an array are
+  // present and are not it.
+  const receiptPresent = receiptHash !== undefined && receiptHash !== null && receiptHash !== '';
+  if (receiptPresent && receiptHash !== consentTextSha256) return refuse('CONSENT_RECEIPT_HASH_MISMATCH');
+  if (at === undefined || at === null || at === '') return refuse('CONSENT_TIMESTAMP_MISSING');
+  if (!isIsoInstant(at)) return refuse('CONSENT_TIMESTAMP_INVALID');
+
+  return Object.freeze({
+    consent: Object.freeze(createConsent({
+      type: 'CALLBACK_CONTACT_PERMISSION',
+      status: CONSENT_STATUS.GRANTED,
+      language,
+      channel: 'WEB',
+      scriptVersion: disclaimerVersion,
+      scope: entry.scope,
+      relationship: 'NOT_STATED',
+      at,
+      correlationId: typeof src.correlationId === 'string' && src.correlationId ? src.correlationId : null,
+    })),
+    reason: 'CALLBACK_CONSENT_RECORDED',
+  });
+}
+
 /**
  * Revoke. Spec §6: revocation propagates immediately and a prior SOA does not
  * defeat a later do-not-contact request — so this never consults the SOA.

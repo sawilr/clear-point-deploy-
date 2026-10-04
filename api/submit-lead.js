@@ -20,6 +20,9 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
 import { evaluateTrust, buildSecurityReviewTask } from './_lib/cy2027/trust.js';
 import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
+// AUDIT 2026-10-02 (CE-09 / CRM-15) — the callback consent becomes a consent
+// OBJECT with the scope its text states, and reaches the CRM as its own fields.
+import { recordWebCallbackConsent, CALLBACK_CONSENT_UNAVAILABLE } from './_lib/cy2027/callback-consent.js';
 // AUDIT 2026-08-15 (security remediation) — shared body reader (fixes the
 // malformed-JSON hang; see read-body.js) + Turnstile server-side verification
 // (remediation target 1; inert until TURNSTILE_SECRET is configured).
@@ -1062,6 +1065,44 @@ export default async function handler(req, res) {
     var consent_receipt_hash = typeof body.consent_receipt_hash === 'string' ? body.consent_receipt_hash.slice(0, 128).replace(/[^a-f0-9]/g, '') : '';
     var disclaimer_version = typeof body.disclaimer_version === 'string' ? body.disclaimer_version.slice(0, 32).replace(/[^a-zA-Z0-9._-]/g, '') : '';
     var signer_user_agent = scrubPHI(_cap(body.signer_user_agent, 240)).text;
+    // AUDIT 2026-10-02 (CE-09 / CRM-15) — THE CALLBACK CONSENT, WITH ITS SCOPE.
+    //
+    // The four consent_* booleans below say THROUGH WHICH CHANNEL; nothing said
+    // ABOUT WHAT. The scope lived only as prose in the verbatim text, so §24's
+    // "generic callback consent authorizes only the scope actually stated" had
+    // no value to be checked against.
+    //
+    // The scope is never taken from this request's own fields (interest_type,
+    // lead_type, preferred_language): that would be inferring it. It comes from
+    // the registry in consent.js, and only when the text this submission
+    // attests to IS a registered version. recordWebCallbackConsent() computes
+    // the digest itself, over the RAW text received (scrubPHI above is for
+    // storage, not for comparison); the client's consent_receipt_hash is only
+    // compared against it, never trusted.
+    //
+    // FAIL-CLOSED, AND NOT A NEW GATE: when the text cannot be tied to a
+    // registered version no consent object exists and no CALLBACK_CONSENT_*
+    // value is written; the reason is logged and flagged for a human. The lead
+    // itself is still captured exactly as before — this is the live pipeline,
+    // and the consent gate above is unchanged.
+    var _consentAt = new Date().toISOString();
+    var _cbRec = CALLBACK_CONSENT_UNAVAILABLE;
+    try {
+      _cbRec = recordWebCallbackConsent({
+        consentGiven: body.consent_to_contact,
+        disclaimerVersion: disclaimer_version,
+        consentText: body.consent_text,
+        receiptHash: consent_receipt_hash,
+        at: _consentAt,
+      });
+    } catch (_cbErr) {
+      // The function does not throw; if that ever stops being true, a consented
+      // lead is still not lost to the bookkeeping about its consent.
+      _cbRec = CALLBACK_CONSENT_UNAVAILABLE;
+    }
+    // Reason codes and field names only — never the text, the hash or the person.
+    for (var _cbW = 0; _cbW < _cbRec.warnings.length; _cbW++) console.warn(_cbRec.warnings[_cbW]);
+    if (_cbRec.flag) _dmFlags.push(_cbRec.flag);
     // Append the audit-trail receipt to lead_notes so it survives even if
     // GHL custom-field mapping changes. PII-free (only hash + version + UA).
     if (consent_receipt_hash || disclaimer_version) {
@@ -1075,7 +1116,9 @@ export default async function handler(req, res) {
       // and ON WHICH PAGE is hard to defend. Server clock (authoritative), the
       // rate-limit client id (trusted proxy chain, never the raw header), and the
       // client-reported path (sanitized to a plain path, no query string).
-      receiptBits.push('at=' + new Date().toISOString());
+      // AUDIT 2026-10-02 (CE-09 / CRM-15) — one instant for the receipt and for
+      // CALLBACK_CONSENT_AT; two clock reads on one consent is a discrepancy.
+      receiptBits.push('at=' + _consentAt);
       receiptBits.push('ip=' + (/^[0-9a-f:.]{3,45}$/i.test(String(ip || '')) ? String(ip) : 'unavailable'));
       // Red-team round 3 (R3-SL-13): decode FIRST, then re-parse so percent-encoded
       // traversal normalises, and REJECT anything that is not a plain in-site path
@@ -1103,6 +1146,12 @@ export default async function handler(req, res) {
         }
       } catch (_e) { page_url = ''; }
       if (page_url) receiptBits.push('page=' + page_url);
+      // AUDIT 2026-10-02 (CE-09 / CRM-15) — the scope as its own labelled value
+      // in the receipt ('scope=…'). This line is what holds it while
+      // CALLBACK_CONSENT_SCOPE has no GoHighLevel field id (crm-fields.js
+      // reports that as "unmapped"). When no consent object could be built, the
+      // receipt says so and why ('callback_consent=NOT_RECORDED(<reason>)').
+      receiptBits.push(_cbRec.receiptBit);
       // Red-team round 3 (R3-SL-07): a story may contain a look-alike receipt
       // header. Neutralise it so only the server's block reads as the receipt.
       if (lead_notes) lead_notes = String(lead_notes).replace(/—\s*(TCPA Receipt|Consent Text)\s*—?/gi, '- $1 -');
@@ -1526,7 +1575,14 @@ export default async function handler(req, res) {
         console.warn('[submit-lead] non-string custom field coerced', { key: f.key, type: typeof f.value });
         leadAudit('customfield_type', null, { key: f.key, type: typeof f.value });
         return { id: f.id, key: f.key, value: f.value == null ? '' : String(f.value.text || f.value) };
-      }).filter(function (f) { return f.value; }),
+      }).filter(function (f) { return f.value; })
+        // AUDIT 2026-10-02 (CE-09 / CRM-15) — CALLBACK_CONSENT_STATUS / _AT /
+        // _SCOPE. Only entries with a REAL GoHighLevel id are in _cbRec.fields
+        // (empty until the owner sets CY2027_CRM_FIELD_IDS, and empty unless all
+        // three have one). They ride the CREATE body with the four consent_*
+        // flags, so they inherit LEAD-02: a submission that matches an existing
+        // contact writes none of them.
+        .concat(_cbRec.fields),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
@@ -1621,6 +1677,28 @@ export default async function handler(req, res) {
         headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
         body: JSON.stringify(contact)
       });
+    }
+    // AUDIT 2026-10-02 (CE-09 / CRM-15) — FAIL-SAFE FOR THE LEAD, NOT FOR THE FIELD.
+    // The three CALLBACK_CONSENT_* entries are the first values in this body whose
+    // ids come from owner-supplied configuration (CY2027_CRM_FIELD_IDS). If the
+    // CRM refuses the create with them attached, a consented lead must not be
+    // lost to a field id: the create is retried ONCE in its exact previous shape.
+    // The scope still reaches the note through the receipt line. A duplicate is
+    // not retried — it is not a field problem, and the branch below handles it.
+    if (!ghlRes.ok && _cbRec.fields.length > 0 && (ghlRes.status === 400 || ghlRes.status === 422)) {
+      var _cbPeek = '';
+      try { _cbPeek = await ghlRes.clone().text(); } catch (_cbPeekErr) { _cbPeek = ''; }
+      if (!/duplicat/i.test(_cbPeek)) {
+        console.error('[CY2027-CRM] contact create refused (HTTP ' + ghlRes.status + ') with the CALLBACK_CONSENT_* fields attached — retrying once without them. Check CY2027_CRM_FIELD_IDS.');
+        leadAudit('cy2027_fields_dropped', null, { upstream_status: ghlRes.status });
+        ghlRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/', {
+          method: 'POST',
+          headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
+          body: JSON.stringify(Object.assign({}, contact, {
+            customFields: contact.customFields.filter(function (f) { return _cbRec.fields.indexOf(f) === -1; }),
+          }))
+        });
+      }
     }
     void usedExisting; // available for downstream conditional logic if needed
     // AUDIT 2026-08-13 (O-05) — true when this submission matched an EXISTING
@@ -1753,6 +1831,11 @@ export default async function handler(req, res) {
         if (disclaimer_version) _rcpt.push('disclaimer=' + disclaimer_version);
         _rcpt.push('at=' + new Date().toISOString());
         if (typeof page_url === 'string' && page_url) _rcpt.push('page=' + page_url);
+        // AUDIT 2026-10-02 (CE-09 / CRM-15) — a repeat writes NO consent field on
+        // the existing contact (LEAD-02), so this server-authored line is the
+        // only place the new consent's scope — or the named reason it has none —
+        // is recorded. A fixed code from the registry, never the sender's prose.
+        _rcpt.push(_cbRec.receiptBit);
         if (body.consent_to_contact === true && (consent_receipt_hash || disclaimer_version)) {
           _repeatFacts.push('New consent receipt on this submission — ' + _rcpt.join(' · '));
         }

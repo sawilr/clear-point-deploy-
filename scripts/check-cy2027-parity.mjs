@@ -24,6 +24,10 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+// A STATIC import on purpose: scripts/check-vercel-config.mjs follows static
+// relative imports to verify that every scripts/ file the build needs has its
+// "!scripts/…" exception in .vercelignore. A dynamic import would hide this one.
+import { consentWordingProblems } from './consent-wording-gate.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -361,6 +365,26 @@ if (tpmoCopies.length) {
   );
 } else {
   notes.push('TPMO disclaimer has a single source');
+}
+
+// ── 7. Contact-consent wording ↔ scope registry (CE-09 / CRM-15) ─────────────
+// AUDIT 2026-10-02 — the scope written to CALLBACK_CONSENT_SCOPE is read off the
+// consent wording by its digest. If the wording in src/lib/disclaimerVersion.ts
+// and the registry in api/_lib/cy2027/consent.js drift, every lead fails closed
+// (no scope, a flag on each one) and nobody sees it until the logs. The rule
+// itself is scripts/consent-wording-gate.mjs, which the suite tests by calling.
+// Nothing here reads docs/: both inputs are part of the deployed artifact.
+{
+  const consentMod = await import('../api/_lib/cy2027/consent.js');
+  let dv;
+  try { dv = read('src/lib/disclaimerVersion.ts'); } catch { dv = null; }
+  if (dv === null) {
+    problems.push('src/lib/disclaimerVersion.ts is missing — the contact-consent wording cannot be checked against its scope registry.');
+  } else {
+    const wording = consentWordingProblems({ source: dv, registry: consentMod.CONTACT_CONSENT_TEXT_VERSIONS });
+    if (wording.problems.length) problems.push(...wording.problems);
+    else notes.push(`contact-consent wording v${wording.version} matches its scope registry (${wording.scope})`);
+  }
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────

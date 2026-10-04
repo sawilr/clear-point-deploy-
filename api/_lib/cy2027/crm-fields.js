@@ -29,6 +29,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { languageWasElected } from './soa-instance.js';
+import { CONSENT_STATUS, isStatedConsentScope, isIsoInstant } from './consent.js';
 
 /**
  * The CY2027 additions from spec §18, with the CRM key each one should use.
@@ -123,6 +124,11 @@ export const CONFIRMED_ONLY_FIELDS = Object.freeze([
   'SOA_LANGUAGE', 'SOA_LANGUAGE_SOURCE',
   'SOA_AUTHORIZED_CATEGORIES', 'SOA_DECLINED_CATEGORIES',
   'CALLBACK_CONSENT_STATUS', 'RECORDING_NOTICE_STATUS', 'AI_OUTBOUND_CONSENT_STATUS',
+  // AUDIT 2026-10-02 (CE-09 / CRM-15) — the scope is "the scope actually stated"
+  // (§24). The status was protected and the scope was not, so a model deciding
+  // the caller "probably wants a plan review" could have widened what a consent
+  // covers without touching whether it exists.
+  'CALLBACK_CONSENT_SCOPE',
 ]);
 
 export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED']);
@@ -166,6 +172,16 @@ export function buildCustomFields(values, env = process.env) {
     // The stored election must itself be an election: 'SYSTEM_DEFAULT' written
     // beside SOA_LANGUAGE would state, in the CRM, a choice nobody made.
     if (name === 'SOA_LANGUAGE_SOURCE' && !languageWasElected(value)) {
+      refused.push(name);
+      continue;
+    }
+    // AUDIT 2026-10-02 (CE-09 / CRM-15) — the scope written is a scope some
+    // registered consent wording STATES, or it is not written. The provenance
+    // check above only sees a value that declares one; a plain string — from a
+    // consent object assembled by hand, or read back from storage — would have
+    // gone through as SYSTEM. This is the same rule webCallbackConsent() applies
+    // when it builds the object, enforced again where the value leaves.
+    if (name === 'CALLBACK_CONSENT_SCOPE' && !isStatedConsentScope(value)) {
       refused.push(name);
       continue;
     }
@@ -220,6 +236,29 @@ export function consentsToFields({ recordingNotice, callbackConsent, aiOutboundC
   }
   if (aiOutboundConsent) out.AI_OUTBOUND_CONSENT_STATUS = aiOutboundConsent.status;
   return out;
+}
+
+/**
+ * AUDIT 2026-10-02 (CE-09 / CRM-15) — the revocation side of the callback
+ * consent, for api/opt-out.js. Spec §6: "Revocation must propagate to workflows
+ * immediately" — the grant is now a queryable field, so the revocation has to
+ * be one too, or a contact would read GRANTED beside a DND flag.
+ *
+ * SCOPE is deliberately absent. The opt-out endpoint matches a contact by
+ * phone/email without authentication and never sees the consent it is
+ * revoking, so restating a scope here would be inventing one. buildCustomFields()
+ * drops absent values, so the scope recorded at grant time stays on the contact
+ * as the record of WHAT was revoked.
+ *
+ * The timestamp is required, not defaulted: the caller writes the same instant
+ * into the revocation note, and two clocks on one revocation is a discrepancy.
+ * The result is frozen and carries exactly these two values, whatever else the
+ * caller passed in.
+ */
+export function callbackRevocationToFields(input) {
+  const at = input !== null && typeof input === 'object' ? input.at : undefined;
+  if (!isIsoInstant(at)) throw new Error('crm-fields: a revocation needs its timestamp (a UTC ISO instant)');
+  return Object.freeze({ CALLBACK_CONSENT_STATUS: CONSENT_STATUS.REVOKED, CALLBACK_CONSENT_AT: at });
 }
 
 /**

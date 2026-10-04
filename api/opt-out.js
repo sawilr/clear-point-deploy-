@@ -34,6 +34,9 @@ import { enforceKill } from './_lib/kill-switch.js';
 // bounded size cap every other endpoint uses (this one read req.body directly,
 // relying on the platform default ~4.5MB) and answers malformed JSON with 400.
 import { readJsonBody } from './_lib/read-body.js';
+// AUDIT 2026-10-02 (CE-09 / CRM-15) — the callback consent is now a queryable
+// CRM value on the grant side (api/submit-lead.js), so its revocation is too.
+import { buildCustomFields, callbackRevocationToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 const GHL_VERSION = '2021-07-28';
@@ -159,6 +162,25 @@ export default async function handler(req, res) {
     }
 
     // ── 2. Apply suppression. DND plus per-channel DND, plus consent flags. ──
+    // AUDIT 2026-10-02 (CE-09 / CRM-15) — CALLBACK_CONSENT_STATUS=REVOKED and
+    // CALLBACK_CONSENT_AT, through the same mapping the grant uses. Without this
+    // a contact would read CALLBACK_CONSENT_STATUS=GRANTED beside a DND flag.
+    // Calls are blocked on every path through this endpoint (the email channel is
+    // the only one a consumer can leave open), so the callback permission is
+    // revoked on every path. The SCOPE is not rewritten: this endpoint never sees
+    // the consent it revokes (see callbackRevocationToFields).
+    // Built in its own try so that nothing here can stand between a person and
+    // their suppression.
+    const revokedAt = new Date().toISOString();
+    let cbRevocation = { fields: [], unmapped: [] };
+    try {
+      cbRevocation = buildCustomFields(callbackRevocationToFields({ at: revokedAt }));
+      const cbWarn = unmappedFieldsWarning(cbRevocation.unmapped);
+      if (cbWarn) console.warn(cbWarn);
+    } catch (e) {
+      cbRevocation = { fields: [], unmapped: [] };
+      console.error('[OPTOUT] callback-consent revocation fields not built: ' + String(e).slice(0, 120));
+    }
     const update = {
       dnd: true,
       dndSettings: {
@@ -177,11 +199,24 @@ export default async function handler(req, res) {
         { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: 'false' },
         { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: 'false' },
         ...(blockEmail ? [{ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: 'false' }] : []),
+        ...cbRevocation.fields,
       ],
     };
-    const ures = await fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, {
-      method: 'PUT', headers: H, body: JSON.stringify(update),
+    const putContact = (payload) => fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, {
+      method: 'PUT', headers: H, body: JSON.stringify(payload),
     });
+    let ures = await putContact(update);
+    // AUDIT 2026-10-02 (CE-09 / CRM-15) — FAIL-SAFE. The CALLBACK_CONSENT_* ids
+    // are the only ones in this body that come from owner-supplied configuration.
+    // If the CRM refuses the update with them attached, the suppression is sent
+    // again in its exact previous shape: a field id must never cost a revocation.
+    if (!ures.ok && cbRevocation.fields.length > 0) {
+      console.error('[OPTOUT] update refused status=' + ures.status + ' with the CALLBACK_CONSENT_* fields attached — retrying the suppression without them');
+      ures = await putContact({
+        ...update,
+        customFields: update.customFields.filter((f) => !cbRevocation.fields.includes(f)),
+      });
+    }
     const dndApplied = ures.ok;
     if (!ures.ok) console.error('[OPTOUT] DND update failed status=' + ures.status);
 
@@ -189,8 +224,12 @@ export default async function handler(req, res) {
     const noteBody = [
       'CONTACT REVOCATION — recorded from web chat',
       'Evidence category: ' + evidence,
-      'Timestamp (UTC): ' + new Date().toISOString(),
+      // AUDIT 2026-10-02 (CE-09 / CRM-15) — the same instant as CALLBACK_CONSENT_AT.
+      'Timestamp (UTC): ' + revokedAt,
       'Channels blocked: call, sms' + (blockEmail ? ', email' : ' (email left open at the consumer\'s request)'),
+      // Stated in the note as well, so the revocation of the callback permission
+      // is on the record while the two fields have no GoHighLevel id.
+      'Callback contact permission: REVOKED',
       'Applied by: automated suppression endpoint (api/opt-out)',
       'NOTE: this record must be retained as evidence of the revocation. Do not',
       'delete it, and do not clear DND without a NEW documented consent.',

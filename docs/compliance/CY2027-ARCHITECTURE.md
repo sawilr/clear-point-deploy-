@@ -32,6 +32,7 @@ api/_lib/cy2027/
   rulesets.js        immutable per-plan-year CMS rulesets + kill switch         [shared]
   soa-instance.js    appointment-specific instance + marketing gate             [shared]
   consent.js         the four distinct consent objects                          [shared]
+  callback-consent.js the web callback consent as a record: digest, scope, CRM   [SERVER ONLY]
   trust.js           lead trust state, anti-abuse, human confirmation gate      [shared]
   retention.js       retention by record class + legal hold                     [shared]
   carrier-overlay.js private carrier registry (licensed workspace only)         [shared]
@@ -146,6 +147,26 @@ and `NOT_ASKED` for silence. Neither is ever consent (§6).
 `mayPlaceOutbound()` returns `AI_OUTBOUND_ARCHITECTURE_NOT_VALIDATED` even when an AI
 outbound consent record exists: outbound Voice AI stays disabled until a separately
 validated legal/consent architecture is built and tested (§24).
+
+**Web callback consent and its scope (CE-09 / CRM-15).** `api/submit-lead.js` calls
+`recordWebCallbackConsent()` (`api/_lib/cy2027/callback-consent.js`, server only), which
+builds a `CALLBACK_CONTACT_PERMISSION` object with `webCallbackConsent()`. The scope is
+never derived from the lead: `CONTACT_CONSENT_TEXT_VERSIONS` (`consent.js`) maps each
+consent-text version to the scope that wording states, and a submission earns it only
+when the server's own SHA-256 of the text received equals the registered digest (the
+client's `consent_receipt_hash` is compared, never trusted). Otherwise no object exists,
+no `CALLBACK_CONSENT_*` value is written, the lead is still captured, and it carries a
+`CALLBACK_CONSENT_NOT_RECORDED` flag plus a named reason in the log and in the receipt.
+The same rule is applied again where the value leaves: `buildCustomFields()` refuses a
+`CALLBACK_CONSENT_SCOPE` that no registered wording states, or whose provenance is not
+confirming. `GRANTED` is never sent without its scope: if any of the three fields has no
+GoHighLevel id, none is sent. `api/opt-out.js` writes `CALLBACK_CONSENT_STATUS=REVOKED`
+and the revocation instant through the same mapping and never rewrites the scope.
+Changing the wording in `src/lib/disclaimerVersion.ts` requires a new `DISCLAIMER_VERSION`
+**and a new registry entry**; `scripts/consent-wording-gate.mjs` (run by
+`check-cy2027-parity`) fails the build otherwise. The three fields need GoHighLevel ids
+(`CY2027_CRM_FIELD_IDS`, owner action); until then the scope is held in the
+`— TCPA Receipt —` line of the contact note as `scope=<SCOPE>`.
 
 ### 2.5 Retention
 
