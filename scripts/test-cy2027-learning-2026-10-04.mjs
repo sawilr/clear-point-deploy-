@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import * as learning from '../api/_lib/cy2027/learning.js';
 import {
   CANDIDATE_KINDS, LEARNING_SURFACES, LEARNING_PIPELINE, LEARNING_REJECTED, SUMMARY_MAX_CHARS, PHRASE_MAX_CHARS,
-  createCandidateLearning, candidateHistoryProblem, advanceCandidate, rejectCandidate, isDeployedLearning, candidateLogLine,
+  createCandidateLearning, candidateHistoryProblem, advanceCandidate, rejectCandidate, isDeployedLearning, candidateLogLine, observationLogLine,
 } from '../api/_lib/cy2027/learning.js';
 import * as barrel from '../api/_lib/cy2027/index.js';
 import {
@@ -217,7 +217,7 @@ ok('a rejected record with no history at all is not trusted', candidateHistoryPr
 ok('it exports exactly these names — adding a function that APPLIES a learning must be a visible, reviewed change',
   JSON.stringify(Object.keys(learning).sort()) === JSON.stringify([
     'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTED', 'LEARNING_SURFACES', 'PHRASE_MAX_CHARS', 'SUMMARY_MAX_CHARS',
-    'advanceCandidate', 'candidateHistoryProblem', 'candidateLogLine', 'createCandidateLearning', 'isDeployedLearning', 'rejectCandidate',
+    'advanceCandidate', 'candidateHistoryProblem', 'candidateLogLine', 'createCandidateLearning', 'isDeployedLearning', 'observationLogLine', 'rejectCandidate',
   ]), Object.keys(learning).sort().join(','));
 {
   const SRC = stripComments(read('../api/_lib/cy2027/learning.js'));
@@ -337,6 +337,227 @@ ok('a cycle does not hang it', (() => { const a = { }; a.self = a; return unfroz
   const PKG = JSON.parse(read('../package.json'));
   ok('the gate runs inside the build', /(^|&&)\s*node scripts\/check-no-self-modification\.mjs\s*&&/.test(PKG.scripts.build));
   ok('and its file is shipped to the Vercel build', /^!scripts\/check-no-self-modification\.mjs\r?$/m.test(read('../.vercelignore')));
+}
+
+// ── 7. AUDIT 2026-10-04 — what the first independent read broke ──────────────
+// Every rule about what a candidate may BE was enforced in the constructor and
+// nowhere else. A record put together by hand went through every later stage.
+ok('the surfaces are a closed list, and the shared web endpoint is one of them',
+  JSON.stringify(LEARNING_SURFACES) === JSON.stringify(['VOICE_EMELY', 'VOICE_SOFIA', 'WEB_CLARA', 'WEB_ZARA', 'WEB_CHAT', 'WEB_FORM']) &&
+  Object.isFrozen(LEARNING_SURFACES));
+{
+  const handBuilt = (over) => ({ ...made.candidate, ...over });
+  for (const [what, over, reason] of [
+    ['a kind nobody defined', { kind: 'NEW_SALES_ANGLE' }, 'CANDIDATE_KIND_UNKNOWN'],
+    ['a kind from the prototype chain', { kind: 'constructor' }, 'CANDIDATE_KIND_UNKNOWN'],
+    ['an unknown surface', { surface: 'OUTBOUND_DIALER' }, 'CANDIDATE_SURFACE_UNKNOWN'],
+    ['an unknown language', { language: 'fr' }, 'CANDIDATE_LANGUAGE_UNKNOWN'],
+    ['a count of zero', { occurrences: 0 }, 'CANDIDATE_OCCURRENCES_INVALID'],
+    ['an unreadable creation instant', { createdAt: 'yesterday' }, 'CANDIDATE_INSTANT_INVALID'],
+    ['an id carrying free text', { candidateId: 'Maria Lopez 631-555-0123' }, 'CANDIDATE_ID_INVALID'],
+    ['a summary quoting a caller\'s SSN', { summary: 'Caller gave SSN 123-45-6789.' }, 'CANDIDATE_CONTAINS_SENSITIVE_DATA'],
+    ['a summary naming a caller', { summary: 'Mrs. Delgado did not understand the menu.' }, 'CANDIDATE_CONTAINS_SENSITIVE_DATA'],
+    ['a summary carrying a health condition', { summary: 'She has diabetes and takes insulin every day.' }, 'CANDIDATE_CONTAINS_SENSITIVE_DATA'],
+    ['a phrase carrying a phone number', { agentPhrase: 'Call back at 631-555-0123.' }, 'CANDIDATE_CONTAINS_SENSITIVE_DATA'],
+    ['an empty summary', { summary: '   ' }, 'CANDIDATE_TEXT_REQUIRED'],
+    ['an over-long summary', { summary: 'x'.repeat(SUMMARY_MAX_CHARS + 1) }, 'CANDIDATE_TEXT_TOO_LONG'],
+    ['an extra field', { transcript: 'everything the caller said' }, 'CANDIDATE_FIELD_NOT_ALLOWED'],
+    ['an extra symbol-keyed field', { [Symbol('note')]: 'caller notes' }, 'CANDIDATE_FIELD_NOT_ALLOWED'],
+  ]) {
+    const record = handBuilt(over);
+    ok(`a hand-built record with ${what} is not trusted (${reason})`, candidateHistoryProblem(record) === reason, String(candidateHistoryProblem(record)));
+    throws(`…and cannot be advanced (${what})`, () => advanceCandidate(record, person(0)), /not trustworthy/);
+    throws(`…or rejected (${what})`, () => rejectCandidate(record, { actor: 'Sawil Reyes', at: '2026-10-06T10:00:00Z', reasonCode: 'X' }), /not trustworthy/);
+    throws(`…or logged (${what})`, () => candidateLogLine(record), /not trustworthy/);
+  }
+  ok('an extra field that is not enumerable is found too',
+    candidateHistoryProblem(Object.defineProperty(handBuilt({}), 'hidden', { value: 'caller notes', enumerable: false })) === 'CANDIDATE_FIELD_NOT_ALLOWED');
+  ok('a deployed record whose summary was swapped for a caller\'s details is no longer a deployed learning',
+    isDeployedLearning(walked) === true && isDeployedLearning({ ...walked, summary: 'Caller gave SSN 123-45-6789.' }) === false);
+  ok('a record with no phrase key at all is the same as a record with a null phrase', (() => {
+    const { agentPhrase: _gone, ...rest } = made.candidate;
+    return candidateHistoryProblem(rest) === null && candidateHistoryProblem({ ...rest, agentPhrase: null }) === null;
+  })());
+  ok('the records the pipeline itself produced are all still trusted',
+    candidateHistoryProblem(made.candidate) === null && candidateHistoryProblem(walked) === null && candidateHistoryProblem(rejected) === null);
+
+  // A step may carry only what a step is.
+  const stepOne = { from: 'CANDIDATE', to: 'HUMAN_COMPLIANCE_REVIEW', ...person(0) };
+  ok('a forward step with an extra field is refused',
+    candidateHistoryProblem(handBuilt({ stage: 'HUMAN_COMPLIANCE_REVIEW', history: [stepOne] })) === null &&
+    candidateHistoryProblem(handBuilt({ stage: 'HUMAN_COMPLIANCE_REVIEW', history: [{ ...stepOne, note: 'the caller said…' }] })) === 'HISTORY_ENTRY_MALFORMED');
+  const rejectionStep = { from: 'CANDIDATE', to: LEARNING_REJECTED, actor: 'Sawil Reyes', at: '2026-10-06T10:00:00Z', reasonCode: 'X' };
+  ok('a rejection step with an extra field is refused',
+    candidateHistoryProblem(handBuilt({ stage: LEARNING_REJECTED, history: [rejectionStep] })) === null &&
+    candidateHistoryProblem(handBuilt({ stage: LEARNING_REJECTED, history: [{ ...rejectionStep, evidenceReference: 'x' }] })) === 'HISTORY_ENTRY_MALFORMED');
+
+  // The mirror path. Advancing refused a step dated before the one it follows; rejecting did not.
+  throws('a rejection cannot be dated before the candidate existed',
+    () => rejectCandidate(made.candidate, { actor: 'Sawil Reyes', at: '2026-10-01T00:00:00Z', reasonCode: 'X' }), /before the one it follows/);
+  throws('nor before the step it follows',
+    () => rejectCandidate(advanceCandidate(made.candidate, person(3)), { actor: 'Sawil Reyes', at: '2026-10-06T10:00:00Z', reasonCode: 'X' }), /before the one it follows/);
+  ok('a rejection at the very instant of the last step is allowed (same clock tick, not earlier)',
+    rejectCandidate(made.candidate, { actor: 'Sawil Reyes', at: made.candidate.createdAt, reasonCode: 'X' }).stage === LEARNING_REJECTED);
+  ok('a rejected record whose rejection predates the candidate is not trusted',
+    candidateHistoryProblem(handBuilt({ stage: LEARNING_REJECTED, history: [{ ...rejectionStep, at: '2026-10-01T00:00:00Z' }] })) === 'HISTORY_NOT_CHRONOLOGICAL');
+  ok('nor one whose rejection predates the step before it',
+    candidateHistoryProblem(handBuilt({ stage: LEARNING_REJECTED, history: [{ ...stepOne, at: '2026-10-09T00:00:00Z' }, { ...rejectionStep, from: 'HUMAN_COMPLIANCE_REVIEW', at: '2026-10-08T00:00:00Z' }] })) === 'HISTORY_NOT_CHRONOLOGICAL');
+
+  // Frozen all the way down: Object.freeze is shallow, and a hand-built step stayed editable inside the "frozen" record.
+  const looseStep = { ...stepOne };
+  const advanced = advanceCandidate(handBuilt({ stage: 'HUMAN_COMPLIANCE_REVIEW', history: [looseStep] }), person(1));
+  ok('advancing freezes every earlier step, not only the new one', advanced.history.length === 2 && advanced.history.every((s) => Object.isFrozen(s)));
+  looseStep.actor = 'Someone Else';
+  ok('and the record no longer shares the object it was handed', advanced.history[0].actor === 'Maria Lopez');
+  const looseStep2 = { ...stepOne };
+  const rejectedLate = rejectCandidate(handBuilt({ stage: 'HUMAN_COMPLIANCE_REVIEW', history: [looseStep2] }), { actor: 'Sawil Reyes', at: '2026-10-06T10:00:00Z', reasonCode: 'X' });
+  looseStep2.actor = 'Someone Else';
+  ok('rejecting does the same', rejectedLate.history.every((s) => Object.isFrozen(s)) && rejectedLate.history[0].actor === 'Maria Lopez');
+
+  // The log line is only ever built from a trusted record.
+  let message = '';
+  try { candidateLogLine(handBuilt({ kind: 'call me at 631-555-0123' })); } catch (e) { message = String(e && e.message); }
+  ok('the refusal to log does not repeat what it refused', /not trustworthy \(CANDIDATE_KIND_UNKNOWN\)/.test(message) && !message.includes('631'));
+}
+
+// What an automated surface may do with an observation: one line, or nothing.
+{
+  const observation = { kind: 'FAILED_PHRASE', surface: 'WEB_CHAT', language: 'en', summary: 'The reply had to be corrected before it was sent.' };
+  const line = observationLogLine(observation);
+  const parsed = typeof line === 'string' && line.startsWith('[CANDIDATE-LEARNING] ') ? JSON.parse(line.slice(21)) : null;
+  ok('an observation becomes one tagged line', parsed !== null);
+  ok('the line carries exactly six coarse fields',
+    parsed && JSON.stringify(Object.keys(parsed)) === JSON.stringify(['candidateId', 'kind', 'surface', 'language', 'stage', 'occurrences']));
+  ok('it is a new candidate at the first stage, observed once',
+    parsed && parsed.kind === 'FAILED_PHRASE' && parsed.surface === 'WEB_CHAT' && parsed.language === 'en' && parsed.stage === 'CANDIDATE' && parsed.occurrences === 1);
+  ok('its id is generated, never taken from the text', parsed && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(parsed.candidateId));
+  ok('two observations are two candidates', parsed && JSON.parse(observationLogLine(observation).slice(21)).candidateId !== parsed.candidateId);
+  ok('the summary never reaches the line', typeof line === 'string' && !line.includes('corrected') && !line.includes('summary'));
+  for (const [what, input] of [
+    ['an unknown kind', { ...observation, kind: 'NEW_SALES_ANGLE' }],
+    ['an unknown surface', { ...observation, surface: 'api/chat' }],
+    ['a language outside the two served', { ...observation, language: 'fr' }],
+    ['a summary that quotes a caller', { ...observation, summary: 'Caller gave SSN 123-45-6789.' }],
+    ['no summary', { ...observation, summary: undefined }],
+    ['nothing', undefined],
+    ['null', null],
+    ['a string', 'the bot got it wrong'],
+    ['an array', [observation]],
+  ]) {
+    ok(`an observation with ${what} produces no line`, observationLogLine(input) === null);
+  }
+  let threw = false;
+  let result;
+  try { result = observationLogLine({ ...observation, get summary() { throw new Error('boom'); } }); } catch { threw = true; }
+  ok('an observation that blows up while being read produces no line and no exception', threw === false && result === null);
+}
+
+// The one emission point: api/chat.js, when the deterministic filter had to
+// correct a reply. Driven through the real handler with a model double.
+{
+  const saved = {};
+  const setEnv = (vars) => { for (const [k, v] of Object.entries(vars)) { saved[k] = process.env[k]; if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
+  setEnv({
+    OPENAI_API_KEY: 'sk-test-dummy-learning-000', ANTHROPIC_API_KEY: undefined, LLM_PROVIDER: undefined, VERCEL_ENV: undefined,
+    CP_KILL_ALL: undefined, CP_KILL_AI: undefined, KV_REST_API_URL: undefined, KV_REST_API_TOKEN: undefined,
+  });
+  const { default: chatHandler } = await import('../api/chat.js');
+  const { __setLLMTestFetch } = await import('../api/_lib/llm-provider.js');
+  const modelSays = (text) => new Response(JSON.stringify({
+    id: 'resp_learning', object: 'response', status: 'completed', model: 'gpt-5.6-luna',
+    output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }],
+    usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+  }), { status: 200, headers: { 'content-type': 'application/json' } });
+  let turn = 0;
+  const chat = async (userMessage, modelReply, context) => {
+    turn += 1;
+    const logs = [];
+    const original = [console.log, console.warn, console.error];
+    console.log = console.warn = console.error = (...a) => { logs.push(a.join(' ')); };
+    let modelCalls = 0;
+    __setLLMTestFetch(async () => { modelCalls += 1; return modelSays(modelReply); });
+    const res = {
+      statusCode: null, jsonBody: null,
+      setHeader() { return this; }, status(c) { this.statusCode = c; return this; }, json(o) { this.jsonBody = o; return this; }, end() { return this; },
+    };
+    try {
+      await chatHandler({
+        method: 'POST',
+        headers: { origin: 'http://localhost:5173', 'content-type': 'application/json', 'x-forwarded-for': `10.88.0.${turn}` },
+        body: { userMessage, context, history: [] },
+        on() {},
+      }, res);
+    } finally {
+      [console.log, console.warn, console.error] = original;
+    }
+    return { res, logs, modelCalls, candidates: logs.filter((l) => l.includes('[CANDIDATE-LEARNING]')) };
+  };
+  try {
+    const NY = { zipCode: '11375', state: 'NY' };
+    const es = await chat('Quiero saber sobre la parte B de Medicare ZZUSERMARK', 'Le recomiendo Humana ZZMODELMARK, es el mejor plan para usted.', { ...NY, language: 'es' });
+    ok('the reply the model wrote was corrected by the filter (the signal this hangs off)',
+      es.res.statusCode === 200 && es.modelCalls === 1 && es.logs.some((l) => l.includes('compliance violations corrected')) &&
+      !/humana/i.test(es.res.jsonBody.response), JSON.stringify(es.res.jsonBody));
+    ok('a corrected reply emits exactly ONE candidate line', es.candidates.length === 1, es.candidates.join(' | '));
+    const esLine = es.candidates[0] || '';
+    const esParsed = esLine.startsWith('[CANDIDATE-LEARNING] ') ? JSON.parse(esLine.slice(21)) : {};
+    ok('the line is the fixed observation: a failed phrase, seen on the shared web endpoint, as a new candidate',
+      esParsed.kind === 'FAILED_PHRASE' && esParsed.surface === 'WEB_CHAT' && esParsed.stage === 'CANDIDATE' && esParsed.occurrences === 1 &&
+      JSON.stringify(Object.keys(esParsed)) === JSON.stringify(['candidateId', 'kind', 'surface', 'language', 'stage', 'occurrences']), esLine);
+    ok('in the language the correction was made in (Spanish turn)', esParsed.language === 'es');
+    ok('the line carries nothing the caller typed, nothing the model wrote, no address and no rule tag',
+      esLine.length > 0 && !/ZZUSERMARK|ZZMODELMARK|humana|parte B|10\.88\.|carrier_name|ip=/i.test(esLine), esLine);
+    ok('nothing about the candidate reaches the caller',
+      !/CANDIDATE|candidateId|FAILED_PHRASE|WEB_CHAT/.test(JSON.stringify(es.res.jsonBody)));
+
+    const en = await chat('What does Medicare Part B cover?', 'I recommend Humana, it is the best plan for you.', { ...NY, language: 'en' });
+    ok('an English turn is recorded as English', en.candidates.length === 1 && JSON.parse(en.candidates[0].slice(21)).language === 'en', en.candidates.join(' | '));
+
+    const clean = await chat('Quiero saber sobre la parte B de Medicare', 'La Parte B cubre servicios médicos ambulatorios.', { ...NY, language: 'es' });
+    ok('a reply the filter did not have to correct emits NO candidate',
+      clean.res.statusCode === 200 && clean.modelCalls === 1 && clean.candidates.length === 0 &&
+      !clean.logs.some((l) => l.includes('compliance violations corrected')), clean.candidates.join(' | '));
+    ok('and is delivered as the model wrote it', /Parte B cubre servicios/.test(clean.res.jsonBody.response));
+
+    // The session language is whatever the browser sent. It must not be able to
+    // write itself into the line: the language is one of two values or the
+    // default the filter itself used.
+    const forgedLang = await chat('Medicare Part B?', 'I recommend Humana, it is the best plan for you.', { ...NY, language: 'fr", "kind":"ROUTING_ERROR' });
+    const forgedParsed = forgedLang.candidates.length === 1 ? JSON.parse(forgedLang.candidates[0].slice(21)) : {};
+    ok('a session language the browser made up cannot write itself into the line',
+      forgedLang.candidates.length === 1 && forgedParsed.language === 'es' && forgedParsed.kind === 'FAILED_PHRASE' &&
+      !forgedLang.candidates[0].includes('ROUTING_ERROR') && !forgedLang.candidates[0].includes('fr'), forgedLang.candidates.join(' | '));
+
+    // The observation is built from NEITHER text. The handler scrubs numbers out
+    // of the message before anything else, so the message here also introduces
+    // the caller by name — which no scrubber removes and the candidate rules
+    // refuse — and the reply that is delivered carries a phone number. A
+    // candidate made from either text would be refused and there would be no line.
+    const { scrubPHI } = await import('../api/_lib/phi-scrub.js');
+    const personalMessage = 'Me llamo Rosa, mi teléfono es 631-555-0123 y quiero saber sobre la parte B de Medicare';
+    const withNumbers = await chat(personalMessage,
+      'La Parte B cubre servicios ambulatorios. Usted definitivamente califica para Extra Help. Puede llamar a Medicare al 1-800-633-4227.', { ...NY, language: 'es' });
+    const numbersParsed = withNumbers.candidates.length === 1 ? JSON.parse(withNumbers.candidates[0].slice(21)) : {};
+    const fixed = { kind: 'FAILED_PHRASE', surface: 'WEB_CHAT', language: 'es', summary: 'The reply had to be corrected before it was sent.' };
+    ok('that turn was corrected in part, and the delivered reply still carries a phone number',
+      withNumbers.res.statusCode === 200 && withNumbers.modelCalls === 1 && withNumbers.logs.some((l) => l.includes('compliance violations corrected')) &&
+      /1-800-633-4227/.test(withNumbers.res.jsonBody.response) && !/definitivamente califica/.test(withNumbers.res.jsonBody.response), JSON.stringify(withNumbers.res.jsonBody));
+    ok('a candidate made from that message — even after the handler\'s own scrub — or from that reply would have been refused',
+      observationLogLine(fixed) !== null &&
+      observationLogLine({ ...fixed, summary: scrubPHI(personalMessage, { stripContact: true }).text }) === null &&
+      observationLogLine({ ...fixed, agentPhrase: withNumbers.res.jsonBody.response.slice(0, PHRASE_MAX_CHARS) }) === null);
+    ok('and the turn still emits its one line: the candidate is made from neither the message nor the reply',
+      withNumbers.candidates.length === 1 && numbersParsed.kind === 'FAILED_PHRASE' && numbersParsed.surface === 'WEB_CHAT' &&
+      numbersParsed.language === 'es' && numbersParsed.stage === 'CANDIDATE' && numbersParsed.occurrences === 1, withNumbers.candidates.join(' | '));
+
+    // The corrected text is what the filter alone produces: the emission adds nothing to it.
+    const { complianceFilter } = await import('../api/_lib/compliance-filter.js');
+    const alone = complianceFilter('I recommend Humana, it is the best plan for you.', 'en', { userText: 'What does Medicare Part B cover?', latestUserText: 'What does Medicare Part B cover?', contactOptedOut: false });
+    ok('the caller receives exactly the text the filter produced', alone.violations.length > 0 && en.res.jsonBody.response === alone.text, en.res.jsonBody.response);
+  } finally {
+    __setLLMTestFetch(null);
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 }
 
 if (failures.length) {

@@ -54,8 +54,15 @@ export const CANDIDATE_KINDS = Object.freeze([
   'PRONUNCIATION_ISSUE',
 ]);
 
-/** Where the observation was made. Emely and Sofía live in GoHighLevel; Clara and Zara are the web assistants. */
-export const LEARNING_SURFACES = Object.freeze(['VOICE_EMELY', 'VOICE_SOFIA', 'WEB_CLARA', 'WEB_ZARA', 'WEB_FORM']);
+/**
+ * Where the observation was made. Emely and Sofía live in GoHighLevel; Clara and Zara are the web assistants.
+ *
+ * AUDIT 2026-10-04 (SPEC-23) — WEB_CHAT is the shared endpoint api/chat.js. Clara
+ * and Zara both go through it and the server is not told which one is asking,
+ * so an observation made THERE cannot honestly be filed under either name. It
+ * says where it was seen; it does not guess who was speaking.
+ */
+export const LEARNING_SURFACES = Object.freeze(['VOICE_EMELY', 'VOICE_SOFIA', 'WEB_CLARA', 'WEB_ZARA', 'WEB_CHAT', 'WEB_FORM']);
 
 /** The spec's pipeline, in its order. Each stage is reached from the one before it and from no other. */
 export const LEARNING_PIPELINE = Object.freeze([
@@ -90,7 +97,6 @@ function isIsoInstant(value) {
 function textProblem(value, max, field) {
   if (typeof value !== 'string' || !value.trim()) return { reason: 'CANDIDATE_TEXT_REQUIRED', field };
   if (value.length > max) return { reason: 'CANDIDATE_TEXT_TOO_LONG', field, max };
-  // eslint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return { reason: 'CANDIDATE_TEXT_NOT_PLAIN', field };
   const phi = scrubPHI(value, { stripContact: true });
   if (phi.detected.length || phi.text !== value) {
@@ -116,6 +122,35 @@ const STRICT_TEXT_RULES = Object.freeze([
 ]);
 
 /**
+ * What a candidate's own fields may be — { reason, … } or null.
+ *
+ * AUDIT 2026-10-04 (SPEC-23, first independent read) — these rules were written
+ * inline in createCandidateLearning() and nowhere else. A record assembled by
+ * hand, with a kind nobody defined and a summary quoting a caller's name and
+ * SSN, was ADVANCED by advanceCandidate() and PRINTED by candidateLogLine():
+ * the constructor refused it, every later stage accepted it. That is the G08
+ * lesson again (a rule checked only where the object is built is not a rule
+ * about the object). There is one implementation now, and both the constructor
+ * and candidateHistoryProblem() — which every later stage calls — go through it.
+ * An absent phrase (null or undefined) is "no phrase"; anything else is judged.
+ */
+function candidateFieldsProblem({ kind, surface, language, summary, agentPhrase, occurrences, createdAt, candidateId }) {
+  if (typeof kind !== 'string' || !CANDIDATE_KINDS.includes(kind)) return { reason: 'CANDIDATE_KIND_UNKNOWN' };
+  if (typeof surface !== 'string' || !LEARNING_SURFACES.includes(surface)) return { reason: 'CANDIDATE_SURFACE_UNKNOWN' };
+  if (language !== 'en' && language !== 'es') return { reason: 'CANDIDATE_LANGUAGE_UNKNOWN' };
+  if (!Number.isInteger(occurrences) || occurrences < 1) return { reason: 'CANDIDATE_OCCURRENCES_INVALID' };
+  if (!isIsoInstant(createdAt)) return { reason: 'CANDIDATE_INSTANT_INVALID' };
+  if (typeof candidateId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(candidateId)) return { reason: 'CANDIDATE_ID_INVALID' };
+  const summaryProblem = textProblem(summary, SUMMARY_MAX_CHARS, 'summary');
+  if (summaryProblem) return summaryProblem;
+  if (agentPhrase !== null && agentPhrase !== undefined) {
+    const phraseProblem = textProblem(agentPhrase, PHRASE_MAX_CHARS, 'agentPhrase');
+    if (phraseProblem) return phraseProblem;
+  }
+  return null;
+}
+
+/**
  * Record an observation as a candidate. Returns { ok:true, candidate } (frozen)
  * or { ok:false, reason, … } — it never throws on bad input, because the caller
  * is an automated surface and a rejected observation must not break a call.
@@ -129,19 +164,8 @@ export function createCandidateLearning(input) {
     createdAt = new Date().toISOString(), candidateId = crypto.randomUUID(),
   } = input && typeof input === 'object' ? input : {};
 
-  if (typeof kind !== 'string' || !CANDIDATE_KINDS.includes(kind)) return { ok: false, reason: 'CANDIDATE_KIND_UNKNOWN' };
-  if (typeof surface !== 'string' || !LEARNING_SURFACES.includes(surface)) return { ok: false, reason: 'CANDIDATE_SURFACE_UNKNOWN' };
-  if (language !== 'en' && language !== 'es') return { ok: false, reason: 'CANDIDATE_LANGUAGE_UNKNOWN' };
-  if (!Number.isInteger(occurrences) || occurrences < 1) return { ok: false, reason: 'CANDIDATE_OCCURRENCES_INVALID' };
-  if (!isIsoInstant(createdAt)) return { ok: false, reason: 'CANDIDATE_INSTANT_INVALID' };
-  if (typeof candidateId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(candidateId)) return { ok: false, reason: 'CANDIDATE_ID_INVALID' };
-
-  const summaryProblem = textProblem(summary, SUMMARY_MAX_CHARS, 'summary');
-  if (summaryProblem) return { ok: false, ...summaryProblem };
-  if (agentPhrase !== null) {
-    const phraseProblem = textProblem(agentPhrase, PHRASE_MAX_CHARS, 'agentPhrase');
-    if (phraseProblem) return { ok: false, ...phraseProblem };
-  }
+  const problem = candidateFieldsProblem({ kind, surface, language, summary, agentPhrase, occurrences, createdAt, candidateId });
+  if (problem) return { ok: false, ...problem };
 
   return {
     ok: true,
@@ -184,6 +208,7 @@ export function candidateHistoryProblem(candidate) {
     const s = forward[i];
     if (!s || typeof s !== 'object') return 'HISTORY_ENTRY_MALFORMED';
     if (s.from !== LEARNING_PIPELINE[i] || s.to !== LEARNING_PIPELINE[i + 1]) return 'HISTORY_OUT_OF_ORDER';
+    if (!hasOnlyKeys(s, FORWARD_STEP_KEYS)) return 'HISTORY_ENTRY_MALFORMED';
     if (humanActorProblem(s.actor)) return 'HISTORY_STEP_NOT_BY_A_PERSON';
     if (!isIsoInstant(s.at)) return 'HISTORY_INSTANT_INVALID';
     if (isIsoInstant(previous) && Date.parse(s.at) < Date.parse(previous)) return 'HISTORY_NOT_CHRONOLOGICAL';
@@ -194,11 +219,45 @@ export function candidateHistoryProblem(candidate) {
     const last = steps[steps.length - 1];
     if (!last || typeof last !== 'object') return 'HISTORY_ENTRY_MALFORMED';
     if (last.to !== LEARNING_REJECTED || last.from !== LEARNING_PIPELINE[forward.length]) return 'HISTORY_OUT_OF_ORDER';
+    if (!hasOnlyKeys(last, REJECTION_STEP_KEYS)) return 'HISTORY_ENTRY_MALFORMED';
     if (humanActorProblem(last.actor)) return 'HISTORY_STEP_NOT_BY_A_PERSON';
     if (!isIsoInstant(last.at)) return 'HISTORY_INSTANT_INVALID';
+    // AUDIT 2026-10-04 (SPEC-23) — the forward steps were checked for order in
+    // time and the rejection was not: the mirror path accepted what the first
+    // refused. A rejection dated before the thing it rejects existed is not a
+    // record of a decision.
+    if (isIsoInstant(previous) && Date.parse(last.at) < Date.parse(previous)) return 'HISTORY_NOT_CHRONOLOGICAL';
     if (typeof last.reasonCode !== 'string' || !last.reasonCode.trim()) return 'HISTORY_REASON_MISSING';
   }
+  // AUDIT 2026-10-04 (SPEC-23) — the record itself, not only its history. A
+  // closed list of fields, because advanceCandidate() copies the record forward
+  // and anything extra ("transcript", "callerName") would ride along unjudged;
+  // then the same field rules the constructor applies (candidateFieldsProblem).
+  if (!hasOnlyKeys(candidate, CANDIDATE_RECORD_KEYS)) return 'CANDIDATE_FIELD_NOT_ALLOWED';
+  const fields = candidateFieldsProblem(candidate);
+  if (fields) return fields.reason;
   return null;
+}
+
+const CANDIDATE_RECORD_KEYS = Object.freeze([
+  'candidateId', 'kind', 'surface', 'language', 'summary', 'agentPhrase', 'occurrences', 'createdAt', 'stage', 'history',
+]);
+const FORWARD_STEP_KEYS = Object.freeze(['from', 'to', 'actor', 'at', 'evidenceReference']);
+const REJECTION_STEP_KEYS = Object.freeze(['from', 'to', 'actor', 'at', 'reasonCode']);
+
+/** Does `value` carry no own property (string or symbol, enumerable or not) outside `allowed`? */
+function hasOnlyKeys(value, allowed) {
+  return Reflect.ownKeys(value).every((key) => typeof key === 'string' && allowed.includes(key));
+}
+
+/** The instant of the last thing recorded about a candidate: its latest step, or its creation. */
+function lastRecordedInstant(candidate) {
+  return candidate.history.length ? candidate.history[candidate.history.length - 1].at : candidate.createdAt;
+}
+
+/** Earlier steps, copied and frozen: Object.freeze is shallow, and a hand-built step would stay editable inside a "frozen" record. */
+function frozenHistory(candidate, step) {
+  return Object.freeze([...candidate.history.map((s) => Object.freeze({ ...s })), step]);
 }
 
 function assertHumanDecision(actor, at, what) {
@@ -224,8 +283,7 @@ export function advanceCandidate(candidate, { actor, at, evidenceReference } = {
   if (typeof evidenceReference !== 'string' || !evidenceReference.trim()) {
     throw new Error('learning: a pipeline step needs a reference to what was reviewed');
   }
-  const last = candidate.history.length ? candidate.history[candidate.history.length - 1].at : candidate.createdAt;
-  if (Date.parse(at) < Date.parse(last)) throw new Error('learning: a step cannot be dated before the one it follows');
+  if (Date.parse(at) < Date.parse(lastRecordedInstant(candidate))) throw new Error('learning: a step cannot be dated before the one it follows');
   const step = Object.freeze({
     from: LEARNING_PIPELINE[idx],
     to: LEARNING_PIPELINE[idx + 1],
@@ -233,7 +291,7 @@ export function advanceCandidate(candidate, { actor, at, evidenceReference } = {
     at,
     evidenceReference: evidenceReference.trim(),
   });
-  return Object.freeze({ ...candidate, stage: step.to, history: Object.freeze([...candidate.history, step]) });
+  return Object.freeze({ ...candidate, stage: step.to, history: frozenHistory(candidate, step) });
 }
 
 /** Reject a candidate. Terminal, and also a person's decision. */
@@ -244,8 +302,10 @@ export function rejectCandidate(candidate, { actor, at, reasonCode } = {}) {
   if (candidate.stage === 'DEPLOYMENT') throw new Error('learning: a deployed learning is withdrawn by a new versioned change, not by rejecting its record');
   assertHumanDecision(actor, at, 'a rejection');
   if (typeof reasonCode !== 'string' || !reasonCode.trim()) throw new Error('learning: a rejection needs a reason code');
+  // Same rule, same helper as advanceCandidate(): the two paths cannot drift.
+  if (Date.parse(at) < Date.parse(lastRecordedInstant(candidate))) throw new Error('learning: a step cannot be dated before the one it follows');
   const step = Object.freeze({ from: candidate.stage, to: LEARNING_REJECTED, actor: actor.trim(), at, reasonCode: reasonCode.trim() });
-  return Object.freeze({ ...candidate, stage: LEARNING_REJECTED, history: Object.freeze([...candidate.history, step]) });
+  return Object.freeze({ ...candidate, stage: LEARNING_REJECTED, history: frozenHistory(candidate, step) });
 }
 
 /** True only for a candidate that reached DEPLOYMENT through every stage, each decided by a person. */
@@ -260,6 +320,14 @@ export function isDeployedLearning(candidate) {
  */
 export function candidateLogLine(candidate) {
   if (!candidate || typeof candidate !== 'object') throw new Error('learning: nothing to log');
+  // AUDIT 2026-10-04 (SPEC-23) — this printed whatever sat in the six fields of
+  // whatever object it was given, so "never free text" held only for records
+  // the constructor had made: { kind: 'call me at 555-…' } went into the log
+  // verbatim. A record that is not trustworthy is not logged; what does get
+  // printed is therefore an id of a fixed shape, three values from closed
+  // lists, a stage and a count.
+  const problem = candidateHistoryProblem(candidate);
+  if (problem) throw new Error(`learning: this candidate's record is not trustworthy (${problem}) — nothing is logged`);
   return '[CANDIDATE-LEARNING] ' + JSON.stringify({
     candidateId: candidate.candidateId,
     kind: candidate.kind,
@@ -268,4 +336,23 @@ export function candidateLogLine(candidate) {
     stage: candidate.stage,
     occurrences: candidate.occurrences,
   });
+}
+
+/**
+ * What an automated surface does with something it noticed: ONE log line, or
+ * nothing. Returns the line for a new candidate, or null when the observation
+ * is refused. It never throws — a refused or malformed observation must not be
+ * able to break the reply or the call it was noticed in — and it returns a
+ * string for the caller to log: this module writes nowhere, not even to a log.
+ *
+ * There is no store behind it. The line IS the candidate until a person picks
+ * it up; everything after CANDIDATE is a human step (advanceCandidate).
+ */
+export function observationLogLine(input) {
+  try {
+    const made = createCandidateLearning(input);
+    return made.ok ? candidateLogLine(made.candidate) : null;
+  } catch {
+    return null;
+  }
 }

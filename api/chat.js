@@ -47,6 +47,19 @@ import { selectLLMProvider, callOpenAI, sanitizeDetail } from './_lib/llm-provid
 import { resolveScope, scopeGate, buildScopeNote } from './_lib/entity-scope.js';
 // AUDIT 2026-08-18 (CLARA-MED-03) — deterministic Medicare figure backstop.
 import { verifyMedicareFigures, MEDICARE_FIGURES_YEAR } from './_lib/medicare-figures.js';
+// AUDIT 2026-10-04 (SPEC-23) — controlled learning: this endpoint may NOTE that
+// something went wrong with a reply; it may not change anything because of it.
+import { observationLogLine } from './_lib/cy2027/learning.js';
+
+// The one observation this endpoint makes, in full. Every value is fixed here:
+// the summary is this sentence and never anything a caller typed or the model
+// wrote, and the surface is the shared endpoint because Clara and Zara both use
+// it and the server is not told which one is asking.
+const FILTER_CORRECTION_OBSERVATION = Object.freeze({
+  kind: 'FAILED_PHRASE',
+  surface: 'WEB_CHAT',
+  summary: 'The compliance post-filter had to correct the assistant reply before it was sent.',
+});
 
 // ── CARRIER FIREWALL COPY + DETECTOR (CY2027 §20/§21/§33) ─────────────────
 // Deliberately names no carrier and no plan, so the refusal itself can never
@@ -1118,6 +1131,15 @@ export default async function handler(req, res) {
     cleanText = filtered.text;
     if (filtered.violations.length) {
       console.warn('[CHAT] compliance violations corrected:', filtered.violations.join(','), 'ip=' + ip);
+      // AUDIT 2026-10-04 (SPEC-23) — the only place this endpoint emits a
+      // candidate learning, and it hangs off a signal that already existed: the
+      // deterministic filter had to correct what the model wrote. One line, of
+      // closed-list values only (no rule tag — those quote the reply — no ip,
+      // no message, no reply). The language is the one the correction was made
+      // in. It changes no reply text and no routing, and nothing reads it back:
+      // a person collects these from the log and decides (learning.js).
+      var _learningLine = observationLogLine({ ...FILTER_CORRECTION_OBSERVATION, language: lang === 'en' ? 'en' : 'es' });
+      if (_learningLine) console.warn(_learningLine);
     }
     // Legacy in-file compliance pass (defense-in-depth) + USTED normalization.
     cleanText = compliancePostFilter(cleanText, lang);

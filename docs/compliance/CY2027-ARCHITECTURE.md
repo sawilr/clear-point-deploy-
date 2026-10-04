@@ -145,6 +145,74 @@ rule, record each lifecycle step with `recordRulesetTransition`, add the CY2028 
 variant if the standardized sentence changes, and add the 2028 state rulesets. Until then
 the workflow fails closed on 1 October 2027 by design.
 
+#### 2.2b Controlled learning (spec §23, added 2026-10-04)
+
+**The rule.** "Emely/Sofía do not autonomously rewrite their production prompts, SOA
+language, compliance rules or knowledge base from conversations … No production
+self-modification." §33 lists "production prompt or rules self-modify from live
+conversations" as an immediate fail. Before 2026-10-04 this held only because nobody had
+written the code that would break it. It is now a record, a pipeline and a build gate.
+
+**What a candidate is.** An observation about the SYSTEM, never about a caller, built by
+`createCandidateLearning()` in `api/_lib/cy2027/learning.js`:
+
+| Field | Allowed values |
+|---|---|
+| `kind` | the six the spec names: `RECURRING_CALLER_CONFUSION`, `FAILED_PHRASE`, `MISSING_FAQ`, `ROUTING_ERROR`, `REPEATED_TRANSFER_CAUSE`, `PRONUNCIATION_ISSUE` |
+| `surface` | `VOICE_EMELY`, `VOICE_SOFIA`, `WEB_CLARA`, `WEB_ZARA`, `WEB_CHAT` (the shared endpoint `api/chat.js`, which is not told which web assistant is asking and does not guess), `WEB_FORM` |
+| `language` | `en` or `es` |
+| `summary`, `agentPhrase` | what the assistant did. Refused — not cleaned — if the scrubbers find an identifier, a date, a long number, clinical / benefit / financial detail or the common ways a person is named |
+| `occurrences`, `createdAt`, `candidateId` | a count, a UTC instant, an id of a fixed shape |
+
+One limit is stated rather than hidden: no scrubber recognises a bare personal name, so
+the first human stage must reject a candidate that quotes or names a caller.
+
+**The pipeline.** `CANDIDATE → HUMAN_COMPLIANCE_REVIEW → SOURCE_VERIFICATION →
+VERSIONED_CHANGE → REGRESSION_TESTS → RED_TEAM → APPROVAL → DEPLOYMENT`, the spec's order.
+`advanceCandidate()` moves ONE stage and throws unless a named person decided it
+(`humanActorProblem()` in `actors.js` — the same check as quarantine review and ruleset
+promotion), with a real UTC instant no earlier than the previous step and a reference to
+what was reviewed. `rejectCandidate()` is terminal and is held to the same rules. Every
+function that uses a record first re-checks the whole record — its fields, its closed list
+of keys and its history (`candidateHistoryProblem()`): a record assembled by hand with an
+undefined kind, a caller's details in the summary, an extra field, a skipped stage or a
+step decided by automation is refused at every stage, not only where it is built
+(the first independent read found the constructor refusing what `advanceCandidate()` and
+`candidateLogLine()` then accepted; fixed and pinned by behaviour).
+
+**Nothing in the repository applies a learning.** No function in `learning.js` accepts,
+returns or writes a prompt, a ruleset, a knowledge body or SOA text, and the suite pins the
+module's exact export list so that adding one is a visible, reviewed change. Reaching
+`DEPLOYMENT` records that people approved and shipped a change through the normal route (a
+reviewed commit); it does not ship it. There is also **no store**: the module keeps
+nothing, anywhere. A candidate exists as one log line until a person picks it up.
+
+**The one emission point.** `api/chat.js`, at the signal it already had: the deterministic
+compliance post-filter had to correct what the model wrote. It logs one line —
+`[CANDIDATE-LEARNING] {candidateId, kind:"FAILED_PHRASE", surface:"WEB_CHAT", language, stage:"CANDIDATE", occurrences:1}` —
+built by `observationLogLine()` from a fixed summary sentence. The line carries no caller
+text, no model text, no rule tag (those quote the reply) and no address; the language is
+the one the correction was made in (`en`/`es`), never the string the browser sent. It
+changes no reply and no routing, nothing reads it back, and a refused observation produces
+no line and no exception. No other surface emits a candidate today.
+
+**The build gate** `scripts/check-no-self-modification.mjs` (in `npm run build`, shipped
+to the Vercel build by its `.vercelignore` exception):
+
+| It proves, on every build | It cannot prove |
+|---|---|
+| no file under `api/` imports `fs`, `fs/promises`, `child_process`, `worker_threads`, `vm` or `cluster`, uses `eval` / `new Function` / `process.binding`, or loads a module by a computed name — a function that cannot open a file cannot rewrite a prompt, a ruleset or a knowledge file | anything outside this repository. **Emely's and Sofía's prompts live in GoHighLevel**; whether they change only by a person's hand is an owner process (below) |
+| the governing objects (CMS and state rulesets, lifecycle lists, approved SOA text and categories, TPMO configuration, the learning lists) are frozen all the way down | that a change made by a person through the reviewed route was a good one — that is review, not this gate |
+| no source file under `api/` or `src/` reassigns or mutates them | a write through a network API (a KV or CRM call that stores a prompt): the gate looks at filesystem and process capability, not at every outbound request. Today no code path fetches a prompt or a rule from a remote store, so there is nothing for such a write to feed |
+
+**The voice agents — an owner process.** Emely and Sofía run in GoHighLevel; this
+repository cannot see or gate their prompts. For §23 to hold there the owner must: keep
+any GoHighLevel "learn from conversations" / auto-improve setting **off** for both agents;
+change a voice prompt only through the same pipeline (candidate → review → source check →
+versioned prompt → regression calls → red-team → approval), recording each step with a
+name and a date; and keep the previous prompt version so a change can be undone. Nothing
+in code verifies this; it is listed in §6.
+
 ### 2.3 Lead trust
 
 ```
@@ -396,9 +464,11 @@ Stated plainly rather than implied:
 | Confirmation copy to the beneficiary | **BUILT, FLAG OFF.** `CY2027_SEND_BENEFICIARY_COPY` plus a configured channel plus a recorded `CALLBACK_CONTACT_PERMISSION` — all three required, none assumed. The message carries no name, ZIP, categories or appointment detail, and a marketing phrase throws. Previously: It is an outbound message, so it needs a channel, a consent check and owner authorization before it is wired. |
 | Quarantine STOPPING the lead workflow | **BUILT, FLAG OFF.** `CY2027_QUARANTINE_STOP` gates it; unset in production, so behaviour is unchanged today. When on, a flagged lead still creates the contact and the note — only the automated opportunity is withheld. Previously stated as owner-gated: §13 asks that a high-risk lead halt the automated workflow before appointment confirmation. The trust engine is wired into `api/submit-lead.js` and attaches `TRUST_*` flags plus a `[SECURITY-REVIEW]` task, but it deliberately changes NO routing: that is the live lead pipeline, and altering the opportunity/dialing control flow without end-to-end exercise would risk the core business function. Wiring the stop is a follow-up to run with the owner. |
 | In-person appointment gate in practice | `marketingGate()` refuses an in-person appointment without a written, non-superseded, evidenced SOA for that exact appointment. There is no booking endpoint in this repository — appointments are created by the advisor in GoHighLevel — so the process half (the advisor consulting the gate) is an owner workflow item. |
-| SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of six preconditions now closed; `tpmoCountsVerifiedEverywhere` and `signedPdfPersisted` remain. |
+| SOA workflow enablement | `SOA_ENABLED = false` in all four mirrors. Four of seven preconditions closed; `tpmoCountsVerifiedEverywhere`, `signedPdfPersisted` and (added 2026-10-04) `rulesetPromotionAttested` remain. |
 | Human promotion of the active rulesets | **OWNER ATTESTATION.** No named person is on record as having promoted `CMS_RULESET_2027` or the three state rulesets, and no source has a verification date. Carried as the SOA precondition `rulesetPromotionAttested`; see §2.2a for the exact steps. |
 | CY2028 ruleset | **NOT STARTED — by design.** `CMS_RULESET_2028` is a `PENDING_REVIEW` placeholder with no rule values. `npm run preflight` counts down to 1 October 2027 and blocks inside 120 days. |
+| Voice agents' learning loop (§23) | **OWNER PROCESS.** Emely's and Sofía's prompts live in GoHighLevel, outside this repository and outside its build gate. Keeping any auto-learning setting off and changing a voice prompt only through the reviewed pipeline is the owner's procedure; nothing in code verifies it. See §2.2b. |
+| Candidate-learning store and review queue | **NOT BUILT.** A candidate is one `[CANDIDATE-LEARNING]` log line; there is no database of candidates and no review screen. A person collects them from the function logs. Only `api/chat.js` emits one (when the compliance filter corrects a reply); the voice agents and the forms emit none. |
 | Production deploy | Not done. Requires owner GO. |
 
 ---
