@@ -261,6 +261,10 @@ export function SmartMedicareReview() {
         : (prefLang === 'either' || prefLang === 'Cualquiera' || prefLang === 'Either') ? (isEs ? 'Spanish' : 'English')
         : 'English',
       medicare_status: '',
+      // AUDIT 2026-10-04 (DM-04) — the Medicaid / Extra Help answer travels as a
+      // TOKEN on its own field, never as a line of the summary. The server
+      // stores it as SELF_REPORTED (spec §14) and refuses any other value.
+      benefit_self_report: medicaidExtraHelp,
       interest_type: interestType,
       // Precise lead taxonomy — never a generic hot bucket (Sawil 2026-06-15).
       lead_type: lt,
@@ -374,7 +378,8 @@ export function SmartMedicareReview() {
       ...(currentCarrier ? [`Current Carrier: ${currentCarrier}`] : []),
       ...(rxCount ? [`Prescription medications: ${rxCount}`] : []),
       ...(doctorPriority ? [`Doctor to keep: ${doctorPriority}`] : []),
-      ...(medicaidExtraHelp ? [`Medicaid / Extra Help: ${medicaidExtraHelp}`] : []),
+      // DM-04: the Medicaid / Extra Help answer is deliberately NOT a summary line.
+      // It travels as payload.benefit_self_report (see handleSubmit).
       '',
       'Recommended Agent Follow-Up:',
       specialCat
@@ -969,11 +974,14 @@ export function SmartMedicareReview() {
                     className="w-full px-3 py-2.5 min-h-[44px] rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
                   >
                     <option value="">{t('Select…', 'Seleccione…')}</option>
-                    <option value="Yes — Medicaid">{t('Yes — Medicaid', 'Sí — Medicaid')}</option>
-                    <option value="Yes — Extra Help / LIS">{t('Yes — Extra Help / LIS', 'Sí — Extra Help / LIS')}</option>
-                    <option value="Yes — both Medicaid and Extra Help">{t('Yes — both', 'Sí — ambos')}</option>
-                    <option value="No">{t('No', 'No')}</option>
-                    <option value="Don't know / not sure">{t('I don’t know', 'No sé')}</option>
+                    {/* AUDIT 2026-10-04 (DM-04) — each value is a benefit_self_report
+                        token the server accepts (api/_lib/cy2027/benefit-self-report.js);
+                        scripts/check-allowlist-drift.mjs fails the build if they drift. */}
+                    <option value="medicaid">{t('Yes — Medicaid', 'Sí — Medicaid')}</option>
+                    <option value="extra_help">{t('Yes — Extra Help / LIS', 'Sí — Extra Help / LIS')}</option>
+                    <option value="both">{t('Yes — both', 'Sí — ambos')}</option>
+                    <option value="no">{t('No', 'No')}</option>
+                    <option value="unsure">{t('I don’t know', 'No sé')}</option>
                   </select>
                 </label>
               </div>

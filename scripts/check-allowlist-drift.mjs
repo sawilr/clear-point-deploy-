@@ -23,6 +23,10 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// AUDIT 2026-10-04 (DM-04) — the server's own token table, not a copy of it.
+// api/ is part of the deployed artefact, so this import needs no .vercelignore
+// exception (check-vercel-config.mjs follows it and agrees).
+import { BENEFIT_SELF_REPORT_TOKENS } from '../api/_lib/cy2027/benefit-self-report.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HANDLER = readFileSync(join(root, 'api', 'submit-lead.js'), 'utf8');
@@ -152,10 +156,53 @@ for (const file of walk(join(root, 'src'))) {
   }
 }
 
+// ── 5. The Smart Review Medicaid / Extra Help options must be server tokens. ──
+// AUDIT 2026-10-04 (DM-04). The server refuses a benefit_self_report it does not
+// recognise — fail-closed, by design, and matched exactly — so an option value
+// that drifts from the vocabulary would make the answer vanish with nothing but
+// a log line. Same failure mode as sections 1-4, and the same structural-probe
+// rule: finding nothing is a failure, not a pass. The two ends of the wire are
+// probed too, because a token nobody sends is the same silent loss.
+let benefitOptionCount = 0;
+{
+  const smart = readFileSync(join(root, 'src', 'components', 'SmartMedicareReview.tsx'), 'utf8');
+  const select = smart.match(/value=\{medicaidExtraHelp\}[\s\S]*?<\/select>/);
+  if (!select) {
+    fail('cannot find the Medicaid / Extra Help <select> in src/components/SmartMedicareReview.tsx — this check cannot run, so the self-report tokens are unverified');
+  } else {
+    const all = [...select[0].matchAll(/<option\b[^>]*>/g)].map((m) => m[0]);
+    const options = all.map((tag) => {
+      const m = tag.match(/\bvalue=(?:"([^"]*)"|'([^']*)'|\{\s*['"`]([^'"`]*)['"`]\s*\})/);
+      return m ? (m[1] ?? m[2] ?? m[3]) : null;
+    });
+    if (options.some((v) => v === null)) {
+      fail('an <option> of the Medicaid / Extra Help <select> has a value this check cannot read — write it as a string literal');
+    }
+    const values = options.filter((v) => v);
+    benefitOptionCount = values.length;
+    if (values.length < 3) fail(`the Medicaid / Extra Help <select> yielded only ${values.length} option values — the parse is wrong, not the form`);
+    for (const value of values) {
+      if (!Object.prototype.hasOwnProperty.call(BENEFIT_SELF_REPORT_TOKENS, value)) {
+        fail(`the Smart Review option "${value}" is not a benefit_self_report token the server accepts — the answer would be refused and never stored`);
+      }
+    }
+  }
+  if (!/^[ \t]*benefit_self_report:\s*medicaidExtraHelp,[ \t]*\r?$/m.test(smart)) {
+    fail('src/components/SmartMedicareReview.tsx no longer sends `benefit_self_report: medicaidExtraHelp` — the answer would never leave the browser');
+  }
+  const bridge = readFileSync(join(root, 'src', 'lib', 'ghl.ts'), 'utf8');
+  if (!/^[ \t]*if \(payload\.benefit_self_report\) \{ body\.benefit_self_report = payload\.benefit_self_report; \}[ \t]*\r?$/m.test(bridge)) {
+    fail('src/lib/ghl.ts no longer forwards payload.benefit_self_report to the request body — the answer would never reach the server');
+  }
+  if (!/^[ \t]*benefitSelfReport:\s*body\.benefit_self_report,[ \t]*\r?$/m.test(HANDLER)) {
+    fail('api/submit-lead.js no longer hands body.benefit_self_report to recordBenefitSelfReport() as received — the answer would be dropped');
+  }
+}
+
 if (problems.length) {
   console.error('[allowlist-drift] FAILED — the front end can send values the server silently discards:\n');
   for (const p of problems) console.error('  • ' + p);
   console.error('\nFix the allow-list in api/submit-lead.js (or the producer), then re-run the build.');
   process.exit(1);
 }
-console.log(`[allowlist-drift] OK — lead_source (${LEAD_SOURCES.length}), lead_type (${LEAD_TYPES.length}) and medicare_status (${MEDICARE_STATUSES.length}) allow-lists cover every value the front end sends.`);
+console.log(`[allowlist-drift] OK — lead_source (${LEAD_SOURCES.length}), lead_type (${LEAD_TYPES.length}) and medicare_status (${MEDICARE_STATUSES.length}) allow-lists cover every value the front end sends; ${benefitOptionCount} Smart Review benefit option(s) are server tokens.`);

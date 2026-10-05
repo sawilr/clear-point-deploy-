@@ -41,6 +41,9 @@ export interface GHLLeadPayload {
   source_component?: string;
   lead_type?: string;
   lead_quality_flags?: string;
+  // AUDIT 2026-10-04 (DM-04) — Smart Review's Medicaid / Extra Help answer as a
+  // token: 'medicaid' | 'extra_help' | 'both' | 'no' | 'unsure'.
+  benefit_self_report?: string;
   website_url?: string;
   ghl_contact_id?: string;
   ghl_assigned_user_id?: string;
@@ -195,6 +198,9 @@ export async function submitLeadToGHL(payload: GHLLeadPayload): Promise<boolean>
     if (payload.bot_transcript_summary) { body.conversation_summary = payload.bot_transcript_summary; }
     if (payload.lead_quality_flags) { body.lead_quality_flags = payload.lead_quality_flags; }
     if (payload.interest_type) { body.interest_type = payload.interest_type; }
+    // AUDIT 2026-10-04 (DM-04) — forwarded as its own field so the server can
+    // store it as SELF_REPORTED; it is no longer a line inside lead_notes.
+    if (payload.benefit_self_report) { body.benefit_self_report = payload.benefit_self_report; }
     // AUDIT 2026-07-03 Phase 3 — best_time_to_contact was declared on the payload
     // and populated by every surface (LeadForm dropdown, Zara intake, Clara engine)
     // but never copied into the request body, so the senior's chosen callback

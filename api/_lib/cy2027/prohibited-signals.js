@@ -85,6 +85,18 @@ const GROUPS = Object.freeze([
       // determination (spec §14) and never a commercial score (spec §15).
       /\bmedicaid\b[^.!?;\n]{0,40}/gi,
       /\b(?:dual[- ]eligible|dually\s+eligible|doble\s+elegib\w*)\b/gi,
+      // AUDIT 2026-10-04 (DM-04) — the lead form's coverage option for
+      // "Medicare + Medicaid" is the bare token `dual`, and the form echoes it
+      // into prose ("Status: dual."). Neither was known to the pattern above, so
+      // the token reached the CRM note and the scorer ("Current coverage: dual").
+      // Matched in two forms only, because a bare /dual/ would also eat "dual
+      // coverage through an employer", which is ordinary Medicare process detail:
+      //   • LABELLED — "Status: dual", "Coverage: dual", "Cobertura: dual" (and
+      //     not "Coverage: dual coverage through her employer", which is that
+      //     same ordinary detail behind a label);
+      //   • the WHOLE value — what the scorer's coverage line receives.
+      /\b(?:status|coverage|cobertura)\s*:\s*dual\b(?!\s+(?:coverage|cobertura)\b)/gi,
+      /^\s*dual\s*$/gi,
       /\b(?:extra\s+help|low[- ]income\s+subsidy|\bLIS\b|ayuda\s+adicional|subsidio\s+por\s+bajos\s+ingresos)\b/gi,
       /\b(?:qmb|slmb|qi-?1|msp|medicare\s+savings\s+program|programa\s+de\s+ahorros\s+de\s+medicare)\b/gi,
     ],

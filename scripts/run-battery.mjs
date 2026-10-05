@@ -62,6 +62,10 @@ const SUITES = [
   'test-cy2027-yearly-2026-10-04.mjs',
   // Controlled learning (spec §23) and the no-self-modification build gate (§33).
   'test-cy2027-learning-2026-10-04.mjs',
+  // Self-reported Medicaid / Extra Help (spec §14, audit DM-04): the storage
+  // class, the classifier, the lead handler run against a laboratory CRM and
+  // scorer, and the allow-list gate run against trees with a defect.
+  'test-cy2027-benefit-self-report-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

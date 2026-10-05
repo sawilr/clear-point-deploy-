@@ -74,6 +74,15 @@ export const CY2027_FIELD_KEYS = Object.freeze({
   LICENSED_AGENT_REVIEW_REQUIRED: 'contact.licensed_agent_review_required',
   DATA_SENSITIVITY_CLASS: 'contact.data_sensitivity_class',
   RETENTION_CLASS: 'contact.retention_class',
+  // AUDIT 2026-10-04 (DM-04) — spec §14: "Self-reported Medicaid/LIS values are
+  // stored as SELF_REPORTED, never as eligibility determinations." Two fields
+  // whose KEY says self-reported, so the provenance survives an export, a smart
+  // list or a workflow filter that shows the value without its history. They are
+  // not in the §18 list — §14 is what requires them — and no existing field is
+  // equivalent: contact.medicare_status is Medicare COVERAGE, not a Medicaid /
+  // Extra Help answer. Reported as unmapped until the owner creates them.
+  SELF_REPORTED_MEDICAID_STATUS: 'contact.self_reported_medicaid_status',
+  SELF_REPORTED_LIS_STATUS: 'contact.self_reported_lis_status',
 });
 
 /**
@@ -180,7 +189,33 @@ function isConsentStatus(value) {
   return typeof value === 'string' && Object.keys(CONSENT_STATUS).some((k) => CONSENT_STATUS[k] === value);
 }
 
-export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED']);
+// AUDIT 2026-10-04 (DM-04) — SELF_REPORTED is its own class, not a synonym of
+// BENEFICIARY_CONFIRMED. A person CONFIRMS facts they own (their state, their
+// language). They can only REPORT what an agency decided about them (Medicaid,
+// Extra Help), and that report must never read as the agency's determination.
+// It is deliberately NOT in CONFIRMING_PROVENANCE below.
+export const PROVENANCE = Object.freeze(['BENEFICIARY_CONFIRMED', 'SYSTEM', 'AI_INFERRED', 'SELF_REPORTED']);
+
+/** The provenance a benefit-status value must declare, and the only fields that take it. */
+export const SELF_REPORTED = 'SELF_REPORTED';
+export const SELF_REPORTED_ONLY_FIELDS = Object.freeze(['SELF_REPORTED_MEDICAID_STATUS', 'SELF_REPORTED_LIS_STATUS']);
+
+/**
+ * The only values those fields can hold. There is deliberately no ELIGIBLE /
+ * VERIFIED / true member: this layer cannot express a determination, so it
+ * cannot store one by accident (spec §31: "Customer says Medicaid - store
+ * self-reported, not eligible=true").
+ */
+export const SELF_REPORT_VALUE = Object.freeze({
+  YES: 'SELF_REPORTED_YES',
+  NO: 'SELF_REPORTED_NO',
+  UNSURE: 'SELF_REPORTED_UNSURE',
+});
+
+/** Exactly one of the SELF_REPORT_VALUE values — a string, matched as written. */
+export function isSelfReportValue(value) {
+  return typeof value === 'string' && Object.keys(SELF_REPORT_VALUE).some((k) => SELF_REPORT_VALUE[k] === value);
+}
 
 /**
  * RED TEAM 2026-10-03 (G08/CRM-28) — the guard refused only the exact token
@@ -223,6 +258,21 @@ export function buildCustomFields(values, env = process.env) {
     const source = isWrapped ? raw.source : 'SYSTEM';
     if (value === undefined || value === null || value === '') continue;
     if (CONFIRMED_ONLY_FIELDS.includes(name) && !CONFIRMING_PROVENANCE.includes(source)) {
+      refused.push(name);
+      continue;
+    }
+    // AUDIT 2026-10-04 (DM-04) — the self-reported class and its fields are
+    // bound to each other, in BOTH directions, here where the value leaves:
+    //   • a benefit-status field takes nothing but a value of the closed
+    //     vocabulary that DECLARES itself SELF_REPORTED. A plain scalar (SYSTEM),
+    //     an inference, a confirmation, 'ELIGIBLE', 'true', ['SELF_REPORTED_YES']
+    //     or free text is refused and reported — never coerced to the nearest
+    //     value;
+    //   • a value declared SELF_REPORTED goes to no other field: a self-report
+    //     written under a key that does not say so would read as a fact.
+    if (SELF_REPORTED_ONLY_FIELDS.includes(name)
+      ? !(source === SELF_REPORTED && isSelfReportValue(value))
+      : source === SELF_REPORTED) {
       refused.push(name);
       continue;
     }

@@ -26,6 +26,9 @@ import {
   recordWebCallbackConsent, CALLBACK_CONSENT_UNAVAILABLE, tcpaReceiptLine, consentReceiptText,
   neutralizeReceiptLookalikes, crmRefusalStep,
 } from './_lib/cy2027/callback-consent.js';
+// AUDIT 2026-10-04 (DM-04) — a Medicaid / Extra Help answer is stored as
+// SELF_REPORTED, on its own fields and in one server-authored note block.
+import { recordBenefitSelfReport, neutralizeBenefitLookalikes } from './_lib/cy2027/benefit-self-report.js';
 // AUDIT 2026-08-15 (security remediation) — shared body reader (fixes the
 // malformed-JSON hang; see read-body.js) + Turnstile server-side verification
 // (remediation target 1; inert until TURNSTILE_SECRET is configured).
@@ -823,6 +826,32 @@ export default async function handler(req, res) {
       if (!s) return '';
       return MEDICARE_STATUSES.indexOf(s) !== -1 ? s : 'other';
     })(medicare_status_raw);
+    // AUDIT 2026-10-04 (DM-04) — spec §14: "Self-reported Medicaid/LIS values are
+    // stored as SELF_REPORTED, never as eligibility determinations." The lead
+    // form's 'dual' option went into contact.medicare_status as a bare value —
+    // a Medicaid assertion with no provenance, in a field about Medicare
+    // coverage — and the same token reached the lead scorer as "Current
+    // coverage: dual" (§15: Medicaid is never a commercial score). A direct
+    // POST could put "I have Medicaid" in the same field verbatim.
+    //
+    // The decision is recordBenefitSelfReport()'s (one implementation, tested by
+    // calling it). Its result is applied HERE, at the two source variables, so
+    // both sinks below — the scorer metadata and the contact.medicare_status
+    // custom field — are covered by construction. MEDICARE_STATUSES keeps
+    // 'dual': the form still sends it, and the allow-list is what recognises it.
+    //
+    // body.benefit_self_report is the structured Smart Review answer, handed
+    // over AS RECEIVED: the function takes one of five exact string tokens and
+    // refuses everything else by name. It used to travel as a prose line that
+    // the DM-09 filter removes, which left a flag and no value anywhere.
+    var _benefit = recordBenefitSelfReport({
+      medicareStatusToken: medicare_status_token,
+      medicareStatusText: medicare_status,
+      benefitSelfReport: body.benefit_self_report,
+    });
+    if (_benefit.coverageWithheld) { medicare_status = ''; medicare_status_token = ''; }
+    // Reason codes and field names only — never the value that was refused.
+    for (var _bsW = 0; _bsW < _benefit.warnings.length; _bsW++) console.warn(_benefit.warnings[_bsW]);
     var utm_source = body.utm_source;
     var utm_medium = body.utm_medium; var utm_campaign = body.utm_campaign;
     var lead_notes = body.lead_notes; var conversation_summary = body.conversation_summary;
@@ -871,12 +900,14 @@ export default async function handler(req, res) {
     // without copying unnecessary clinical detail into broad CRM notes."
     //
     // Self-reported Medicaid/LIS is kept out as a VALUE too (§14 stores it as
-    // SELF_REPORTED on its own field, never as prose and never as a score).
+    // SELF_REPORTED — its own fields plus one server-authored note block, see
+    // DM-04 above — never as the sender's prose and never as a score).
     var _dmNotes = redactProhibitedForScoring(lead_notes);
     var _dmSummary = redactProhibitedForScoring(conversation_summary);
     lead_notes = _dmNotes.text;
     conversation_summary = _dmSummary.text;
-    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags)));
+    // DM-04: a structured self-report raises the same flag the prose filter does.
+    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _benefit.flags)));
     if (_dmFlags.length) {
       // Category only — never the phrase that triggered it.
       console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions }));
@@ -1575,6 +1606,25 @@ export default async function handler(req, res) {
       lead_quality_flags = (lead_quality_flags ? lead_quality_flags + '; ' : '') +
         'AI: ' + tempTag + '/' + urgTag + ' (intent ' + intel.intent_strength + '/10)';
     }
+    // AUDIT 2026-10-04 (DM-04) — appended AFTER the intel call on purpose: the
+    // scorer has already run, so this block cannot become a scoring input (§15).
+    // Server-authored from a closed vocabulary — no character of it comes from
+    // the request. It is the record that works today, while the two
+    // SELF_REPORTED_* fields wait for their GoHighLevel ids. A repeat submission
+    // does not get it: that note carries nothing sender-derived about a contact
+    // nobody verified (API-01).
+    //
+    // Everything already in the note at this point was written by the sender, by
+    // a model reading the sender, or by the server's receipt code — and none of
+    // it may carry the label of this block. It is neutralised for EVERY lead,
+    // not only one with a self-report: a look-alike in a note that has no real
+    // block is the worse case. The transcript is appended to the note after
+    // lead_notes, so it gets the same treatment.
+    lead_notes = neutralizeBenefitLookalikes(String(lead_notes || ''));
+    conversation_summary = neutralizeBenefitLookalikes(String(conversation_summary || ''));
+    if (_benefit.noteBlock) {
+      lead_notes = (lead_notes ? lead_notes.trimEnd() + '\n\n' : '') + _benefit.noteBlock;
+    }
 
     // (3) submission_id — PII-free idempotency/trace key (phone+zip+UTC-hour digest).
     //     Logged and returned so a lead can be traced end-to-end without exposing PII.
@@ -1643,7 +1693,13 @@ export default async function handler(req, res) {
         // three have one). They ride the CREATE body with the four consent_*
         // flags, so they inherit LEAD-02: a submission that matches an existing
         // contact writes none of them.
-        .concat(_cbRec.fields),
+        .concat(_cbRec.fields)
+        // AUDIT 2026-10-04 (DM-04) — SELF_REPORTED_MEDICAID_STATUS / _LIS_STATUS,
+        // the queryable half of the self-report. Same rules as the three above:
+        // only entries with a REAL GoHighLevel id (buildCustomFields() refuses
+        // anything that is not a SELF_REPORTED value of the closed vocabulary),
+        // on the CREATE body only, so an existing contact gets none (LEAD-02).
+        .concat(_benefit.fields),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
@@ -1757,17 +1813,25 @@ export default async function handler(req, res) {
     // is retried once without the entries, and the branches below judge THAT
     // answer. A real duplicate says so again without the fields. The drop is
     // logged and audited only when it is what made the difference.
-    if (!ghlRes.ok && crmRefusalStep(ghlRes.status, _cbRec.fields.length) === 'RETRY_WITHOUT_FIELDS') {
+    //
+    // AUDIT 2026-10-04 (DM-04) — the SELF_REPORTED_* entries take their ids from
+    // the same owner-supplied configuration, so they are part of what a refusal
+    // may be about and part of what the one retry leaves out. Without this a
+    // mistyped id for a benefit field would lose every lead that answered the
+    // question. The self-report still reaches the note through its block.
+    var _ownerIdFields = _cbRec.fields.concat(_benefit.fields);
+    if (!ghlRes.ok && crmRefusalStep(ghlRes.status, _ownerIdFields.length) === 'RETRY_WITHOUT_FIELDS') {
       var _cbRefusedStatus = ghlRes.status;
       var _cbRetryRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/', {
         method: 'POST',
         headers: { 'Authorization':'Bearer '+token, 'Version':'2021-07-28', 'Content-Type':'application/json', 'Accept':'application/json', 'User-Agent':'ClearPoint-Website/1.0' },
         body: JSON.stringify(Object.assign({}, contact, {
-          customFields: contact.customFields.filter(function (f) { return _cbRec.fields.indexOf(f) === -1; }),
+          customFields: contact.customFields.filter(function (f) { return _ownerIdFields.indexOf(f) === -1; }),
         }))
       });
       if (_cbRetryRes.ok) {
-        console.error('[CY2027-CRM] contact create refused (HTTP ' + _cbRefusedStatus + ') with the CALLBACK_CONSENT_* fields attached and accepted without them — the lead was kept and the three fields were NOT written. Check CY2027_CRM_FIELD_IDS.');
+        // Field keys only (configuration names) — never a value.
+        console.error('[CY2027-CRM] contact create refused (HTTP ' + _cbRefusedStatus + ') with ' + _ownerIdFields.length + ' owner-configured field(s) attached (' + _ownerIdFields.map(function (f) { return String(f.key); }).join(', ') + ') and accepted without them — the lead was kept and those fields were NOT written. Check CY2027_CRM_FIELD_IDS.');
         leadAudit('cy2027_fields_dropped', null, { upstream_status: _cbRefusedStatus });
       }
       ghlRes = _cbRetryRes;
