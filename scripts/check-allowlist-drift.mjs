@@ -26,7 +26,9 @@ import { fileURLToPath } from 'node:url';
 // AUDIT 2026-10-04 (DM-04) — the server's own token table, not a copy of it.
 // api/ is part of the deployed artefact, so this import needs no .vercelignore
 // exception (check-vercel-config.mjs follows it and agrees).
-import { BENEFIT_SELF_REPORT_TOKENS } from '../api/_lib/cy2027/benefit-self-report.js';
+import {
+  BENEFIT_SELF_REPORT_TOKENS, COVERAGE_TOKENS_ASSERTING_MEDICAID, isCoverageOptionAssertingMedicaid,
+} from '../api/_lib/cy2027/benefit-self-report.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const HANDLER = readFileSync(join(root, 'api', 'submit-lead.js'), 'utf8');
@@ -50,6 +52,19 @@ const MEDICARE_STATUSES = serverList('MEDICARE_STATUSES');
 
 // The server normalises before comparing; mirror that exactly.
 const norm = (v) => String(v).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+// AUDIT 2026-10-04 (DM-04, red team) — the server reads a Medicaid self-report
+// from the coverage value AS SENT, not from its normalised token (the token is
+// lossy: '¿dual?' and 'не dual' both become 'dual'). A surface value that only
+// NORMALISES to that token ("dual!", "Dual.") would pass the allow-list checks
+// below and then be withheld as unclassified text on every lead — no
+// self-report stored, and nothing would say so. The server's own function is
+// asked, not a copy of its rule.
+function mustBeTheMedicaidOptionItself(value, where) {
+  if (COVERAGE_TOKENS_ASSERTING_MEDICAID.includes(norm(value)) && !isCoverageOptionAssertingMedicaid(value)) {
+    fail(`${where} "${value}" normalises to the server's Medicaid coverage token but is not the token itself — the server would withhold it as unclassified text and store no self-report`);
+  }
+}
 
 // ── 1. Every LEAD_TYPE_TAG value must be accepted. ───────────────────────
 {
@@ -103,6 +118,7 @@ for (const file of walk(join(root, 'src'))) {
     if (MEDICARE_STATUSES.indexOf(norm(value)) === -1) {
       fail(`medicare_status "${value}" in ${file.slice(root.length + 1)} is not in the server MEDICARE_STATUSES allow-list — the enrichment model would see "other"`);
     }
+    mustBeTheMedicaidOptionItself(value, `medicare_status in ${file.slice(root.length + 1)}`);
   }
 }
 
@@ -132,6 +148,7 @@ for (const file of walk(join(root, 'src'))) {
       if (MEDICARE_STATUSES.indexOf(norm(value)) === -1) {
         fail(`the LeadForm coverage option "${value}" is not in the server MEDICARE_STATUSES allow-list`);
       }
+      mustBeTheMedicaidOptionItself(value, 'the LeadForm coverage option');
     }
   }
 }
@@ -152,6 +169,7 @@ for (const file of walk(join(root, 'src'))) {
       if (MEDICARE_STATUSES.indexOf(norm(value)) === -1) {
         fail(`Clara's MedicareStatus value "${value}" is not in the server MEDICARE_STATUSES allow-list`);
       }
+      mustBeTheMedicaidOptionItself(value, "Clara's MedicareStatus value");
     }
   }
 }

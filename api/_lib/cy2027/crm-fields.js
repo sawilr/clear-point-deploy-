@@ -94,21 +94,100 @@ export const CY2027_FIELD_KEYS = Object.freeze({
  * valid — it must make the gap visible instead.
  */
 export function fieldIdMap(env = process.env) {
+  return fieldIdConfig(env).ids;
+}
+
+/**
+ * AUDIT 2026-10-04 (DM-04, red team) — AN OWNER ID IS NOT TRUSTED JUST BECAUSE
+ * IT IS A STRING. Measured: with CY2027_CRM_FIELD_IDS mapping
+ * SELF_REPORTED_LIS_STATUS to 'R510tHz6GFBaqZgN5e5S' — the id api/submit-lead.js
+ * already uses for contact.medicare_status — the create body carried
+ * SELF_REPORTED_YES under the Medicare-coverage field's own id: the exact defect
+ * DM-04 removes, re-created by one pasted id. Two CY2027 names given ONE id did
+ * the same between themselves (an Extra Help answer landing in the field made
+ * for Medicaid), and that held for every CY2027 field, not only the two new ones.
+ *
+ * These are the GoHighLevel ids this code ALREADY writes (api/submit-lead.js
+ * and api/opt-out.js). They are a copy, kept for one purpose — refusing them as
+ * a CY2027 id — and the suite fails if a handler writes an id that is not here.
+ *
+ * LIMIT, stated: this knows the ids the CODE writes. A field that exists only in
+ * the GoHighLevel sub-account (made by hand, written by a workflow) is unknown
+ * here; giving each CY2027 key its OWN NEW field stays an owner action.
+ */
+export const PRODUCTION_FIELD_IDS = Object.freeze([
+  'QULAmkAuVNCQrAMZ487K', // contact.preferred_language
+  'R510tHz6GFBaqZgN5e5S', // contact.medicare_status
+  'vPKlhpz6aucJK1U3fJRZ', // contact.consent_marketing
+  'w1hopBfNLGauFRRzQ71l', // contact.consent_sms
+  'mHdpDjBSA76lQJrKoixL', // contact.consent_calls
+  'ykiTUcsu3nvawK39hmll', // contact.consent_email
+  'GSss3tRLKg8mNCzEv3D9', // contact.client_age
+  'HoYmwc19InLwUwXNyKcr', // contact.calculated_age
+  'qGryQuR67jXFFVRFBLkz', // contact.lead_quality_flags
+  '6vSP5DJvAc6Jl9BXg409', // contact.chat_conversation_summary
+  'PpDDusEEsMz4xNIcrwRW', // contact.best_time_to_call
+  'fLxx7s1GpVJYlxJl08G6', // contact.medicare_interest
+]);
+
+/** Named reasons a configured id is not used. */
+export const FIELD_ID_REFUSAL = Object.freeze({
+  IN_USE: 'ID_OF_A_FIELD_ALREADY_IN_USE',
+  SHARED: 'ID_GIVEN_TO_MORE_THAN_ONE_FIELD',
+});
+
+/**
+ * CY2027_CRM_FIELD_IDS, read once and judged.
+ *
+ * @returns {{ ids: object, refused: object }}
+ *   `ids`     — name → id, for the ids that may be written to.
+ *   `refused` — name → FIELD_ID_REFUSAL, for a configured id that is the id of
+ *               a field this code already writes, or that was given to more
+ *               than one name (then NONE of those names gets it: there is no
+ *               telling which one the field was made for).
+ * A refused name has no id, so every caller of buildCustomFields() reports it as
+ * unmapped and the callback-consent unit rule holds without knowing about this.
+ */
+export function fieldIdConfig(env = process.env) {
+  const ids = {};
+  const refused = {};
   const raw = (env.CY2027_CRM_FIELD_IDS || '').trim();
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const out = {};
-    for (const [k, v] of Object.entries(parsed)) {
-      if (typeof v === 'string' && v.trim() && Object.prototype.hasOwnProperty.call(CY2027_FIELD_KEYS, k)) {
-        out[k] = v.trim();
-      }
+  if (!raw) return { ids, refused };
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return { ids, refused }; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ids, refused };
+  const namesById = new Map();
+  for (const [k, v] of Object.entries(parsed)) {
+    if (typeof v === 'string' && v.trim() && Object.prototype.hasOwnProperty.call(CY2027_FIELD_KEYS, k)) {
+      const id = v.trim();
+      namesById.set(id, (namesById.get(id) || []).concat(k));
     }
-    return out;
-  } catch {
-    return {};
   }
+  for (const [id, names] of namesById) {
+    const reason = PRODUCTION_FIELD_IDS.includes(id) ? FIELD_ID_REFUSAL.IN_USE
+      : (names.length > 1 ? FIELD_ID_REFUSAL.SHARED : null);
+    for (const name of names) {
+      if (reason) refused[name] = reason; else ids[name] = id;
+    }
+  }
+  return { ids, refused };
+}
+
+/**
+ * One line naming the configured ids that were refused, and why. `names` limits
+ * it to the fields the caller is about to write. Configuration names and reason
+ * codes only — never an id, never a value.
+ */
+export function refusedFieldIdsWarning(refused, names) {
+  const src = refused !== null && typeof refused === 'object' ? refused : {};
+  const hit = (Array.isArray(names) ? names : Object.keys(src))
+    .filter((n) => Object.prototype.hasOwnProperty.call(src, n));
+  if (!hit.length) return null;
+  return (
+    '[CY2027-CRM] CY2027_CRM_FIELD_IDS gives ' + hit.length + ' field(s) an id that is REFUSED: ' +
+    hit.map((n) => n + ' (' + src[n] + ')').join(', ') + '. Each CY2027 field needs its OWN new GoHighLevel ' +
+    'field — never the id of a field already in use, never one id for two names. Nothing is written to a refused id.'
+  );
 }
 
 /**

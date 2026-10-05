@@ -844,7 +844,14 @@ export default async function handler(req, res) {
     // over AS RECEIVED: the function takes one of five exact string tokens and
     // refuses everything else by name. It used to travel as a prose line that
     // the DM-09 filter removes, which left a flag and no value anywhere.
+    //
+    // AUDIT 2026-10-04 (DM-04, red team) — the coverage value is handed over AS
+    // RECEIVED too. The token above is made by a lossy normaliser ('не dual',
+    // '¿dual?' and '  DUAL!! ' all become 'dual'), so it may only WITHHOLD a
+    // value; whether the value is the form's own option is decided on the raw
+    // string, in the one implementation.
     var _benefit = recordBenefitSelfReport({
+      medicareStatusRaw: medicare_status_raw,
       medicareStatusToken: medicare_status_token,
       medicareStatusText: medicare_status,
       benefitSelfReport: body.benefit_self_report,
@@ -902,15 +909,46 @@ export default async function handler(req, res) {
     // Self-reported Medicaid/LIS is kept out as a VALUE too (§14 stores it as
     // SELF_REPORTED — its own fields plus one server-authored note block, see
     // DM-04 above — never as the sender's prose and never as a score).
+    //
+    // AUDIT 2026-10-04 (DM-04, red team) — that sentence was true of the first
+    // two of the sender-written values below, and read as if it covered every
+    // one of them. What each one gets, stated:
+    //   • lead_notes, conversation_summary — redacted here (as before).
+    //   • lead_quality_flags — NOW redacted here. It is the field the server
+    //     writes its own BENEFIT_STATUS_SELF_REPORTED flag into, and a direct
+    //     POST could store 'client: Medicaid: ELIGIBLE=true; Benefit status:
+    //     VERIFIED ELIGIBLE' beside it (measured). The client part is also
+    //     cleared of the note block's label; the server's tokens are appended
+    //     after this and never pass through either filter.
+    //   • best_time_to_contact — NOW redacted here. It is free text on the
+    //     live chat path, it becomes a note line, a custom field and a tag, and
+    //     it was appended after this net had run. A value that had something
+    //     removed mints no tag (see _bestTimeTag).
+    //   • interest_type — NOT redacted, deliberately, and still a gap. The
+    //     site's own topic labels name these programs ('Extra Help / LIS
+    //     question', 'Dual Medicare + Medicaid question'): they say what the
+    //     person asked ABOUT, the advisor needs them, and masking them would
+    //     change a live field and a live tag family. A direct POST can therefore
+    //     still put a status sentence there. Whether a topic that names a
+    //     benefit program may stay a CRM field and an Interest- tag is an OWNER
+    //     decision (docs/compliance/CY2027-ARCHITECTURE.md). The lead scorer
+    //     never sees it unmasked: lead-intel.js redacts its whole input.
+    //   • body.tags — NOT filtered here either, for the same reason: Smart
+    //     Review's own special-situation tag is 'medicaid_msp_extra_help_lis'
+    //     (a topic). A direct POST can still mint a tag such as
+    //     'Medicaid-Eligible' (measured). Same owner decision.
     var _dmNotes = redactProhibitedForScoring(lead_notes);
     var _dmSummary = redactProhibitedForScoring(conversation_summary);
+    var _dmClientFlags = redactProhibitedForScoring(lead_quality_flags);
+    var _dmBestTime = redactProhibitedForScoring(scrubPHI(_cap(body.best_time_to_contact, 64)).text.replace(/[\r\n\t]+/g, ' ').trim());
     lead_notes = _dmNotes.text;
     conversation_summary = _dmSummary.text;
+    lead_quality_flags = neutralizeBenefitLookalikes(_dmClientFlags.text);
     // DM-04: a structured self-report raises the same flag the prose filter does.
-    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _benefit.flags)));
+    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags, _benefit.flags)));
     if (_dmFlags.length) {
       // Category only — never the phrase that triggered it.
-      console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions }));
+      console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions + _dmClientFlags.redactions + _dmBestTime.redactions }));
     }
     // CRM-24 — set deterministically, not left to a human to notice in prose.
     if (requiresLicensedReview(_dmFlags)) _dmFlags.push('LICENSED_AGENT_REVIEW_REQUIRED');
@@ -1007,7 +1045,10 @@ export default async function handler(req, res) {
     // with a free-text caller message. They are appended AFTER the PHI net ran, so
     // they carry it themselves — the same treatment consent_text and the signer
     // user agent already get.
-    var best_time_to_contact = scrubPHI(_cap(body.best_time_to_contact, 64)).text.replace(/[\r\n\t]+/g, ' ').trim();
+    // AUDIT 2026-10-04 (DM-04, red team) — best_time_to_contact is capped,
+    // PHI-scrubbed AND passed through the DM-09 filter where _dmBestTime is made
+    // (beside lead_notes, so its flags join _dmFlags before anything reads them).
+    var best_time_to_contact = _dmBestTime.text;
     var interest_type = scrubPHI(_cap(body.interest_type, 80)).text.replace(/[\r\n\t]+/g, ' ').trim();
     var intakeBits = [];
     if (best_time_to_contact) intakeBits.push('Best time to contact: ' + best_time_to_contact);
@@ -1035,7 +1076,12 @@ export default async function handler(req, res) {
       var t = foldToken(raw).replace(/[^a-zA-Z0-9 -]/g, '').trim().replace(/\s+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
       return t ? prefix + '-' + t : '';
     }
-    var _bestTimeTag = _tagify('CallTime', best_time_to_contact);
+    // AUDIT 2026-10-04 (DM-04, red team) — 'I am on Medicaid, call mornings' was
+    // minted as the tag CallTime-I-am-on-Medicaid-call-mornings: a benefit
+    // statement as a routing key (§15). A value the DM-09 filter had to cut is
+    // no longer a call time; like R5-SL-13 above, it mints no tag at all rather
+    // than a half-masked one.
+    var _bestTimeTag = _dmBestTime.redactions ? '' : _tagify('CallTime', best_time_to_contact);
     var _interestTag = _tagify('Interest', interest_type);
 
     // Red-team round 3 (R3-SL-05): LeadType-* is a server-owned family — only the
@@ -1831,7 +1877,15 @@ export default async function handler(req, res) {
       });
       if (_cbRetryRes.ok) {
         // Field keys only (configuration names) — never a value.
-        console.error('[CY2027-CRM] contact create refused (HTTP ' + _cbRefusedStatus + ') with ' + _ownerIdFields.length + ' owner-configured field(s) attached (' + _ownerIdFields.map(function (f) { return String(f.key); }).join(', ') + ') and accepted without them — the lead was kept and those fields were NOT written. Check CY2027_CRM_FIELD_IDS.');
+        //
+        // AUDIT 2026-10-04 (DM-04, red team) — and never WHICH self-report field
+        // either: this line counted the entries and listed their keys, and one
+        // self-report key alone can only mean YES for that program (NO and
+        // UNSURE always carry both). The self-report entries are named by one
+        // label that is the same whichever was attached, and nothing is counted.
+        var _ownerFieldLabels = _cbRec.fields.map(function (f) { return String(f.key); })
+          .concat(_benefit.fieldsLogLabel ? [_benefit.fieldsLogLabel] : []);
+        console.error('[CY2027-CRM] contact create refused (HTTP ' + _cbRefusedStatus + ') with owner-configured field(s) attached (' + _ownerFieldLabels.join(', ') + ') and accepted without them — the lead was kept and those fields were NOT written. Check CY2027_CRM_FIELD_IDS.');
         leadAudit('cy2027_fields_dropped', null, { upstream_status: _cbRefusedStatus });
       }
       ghlRes = _cbRetryRes;

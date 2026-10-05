@@ -34,7 +34,7 @@ import { dirname, join } from 'node:path';
 import { SOA_PRECONDITIONS, soaBlockers, SOA_ENABLED } from '../src/lib/soaContent.ts';
 import { TPMO_DISCLAIMER_CONFIG, hasVerifiedTpmoCounts, tpmoDisclaimerText, activeContractYearVariant } from '../api/_lib/cy2027/tpmo.js';
 import { configurationProblem } from '../api/_lib/cy2027/evidence-store.js';
-import { fieldIdMap, CY2027_FIELD_KEYS } from '../api/_lib/cy2027/crm-fields.js';
+import { fieldIdMap, fieldIdConfig, CY2027_FIELD_KEYS } from '../api/_lib/cy2027/crm-fields.js';
 import { overlayInventory } from '../api/_lib/cy2027/carrier-overlay.js';
 import { hasCountyDataset } from '../api/_lib/cy2027/state-rules.js';
 import { activePlanYear } from '../api/_lib/cy2027/rulesets.js';
@@ -182,6 +182,15 @@ const storeProblem = configurationProblem();
 if (storeProblem) warns.push(`evidence store: ${storeProblem} — signing returns 503 and the marketing gate stays locked`);
 else oks.push('evidence store configured (verify with scripts/cy2027-verify-evidence-store.mjs)');
 
+// AUDIT 2026-10-04 (DM-04, red team) — an id that IS configured and is refused
+// (the id of a field the site already writes, or one id given to two names) is
+// not "not mapped yet": it is a configuration error that would have put a CY2027
+// value in the wrong field. It blocks, by name and reason.
+const idConfig = fieldIdConfig();
+const refusedIds = Object.keys(idConfig.refused);
+if (refusedIds.length) {
+  blocks.push(`CRM field ids REFUSED in CY2027_CRM_FIELD_IDS: ${refusedIds.map((n) => n + ' (' + idConfig.refused[n] + ')').join(', ')} — each CY2027 key needs its OWN new GoHighLevel field`);
+}
 const ids = fieldIdMap();
 const total = Object.keys(CY2027_FIELD_KEYS).length;
 if (Object.keys(ids).length < total) {
