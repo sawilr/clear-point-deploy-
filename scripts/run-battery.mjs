@@ -71,6 +71,12 @@ const SUITES = [
   // against a laboratory CRM, and the enrichment gate observed withholding
   // against copies of the layer with a defect.
   'test-cy2027-sensitivity-2026-10-04.mjs',
+  // Lead data-quality facts (spec §12, audit FTQ-11 / FTQ-15): the throwaway-
+  // inbox rule and the inconsistency→review aggregate called directly, the lead
+  // handler run against a laboratory CRM (disposable address → review signal,
+  // never a rejection; the retired fraud label refused as tag and de-labelled
+  // in free text), and the support engine driven through real turns.
+  'test-cy2027-ftq-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

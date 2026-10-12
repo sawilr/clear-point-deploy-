@@ -4,6 +4,11 @@
  * Used by: ChatBot.tsx, SmartMedicareReview.tsx
  */
 
+// AUDIT 2026-10-04 (FTQ-11) — the throwaway-inbox domains are no longer listed
+// in this file. They come from the canonical layer, so the browser's reject
+// list and the server's DISPOSABLE_CONTACT_DATA review signal are one list.
+import { DISPOSABLE_EMAIL_DOMAINS } from './cy2027';
+
 export interface LeadQualityFlags {
   flags: string[];
 }
@@ -390,15 +395,9 @@ const FAKE_EMAIL_PATTERNS: RegExp[] = [
   /^abc@abc\./i, /^xyz@xyz\./i,
 ];
 
-const BLOCKED_DOMAINS = new Set([
-  // Disposable / temp
-  'mailinator.com','tempmail.com','tempmail.org','temp-mail.org',
-  '10minutemail.com','guerrillamail.com','guerrillamail.org',
-  'sharklasers.com','yopmail.com','throwaway.email','dispostable.com',
-  'maildrop.cc','trashmail.com','fakeinbox.com','getairmail.com',
-  'trashmail.net','spamgourmet.com','spamgourmet.net','discard.email',
-  'spamevader.com','throwam.com','spamex.com','tempr.email',
-  'burnermail.io','inboxbear.com','mintemail.com','moakt.com',
+const BLOCKED_DOMAINS = new Set<string>([
+  // Disposable / temp — single source: api/_lib/cy2027/data-quality.js (FTQ-11)
+  ...DISPOSABLE_EMAIL_DOMAINS,
   // Obvious placeholder domains
   'example.com','example.net','example.org','test.com','test.net',
   'fake.com','fake.net','noemail.com','noemail.net','invalid.com',

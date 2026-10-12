@@ -38,6 +38,7 @@ api/_lib/cy2027/
   retention.js       retention by record class + legal hold                     [shared]
   carrier-overlay.js private carrier registry (licensed workspace only)         [shared]
   tpmo.js            canonical (e)(41) disclaimer + counts config               [shared]
+  data-quality.js    throwaway-inbox list + inconsistency→review rule (§12)     [shared]
   evidence.js        integrity hash, text snapshot, audit log            [SERVER ONLY]
   sensitivity.js     data sensitivity class + handling by class         [SERVER ONLY]
 ```

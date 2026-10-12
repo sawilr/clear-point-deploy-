@@ -158,9 +158,16 @@ const denyFn = new Function('tag',
 
 const BOT_TAGS = ['customer_service_bot', 'language_es', 'language_en', 'state_NY', 'category_billing',
   'status_existing_client', 'urgency_elevated', 'consent_no', 'consent_unknown',
-  'confidence_high', 'probable_fake_lead', 'phi_scrubbed'];
+  'confidence_high', 'data_review_suggested', 'phi_scrubbed'];
 for (const tag of BOT_TAGS) {
   ok(`SL-07 the support bot's "${tag}" reaches the CRM`, !denyFn(tag), 'DENIED');
+}
+// AUDIT 2026-10-04 (FTQ-15) — `probable_fake_lead` left the bot's vocabulary:
+// it labelled a person a probable fake on a single inconsistency. The server
+// now refuses it in every spelling, so a cached bundle or a direct POST
+// cannot put that label on a CRM record either.
+for (const tag of ['probable_fake_lead', 'Probable-Fake-Lead', 'PROBABLE FAKE LEAD', 'probableFakeLead']) {
+  ok(`SL-07/FTQ-15 the legacy fraud label "${tag}" is refused`, denyFn(tag), 'ALLOWED');
 }
 // consent_no and consent_unknown are the point of this fix: the server never
 // records a negative, so discarding them threw away the only negative-consent

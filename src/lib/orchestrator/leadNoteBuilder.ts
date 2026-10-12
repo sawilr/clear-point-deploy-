@@ -18,8 +18,8 @@
 // Input  : ConversationState + transcript array + language hint.
 // Output : { noteText, serviceCategory, interestType, recommendedStage,
 //            customerStatus, escalationReason, consentStatus, urgency,
-//            emotionTag, phiScrubbed, probableFakeLead, confidenceScore,
-//            transcriptSummary, tags }
+//            emotionTag, phiScrubbed, dataReviewSuggested, inconsistencyKinds,
+//            confidenceScore, transcriptSummary, tags }
 //
 // SAFETY
 // ------
@@ -38,6 +38,8 @@ import type { ConversationState } from '../customerServiceEngine';
 // 'es' → 'Spanish', null → 'Unknown'.
 import { preferredLanguageForGHL } from './languagePolicy';
 import { scrubSensitiveText } from '../phiPatterns';
+// AUDIT 2026-10-04 (FTQ-15) — the only inconsistency kinds the note may name.
+import { REVIEW_INCONSISTENCY_KINDS } from '../cy2027';
 
 // ── ALLOW-LISTS (controlled vocabulary) ─────────────────────────────────────
 
@@ -281,7 +283,7 @@ function deriveRecommendedStage(
   if (urgency === 'Crisis') return 'crisis_followup';
   if (category === 'fraud_scam') return 'fraud_alert';
   if (customerStatus === 'existing_client_claimed') return 'existing_client_callback';
-  if (state.probableFakeLead || (state.dataConfidenceScore ?? 100) < 40) return 'review_queue';
+  if (state.dataReviewSuggested || (state.dataConfidenceScore ?? 100) < 40) return 'review_queue';
   if (state.advisorHandoffStarted || state.needsHuman) {
     if (urgency === 'Elevated') return 'hot_handoff';
     return 'new_lead_prescreen';
@@ -370,7 +372,8 @@ export interface LeadNoteResult {
   urgency: Urgency;
   emotionTag: string;
   phiScrubbed: boolean;
-  probableFakeLead: boolean;
+  dataReviewSuggested: boolean;
+  inconsistencyKinds: string[];
   confidenceScore: number;
   transcriptSummary: string;
   tags: string[];
@@ -393,7 +396,15 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
   const recommendedStage = deriveRecommendedStage(state, serviceCategory, customerStatus, urgency);
   const consentStatus = deriveConsentStatus(state);
   const phiScrubbed = detectPhiScrubbed(state, transcript);
-  const probableFakeLead = !!state.probableFakeLead;
+  // AUDIT 2026-10-04 (FTQ-15) — was `probableFakeLead`, true after ANY single
+  // inconsistency, and emitted below as the machine field + CRM tag
+  // `probable_fake_lead`: a fraud label with no evidence (spec §12). What is
+  // emitted now is (a) WHICH kinds of inconsistency counted, filtered through
+  // the canonical allow-list so nothing else in state can be printed as one,
+  // and (b) whether they aggregate to a request for a human to check the data.
+  // Neither is a statement about the person.
+  const dataReviewSuggested = !!state.dataReviewSuggested;
+  const inconsistencyKinds: string[] = REVIEW_INCONSISTENCY_KINDS.filter((k) => (state.inconsistencyKinds || []).includes(k));
   const confidenceScore = state.dataConfidenceScore ?? 100;
   const emotionTag = state.emotionalState || 'calm';
   const { whatUserSaid, transcriptSummary } = buildUserProblemSummary(transcript, language, customerStatus);
@@ -554,8 +565,8 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
       es: 'Verificar cuenta internamente (NO compartir información de cuenta sin verificar). Luego enrutar al asesor asignado.',
     },
     review_queue: {
-      en: 'Send to review queue — possible data quality issue (low confidence or fake-lead signal).',
-      es: 'Enviar a cola de revisión — posible problema de calidad de datos (baja confianza o señal de lead falso).',
+      en: 'Review before standard outreach — some details given do not agree with each other (see inconsistency_kinds and confidence_score). This is a data check, not a finding about the caller: confirm the details with them and serve them as any other caller.',
+      es: 'Revisar antes del acercamiento estándar — algunos datos no coinciden entre sí (ver inconsistency_kinds y confidence_score). Es una verificación de datos, no una conclusión sobre la persona: confirme los datos con ella y atiéndala como a cualquier otra.',
     },
     crisis_followup: {
       en: 'Follow company crisis policy. Do NOT initiate standard Medicare sales workflow.',
@@ -640,7 +651,8 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
     `recommended_stage: ${recommendedStage}`,
     `confidence_score: ${confidenceScore}`,
     `escalation_reason: ${escalationReason}`,
-    `probable_fake_lead: ${probableFakeLead ? 'true' : 'false'}`,
+    `data_review_suggested: ${dataReviewSuggested ? 'true' : 'false'}`,
+    `inconsistency_kinds: ${inconsistencyKinds.length ? inconsistencyKinds.join(',') : 'none'}`,
     `emotion_tag: ${emotionTag}`,
     `PHI_scrubbed: ${phiScrubbed ? 'true' : 'false'}`,
     `date_of_birth: ${state.dateOfBirth || (state.dobRefused ? 'declined' : '')}`,
@@ -680,7 +692,7 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
     `consent_${consentStatus}`,
     `confidence_${confidenceScore < 40 ? 'low' : confidenceScore < 80 ? 'medium' : 'high'}`,
   ];
-  if (probableFakeLead) tags.push('probable_fake_lead');
+  if (dataReviewSuggested) tags.push('data_review_suggested');
   if (phiScrubbed) tags.push('phi_scrubbed');
 
   return {
@@ -694,7 +706,8 @@ export function buildLeadNote(input: BuildLeadNoteInput): LeadNoteResult {
     urgency,
     emotionTag,
     phiScrubbed,
-    probableFakeLead,
+    dataReviewSuggested,
+    inconsistencyKinds,
     confidenceScore,
     transcriptSummary,
     tags,

@@ -69,3 +69,14 @@ export type {
 } from '../../api/_lib/cy2027/soa-instance.js';
 
 export { activePlanYear, CY2027_MARKETING_START_UTC } from '../../api/_lib/cy2027/rulesets.js';
+
+// AUDIT 2026-10-04 (FTQ-11 / FTQ-15) — lead data-quality facts have one source.
+// The browser validator rejects the throwaway-inbox list at the form and the
+// server raises DISPOSABLE_CONTACT_DATA for the same list; the support bot
+// decides "a human should check this data" with the same aggregation rule the
+// test suite pins, instead of a private boolean.
+export {
+  DISPOSABLE_EMAIL_DOMAINS,
+  REVIEW_INCONSISTENCY_KINDS,
+  aggregateInconsistency,
+} from '../../api/_lib/cy2027/data-quality.js';

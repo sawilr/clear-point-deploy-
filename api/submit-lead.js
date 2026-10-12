@@ -20,6 +20,7 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
 import { evaluateTrust, buildSecurityReviewTask } from './_lib/cy2027/trust.js';
 import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
+import { isDisposableEmail, neutralizeFakeLeadLabel } from './_lib/cy2027/data-quality.js';
 // AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS (spec §18). The class is
 // derived from what the free-text scrubbers below reported, written through the
 // canonical field builder, and consulted before the enrichment vendor call.
@@ -965,6 +966,14 @@ export default async function handler(req, res) {
     lead_notes = _dmNotes.text;
     conversation_summary = _dmSummary.text;
     lead_quality_flags = neutralizeBenefitLookalikes(_dmClientFlags.text);
+    // AUDIT 2026-10-04 (FTQ-15) — the retired fraud label `probable_fake_lead`
+    // is de-labelled in every piece of client free text HERE, before the scorer
+    // reads it and before any note or field is written. The tag of the same name
+    // is refused further down; stopping the tag while writing the same line into
+    // the note would be a rule enforced on one path and not on its mirror.
+    lead_notes = neutralizeFakeLeadLabel(lead_notes);
+    conversation_summary = neutralizeFakeLeadLabel(conversation_summary);
+    lead_quality_flags = neutralizeFakeLeadLabel(lead_quality_flags);
     // DM-04: a structured self-report raises the same flag the prose filter does.
     var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags, _dmInterest.flags, _benefit.flags)));
     if (_dmFlags.length) {
@@ -1002,6 +1011,20 @@ export default async function handler(req, res) {
     }
     if (rlFloodDay && typeof rlFloodDay.remaining === 'number' && rlFloodDay.remaining <= 10) {
       _trustSignals.push('REPEATED_MASS_SUBMISSION');
+    }
+    // AUDIT 2026-10-04 (FTQ-11) — DISPOSABLE CONTACT DATA (§12). The throwaway-
+    // inbox list lived only in the browser validator, so a direct POST with one
+    // reached the CRM unflagged and this signal was never raised by anything.
+    // It is derived here, on the server, from the canonical list. It is a REVIEW
+    // signal and nothing else: the contact is still created, the address is
+    // still stored, and a lead with NO email or an unreadable one raises
+    // nothing (§12: never penalise a person who "lacks email"; FTQ-16).
+    // `email` is still the raw body value at this point, so it is capped exactly
+    // as the normalisation further down caps it, and isDisposableEmail applies
+    // the same shape test: the signal is raised only for an address this handler
+    // will actually keep. Only the signal NAME is logged, never the address.
+    if (isDisposableEmail(_cap(email, 254))) {
+      _trustSignals.push('DISPOSABLE_CONTACT_DATA');
     }
     var _trust = evaluateTrust({ signals: _trustSignals });
     if (_trust.state !== 'UNVERIFIED') _dmFlags.push('TRUST_' + _trust.state);
@@ -1373,7 +1396,19 @@ export default async function handler(req, res) {
     // with "Consent Captured" or "Lang-ES". The `soa` key is also tightened so
     // ordinary words that start with those three letters survive — "soap-note"
     // and "soar-program" were being denied as SOA workflow tags.
-    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa|soasigned|soarecorded|soapending|soa[0-9][a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
+    // AUDIT 2026-10-04 (FTQ-15) — a client-asserted VERDICT about the person is
+    // refused. The support bot used to send `probable_fake_lead` for ANY single
+    // inconsistency (an out-of-area ZIP, a name the validator did not recognise),
+    // which put a fraud label on a real person's CRM record with no evidence
+    // (§12: "Do not label 'fraudulent' without evidence"). The bot now sends
+    // `data_review_suggested`, and only when inconsistencies aggregate. The old
+    // spelling is denied HERE as well, because a cached bundle or a direct POST
+    // can still send it — and not as one exact token but as the verdict SHAPE:
+    // a qualifier + fake/fraud/bogus/spam/scam (probable_fake, suspected_fraud),
+    // or such an adjective + lead/caller/contact/person/submission (fake_lead,
+    // spam_caller). The bot's own topic vocabulary keeps flowing because a topic
+    // is not that shape: category_fraud_scam, fraud_alert, fraud_scam.
+    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa|soasigned|soarecorded|soapending|soa[0-9][a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*|(?:probable|probably|likely|possible|possibly|suspected|potential|confirmed)(?:fake|fraud|fraudulent|bogus|spam|scam)(?:lead|leads|caller|contact|person|submission)?|(?:fake|fraud(?:ulent)?|bogus|spam|scam)(?:lead|leads|caller|contact|person|submission))$/;
     // Family prefixes are matched on the DASH key, so the family has to be a real
     // token: "urg-high" is denied, the support bot's "urgency_elevated" is not.
     // "status-*" is deliberately absent — only its exact values above are owned,

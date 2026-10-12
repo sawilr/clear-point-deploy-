@@ -61,6 +61,10 @@ check('"test" name → inconsistency recorded',
 check('"test" name → dataConfidenceScore dropped',
   (s.dataConfidenceScore ?? 100) <= 70);
 check('"test" name → step bounced back to conversation', s.step === 'conversation');
+// AUDIT 2026-10-04 (FTQ-15) — one low-weight inconsistency is recorded, not labelled.
+check('"test" name alone → NO review suggested', s.dataReviewSuggested === false);
+check('"test" name alone → counted as the kind "name"', (s.inconsistencyKinds || []).join() === 'name');
+check('the state carries no fake-lead flag', !('probableFakeLead' in s));
 
 console.log('\n=== INCONSISTENCY V20: ZIP + declared state mismatch ===');
 // V20 flow — user describes their issue with their state, then later provides ZIP.
@@ -72,7 +76,7 @@ s = processMessage('10001', s).newState; // bare 5-digit ZIP captured in convers
 check('ZIP 10001 + declared FL → mismatch flagged',
   (s.inconsistencies || []).some((i) => i.startsWith('zip_state_mismatch')),
   `inconsistencies=${(s.inconsistencies || []).join(',')}`);
-check('probableFakeLead = true', s.probableFakeLead === true);
+check('state/ZIP contradiction alone → data review suggested (not a fraud label)', s.dataReviewSuggested === true);
 check('confidence score dropped significantly', (s.dataConfidenceScore ?? 100) <= 50);
 
 console.log('\n=== INCONSISTENCY V20: phone is fake number ===');
@@ -89,9 +93,18 @@ s = createInitialState();
 s = processMessage('english', s).newState;
 // V20 — user describes problem directly, no name/ZIP step.
 s = processMessage('I have a doctor bill', s).newState;
-check('clean lead: probableFakeLead = false', s.probableFakeLead !== true);
+check('clean lead: no data review suggested', s.dataReviewSuggested !== true);
 check('clean lead: dataConfidenceScore unchanged', s.dataConfidenceScore === 100);
 check('clean lead: no inconsistencies', (s.inconsistencies || []).length === 0);
+
+console.log('\n=== FTQ-15: an out-of-area ZIP is geography, not an inconsistency in the data ===');
+s = createInitialState();
+s = processMessage('english', s).newState;
+s = processMessage('33101', s).newState;
+check('out-of-area ZIP is still recorded',
+  (s.inconsistencies || []).some((i) => i.startsWith('zip_not_in_service_area')));
+check('out-of-area ZIP → no data review suggested', s.dataReviewSuggested === false);
+check('out-of-area ZIP → counts toward no review kind', (s.inconsistencyKinds || []).length === 0);
 
 console.log('\n=== ANTONIO REGRESSION V20 (Wave 17 must still pass) ===');
 s = createInitialState();

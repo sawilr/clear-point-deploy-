@@ -133,7 +133,7 @@ if (distinct.size > 1) {
 // only `export declare const|function`, and then printed "4 declaration files
 // match" unconditionally whether or not it had checked anything. A guard that
 // reports success for work it did not do is worse than no guard.
-const DECLARED = ['soa-text', 'state-rules', 'soa-instance', 'rulesets', 'tpmo'];
+const DECLARED = ['soa-text', 'state-rules', 'soa-instance', 'rulesets', 'tpmo', 'data-quality'];
 let declChecked = 0;
 for (const base of DECLARED) {
   let dts;

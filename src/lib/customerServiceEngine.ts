@@ -24,6 +24,9 @@ import { validatePhone as _validatePhoneStrict, validateEmail as _validateEmailS
 import { TCPA_CONSENT_TEXT_EN as _TCPA_EN, TCPA_CONSENT_TEXT_ES as _TCPA_ES } from './disclaimerVersion.ts';
 import { hasSessionOptOut } from './optOutGuard.ts';
 import { SOA_ENABLED } from './soaContent.ts';
+// AUDIT 2026-10-04 (FTQ-15) — the rule for "when do inconsistencies amount to a
+// request for human review" is canonical (api/_lib/cy2027/data-quality.js).
+import { aggregateInconsistency } from './cy2027.ts';
 import { tpmoDisclaimerText as _tpmoDisclaimerText } from './tpmoConfig.ts';
 
 // AUDIT 2026-10-03 (TPY-09 follow-up) — the advisor-handoff message closed with
@@ -179,8 +182,17 @@ export interface ConversationState {
    *  Clara can escape the re-ask loop (offer the direct line) instead of
    *  repeating the same question forever. */
   phoneAttempts?: number;
-  /** Set when ZIP + declared state disagree, or when name/ZIP/phone fail validation. */
-  probableFakeLead?: boolean;
+  /** AUDIT 2026-10-04 (FTQ-15) — replaces `probableFakeLead`, which ANY single
+   *  inconsistency set to true and which reached the CRM as a fraud label.
+   *  True only when the recorded inconsistencies AGGREGATE to the canonical
+   *  review threshold (see flagInconsistency). It asks a human to check the
+   *  data; it is never a finding about the person (spec §12). */
+  dataReviewSuggested?: boolean;
+  /** Distinct inconsistency KINDS that counted toward review (canonical
+   *  vocabulary: zip_state_mismatch | name | phone). Geography is not one. */
+  inconsistencyKinds?: string[];
+  /** Sum of the penalties of those distinct kinds. */
+  inconsistencyWeight?: number;
   /** Human-readable inconsistency list for the advisor to review. */
   inconsistencies?: string[];
   /** 0-100. Starts at 100 and decreases each time data validation fails. */
@@ -919,11 +931,32 @@ export function detectDeclaredState(text: string): string | null {
   return null;
 }
 
-/** Decrements the running data-confidence score and records the inconsistency. */
+// AUDIT 2026-10-04 (FTQ-15) — this used to set `probableFakeLead = true` on ANY
+// call, whatever the penalty. A Florida resident who typed a real ZIP
+// (zip_not_in_service_area, 25) or a caller whose answer the name validator did
+// not recognise (name_*, 30) was written to the CRM as `probable_fake_lead:
+// true` plus a `probable_fake_lead` tag. Spec §12: "Do not label 'fraudulent'
+// without evidence"; "Uncertainty is not fraud."
+//
+// Nothing that was recorded before is lost: every call still appends to
+// `inconsistencies` and still lowers the data-confidence score by the same
+// penalty. What changed is the conclusion drawn from it. A review is suggested
+// only when DISTINCT counted kinds aggregate to the canonical threshold, and
+// the flag is named for what it asks of a human (check the data), never for a
+// verdict about the person. The rule itself is in
+// api/_lib/cy2027/data-quality.js so it cannot be re-loosened here unnoticed.
+/** Records the inconsistency, lowers the data-confidence score, and re-derives the review suggestion. */
 function flagInconsistency(state: ConversationState, reason: string, penalty: number): void {
-  state.probableFakeLead = true;
   state.inconsistencies = [...(state.inconsistencies || []), reason];
   state.dataConfidenceScore = Math.max(0, (state.dataConfidenceScore ?? 100) - penalty);
+  const next = aggregateInconsistency(
+    { kinds: state.inconsistencyKinds, weight: state.inconsistencyWeight },
+    reason,
+    penalty,
+  );
+  state.inconsistencyKinds = next.kinds;
+  state.inconsistencyWeight = next.weight;
+  state.dataReviewSuggested = next.reviewSuggested;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2924,7 +2957,9 @@ export function createInitialState(): ConversationState {
     isValidState: false,
     nameIsValid: false,
     zipCodeIsValid: false,
-    probableFakeLead: false,
+    dataReviewSuggested: false,
+    inconsistencyKinds: [],
+    inconsistencyWeight: 0,
     inconsistencies: [],
     dataConfidenceScore: 100,
     // Wave 19

@@ -352,16 +352,18 @@ function assertStructure(label, note) {
   assertNoPhiEcho(L, note);
 }
 
-// ───── TEST 15 — Fake lead (Mickey Mouse + suspicious phone) ─────
+// ───── TEST 15 — Aggregated inconsistencies → data review (never a fraud label) ─────
 {
-  // The engine sets `probableFakeLead` via validators when fake contact info
-  // is collected. We simulate by directly seeding state markers — these
-  // mirror real engine behavior for fake-contact detection.
+  // AUDIT 2026-10-04 (FTQ-15) — the engine sets `dataReviewSuggested` only when
+  // distinct inconsistency kinds aggregate. We simulate by seeding the state
+  // markers the engine produces for an unrecognised name + an invalid phone.
   let s = createInitialState();
   s = processMessage('english', s).newState;
   s = processMessage('10550', s).newState;
   s = processMessage('my doctor refuses my plan', s).newState;
-  s.probableFakeLead = true;
+  s.dataReviewSuggested = true;
+  s.inconsistencyKinds = ['name', 'phone'];
+  s.inconsistencyWeight = 55;
   s.dataConfidenceScore = 25;
   s.inconsistencies = ['name_suspicious_full', 'phone_fake_555_hollywood'];
   const transcript = s.messages.map((m) => ({
@@ -369,13 +371,19 @@ function assertStructure(label, note) {
     text: m.content,
   }));
   const note = buildLeadNote({ state: s, transcript });
-  const L = 'T15.en_fake_lead';
-  check(`${L}.probable_fake_lead in machine fields`,
-    /probable_fake_lead: true/.test(note.noteText));
+  const L = 'T15.en_data_review';
+  check(`${L}.data_review_suggested in machine fields`,
+    /data_review_suggested: true/.test(note.noteText));
+  check(`${L}.inconsistency kinds are named`,
+    /inconsistency_kinds: name,phone/.test(note.noteText));
+  check(`${L}.no fraud label anywhere in the note`,
+    !/probable_fake_lead|fake[-_ ]lead|lead falso/i.test(note.noteText));
   check(`${L}.recommendedStage is review_queue`,
     note.recommendedStage === 'review_queue');
-  check(`${L}.tags include probable_fake_lead`,
-    note.tags.includes('probable_fake_lead'));
+  check(`${L}.tags include data_review_suggested`,
+    note.tags.includes('data_review_suggested'));
+  check(`${L}.tags carry no fraud label`,
+    !note.tags.includes('probable_fake_lead'));
   check(`${L}.confidence tag is low`,
     note.tags.some((t) => t === 'confidence_low'));
   assertStructure(L, note);
