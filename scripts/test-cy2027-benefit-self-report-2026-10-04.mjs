@@ -1086,9 +1086,14 @@ ok('the registered consent wording carries no label the neutraliser would touch'
         // meant to alter: a chat lead whose TOPIC is Extra Help. lead-intel's own
         // redactor adds the flag to the model's list and the note prints it; the
         // look-alike neutraliser rewrote it to "BENEFIT_STATUS -SELF_REPORTED".
-        const chat = await run(lead({ medicare_status: 'Not sure', interest_type: 'Extra Help', lead_source: 'chatbot', form_name: 'Zara ChatBot',
+        // AUDIT 2026-10-04 (CRM-25, red team) — the topic is the label Clara's
+        // detectInterest() actually sends ('Extra Help / LIS'). The fixture used
+        // to say 'Extra Help', which no client module sends: since the interest
+        // door is classified, free text naming a program is masked before the
+        // model sees it, and only a site label reaches it as written.
+        const chat = await run(lead({ medicare_status: 'Not sure', interest_type: 'Extra Help / LIS', lead_source: 'chatbot', form_name: 'Zara ChatBot',
           lead_notes: 'Client asked for help with a topic.', conversation_summary: 'Language: en. State: NY. ZIP: 10451. Coverage: Not sure. Topics: none.' }));
-        ok('handler (chat lead, topic "Extra Help"): the flag is printed in the advisor note and the summary field EXACTLY — the server\'s own token is never rewritten',
+        ok('handler (chat lead, topic "Extra Help / LIS"): the flag is printed in the advisor note and the summary field EXACTLY — the server\'s own token is never rewritten',
           created(chat) && chat.scored.length === 1 && chat.notes[0].includes('\nCompliance flags:\n  • BENEFIT_STATUS_SELF_REPORTED\n') &&
           String(cf(chat.creates[0], 'contact.chat_conversation_summary')).includes('\nCompliance flags:\n  • BENEFIT_STATUS_SELF_REPORTED\n') &&
           !/BENEFIT_STATUS[^_]/.test(chat.wire), chat.notes.join('|').slice(-400));

@@ -314,12 +314,29 @@ export function neutralizeReceiptLookalikes(text) {
 //                          duplicate says so again without the fields).
 //   REFUSED                any other 4xx with nothing attached to drop, or a
 //                          status that is not a refusal this policy knows.
+//   DUPLICATE_CONTACT      a 400 whose body is GoHighLevel's "does not allow
+//                          duplicated contacts" — see below.
+//
+// AUDIT 2026-10-04 (CRM-25, red team) — with any owner id mapped (and the
+// DATA_SENSITIVITY_CLASS id rides EVERY lead), each repeat submission paid a
+// second create POST before the lead handler's dedupe branch recognised the
+// duplicate: the 400 for a duplicate CONTACT was indistinguishable, here, from
+// a 400 over a field id. The caller may now pass the response body; a 400 that
+// says the CONTACT is a duplicate is answered DUPLICATE_CONTACT, and the
+// caller's existing dedupe branch judges it without a retry. The match is the
+// CRM's own wording about contacts — 'duplicate custom field id' and
+// 'duplicated id' (the wordings the earlier red team found losing leads) still
+// retry. Only a 400: the dedupe branch recognises no other status, so a 422
+// worded the same way keeps the one retry it had. No body given = the policy
+// above, unchanged (api/opt-out.js).
 // ─────────────────────────────────────────────────────────────────────────────
-export function crmRefusalStep(status, attachedCount) {
+const DUPLICATE_CONTACT_WORDING = /duplicat\w*\s+contacts?\b/i;
+export function crmRefusalStep(status, attachedCount, bodyText) {
   if (!Number.isInteger(status)) return 'REFUSED';
   if (status >= 200 && status < 300) return 'ACCEPTED';
   if (status === 429 || (status >= 500 && status <= 599)) return 'TRANSIENT';
   if (status === 401) return 'AUTH';
+  if (status === 400 && typeof bodyText === 'string' && DUPLICATE_CONTACT_WORDING.test(bodyText)) return 'DUPLICATE_CONTACT';
   if (status >= 400 && status <= 499 && Number.isInteger(attachedCount) && attachedCount > 0) return 'RETRY_WITHOUT_FIELDS';
   return 'REFUSED';
 }

@@ -2565,6 +2565,18 @@ consentScope: {
   ok('CE-09 (retry policy): an accepted write is not a refusal, and anything that is not an HTTP status is not retried',
     [200, 201, 204].every((s) => crmRefusalStep(s, 3) === 'ACCEPTED') &&
     [0, 100, 301, 399, 600, -1, NaN, '422', null, undefined, 422.5].every((s) => crmRefusalStep(s, 3) === 'REFUSED'));
+  // AUDIT 2026-10-04 (CRM-25, red team) — the body, when the caller has it.
+  const DUP = 'This location does not allow duplicated contacts.';
+  ok('CRM-25 (retry policy): a 400 whose body is the CRM\'s duplicate-CONTACT wording is DUPLICATE_CONTACT, not a retry — whatever is attached, in any casing, inside JSON or bare',
+    crmRefusalStep(400, 3, DUP) === 'DUPLICATE_CONTACT' && crmRefusalStep(400, 1, '{"message":"' + DUP + '","statusCode":400}') === 'DUPLICATE_CONTACT' &&
+    crmRefusalStep(400, 0, DUP) === 'DUPLICATE_CONTACT' && crmRefusalStep(400, 2, 'Duplicate contact') === 'DUPLICATE_CONTACT' && crmRefusalStep(400, 2, 'DUPLICATED CONTACTS found') === 'DUPLICATE_CONTACT');
+  ok('CRM-25 (retry policy): the wordings the earlier red team found losing leads still retry — "duplicate" alone is not a duplicate contact',
+    crmRefusalStep(400, 3, 'duplicate custom field id') === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(400, 3, 'duplicated id') === 'RETRY_WITHOUT_FIELDS' &&
+    crmRefusalStep(400, 3, 'duplicate') === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(422, 3, 'duplicate custom field id') === 'RETRY_WITHOUT_FIELDS');
+  ok('CRM-25 (retry policy): only a 400 is a duplicate contact (the dedupe branch recognises no other status); no body, an empty body or a body that is not text changes nothing',
+    crmRefusalStep(422, 3, DUP) === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(409, 3, DUP) === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(400, 3) === 'RETRY_WITHOUT_FIELDS' &&
+    crmRefusalStep(400, 3, '') === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(400, 3, { message: DUP }) === 'RETRY_WITHOUT_FIELDS' && crmRefusalStep(400, 3, [DUP]) === 'RETRY_WITHOUT_FIELDS' &&
+    crmRefusalStep(400, 0, '') === 'REFUSED' && crmRefusalStep(500, 3, DUP) === 'TRANSIENT' && crmRefusalStep(401, 3, DUP) === 'AUTH' && crmRefusalStep(201, 3, DUP) === 'ACCEPTED');
 
   // ── 25e-4. The revocation, as a record ───────────────────────────────────────
   const fieldsOf = (r) => r.fields.map((f) => f.id + '=' + f.value).join();
@@ -3117,10 +3129,12 @@ consentScope: {
         // number of CREATE attempts is not part of it, and changed on purpose
         // (red team 2026-10-04): with the CY2027 ids configured, a refused create
         // is retried once without the three entries — the CRM's word "duplicate"
-        // no longer suppresses that retry — and a real duplicate says so again.
-        ok('CE-09 (lead handler): a repeat on an existing contact writes NOTHING to it — no PUT, and no create is accepted (LEAD-02)',
-          r.status === 200 && r.puts.length === 0 && r.creates.length === 2 &&
-          cbFields(r.creates[0]).length === 3 && cbFields(r.creates[1]).length === 0 &&
+        // alone no longer suppresses that retry. AUDIT 2026-10-04 (CRM-25, red
+        // team): the CRM's own duplicate-CONTACT wording on a 400 does — it is
+        // read before the retry, so a repeat is ONE create again (see 25e-3).
+        ok('CE-09 (lead handler): a repeat on an existing contact writes NOTHING to it — no PUT, one create attempt, none accepted (LEAD-02)',
+          r.status === 200 && r.puts.length === 0 && r.creates.length === 1 &&
+          cbFields(r.creates[0]).length === 3 &&
           !r.logs.some((l) => /cy2027_fields_dropped|\[CY2027-CRM\] contact create refused/.test(l)),
           `status=${r.status} creates=${r.creates.length} puts=${r.puts.length}`);
         ok('CRM-15 (lead handler): the repeat note carries the scope of the new consent',
@@ -3152,7 +3166,7 @@ consentScope: {
         ok('CE-09 (lead handler): the repeat receipt carries the instant of the consent — the clock is not read a second time for it', (() => {
           const at = (repeatReceipt(one)[1] || '').slice(3);
           // On a clock that never repeats, the first value read by this request is its consent instant.
-          return isIsoInstant(at) && one.creates.length === 2 && cf(one.creates[0], 'contact.callback_consent_at') === at;
+          return isIsoInstant(at) && one.creates.length === 1 && cf(one.creates[0], 'contact.callback_consent_at') === at;
         })(), JSON.stringify(repeatReceipt(one)));
         delete process.env.CY2027_CRM_FIELD_IDS;
         const Ln = lead();

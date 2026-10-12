@@ -25,6 +25,9 @@ import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
 // canonical field builder, and consulted before the enrichment vendor call.
 import { buildCustomFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
 import { classifyLeadRecord, enrichmentExposure, neutralizeClassLookalikes } from './_lib/cy2027/sensitivity.js';
+// AUDIT 2026-10-04 (CRM-25, red team) — the topic labels the site itself sends
+// as interest_type; anything else in that field is free text (see below).
+import { isSiteInterestLabel } from './_lib/cy2027/interest-labels.js';
 // AUDIT 2026-10-02 (CE-09 / CRM-15) — the callback consent becomes a consent
 // OBJECT with the scope its text states, and reaches the CRM as its own fields.
 import {
@@ -929,15 +932,23 @@ export default async function handler(req, res) {
     //     live chat path, it becomes a note line, a custom field and a tag, and
     //     it was appended after this net had run. A value that had something
     //     removed mints no tag (see _bestTimeTag).
-    //   • interest_type — NOT redacted, deliberately, and still a gap. The
+    //   • interest_type — a label the site itself sends (the allow-list in
+    //     _lib/cy2027/interest-labels.js) is NOT redacted, deliberately. The
     //     site's own topic labels name these programs ('Extra Help / LIS
     //     question', 'Dual Medicare + Medicaid question'): they say what the
     //     person asked ABOUT, the advisor needs them, and masking them would
-    //     change a live field and a live tag family. A direct POST can therefore
-    //     still put a status sentence there. Whether a topic that names a
-    //     benefit program may stay a CRM field and an Interest- tag is an OWNER
-    //     decision (docs/compliance/CY2027-ARCHITECTURE.md). The lead scorer
-    //     never sees it unmasked: lead-intel.js redacts its whole input.
+    //     change a live field and a live tag family. Whether a topic that names
+    //     a benefit program may stay a CRM field and an Interest- tag is an
+    //     OWNER decision (docs/compliance/CY2027-ARCHITECTURE.md). The lead
+    //     scorer never sees it unmasked: lead-intel.js redacts its whole input.
+    //     AUDIT 2026-10-04 (CRM-25, red team) — anything ELSE in the field is
+    //     free text a sender typed, and it is NOW redacted here exactly as
+    //     best_time_to_contact is: 'chemo for my cancer and Part D' sent by a
+    //     direct POST was filed verbatim under NO_RESTRICTED_SIGNAL (measured).
+    //     The redactor's flags and the PHI categories of BOTH short fields reach
+    //     the record's class and the review flags whichever case it is — a
+    //     label is true whoever chose the words — and a free-text value that
+    //     had something removed mints no Interest- tag (see _interestTag).
     //   • body.tags — NOT filtered here either, for the same reason: Smart
     //     Review's own special-situation tag is 'medicaid_msp_extra_help_lis'
     //     (a topic). A direct POST can still mint a tag such as
@@ -945,15 +956,21 @@ export default async function handler(req, res) {
     var _dmNotes = redactProhibitedForScoring(lead_notes);
     var _dmSummary = redactProhibitedForScoring(conversation_summary);
     var _dmClientFlags = redactProhibitedForScoring(lead_quality_flags);
-    var _dmBestTime = redactProhibitedForScoring(scrubPHI(_cap(body.best_time_to_contact, 64)).text.replace(/[\r\n\t]+/g, ' ').trim());
+    var _phiBestTime = scrubPHI(_cap(body.best_time_to_contact, 64));
+    var _dmBestTime = redactProhibitedForScoring(_phiBestTime.text.replace(/[\r\n\t]+/g, ' ').trim());
+    var _phiInterest = scrubPHI(_cap(body.interest_type, 80));
+    var _interestAsSent = _phiInterest.text.replace(/[\r\n\t]+/g, ' ').trim();
+    var _dmInterest = redactProhibitedForScoring(_interestAsSent);
+    var _interestIsSiteLabel = isSiteInterestLabel(_interestAsSent);
     lead_notes = _dmNotes.text;
     conversation_summary = _dmSummary.text;
     lead_quality_flags = neutralizeBenefitLookalikes(_dmClientFlags.text);
     // DM-04: a structured self-report raises the same flag the prose filter does.
-    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags, _benefit.flags)));
+    var _dmFlags = Array.from(new Set([].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags, _dmInterest.flags, _benefit.flags)));
     if (_dmFlags.length) {
-      // Category only — never the phrase that triggered it.
-      console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions + _dmClientFlags.redactions + _dmBestTime.redactions }));
+      // Category only — never the phrase that triggered it. The count is what
+      // was actually removed: a site label is kept, so it removes nothing.
+      console.warn('[DATA-MIN] ' + JSON.stringify({ flags: _dmFlags, redactions: _dmNotes.redactions + _dmSummary.redactions + _dmClientFlags.redactions + _dmBestTime.redactions + (_interestIsSiteLabel ? 0 : _dmInterest.redactions) }));
     }
     // CRM-24 — set deterministically, not left to a human to notice in prose.
     if (requiresLicensedReview(_dmFlags)) _dmFlags.push('LICENSED_AGENT_REVIEW_REQUIRED');
@@ -1009,7 +1026,10 @@ export default async function handler(req, res) {
     // Red-team round 3 (R3-SL-10): every dash variant and the underscore, and
     // "SOA" only as the tag family (never "soap"/"soar" in prose).
     lead_quality_flags = lead_quality_flags ? 'client: ' + lead_quality_flags.replace(/(?<![A-Za-z0-9_])(AI:|\bSOA(?:[\s_\p{Pd}]?(?:recorded|signed|pending|status|captured|\d+))?\b|DNC|DND|Temp[\s_\p{Pd}]\w+|Urg[\s_\p{Pd}]\w+|Intent[\s_\p{Pd}]\w+)/giu, '[x]') : '';
-    var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected);
+    // AUDIT 2026-10-04 (CRM-25, red team) — the two short fields' categories
+    // were discarded at their call sites, so an SSN removed from the call time
+    // or the topic never raised IDENTIFIER_REDACTED (measured). Counted now.
+    var _phiCats = _scrubNotes.detected.concat(_scrubSummary.detected, _scrubFlags.detected, _phiBestTime.detected, _phiInterest.detected);
     if (_phiCats.length > 0) {
       console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
     }
@@ -1018,17 +1038,20 @@ export default async function handler(req, res) {
     // topic redacted from the sender's free text, or a redacted identifier,
     // makes it RESTRICTED_TOPIC_FLAGGED; otherwise CONTACT_PII. Never throws
     // and never rejects — an unreadable input takes the higher class.
-    // The flags are the four FREE-TEXT redactors' — not _dmFlags, which also
+    // The flags are the five FREE-TEXT redactors' — not _dmFlags, which also
     // carries the structured Medicaid / Extra Help answer (_benefit.flags) and
     // the workflow flags (TRUST_*, LICENSED_AGENT_REVIEW_REQUIRED): the answer
     // has its own SELF_REPORTED storage and §15 is pinned as an equality
     // between a lead that answered and one that did not (DM-04), so it must
     // not move the class.
-    // Known limit: the PHI categories of the short structured fields scrubbed
-    // elsewhere (medicare_status, best time, interest, consent text, user
-    // agent) are discarded at their call sites and are not counted here.
+    // AUDIT 2026-10-04 (CRM-25, red team) — the interest door was missing from
+    // this list, so clinical text typed there was filed under NO_RESTRICTED_SIGNAL
+    // (measured). It is counted whether the value is a site label or free text:
+    // the class states what the record carries, not who chose the words.
+    // Known limit: the PHI categories of medicare_status, the consent text and
+    // the user agent are still discarded at their call sites.
     var _sensitivity = classifyLeadRecord({
-      signalFlags: [].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags),
+      signalFlags: [].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags, _dmInterest.flags),
       phiCategories: _phiCats,
     });
 
@@ -1072,7 +1095,10 @@ export default async function handler(req, res) {
     // PHI-scrubbed AND passed through the DM-09 filter where _dmBestTime is made
     // (beside lead_notes, so its flags join _dmFlags before anything reads them).
     var best_time_to_contact = _dmBestTime.text;
-    var interest_type = scrubPHI(_cap(body.interest_type, 80)).text.replace(/[\r\n\t]+/g, ' ').trim();
+    // AUDIT 2026-10-04 (CRM-25, red team) — a label the site sends is kept as
+    // sent (owner decision, see the DM-09 block above); anything else is free
+    // text and is the redactor's output, like best_time_to_contact.
+    var interest_type = _interestIsSiteLabel ? _interestAsSent : _dmInterest.text;
     var intakeBits = [];
     if (best_time_to_contact) intakeBits.push('Best time to contact: ' + best_time_to_contact);
     if (interest_type) intakeBits.push('Interest/topic: ' + interest_type);
@@ -1105,7 +1131,10 @@ export default async function handler(req, res) {
     // no longer a call time; like R5-SL-13 above, it mints no tag at all rather
     // than a half-masked one.
     var _bestTimeTag = _dmBestTime.redactions ? '' : _tagify('CallTime', best_time_to_contact);
-    var _interestTag = _tagify('Interest', interest_type);
+    // CRM-25 (red team) — same rule for free text in the topic: a value the
+    // DM-09 filter had to cut is not a topic, and mints no Interest- tag at all
+    // rather than a tag made of the mask. A site label is never cut.
+    var _interestTag = (!_interestIsSiteLabel && _dmInterest.redactions) ? '' : _tagify('Interest', interest_type);
 
     // Red-team round 3 (R3-SL-05): LeadType-* is a server-owned family — only the
     // lead types Clara and the forms actually produce may mint one.
@@ -1933,7 +1962,19 @@ export default async function handler(req, res) {
     // same reason: its id is owner-supplied, and a lead is never lost to a
     // label. The class still reaches the note through its block.
     var _ownerIdFields = _cbRec.fields.concat(_benefit.fields, _cyFields.fields);
-    if (!ghlRes.ok && crmRefusalStep(ghlRes.status, _ownerIdFields.length) === 'RETRY_WITHOUT_FIELDS') {
+    // AUDIT 2026-10-04 (CRM-25, red team) — a repeat submission under a mapped
+    // id paid a second create before the dedupe branch below saw the duplicate
+    // (measured: 6 CRM calls instead of 5). The refusal's body is read from a
+    // CLONE so the branch below can still read it, and crmRefusalStep() answers
+    // DUPLICATE_CONTACT for the CRM's own duplicate-contact wording on a 400:
+    // no retry, the dedupe branch judges the first answer. A body that cannot
+    // be read is no body — the policy then decides on the status alone, as
+    // before.
+    var _firstRefusalBody = '';
+    if (!ghlRes.ok && _ownerIdFields.length) {
+      try { _firstRefusalBody = await ghlRes.clone().text(); } catch (e) { _firstRefusalBody = ''; }
+    }
+    if (!ghlRes.ok && crmRefusalStep(ghlRes.status, _ownerIdFields.length, _firstRefusalBody) === 'RETRY_WITHOUT_FIELDS') {
       var _cbRefusedStatus = ghlRes.status;
       var _cbRetryRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/', {
         method: 'POST',

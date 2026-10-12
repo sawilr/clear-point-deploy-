@@ -217,7 +217,7 @@ export function enrichmentExposure(sensitivityClass) {
   return { allowed: true, reason: 'ALLOWED_AFTER_MINIMIZATION', sensitivityClass, requires: MINIMIZATION_STEPS.slice() };
 }
 
-// ─── Look-alikes of the note line ─────────────────────────────────────────────
+// ─── Look-alikes of the note line and of its header ──────────────────────────
 // A sender has several doors into the contact note (the notes, the transcript,
 // the call-time text, the model's summary of their story). A line of theirs
 // that reads `data_sensitivity_class: COMPLIANCE_EVIDENCE` must not pass for
@@ -226,6 +226,25 @@ export function enrichmentExposure(sensitivityClass) {
 // code points, modifier letters) inside them and any non-solid run between
 // them, followed by at least one mark; judged as written and, when the line
 // folds (NFKD) to something else, as the folding reads.
+//
+// AUDIT 2026-10-04 (CRM-25, red team) — two more readings, both measured:
+//   • THE HEADER WAS NOT COVERED. A sender's own '— Record class —' line was
+//     stored as written, so the note carried the server's header twice, and
+//     the forged line under it — neutralised — still read as a second server
+//     section to a human. A line whose only solid characters are the words
+//     'record' and 'class', with at least one mark anywhere on it (the dashes
+//     are what make the words a header), is rewritten 'Record class - quoted'.
+//     The two bare words on a line of their own are prose and stay.
+//   • CROSS-SCRIPT LETTERS WENT THROUGH. 'dаta_sensitivity_class:' with a
+//     Cyrillic а (U+0430) is not a compatibility form, so NFKD leaves it, and
+//     the line was returned unchanged. Each line is read a third time with the
+//     Cyrillic, Greek, Armenian and Latin letters that print as one of the
+//     letters of these five words folded to that letter; a line that then
+//     carries the label or the header is returned folded and neutralised, and
+//     every other line exactly as it was. The table is the confusables of
+//     those thirteen letters, not Unicode's whole list: outside it the limit
+//     the sibling neutraliser states still holds, which is why the server's
+//     block is placed last and the value is a CRM field of its own.
 const IGNORABLE = '\\p{Default_Ignorable_Code_Point}';
 const NOT_SOLID = '(?:[^\\p{L}\\p{N}\\n]|(?=[\\p{L}\\p{N}])[' + IGNORABLE + '\\p{Lm}])';
 const NOTHING = '(?:[^\\p{L}\\p{N}\\p{P}\\p{S}\\s]|(?=[\\p{L}\\p{N}\\s])' + IGNORABLE + ')';
@@ -235,8 +254,39 @@ const LOOKALIKE_LABEL = new RegExp(
 const HAS_MARK = /(?!-)[\p{P}\p{S}\p{Lm}]/u;
 const NOTHING_RUN = new RegExp(NOTHING + '+', 'gu');
 const ANY_MARK = /[\p{P}\p{S}\p{Lm}]/gu;
+const SOME_MARK = /[\p{P}\p{S}\p{Lm}]/u;
 const CONNECTORS_ONLY = /^\p{Pc}+$/u;
-function neutralizeLine(line) {
+// The header: nothing solid on the line but the two words, in that order.
+const LOOKALIKE_HEADER = new RegExp(
+  '^(' + NOT_SOLID + '*)(' + spelled('record') + ')(' + NOT_SOLID + '*)(' + spelled('class') + ')(' + NOT_SOLID + '*)$', 'u');
+// Letters of other scripts (and the dotless i) that print as a letter of
+// 'data', 'sensitivity', 'class', 'record'. Flat and frozen; the regex is built
+// from its own keys, so every character it matches has an entry.
+const CONFUSABLE_TO_LATIN = Object.freeze({
+  '\u0430': 'a', '\u0410': 'A', '\u03B1': 'a', '\u0391': 'A',
+  '\u0441': 'c', '\u0421': 'C', '\u03F2': 'c', '\u03F9': 'C',
+  '\u0501': 'd', '\u0500': 'D',
+  '\u0435': 'e', '\u0415': 'E', '\u0395': 'E',
+  '\u0456': 'i', '\u0406': 'I', '\u03B9': 'i', '\u0399': 'I', '\u0131': 'i', '\u04C0': 'I',
+  '\u04CF': 'l',
+  '\u0578': 'n', '\u039D': 'N',
+  '\u043E': 'o', '\u041E': 'O', '\u03BF': 'o', '\u039F': 'O', '\u0585': 'o',
+  '\u0455': 's', '\u0405': 'S',
+  '\u0442': 't', '\u0422': 'T', '\u03C4': 't', '\u03A4': 'T',
+  '\u03BD': 'v', '\u0475': 'v', '\u0474': 'V',
+  '\u0443': 'y', '\u0423': 'Y', '\u03B3': 'y', '\u03A5': 'Y',
+});
+const CONFUSABLE = new RegExp('[' + Object.keys(CONFUSABLE_TO_LATIN).join('') + ']', 'gu');
+const foldConfusables = (line) => line.replace(CONFUSABLE, (c) => CONFUSABLE_TO_LATIN[c]);
+function neutralizeHeader(line) {
+  const m = LOOKALIKE_HEADER.exec(line);
+  if (!m) return line;
+  // Spaces alone around the words: prose, not a header.
+  if (!SOME_MARK.test(m[1] + m[3] + m[5])) return line;
+  // Letters, one space and ASCII hyphens: a fixed point of this sweep.
+  return m[2].replace(NOTHING_RUN, '') + ' ' + m[4].replace(NOTHING_RUN, '') + ' - quoted';
+}
+function neutralizeLabel(line) {
   return line.replace(LOOKALIKE_LABEL, (all, words, tail, offset, whole) => {
     // Spaces and ASCII hyphens only: the words are not labelling anything.
     if (!HAS_MARK.test(tail)) return all;
@@ -252,19 +302,30 @@ function neutralizeLine(line) {
     return words.replace(NOTHING_RUN, '') + ' - quoted -' + tail.slice(afterLastMark).replace(NOTHING_RUN, '');
   });
 }
+/** One line, as written: the label rule, then the header rule (disjoint — a header line has no other solid text). */
+function neutralizeLine(line) {
+  return neutralizeHeader(neutralizeLabel(line));
+}
+/** One line in its three readings: as written, as NFKD folds it, as its cross-script letters print. */
+function neutralizeLineReadings(line) {
+  const direct = neutralizeLine(line);
+  const folded = direct.normalize('NFKD');
+  const foldedOut = folded === direct ? direct : neutralizeLine(folded);
+  const asWritten = foldedOut === folded ? direct : foldedOut.normalize('NFC');
+  const decomposed = asWritten.normalize('NFKD');
+  const latin = foldConfusables(decomposed);
+  if (latin === decomposed) return asWritten;
+  const latinOut = neutralizeLine(latin);
+  return latinOut === latin ? asWritten : latinOut.normalize('NFC');
+}
 /**
- * Sender text with every look-alike of the note line marked as quoted. The
- * server's own block (sensitivityNoteBlock) is appended AFTER this runs, so
- * the only `data_sensitivity_class:` line in a note is the server's.
+ * Sender text with every look-alike of the note line, and of its header,
+ * marked as quoted. The server's own block (sensitivityNoteBlock) is appended
+ * AFTER this runs, so the only `data_sensitivity_class:` line — and the only
+ * `— Record class —` line — in a note is the server's.
  */
 export function neutralizeClassLookalikes(text) {
   if (typeof text !== 'string') return '';
   if (!text) return text;
-  return text.split('\n').map((line) => {
-    const direct = neutralizeLine(line);
-    const folded = direct.normalize('NFKD');
-    if (folded === direct) return direct;
-    const foldedOut = neutralizeLine(folded);
-    return foldedOut === folded ? direct : foldedOut.normalize('NFC');
-  }).join('\n');
+  return text.split('\n').map(neutralizeLineReadings).join('\n');
 }
