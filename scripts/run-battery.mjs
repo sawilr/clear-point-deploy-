@@ -66,6 +66,11 @@ const SUITES = [
   // class, the classifier, the lead handler run against a laboratory CRM and
   // scorer, and the allow-list gate run against trees with a defect.
   'test-cy2027-benefit-self-report-2026-10-04.mjs',
+  // Data sensitivity class (spec §18, audit CRM-25): the taxonomy and the
+  // write-stage refusal called directly, the lead and opt-out handlers run
+  // against a laboratory CRM, and the enrichment gate observed withholding
+  // against copies of the layer with a defect.
+  'test-cy2027-sensitivity-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

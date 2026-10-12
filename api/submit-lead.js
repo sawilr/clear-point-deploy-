@@ -20,6 +20,11 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
 import { evaluateTrust, buildSecurityReviewTask } from './_lib/cy2027/trust.js';
 import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
+// AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS (spec §18). The class is
+// derived from what the free-text scrubbers below reported, written through the
+// canonical field builder, and consulted before the enrichment vendor call.
+import { buildCustomFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+import { classifyLeadRecord, enrichmentExposure, neutralizeClassLookalikes } from './_lib/cy2027/sensitivity.js';
 // AUDIT 2026-10-02 (CE-09 / CRM-15) — the callback consent becomes a consent
 // OBJECT with the scope its text states, and reaches the CRM as its own fields.
 import {
@@ -1008,6 +1013,24 @@ export default async function handler(req, res) {
     if (_phiCats.length > 0) {
       console.warn('[LEAD] PHI redacted before LLM/CRM: ' + Array.from(new Set(_phiCats)).join(','));
     }
+    // AUDIT 2026-10-04 (CRM-25) — classify the record from the scrubbers' OWN
+    // outputs, so the label cannot disagree with what they removed: a §14/§15
+    // topic redacted from the sender's free text, or a redacted identifier,
+    // makes it RESTRICTED_TOPIC_FLAGGED; otherwise CONTACT_PII. Never throws
+    // and never rejects — an unreadable input takes the higher class.
+    // The flags are the four FREE-TEXT redactors' — not _dmFlags, which also
+    // carries the structured Medicaid / Extra Help answer (_benefit.flags) and
+    // the workflow flags (TRUST_*, LICENSED_AGENT_REVIEW_REQUIRED): the answer
+    // has its own SELF_REPORTED storage and §15 is pinned as an equality
+    // between a lead that answered and one that did not (DM-04), so it must
+    // not move the class.
+    // Known limit: the PHI categories of the short structured fields scrubbed
+    // elsewhere (medicare_status, best time, interest, consent text, user
+    // agent) are discarded at their call sites and are not counted here.
+    var _sensitivity = classifyLeadRecord({
+      signalFlags: [].concat(_dmNotes.flags, _dmSummary.flags, _dmClientFlags.flags, _dmBestTime.flags),
+      phiCategories: _phiCats,
+    });
 
     // ── 3.6 — input hardening (Grupo B) ─────────────────────────────────────
     // Reuse the existing _cap() helper — do NOT duplicate the phone validation,
@@ -1610,8 +1633,19 @@ export default async function handler(req, res) {
     // Graceful: if the call fails (no key, network, timeout), `intel` is
     // null and we proceed with the raw notes only.
     var intel = null;
+    // AUDIT 2026-10-04 (CRM-25) — vendor exposure follows the class. The call
+    // below was unconditional: it relied on every scrub above having run, and
+    // nothing tied "may this record leave for the enrichment model" to what
+    // the record is. Both lead classes are allowed AFTER_MINIMIZATION, so
+    // behaviour today is unchanged; an unknown class, or one the policy table
+    // withholds, skips the call and the lead is filed without the summary
+    // (the same graceful path as a missing API key). Reason code only.
+    var _exposure = enrichmentExposure(_sensitivity.sensitivityClass);
+    if (!_exposure.allowed) {
+      console.warn('[DATA-CLASS] ' + JSON.stringify({ enrichment: 'withheld', reason: _exposure.reason }));
+    }
     try {
-      intel = await analyzeLeadIntelligence({
+      intel = !_exposure.allowed ? null : await analyzeLeadIntelligence({
         // AUDIT 2026-09-12 (FORMS-04, P2) — the enrichment model needs the STORY,
         // not the identity: strip name / phone / email / DOB before the call.
         leadNotes: scrubIdentityForIntel((lead_notes || conversation_summary || '').toString(), [first_name, last_name, phone, email], date_of_birth),
@@ -1668,6 +1702,20 @@ export default async function handler(req, res) {
     // lead_notes, so it gets the same treatment.
     lead_notes = neutralizeBenefitLookalikes(String(lead_notes || ''));
     conversation_summary = neutralizeBenefitLookalikes(String(conversation_summary || ''));
+    // AUDIT 2026-10-04 (CRM-25) — the record's class, as one server-authored
+    // block built from a closed vocabulary (no character of it comes from the
+    // request), so it is not lost while the field id is unmapped. AFTER the
+    // model's section — the scorer has already run, so it is never a scoring
+    // input (§15) — and BEFORE the self-report block, which stays the last
+    // block of the note. Every door a sender has into the note (their notes,
+    // the transcript, the call-time text, the model's summary of their story)
+    // is neutralised first, so the only line that reads as the class is the
+    // server's. On a repeat request the note is server text only and nothing
+    // of the sender's is stored on the existing contact (LEAD-02 / API-01), so
+    // that note is left exactly as it was.
+    lead_notes = neutralizeClassLookalikes(lead_notes);
+    conversation_summary = neutralizeClassLookalikes(conversation_summary);
+    lead_notes = (lead_notes ? lead_notes.trimEnd() + '\n\n' : '') + _sensitivity.noteBlock;
     if (_benefit.noteBlock) {
       lead_notes = (lead_notes ? lead_notes.trimEnd() + '\n\n' : '') + _benefit.noteBlock;
     }
@@ -1681,6 +1729,17 @@ export default async function handler(req, res) {
       submission_id = Array.from(new Uint8Array(_sidBuf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('').slice(0, 16);
       console.log('[LEAD] submission_id=' + submission_id);
     } catch (_e) { /* non-fatal — tracing only */ }
+
+    // AUDIT 2026-10-04 (CRM-25) — the class as a QUERYABLE field, through the
+    // canonical builder: it is sent only when the owner has mapped a real
+    // GoHighLevel id for it, and the gap is logged on every lead until then.
+    // With no id mapped the request body below is identical to before. The
+    // value is a plain scalar, so it carries the SYSTEM provenance the write
+    // stage demands for this field.
+    var _cyFields = buildCustomFields({ DATA_SENSITIVITY_CLASS: _sensitivity.sensitivityClass });
+    var _cyWarn = unmappedFieldsWarning(_cyFields.unmapped);
+    if (_cyWarn) console.warn(_cyWarn);
+    if (_cyFields.refused.length) console.warn('[CY2027-CRM] refused: ' + _cyFields.refused.join(','));
 
     var contact = {
       locationId, firstName: first_name, lastName: last_name || '',
@@ -1745,7 +1804,12 @@ export default async function handler(req, res) {
         // only entries with a REAL GoHighLevel id (buildCustomFields() refuses
         // anything that is not a SELF_REPORTED value of the closed vocabulary),
         // on the CREATE body only, so an existing contact gets none (LEAD-02).
-        .concat(_benefit.fields),
+        .concat(_benefit.fields)
+        // AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS, in the same shape
+        // and under the same rules as the two families above: a REAL id only,
+        // on the CREATE body only (LEAD-02), and part of the one retry without
+        // owner-configured entries below.
+        .concat(_cyFields.fields),
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
@@ -1865,7 +1929,10 @@ export default async function handler(req, res) {
     // may be about and part of what the one retry leaves out. Without this a
     // mistyped id for a benefit field would lose every lead that answered the
     // question. The self-report still reaches the note through its block.
-    var _ownerIdFields = _cbRec.fields.concat(_benefit.fields);
+    // AUDIT 2026-10-04 (CRM-25) — and the DATA_SENSITIVITY_CLASS entry, for the
+    // same reason: its id is owner-supplied, and a lead is never lost to a
+    // label. The class still reaches the note through its block.
+    var _ownerIdFields = _cbRec.fields.concat(_benefit.fields, _cyFields.fields);
     if (!ghlRes.ok && crmRefusalStep(ghlRes.status, _ownerIdFields.length) === 'RETRY_WITHOUT_FIELDS') {
       var _cbRefusedStatus = ghlRes.status;
       var _cbRetryRes = await ghlFetchRetry('https://services.leadconnectorhq.com/contacts/', {
@@ -1884,7 +1951,9 @@ export default async function handler(req, res) {
         // UNSURE always carry both). The self-report entries are named by one
         // label that is the same whichever was attached, and nothing is counted.
         var _ownerFieldLabels = _cbRec.fields.map(function (f) { return String(f.key); })
-          .concat(_benefit.fieldsLogLabel ? [_benefit.fieldsLogLabel] : []);
+          .concat(_benefit.fieldsLogLabel ? [_benefit.fieldsLogLabel] : [])
+          // CRM-25 — the key only; the class value is never logged.
+          .concat(_cyFields.fields.map(function (f) { return String(f.key); }));
         console.error('[CY2027-CRM] contact create refused (HTTP ' + _cbRefusedStatus + ') with owner-configured field(s) attached (' + _ownerFieldLabels.join(', ') + ') and accepted without them — the lead was kept and those fields were NOT written. Check CY2027_CRM_FIELD_IDS.');
         leadAudit('cy2027_fields_dropped', null, { upstream_status: _cbRefusedStatus });
       }

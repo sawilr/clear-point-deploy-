@@ -46,9 +46,19 @@ import {
   recordCallbackRevocation, callbackConsentStateOf, callbackRevocationNoteLine, crmRefusalStep,
   CALLBACK_REVOCATION_UNAVAILABLE, CALLBACK_REVOCATION_MODE,
 } from './_lib/cy2027/callback-consent.js';
+// AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS (spec §18). A revocation is
+// a consent record kept as evidence, so the contact that carries one is
+// classified as compliance evidence — the highest class. That keeps this
+// endpoint's asymmetry intact: a forged request can only make handling
+// stricter, never looser. The class is derived once, below, from the record
+// class; the I/O that writes it is in step 4.
+import { buildCustomFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+import { RECORD_CLASS } from './_lib/cy2027/retention.js';
+import { sensitivityForEvidenceRecord } from './_lib/cy2027/sensitivity.js';
 
 const GHL_BASE = 'https://services.leadconnectorhq.com';
 const GHL_VERSION = '2021-07-28';
+const REVOCATION_SENSITIVITY_CLASS = sensitivityForEvidenceRecord(RECORD_CLASS.CONSENT_RECORD);
 
 /** Digits-only U.S. 10-digit extraction. Returns '' when not a plausible NANP. */
 function tenDigits(raw) {
@@ -311,6 +321,8 @@ export default async function handler(req, res) {
       'Callback contact permission: REVOKED',
       callbackRevocationNoteLine(cbRevocation, cbOutcome),
       'Applied by: automated suppression endpoint (api/opt-out)',
+      // CRM-25 — in the note, so the class is on the record while the field has no id.
+      'data_sensitivity_class: ' + REVOCATION_SENSITIVITY_CLASS,
       'NOTE: this record must be retained as evidence of the revocation. Do not',
       'delete it, and do not clear DND without a NEW documented consent.',
     ].join('\n');
@@ -324,13 +336,38 @@ export default async function handler(req, res) {
       console.error('[OPTOUT] note failed: ' + String(e).slice(0, 120));
     }
 
+    // ── 4. Record class (AUDIT 2026-10-04, CRM-25) ───────────────────────────
+    // Deliberately a SEPARATE, best-effort request sent AFTER the suppression
+    // and the note, and only when the owner has mapped a real field id. The
+    // suppression body above is left byte-identical: a stale or mistyped id
+    // for a classification label must never be able to cost a revocation, or
+    // take the CALLBACK_CONSENT_* fields down with it through the retry
+    // policy. The class is in the audit note either way.
+    const cy = buildCustomFields({ DATA_SENSITIVITY_CLASS: REVOCATION_SENSITIVITY_CLASS });
+    const cyWarn = unmappedFieldsWarning(cy.unmapped);
+    if (cyWarn) console.warn(cyWarn);
+    if (cy.refused.length) console.warn('[CY2027-CRM] refused: ' + cy.refused.join(','));
+    let classOutcome = 'NOT_MAPPED';
+    if (cy.fields.length) {
+      try {
+        const cres = await fetch(`${GHL_BASE}/contacts/${encodeURIComponent(match.id)}`, {
+          method: 'PUT', headers: H, body: JSON.stringify({ customFields: cy.fields }),
+        });
+        classOutcome = cres.ok ? 'WRITTEN' : 'UPDATE_FAILED';
+        if (!cres.ok) console.error('[OPTOUT] record-class update failed status=' + cres.status + ' — the revocation note carries the class');
+      } catch (e) {
+        classOutcome = 'REQUEST_FAILED';
+        console.error('[OPTOUT] record-class update failed: ' + String(e).slice(0, 120));
+      }
+    }
+
     // PII-free telemetry — the outcome lives in the logs, NOT in the client
     // response (OPTOUT-01). Since 2026-09-12 the PUT above also clears the
     // consent_* custom fields (same ids as submit-lead.js) and drops the
     // 'Consent Captured' tag; DND remains the authoritative platform-level
     // suppression.
     console.warn('[OPTOUT] applied dnd=' + dndApplied + ' note=' + noteApplied + ' evidence=' + evidence
-      + ' callback_consent=' + cbRevocation.mode + '/' + cbOutcome);
+      + ' callback_consent=' + cbRevocation.mode + '/' + cbOutcome + ' record_class=' + classOutcome);
     return ack(res);
   } catch (e) {
     console.error('[OPTOUT] unexpected: ' + String(e).slice(0, 200));

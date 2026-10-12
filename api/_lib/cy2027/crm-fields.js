@@ -30,6 +30,7 @@
 
 import { languageWasElected } from './soa-instance.js';
 import { CONSENT_STATUS, isStatedConsentScope, isRecordableInstant } from './consent.js';
+import { DATA_SENSITIVITY_CLASS, isSensitivityClass } from './sensitivity.js';
 
 /**
  * The CY2027 additions from spec §18, with the CRM key each one should use.
@@ -336,6 +337,18 @@ export function buildCustomFields(values, env = process.env) {
     // falsy declared source to SYSTEM.)
     const source = isWrapped ? raw.source : 'SYSTEM';
     if (value === undefined || value === null || value === '') continue;
+    // AUDIT 2026-10-04 (CRM-25) — this field was being written with a RETENTION
+    // label ('SOA_EVIDENCE'), because nothing said what a sensitivity class is.
+    // It now takes only a value of the taxonomy in ./sensitivity.js, and only
+    // from the SYSTEM — an allow-list of one provenance, matched exactly, not a
+    // deny-list of 'AI_INFERRED': how a record is handled is decided by the
+    // system from what the scrubbers found, never guessed by a model, never
+    // declared by the beneficiary, never self-reported. Refused and named, so
+    // the caller logs it; never dropped quietly.
+    if (name === 'DATA_SENSITIVITY_CLASS' && (source !== 'SYSTEM' || !isSensitivityClass(value))) {
+      refused.push(name);
+      continue;
+    }
     if (CONFIRMED_ONLY_FIELDS.includes(name) && !CONFIRMING_PROVENANCE.includes(source)) {
       refused.push(name);
       continue;
@@ -448,6 +461,9 @@ export function soaInstanceToFields(instance, extra = {}) {
     CMS_RULESET_VERSION: instance.cmsRulesetVersion,
     RETENTION_CLASS: 'SOA_EVIDENCE',
     ...extra,
+    // AUDIT 2026-10-04 (CRM-25) — after `...extra` on purpose: a signed SOA is
+    // compliance evidence by construction, and no caller may lower that.
+    DATA_SENSITIVITY_CLASS: DATA_SENSITIVITY_CLASS.COMPLIANCE_EVIDENCE,
   };
 }
 

@@ -57,12 +57,18 @@ import { putEvidence } from './_lib/cy2027/evidence-store.js';
 import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
 import { sendCopy } from './_lib/cy2027/beneficiary-copy.js';
 import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
+import { sensitivityForEvidenceRecord } from './_lib/cy2027/sensitivity.js';
 
 // The signed SOA keeps the EVIDENCE retention class, not the signing-link TTL.
 // Six years in seconds; the authoritative copy lives in the evidence store and
 // this is the operational index entry beside it.
 const SIGNED_RECORD_CLASS = RECORD_CLASS.SOA_EVIDENCE;
 const SIGNED_RECORD_TTL_SEC = RETENTION_YEARS[RECORD_CLASS.SOA_EVIDENCE] * 365 * 24 * 60 * 60;
+// AUDIT 2026-10-04 (CRM-25) — how the record is HANDLED is a different question
+// from how long it is KEPT. This file used to write the retention label
+// ('SOA_EVIDENCE') into DATA_SENSITIVITY_CLASS. The class is now derived from
+// the record class in one place, so the two cannot be confused again.
+const SIGNED_SENSITIVITY_CLASS = sensitivityForEvidenceRecord(SIGNED_RECORD_CLASS);
 
 const AGENT_NAME = 'Sawil Reyes';
 const AGENT_NPN = '17261494';
@@ -416,6 +422,8 @@ export default async function handler(req, res) {
     evidenceUri: instance.evidenceReference,
     integrityHash: evidence.integrityHash,
     recordClass: SIGNED_RECORD_CLASS,
+    // CRM-25 — a label beside recordClass; like it, nothing reads it yet.
+    sensitivityClass: SIGNED_SENSITIVITY_CLASS,
   }, SIGNED_RECORD_TTL_SEC);
 
   // ── Compose GHL note ───────────────────────────────────────────────────
@@ -449,6 +457,8 @@ export default async function handler(req, res) {
     'soa_integrity_hash: ' + instance.integrityHash,
     'soa_evidence_uri: ' + instance.evidenceReference,
     'soa_evidence_retention_years: ' + stored.retentionYears,
+    // CRM-25 — in the note too, so the class is not lost while the field ID is unmapped.
+    'data_sensitivity_class: ' + SIGNED_SENSITIVITY_CLASS,
     'consent_no_obligation: true',
     'consent_esign_act: true',
     'tpmo_disclaimer_version: ' + TPMO_VERSION,
@@ -466,12 +476,16 @@ export default async function handler(req, res) {
   // explicit and the gap is LOGGED on every signature instead of being silent.
   // CRM-21 — the channel was proven before any prefill was released (sign-soa
   // refuses without link.factorVerifiedAt), so the proof is recorded, not assumed.
+  // AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS is no longer passed here:
+  // soaInstanceToFields() sets it by construction, and buildCustomFields()
+  // refuses anything outside the taxonomy. Refusals are names only, and logged
+  // (crm-fields.js says the caller logs them; this caller did not).
   var _cf = buildCustomFields(soaInstanceToFields(instance, {
     CHANNEL_VERIFICATION_STATUS: 'VERIFIED',
-    DATA_SENSITIVITY_CLASS: 'SOA_EVIDENCE',
   }));
   var _cfWarn = unmappedFieldsWarning(_cf.unmapped);
   if (_cfWarn) console.warn(_cfWarn);
+  if (_cf.refused.length) console.warn('[CY2027-CRM] refused: ' + _cf.refused.join(','));
 
   // ── Confirmation copy to the beneficiary (spec §9 / EV-07) ─────────────
   // Disabled until the owner configures a channel AND a recorded contact

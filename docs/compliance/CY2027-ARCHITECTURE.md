@@ -39,6 +39,7 @@ api/_lib/cy2027/
   carrier-overlay.js private carrier registry (licensed workspace only)         [shared]
   tpmo.js            canonical (e)(41) disclaimer + counts config               [shared]
   evidence.js        integrity hash, text snapshot, audit log            [SERVER ONLY]
+  sensitivity.js     data sensitivity class + handling by class         [SERVER ONLY]
 ```
 
 ---
@@ -384,6 +385,36 @@ transcript for years 4–6. `ENROLLMENT_RECORD` is deliberately `null` —
 whose period is unconfirmed. Every uncertainty (unknown class, unparseable date, active
 hold) resolves to **keep**.
 
+### 2.6 Data sensitivity class (CRM-25)
+
+§18 names the field `DATA_SENSITIVITY_CLASS` and defines no values. The three below are
+an implementation decision (`api/_lib/cy2027/sensitivity.js`), pending owner/counsel
+confirmation of the names. It answers *how a record is handled*; `RETENTION_CLASS`
+answers *how long it is kept*. They are separate fields with separate vocabularies, and
+`buildCustomFields()` refuses a retention label — or any value not of the SYSTEM's own
+making — in the sensitivity field.
+
+| Class | Assigned to | Enrichment vendor | Values in logs |
+|---|---|---|---|
+| `CONTACT_PII` | a web/chat lead where the free-text scrubbers removed nothing | only after minimization | never |
+| `RESTRICTED_TOPIC_FLAGGED` | a lead where a §14/§15 topic was redacted from free text, or an identifier (SSN, MBI, card…) was removed | only after minimization | never |
+| `COMPLIANCE_EVIDENCE` | a signed SOA; a consent revocation | never | never |
+
+"After minimization" means the four controls already in the lead path: PHI scrub,
+prohibited-signal redaction, identity scrub, coarse metadata (ZIP3, age band).
+`api/submit-lead.js` asks `enrichmentExposure()` before the vendor call; an unknown
+class, or one the table withholds, skips the call and the lead is still filed. Every path
+that stores a record (new lead, signed SOA, revocation) writes the class to the contact
+note, and to the CRM field once its GoHighLevel id is mapped (on the lead create it rides
+the same one-time retry-without-owner-fields as the other CY2027 entries; on a revocation
+it is a separate best-effort request after the suppression, so a field id can never cost
+one). On a repeat submission that matches an existing contact nothing is classified,
+because nothing of the sender's is stored there. The structured Medicaid / Extra Help
+answer (audit DM-04; see §6) is deliberately **not** an input to the class: it has its own
+`SELF_REPORTED` storage, leaves no residue in free text, and §15 is pinned as a byte-level
+equality between a lead that answered and one that did not. The log column is a
+declaration pinned by the test suite, not a runtime filter.
+
 ---
 
 ## 3. Jurisdiction
@@ -505,6 +536,7 @@ Stated plainly rather than implied:
 | CY2028 ruleset | **NOT STARTED — by design.** `CMS_RULESET_2028` is a `PENDING_REVIEW` placeholder with no rule values. `npm run preflight` counts down to 1 October 2027 and blocks inside 120 days. |
 | Voice agents' learning loop (§23) | **OWNER PROCESS.** Emely's and Sofía's prompts live in GoHighLevel, outside this repository and outside its build gate. Keeping any auto-learning setting off and changing a voice prompt only through the reviewed pipeline is the owner's procedure; nothing in code verifies it. See §2.2b. |
 | Candidate-learning store and review queue | **NOT BUILT.** A candidate is one `[CANDIDATE-LEARNING]` log line; there is no database of candidates and no review screen. A person collects them from the function logs. Only `api/chat.js` emits one (when the compliance filter corrects a reply); the voice agents and the forms emit none. |
+| Sensitivity class names (`contact.data_sensitivity_class`) | **OWNER/COUNSEL CONFIRMATION (CRM-25, 2026-10-04).** §18 names the field, not its values; `CONTACT_PII` / `RESTRICTED_TOPIC_FLAGGED` / `COMPLIANCE_EVIDENCE` are this implementation's (§2.6). Whether flagged leads should be withheld from the enrichment vendor altogether is an owner decision (one row in `SENSITIVITY_HANDLING`; today both lead classes get the same service path, §15). The field must exist in GoHighLevel and be mapped in `CY2027_CRM_FIELD_IDS` before it is queryable — its own new field, never an existing id; until then every new lead and every matched opt-out logs the gap, and the class lives in the contact note. No contact already in the CRM is back-filled. How GoHighLevel answers a stale id on the live create could not be verified here: submit one test lead on a preview deployment after mapping the id. |
 | Production deploy | Not done. Requires owner GO. |
 
 ---

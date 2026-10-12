@@ -2891,7 +2891,18 @@ consentScope: {
         ok('CRM-15 (lead handler): they carry real ids, never names', cbFields(c).map((f) => f.id).sort().join() === 'cbA,cbS,cbX');
         ok('CE-09 (lead handler): the receipt and CALLBACK_CONSENT_AT are one instant, on a clock that never repeats',
           r.notes.some((n) => n.includes('at=' + at + ' ')), at + ' vs ' + ((r.notes.join('|').match(/at=\S+/) || [''])[0]));
-        ok('CRM-15 (lead handler): nothing is left to warn about', !r.logs.some((l) => /\[CY2027-CRM\]|\[CALLBACK-CONSENT\]/.test(l)));
+        // AUDIT 2026-10-04 (CRM-25) — under IDS one CY2027 field is unmapped on
+        // purpose (DATA_SENSITIVITY_CLASS), and its gap is logged on every lead,
+        // as the callback fields' gap is today in production. So the CY2027 lines
+        // are an ALLOW-LIST of exactly that one gap line: anything else — and
+        // anything about the callback consent — is still something to warn about.
+        ok('CRM-15 (lead handler): nothing is left to warn about',
+          !r.logs.some((l) => /\[CALLBACK-CONSENT\]/.test(l)) &&
+          r.logs.filter((l) => /\[CY2027-CRM\]/.test(l)).join('|') ===
+            '[warn] [CY2027-CRM] 1 field(s) could not be written because no GoHighLevel field ID is configured for them: DATA_SENSITIVITY_CLASS. ' +
+            'Create them in the sub-account (keys: contact.data_sensitivity_class) and set CY2027_CRM_FIELD_IDS. ' +
+            'The full record is in the contact note meanwhile, but it is not queryable there.',
+          r.logs.filter((l) => /\[CY2027-CRM\]|\[CALLBACK-CONSENT\]/.test(l)).join('|'));
         ok('CE-09 (lead handler): the new-contact path writes with the create, never with a PUT', r.puts.length === 0);
 
         const es = await run(submitLead, lead({ consent_text: SHOWN.es, consent_receipt_hash: sha(SHOWN.es), preferred_language: 'es' }), route());
