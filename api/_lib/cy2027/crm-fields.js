@@ -652,6 +652,14 @@ export function normalizeFieldName(nameOrKey) {
     .split(/[^a-z0-9]+/)
     .filter(Boolean)
     .map((t) => (t.length > 3 && /ies$/.test(t) ? t.slice(0, -3) + 'y' : t))
+    // AUDIT 2026-10-04 (CRM-29, red team) — the -s rule below exempts tokens
+    // ending in ss/us/is so `status` stays `status`; but `statuses` ends in `s`,
+    // not `us`, and became `statuse`: a hand-made `soa_statuses` was neither
+    // reused nor blocked beside fourteen registered `*_status` keys. An -es
+    // plural of such a token folds to the token; and a token ending in sse/use/
+    // ise drops its mute e so `spouse` meets `spouses` after the same rule.
+    .map((t) => (t.length > 4 && /(ss|us|is)es$/.test(t) ? t.slice(0, -2) : t))
+    .map((t) => (t.length > 4 && /(ss|us|is)e$/.test(t) ? t.slice(0, -1) : t))
     .map((t) => (t.length > 3 && /s$/.test(t) && !/(ss|us|is)$/.test(t) ? t.slice(0, -1) : t))
     .join('');
 }
@@ -729,7 +737,11 @@ export function registryProblems(tables) {
     if (f.table === 'EXISTING') {
       // An id is opaque: no dots, underscores or dashes. 'soa_pdf_hash' passed
       // where an id belongs is exactly the CRM-27 defect.
-      if (typeof f.id !== 'string' || !/^[A-Za-z0-9]+$/.test(f.id)) problems.push(P.MALFORMED_ID + ':' + label);
+      // AUDIT 2026-10-04 (CRM-29, red team) — and it is exactly twenty characters,
+      // the shape every production id has (pinned in the sibling suite). Any
+      // alphanumeric string passed here, so a registry id missing its last
+      // character reached the provisioning script's guard as well-formed.
+      if (typeof f.id !== 'string' || !/^[A-Za-z0-9]{20}$/.test(f.id)) problems.push(P.MALFORMED_ID + ':' + label);
       else if (seenId.has(f.id)) problems.push(P.DUPLICATE_ID + ':' + label + '=' + seenId.get(f.id));
       else seenId.set(f.id, label);
     }
@@ -752,26 +764,88 @@ export function registryProblems(tables) {
 }
 
 /**
+ * AUDIT 2026-10-04 (CRM-29, red team) — NAMED reasons the search §18 asks for
+ * cannot be performed on what the sub-account answered. The script used to
+ * coalesce any unexpected listing to "no fields" and create all thirty-six —
+ * beside a hand-made near-duplicate it had not seen — while printing, and
+ * ignoring, the twelve "NOT_IN_ACCOUNT" lines that said it was blind.
+ *   LISTING_UNPARSED        — the response is not a shape this code reads.
+ *   LISTING_EMPTY           — the account reports no custom field at all.
+ *   LISTING_UNREADABLE      — an entry has no string id or no string key: a
+ *                             field that exists but cannot be matched.
+ *   REGISTRY_NOT_IN_ACCOUNT — a field this code writes today (EXISTING_CRM_FIELDS)
+ *                             is absent from the listing. The listing is not
+ *                             the account the writers talk to, or it is partial.
+ */
+export const PROVISIONING_REFUSAL = Object.freeze({
+  LISTING_UNPARSED: 'LISTING_UNPARSED',
+  LISTING_EMPTY: 'LISTING_EMPTY',
+  LISTING_UNREADABLE: 'LISTING_UNREADABLE',
+  REGISTRY_NOT_IN_ACCOUNT: 'REGISTRY_NOT_IN_ACCOUNT',
+});
+
+/**
+ * The GoHighLevel custom-field listing, read into `{ id, key }` entries WITHOUT
+ * coercion — a non-string id or key reaches planProvisioning() as what it is
+ * and is judged there. The two shapes this code has always accepted are
+ * `{ customFields: [...] }` and `{ customField: [...] }`; anything else is a
+ * named refusal, never an empty account (that is the fail-open the red team
+ * measured: `{}` → 36 fields created).
+ *
+ * @returns {{ fields: Array<{ id: unknown, key: unknown }> | null, refusal: null | { reason: string, detail: string[] } }}
+ */
+export function readAccountListing(json) {
+  const j = json !== null && typeof json === 'object' && !Array.isArray(json) ? json : null;
+  const arr = j && Array.isArray(j.customFields) ? j.customFields : j && Array.isArray(j.customField) ? j.customField : null;
+  if (!arr) {
+    const seen = j ? 'top-level keys: ' + (Object.keys(j).join(', ') || '(none)') : 'not an object: ' + (Array.isArray(json) ? 'array' : typeof json);
+    return { fields: null, refusal: { reason: PROVISIONING_REFUSAL.LISTING_UNPARSED, detail: ['expected { customFields: [...] } — ' + seen] } };
+  }
+  return {
+    fields: arr.map((f) => ({ id: f && f.id, key: f && (f.fieldKey || f.key) })),
+    refusal: null,
+  };
+}
+
+/** A listing entry as it is printed in a refusal: its own values, never trusted as text. */
+function describeEntry(f) {
+  const show = (v) => (typeof v === 'string' ? JSON.stringify(v.slice(0, 60)) : v === undefined ? 'undefined' : Array.isArray(v) ? 'array' : typeof v);
+  return 'id=' + show(f.id) + ' key=' + show(f.key);
+}
+
+/**
  * Decide, for each CY2027 field, whether to REUSE, CREATE or REFUSE — from the
  * list of custom fields that exist in the sub-account right now. Pure: the
  * caller does the network I/O (scripts/cy2027-provision-crm-fields.mjs).
  *
  * @param {Array<{ id: string, key: string }>} liveFields every field in the account
- * @returns {{ reuse: Record<string,string>, create: string[], blocked: Array, drift: Array }}
- *   reuse   — name -> id; the exact key already exists.
- *   create  — nothing with that name exists, exactly or slightly differently.
- *   blocked — a field with a SLIGHTLY DIFFERENT key exists, in the account or in
- *             EXISTING_CRM_FIELDS. Never created: that is the duplicate §18
- *             forbids. A person decides whether to reuse it or rename the new one.
- *   drift   — an EXISTING_CRM_FIELDS entry the account does not confirm (id
- *             and/or key differ, or it is absent). Reported, never "fixed" here.
+ * @returns {{ reuse: Record<string,string>, create: string[], withheld: string[], blocked: Array, drift: Array, unreadable: Array, refusal: null | { reason: string, detail: string[] } }}
+ *   reuse      — name -> id; the exact key already exists.
+ *   create     — nothing with that name exists, exactly or slightly differently.
+ *                EMPTY whenever `refusal` is set: a listing this code cannot
+ *                search is not a listing to create from, and a caller that
+ *                forgets to look at `refusal` still creates nothing.
+ *   withheld   — what `create` would have held, when `refusal` is set.
+ *   blocked    — a field with a SLIGHTLY DIFFERENT key exists, in the account or in
+ *                EXISTING_CRM_FIELDS. Never created: that is the duplicate §18
+ *                forbids. A person decides whether to reuse it or rename the new one.
+ *   drift      — an EXISTING_CRM_FIELDS entry the account does not confirm (id
+ *                and/or key differ, or it is absent). Reported, never "fixed" here.
+ *   unreadable — listing entries without a string id or key, as described.
+ *   refusal    — PROVISIONING_REFUSAL and detail, or null when the listing is
+ *                one that was searched. An ID_MISMATCH / KEY_MISMATCH drift alone
+ *                does not refuse: the account is visible, the registry is wrong.
  */
 export function planProvisioning(liveFields, tables) {
   const { existing, cy2027 } = registryTables(tables);
   const bare = (k) => String(k == null ? '' : k).replace(/^contact\./i, '');
-  const live = (Array.isArray(liveFields) ? liveFields : [])
-    .map((f) => ({ id: f && f.id, key: bare(f && f.key) }))
-    .filter((f) => f.key && typeof f.id === 'string' && f.id);
+  // AUDIT 2026-10-04 (CRM-29, red team) — an entry without a string id or key
+  // was silently dropped here, so a live near-duplicate whose id the listing
+  // did not carry landed in `create`. It is counted and named instead.
+  const seen = (Array.isArray(liveFields) ? liveFields : []).map((f) => ({ id: f && f.id, key: f && f.key }));
+  const readable = (f) => typeof f.key === 'string' && bare(f.key) !== '' && typeof f.id === 'string' && f.id !== '';
+  const unreadable = seen.filter((f) => !readable(f)).map((f) => ({ id: f.id, key: f.key, described: describeEntry(f) }));
+  const live = seen.filter(readable).map((f) => ({ id: f.id, key: bare(f.key) }));
   const byKey = new Map(live.map((f) => [f.key, f.id]));
   const byId = new Map(live.map((f) => [f.id, f.key]));
 
@@ -801,5 +875,14 @@ export function planProvisioning(liveFields, tables) {
     else if (byId.has(f.id)) drift.push({ name, key: f.key, registryId: f.id, accountId: f.id, accountKey: 'contact.' + byId.get(f.id), reason: 'KEY_MISMATCH' });
     else drift.push({ name, key: f.key, registryId: f.id, accountId: null, accountKey: null, reason: 'NOT_IN_ACCOUNT' });
   }
-  return { reuse, create, blocked, drift };
+
+  const absent = drift.filter((d) => d.reason === 'NOT_IN_ACCOUNT').map((d) => d.name);
+  const R = PROVISIONING_REFUSAL;
+  const refusal = unreadable.length ? { reason: R.LISTING_UNREADABLE, detail: unreadable.map((u) => u.described) }
+    : live.length === 0 ? { reason: R.LISTING_EMPTY, detail: ['the account reports no custom field; the registry says ' + Object.keys(existing).length + ' exist'] }
+      : absent.length ? { reason: R.REGISTRY_NOT_IN_ACCOUNT, detail: absent }
+        : null;
+  return refusal
+    ? { reuse, create: [], withheld: create, blocked, drift, unreadable, refusal }
+    : { reuse, create, withheld: [], blocked, drift, unreadable, refusal };
 }

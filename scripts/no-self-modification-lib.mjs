@@ -352,6 +352,15 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // only in a test suite the artifact does not ship: KNOWLEDGE_RELEASES.push(…)
   // from a new api/_lib module and an unfrozen ledger both passed this gate ("19/19").
   'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE',
+  // AUDIT 2026-10-04 (CRM-29, red team) — the CRM field registry decides which
+  // GoHighLevel id every consent write and every revocation goes to, which
+  // configured id is refused, which field may only hold a confirmed value and
+  // which may only hold a self-report, and what a provisioning run may create.
+  // None of it was registered here: a registry entry, the legacy list and the
+  // problem vocabulary left unfrozen all passed this gate ("23/23").
+  'CY2027_FIELD_KEYS', 'EXISTING_CRM_FIELDS', 'LEGACY_SOA_NAME_FIELDS', 'PRODUCTION_FIELD_IDS', 'FIELD_ID_REFUSAL',
+  'CONFIRMED_ONLY_FIELDS', 'PROVENANCE', 'SELF_REPORTED_ONLY_FIELDS', 'SELF_REPORT_VALUE', 'CONFIRMING_PROVENANCE',
+  'REGISTRY_PROBLEM', 'PROVISIONING_REFUSAL',
 ]);
 
 const MUTATING_METHODS = Object.freeze(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear']);
@@ -525,7 +534,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -535,6 +544,7 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/learning.js'),
     load('api/_lib/cy2027/data-quality.js'),
     load('api/_lib/medicare-knowledge.js'),
+    load('api/_lib/cy2027/crm-fields.js'),
   ]);
   // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
   // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
@@ -566,6 +576,19 @@ async function governingObjects(root) {
     KNOWLEDGE_STATUS: knowledge.KNOWLEDGE_STATUS,
     MEDICARE_KNOWLEDGE_RELEASE: knowledge.MEDICARE_KNOWLEDGE_RELEASE,
     KB_PROVENANCE: typeof knowledge.knowledgeProvenance === 'function' ? knowledge.knowledgeProvenance(bodyDigest) : undefined,
+    // AUDIT 2026-10-04 (CRM-29, red team) — see GOVERNING_IDENTIFIERS.
+    CY2027_FIELD_KEYS: crm.CY2027_FIELD_KEYS,
+    EXISTING_CRM_FIELDS: crm.EXISTING_CRM_FIELDS,
+    LEGACY_SOA_NAME_FIELDS: crm.LEGACY_SOA_NAME_FIELDS,
+    PRODUCTION_FIELD_IDS: crm.PRODUCTION_FIELD_IDS,
+    FIELD_ID_REFUSAL: crm.FIELD_ID_REFUSAL,
+    CONFIRMED_ONLY_FIELDS: crm.CONFIRMED_ONLY_FIELDS,
+    PROVENANCE: crm.PROVENANCE,
+    SELF_REPORTED_ONLY_FIELDS: crm.SELF_REPORTED_ONLY_FIELDS,
+    SELF_REPORT_VALUE: crm.SELF_REPORT_VALUE,
+    CONFIRMING_PROVENANCE: crm.CONFIRMING_PROVENANCE,
+    REGISTRY_PROBLEM: crm.REGISTRY_PROBLEM,
+    PROVISIONING_REFUSAL: crm.PROVISIONING_REFUSAL,
   };
 }
 

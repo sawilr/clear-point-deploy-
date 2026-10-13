@@ -146,16 +146,29 @@ const GAP_BOTH = '[CY2027-CRM] 2 field(s) could not be written because no GoHigh
     Object.isFrozen(PRODUCTION_FIELD_IDS) && PRODUCTION_FIELD_IDS.length === 12 && new Set(PRODUCTION_FIELD_IDS).size === 12 &&
     PRODUCTION_FIELD_IDS.includes(MEDICARE_STATUS_ID) && PRODUCTION_FIELD_IDS.every((id) => typeof id === 'string' && /^[A-Za-z0-9]{20}$/.test(id)) &&
     Object.isFrozen(FIELD_ID_REFUSAL) && FIELD_ID_REFUSAL.IN_USE !== FIELD_ID_REFUSAL.SHARED);
-  // Drift: every `{ id: '…', key: 'contact.…' }` entry any handler writes is a reserved id, and nothing else is.
+  // AUDIT 2026-10-04 (CRM-29, red team) — this compared PRODUCTION_FIELD_IDS with
+  // the `{ id, key }` entries found under api/**, which since CRM-29 are the
+  // registry's own twelve lines: the list compared with itself, and a mistyped
+  // registry id passed. The behaviour it was written for is pinned where it is
+  // observable — the ids the handler WRITES, collected in the laboratory below
+  // ('id config (run): …') and on the wire in scripts/test-optout-lead02-authz-
+  // 2026-08-18.mjs (O7, L10, L12); the registry against an independent table in
+  // scripts/test-cy2027-2026-10-01.mjs §26. What a source walk can still say is
+  // that NO handler spells an existing field's id itself.
   const apiFiles = (dir) => readdirSync(dir, { withFileTypes: true })
     .flatMap((e) => (e.isDirectory() ? apiFiles(join(dir, e.name)) : (/\.js$/.test(e.name) ? [join(dir, e.name)] : [])));
   const API_DIR = fileURLToPath(new URL('../api', import.meta.url));
-  const idsInCode = new Set();
+  const REGISTRY = join(API_DIR, '_lib', 'cy2027', 'crm-fields.js');
+  const INLINE_ENTRY = /\bid:\s*['"]([A-Za-z0-9]{16,24})['"],\s*key:\s*['"]contact\.[a-z_]+['"]/g;
+  const inlineEntries = [];
   for (const file of apiFiles(API_DIR)) {
-    for (const m of stripComments(readFileSync(file, 'utf8')).matchAll(/\bid:\s*'([A-Za-z0-9]{16,24})',\s*key:\s*'contact\.[a-z_]+'/g)) idsInCode.add(m[1]);
+    if (file === REGISTRY) continue;
+    for (const m of stripComments(readFileSync(file, 'utf8')).matchAll(INLINE_ENTRY)) inlineEntries.push(file.slice(API_DIR.length) + ':' + m[1]);
   }
-  ok('id config: the reserved list is exactly the ids the handlers write (a new production field must be added to it)',
-    idsInCode.size === 12 && [...idsInCode].sort().join() === PRODUCTION_FIELD_IDS.slice().sort().join(), [...idsInCode].sort().join());
+  ok('id config: no handler spells an existing field\'s id itself — the registry is the only place one is written (CRM-29)',
+    inlineEntries.length === 0, inlineEntries.join());
+  ok('id config: the walk that found nothing did look — the same pattern finds the twelve registry entries',
+    [...stripComments(readFileSync(REGISTRY, 'utf8')).matchAll(INLINE_ENTRY)].length === 12);
   for (const id of PRODUCTION_FIELD_IDS) {
     const c = cfg({ SELF_REPORTED_LIS_STATUS: id, SELF_REPORTED_MEDICAID_STATUS: ' ' + id + ' ', SOA_STATE: 's1' });
     ok(`id config: the id of a field already in use (${id}) is refused for every name it was given to, by name`,

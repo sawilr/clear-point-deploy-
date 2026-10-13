@@ -58,6 +58,7 @@ import {
   CY2027_FIELD_KEYS, CONFIRMED_ONLY_FIELDS, callbackRevocationToFields,
   EXISTING_CRM_FIELDS, PRODUCTION_FIELD_IDS, existingField, LEGACY_SOA_NAME_FIELDS, legacySoaNameFields,
   normalizeFieldName, registeredFields, findEquivalentFields, registryProblems, planProvisioning, REGISTRY_PROBLEM,
+  PROVISIONING_REFUSAL, readAccountListing,
 } from '../api/_lib/cy2027/crm-fields.js';
 import {
   recordWebCallbackConsent, CALLBACK_CONSENT_UNAVAILABLE, CALLBACK_CONSENT_NOT_RECORDED_FLAG,
@@ -73,7 +74,7 @@ import {
   sendingEnabled, maySendCopy, buildCopyMessage, assertNotMarketing,
 } from '../api/_lib/cy2027/beneficiary-copy.js';
 import { parseCountyCsv, resolveSigningRulesets } from '../api/_lib/cy2027/state-rules.js';
-import { stripComments } from './no-self-modification-lib.mjs';
+import { stripComments, GOVERNING_IDENTIFIERS, runGate } from './no-self-modification-lib.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -3471,6 +3472,10 @@ consentScope: {
   ok('CRM-29: the registry is internally consistent', registryProblems().length === 0, registryProblems().join(', '));
   ok('CRM-29: the problem vocabulary is closed and frozen',
     Object.isFrozen(REGISTRY_PROBLEM) && Object.keys(REGISTRY_PROBLEM).length === 7 && Object.entries(REGISTRY_PROBLEM).every(([k, v]) => k === v));
+  // AUDIT 2026-10-04 (CRM-29, red team) — the reasons a listing is not searched.
+  ok('CRM-29 (red team): the provisioning refusal vocabulary is closed and frozen',
+    Object.isFrozen(PROVISIONING_REFUSAL) && Object.keys(PROVISIONING_REFUSAL).length === 4 && Object.entries(PROVISIONING_REFUSAL).every(([k, v]) => k === v) &&
+    ['LISTING_UNPARSED', 'LISTING_EMPTY', 'LISTING_UNREADABLE', 'REGISTRY_NOT_IN_ACCOUNT'].every((k) => Object.prototype.hasOwnProperty.call(PROVISIONING_REFUSAL, k)));
 
   // The consistency check is observed FAILING on a defective registry, by name.
   const E = EXISTING_CRM_FIELDS;
@@ -3479,6 +3484,13 @@ consentScope: {
   ok('CRM-29: a name passed where an id belongs is MALFORMED_ID',
     bad({ ...E, X: { id: 'soa_pdf_hash', key: 'contact.x' } }, C).includes('MALFORMED_ID:EXISTING.X') &&
     bad({ ...E, X: { id: 7, key: 'contact.x' } }, C).includes('MALFORMED_ID:EXISTING.X'));
+  // AUDIT 2026-10-04 (CRM-29, red team) — any alphanumeric string passed as an id,
+  // so a registry id missing its last character reached the provisioning guard well-formed.
+  ok('CRM-29 (red team): an id that is not exactly twenty characters is MALFORMED_ID',
+    bad({ ...E, CONSENT_SMS: { id: E.CONSENT_SMS.id.slice(0, 19), key: E.CONSENT_SMS.key } }, C).includes('MALFORMED_ID:EXISTING.CONSENT_SMS') &&
+    bad({ ...E, CONSENT_SMS: { id: E.CONSENT_SMS.id + 'x', key: E.CONSENT_SMS.key } }, C).includes('MALFORMED_ID:EXISTING.CONSENT_SMS') &&
+    bad({ ...E, X: { id: 'true', key: 'contact.x' } }, C).includes('MALFORMED_ID:EXISTING.X') &&
+    !bad({ ...E, X: { id: 'A'.repeat(20), key: 'contact.x' } }, C).some((p) => p.startsWith('MALFORMED_ID')));
   ok('CRM-29: two fields with one id is DUPLICATE_ID',
     bad({ ...E, X: { id: E.CONSENT_SMS.id, key: 'contact.x' } }, C).includes('DUPLICATE_ID:EXISTING.X=EXISTING.CONSENT_SMS'));
   ok('CRM-29: two fields with one key is DUPLICATE_KEY',
@@ -3531,6 +3543,25 @@ consentScope: {
     normalizeFieldName('contact.soa_language') !== normalizeFieldName('contact.preferred_language') &&
     normalizeFieldName('contact.consent_calls') !== normalizeFieldName('contact.callback_consent_status') &&
     normalizeFieldName('contact.soa_status') !== normalizeFieldName('contact.soa_state'));
+  // AUDIT 2026-10-04 (CRM-29, red team) — `statuses` folded to `statuse`, so a
+  // hand-made `soa_statuses` was neither reused nor blocked beside `soa_status`.
+  ok('CRM-29 (red team): an -es plural of a token ending in ss/us/is folds to the token',
+    normalizeFieldName('contact.soa_statuses') === normalizeFieldName('contact.soa_status') &&
+    normalizeFieldName('medicare_statuses') === normalizeFieldName('contact.medicare_status') &&
+    normalizeFieldName('addresses') === normalizeFieldName('address') &&
+    normalizeFieldName('bonuses') === normalizeFieldName('bonus') &&
+    normalizeFieldName('spouses') === normalizeFieldName('spouse') &&
+    normalizeFieldName('uses') === normalizeFieldName('use'));
+  ok('CRM-29 (red team): the plural rule folds no distinct concept',
+    normalizeFieldName('soa_statuses') !== normalizeFieldName('soa_state') &&
+    normalizeFieldName('status') !== normalizeFieldName('statute') &&
+    normalizeFieldName('use') !== normalizeFieldName('us') &&
+    normalizeFieldName('medicare_status') !== normalizeFieldName('medicare_interest') &&
+    registryProblems().length === 0);
+  ok('CRM-29 (red team): a hand-made plural of a registered key is found as its near-duplicate',
+    findEquivalentFields('contact.medicare_statuses').some((f) => f.table === 'EXISTING' && f.name === 'MEDICARE_STATUS') &&
+    findEquivalentFields('soa_statuses').some((f) => f.table === 'CY2027' && f.name === 'SOA_STATUS') &&
+    bad(E, { ...C, SOA_STATUSES: 'contact.soa_statuses' }).includes('NEAR_DUPLICATE_NAME:CY2027.SOA_STATUSES~CY2027.SOA_STATUS'));
   ok('CRM-29: every registered field is listed once', registeredFields().length === Object.keys(E).length + Object.keys(C).length &&
     new Set(registeredFields().map((f) => f.table + '.' + f.name)).size === registeredFields().length);
   ok('CRM-29: the registry stays server-side — the client barrel does not re-export it',
@@ -3584,6 +3615,67 @@ consentScope: {
     plan2.drift.some((d) => d.name === 'PREFERRED_LANGUAGE' && d.reason === 'NOT_IN_ACCOUNT') && plan2.drift.length === GOLDEN.length);
   ok('CRM-29: a malformed account listing never throws', planProvisioning(null).drift.length === GOLDEN.length &&
     planProvisioning([null, {}, { id: 7, key: 'x' }, { id: 'a', key: '' }]).drift.length === GOLDEN.length);
+
+  // AUDIT 2026-10-04 (CRM-29, red team) — measured before the fix: `{}`, an empty
+  // listing and a listing in an unread shape each produced 36 creates beside the
+  // twelve NOT_IN_ACCOUNT lines that said the search was blind; a live
+  // near-duplicate without an id was dropped and then created beside itself.
+  // The decision is a pure function, called here with each defective listing.
+  const R = PROVISIONING_REFUSAL;
+  const oneBucketEach = (p) => p.create.length + p.withheld.length + p.blocked.length + Object.keys(p.reuse).length === total;
+  ok('CRM-29 (red team): a listing that was searched carries no refusal and withholds nothing',
+    plan0.refusal === null && plan0.withheld.length === 0 && plan0.unreadable.length === 0 && plan1.refusal === null && plan1.withheld.length === 0);
+  ok('CRM-29 (red team): a plural near-duplicate in the account BLOCKS the registered key, like any other',
+    planProvisioning([...liveNow, { id: 'pluralField000000001', key: 'contact.soa_statuses' }]).blocked
+      .some((b) => b.name === 'SOA_STATUS' && b.near.some((n) => n.key === 'contact.soa_statuses' && n.where === 'ACCOUNT')));
+  const empty = planProvisioning([]);
+  ok('CRM-29 (red team): an EMPTY listing is refused by name — nothing in `create`, every field withheld',
+    empty.refusal !== null && empty.refusal.reason === R.LISTING_EMPTY && empty.create.length === 0 && empty.withheld.length === total &&
+    empty.drift.length === GOLDEN.length && oneBucketEach(empty), JSON.stringify(empty.refusal));
+  const noId = planProvisioning([...liveNow, { key: 'contact.soa_planyear' }]);
+  ok('CRM-29 (red team): a live entry WITHOUT an id is named, not dropped — and nothing is created beside it',
+    noId.refusal !== null && noId.refusal.reason === R.LISTING_UNREADABLE && noId.create.length === 0 &&
+    noId.unreadable.length === 1 && noId.unreadable[0].key === 'contact.soa_planyear' && /id=undefined key="contact\.soa_planyear"/.test(noId.refusal.detail[0]) &&
+    oneBucketEach(noId), JSON.stringify(noId.refusal));
+  const numId = planProvisioning([...liveNow, { id: 12345, key: 'contact.soa_planyear' }]);
+  ok('CRM-29 (red team): a live entry with a NUMERIC id is unreadable, by name',
+    numId.refusal !== null && numId.refusal.reason === R.LISTING_UNREADABLE && numId.create.length === 0 && /id=number/.test(numId.refusal.detail[0]));
+  const objKey = planProvisioning([...liveNow, { id: 'A'.repeat(20), key: { toString: () => 'soa_state' } }]);
+  ok('CRM-29 (red team): a live entry whose key only COERCES to a string is unreadable, never reused',
+    objKey.refusal !== null && objKey.refusal.reason === R.LISTING_UNREADABLE && !('SOA_STATE' in objKey.reuse) && objKey.create.length === 0);
+  const absent = planProvisioning(liveNow.slice(1));
+  ok('CRM-29 (red team): a listing that lacks a field the writers use today is refused, naming the field',
+    absent.refusal !== null && absent.refusal.reason === R.REGISTRY_NOT_IN_ACCOUNT && JSON.stringify(absent.refusal.detail) === '["PREFERRED_LANGUAGE"]' &&
+    absent.create.length === 0 && absent.withheld.length === total && oneBucketEach(absent), JSON.stringify(absent.refusal));
+  ok('CRM-29 (red team): the two-field listing above is refused the same way, for the ten fields it does not show',
+    plan2.refusal !== null && plan2.refusal.reason === R.REGISTRY_NOT_IN_ACCOUNT && plan2.refusal.detail.length === GOLDEN.length - 2 && plan2.create.length === 0);
+  const hostile = planProvisioning([null, {}, { id: 7, key: 'x' }, { id: 'a', key: '' }]);
+  ok('CRM-29 (red team): unreadable entries are named before emptiness, and `null` is an empty listing',
+    hostile.refusal.reason === R.LISTING_UNREADABLE && hostile.unreadable.length === 4 && hostile.refusal.detail.length === 4 &&
+    planProvisioning(null).refusal.reason === R.LISTING_EMPTY);
+  const nearOnly = planProvisioning([{ id: 'handMadeField0000001', key: 'contact.soa_planyear' }]);
+  ok('CRM-29 (red team): under a refusal the near-duplicate is still reported as blocked — never as creatable',
+    nearOnly.refusal.reason === R.REGISTRY_NOT_IN_ACCOUNT && nearOnly.blocked.some((b) => b.name === 'SOA_PLAN_YEAR') &&
+    !nearOnly.withheld.includes('SOA_PLAN_YEAR') && nearOnly.create.length === 0);
+  const drifted = planProvisioning(liveNow.map((f, i) => (i === 0 ? { id: 'driftedId00000000001', key: f.key } : f)));
+  ok('CRM-29 (red team): an ID_MISMATCH alone does not refuse — the account is visible, the registry is what is wrong',
+    drifted.refusal === null && drifted.drift.length === 1 && drifted.drift[0].reason === 'ID_MISMATCH' && drifted.create.length === total);
+
+  // The listing is read by a pure function too, so the shape rule is observed
+  // refusing — not coalescing to "no fields" as the script used to.
+  const readOk = readAccountListing({ customFields: [{ id: 'A'.repeat(20), fieldKey: 'k' }, { id: 7, key: 'contact.x' }, null] });
+  ok('CRM-29 (red team): the listing reader accepts { customFields } and coerces no value',
+    readOk.refusal === null && JSON.stringify(readOk.fields) === '[{"id":"AAAAAAAAAAAAAAAAAAAA","key":"k"},{"id":7,"key":"contact.x"},{"id":null,"key":null}]', JSON.stringify(readOk));
+  ok('CRM-29 (red team): …and { customField }, the other shape this code has always read',
+    readAccountListing({ customField: [{ id: 'B', key: 'y' }] }).fields[0].id === 'B');
+  for (const [what, json, hint] of [
+    ['an empty object', {}, '(none)'], ['a paginated shape', { data: { customFields: [] } }, 'data'], ['a string-valued customFields', { customFields: 'x' }, 'customFields'],
+    ['null', null, 'object'], ['an array', [], 'array'], ['a string', 'x', 'string'],
+  ]) {
+    const r = readAccountListing(json);
+    ok(`CRM-29 (red team): ${what} is LISTING_UNPARSED, with what was seen, never an empty account`,
+      r.fields === null && r.refusal !== null && r.refusal.reason === R.LISTING_UNPARSED && r.refusal.detail.length === 1 && r.refusal.detail[0].includes(hint), JSON.stringify(r));
+  }
 
   // The three writers read the registry and spell no id of their own. Scanned
   // through strip() so a comment quoting an id can neither pass nor fail this.
@@ -3643,17 +3735,20 @@ consentScope: {
       writeFileSync(pathJoin(dir, 'package.json'), '{"type":"module"}\n');
       cpSync(pathJoin(repo, 'api', '_lib'), pathJoin(dir, 'api', '_lib'), { recursive: true });
       cpSync(pathJoin(repo, 'scripts', 'cy2027-provision-crm-fields.mjs'), pathJoin(dir, 'scripts', 'cy2027-provision-crm-fields.mjs'));
-      const live = GOLDEN.map(([, id, key]) => ({ id, fieldKey: key.replace(/^contact\./, '') }));
+      const goldLive = GOLDEN.map(([, id, key]) => ({ id, fieldKey: key.replace(/^contact\./, '') }));
+      const live = goldLive.slice();
       live[0] = { id: 'driftedId00000000001', fieldKey: 'preferred_language' };
       live.push({ id: 'handMadeField0000001', fieldKey: 'soa_planyear' }, { id: 'exactKeyField0000001', fieldKey: 'soa_state' });
-      writeFileSync(pathJoin(dir, 'mock-ghl.mjs'),
-        'const LIVE = ' + JSON.stringify(live) + ';\n' +
+      // The mocked GoHighLevel answers the listing GET with exactly `listingJson`.
+      const writeMock = (listingJson) => writeFileSync(pathJoin(dir, 'mock-ghl.mjs'),
+        'const LISTING = ' + JSON.stringify(listingJson) + ';\n' +
         'globalThis.fetch = async (url, init) => {\n' +
         '  const method = (init && init.method) || "GET";\n' +
         '  process.stdout.write("MOCK_" + method + " " + (method === "POST" ? JSON.parse(init.body).fieldKey : "list") + "\\n");\n' +
         '  if (method === "POST") return new Response(JSON.stringify({ customField: { id: "new_" + JSON.parse(init.body).fieldKey } }), { status: 200 });\n' +
-        '  return new Response(JSON.stringify({ customFields: LIVE }), { status: 200 });\n' +
+        '  return new Response(LISTING, { status: 200 });\n' +
         '};\n');
+      writeMock(JSON.stringify({ customFields: live }));
       const runProv = (script, ...args) => spawnSync(process.execPath,
         ['--import', pathToFileURL(pathJoin(dir, 'mock-ghl.mjs')).href, script, ...args],
         { cwd: dir, encoding: 'utf8', timeout: 60000, env: { ...process.env, GHL_API_TOKEN: 'test-token', GHL_LOCATION_ID: 'test-location' } });
@@ -3686,8 +3781,91 @@ consentScope: {
         broken.status === 1 && /registry is inconsistent/.test(broken.stderr) && /DUPLICATE_ID:EXISTING\.CONSENT_EMAIL=EXISTING\.CONSENT_SMS/.test(broken.stderr) &&
         !/MOCK_/.test(broken.stdout) && posts(broken).length === 0,
         `status=${broken.status} ${String(broken.stderr).slice(0, 300)} ${String(broken.stdout).slice(0, 200)}`);
+      writeFileSync(CF, original);
+
+      // AUDIT 2026-10-04 (CRM-29, red team) — measured on the previous script:
+      // each of these listings gave exit 0 and 36 MOCK_POST lines with --apply.
+      // Now: the listing is fetched (MOCK_GET), the refusal is printed by name,
+      // the exit code is 1 and no POST is made — in a dry run as well, so the
+      // dry run says what --apply would do.
+      const refusedRuns = [
+        ['an unexpected shape {}', '{}', 'LISTING_UNPARSED', /top-level keys: \(none\)/],
+        ['a paginated shape holding the near-duplicate', JSON.stringify({ data: { customFields: [{ id: 'handMadeField0000001', fieldKey: 'soa_planyear' }] } }), 'LISTING_UNPARSED', /top-level keys: data/],
+        ['an empty listing', '{"customFields":[]}', 'LISTING_EMPTY', /reports no custom field; the registry says 12 exist/],
+        ['a listing with an entry that has no id', JSON.stringify({ customFields: [...goldLive, { fieldKey: 'soa_planyear' }] }), 'LISTING_UNREADABLE', /\? id=undefined key="soa_planyear"/],
+        ['a listing missing a field the writers use today', JSON.stringify({ customFields: goldLive.slice(1) }), 'REGISTRY_NOT_IN_ACCOUNT', /✗ PREFERRED_LANGUAGE/],
+      ];
+      for (const [what, listingJson, reason, detail] of refusedRuns) {
+        writeMock(listingJson);
+        for (const mode of [[], ['--apply']]) {
+          const r = runProv(SCRIPT, ...mode);
+          const out = String(r.stdout) + String(r.stderr);
+          ok(`CRM-29 (provisioning, ${mode.length ? '--apply' : 'dry run'}, red team): ${what} is refused by name (${reason}) — exit 1, listed, nothing created`,
+            r.status === 1 && posts(r).length === 0 && /^MOCK_GET list$/m.test(r.stdout) && String(r.stderr).includes('(' + reason + ')') && detail.test(out) &&
+            !/created /.test(r.stdout) && !/Set this in the environment/.test(r.stdout),
+            `status=${r.status} posts=${posts(r).length} ${String(r.stderr).slice(0, 300)} ${String(r.stdout).slice(-200)}`);
+        }
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // AUDIT 2026-10-04 (CRM-29, red team) — the registry, the legacy list and the
+  // two vocabularies decide which GoHighLevel id every consent write and every
+  // revocation goes to, and were outside the build gate: a copy with their
+  // freezes removed passed it ("23/23"), and only this suite — which the
+  // artifact does not ship — noticed. They are governing identifiers now, and
+  // the gate is observed FAILING on such a copy, by its own command.
+  {
+    const CRM_GOVERNING = ['CY2027_FIELD_KEYS', 'EXISTING_CRM_FIELDS', 'LEGACY_SOA_NAME_FIELDS', 'PRODUCTION_FIELD_IDS', 'FIELD_ID_REFUSAL',
+      'CONFIRMED_ONLY_FIELDS', 'PROVENANCE', 'SELF_REPORTED_ONLY_FIELDS', 'SELF_REPORT_VALUE', 'CONFIRMING_PROVENANCE', 'REGISTRY_PROBLEM', 'PROVISIONING_REFUSAL'];
+    ok('CRM-29 (red team): every crm-fields table is a governing identifier of the build gate', CRM_GOVERNING.every((n) => GOVERNING_IDENTIFIERS.includes(n)),
+      CRM_GOVERNING.filter((n) => !GOVERNING_IDENTIFIERS.includes(n)).join());
+    const injected = { srcFiles: [{ path: 'src/ok.ts', source: 'export const b = 2;' }], objects: { X: Object.freeze({ a: 1 }) } };
+    for (const n of CRM_GOVERNING) {
+      const r = await runGate({ ...injected, apiFiles: [{ path: 'api/zz.js', source: `${n}.x = 1; ${n}.push('x');` }] });
+      ok(`CRM-29 (red team): the gate reports a runtime write to ${n} from a module under api/`,
+        r.problems.some((p) => p.startsWith(`api/zz.js: writes to ${n}.x`)) && r.problems.some((p) => p.startsWith(`api/zz.js: mutates ${n} in place`)), r.problems.join(' | '));
+    }
+    const repoGate = await runGate();
+    ok('CRM-29 (red team): the gate loads the registry module and finds every one of its tables frozen all the way down',
+      repoGate.problems.length === 0 && repoGate.objectCount >= 35 && repoGate.frozenCount === repoGate.objectCount, `${repoGate.frozenCount}/${repoGate.objectCount} ${repoGate.problems.join(' | ')}`);
+
+    const gateTree = mkdtempSync(pathJoin(tmpdir(), 'cy2027-crm29-gate-'));
+    try {
+      const repo = fileURLToPath(new URL('..', import.meta.url));
+      cpSync(pathJoin(repo, 'api'), pathJoin(gateTree, 'api'), { recursive: true });
+      cpSync(pathJoin(repo, 'src'), pathJoin(gateTree, 'src'), { recursive: true });
+      writeFileSync(pathJoin(gateTree, 'package.json'), JSON.stringify({ type: JSON.parse(readFileSync(pathJoin(repo, 'package.json'), 'utf8')).type }));
+      const CF = pathJoin(gateTree, 'api', '_lib', 'cy2027', 'crm-fields.js');
+      let src = readFileSync(CF, 'utf8');
+      for (const [from, to] of [
+        ["CONSENT_SMS: Object.freeze({ id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms' }),", "CONSENT_SMS: { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms' },"],
+        ['export const LEGACY_SOA_NAME_FIELDS = Object.freeze([', 'export const LEGACY_SOA_NAME_FIELDS = (['],
+        ['export const REGISTRY_PROBLEM = Object.freeze({', 'export const REGISTRY_PROBLEM = ({'],
+        ['export const PROVISIONING_REFUSAL = Object.freeze({', 'export const PROVISIONING_REFUSAL = ({'],
+      ]) {
+        ok(`CRM-29 (gate laboratory): the freeze is one exact line in the copy — ${from.slice(0, 44)}`, src.split(from).length === 2);
+        src = src.replace(from, to);
+      }
+      writeFileSync(CF, src);
+      writeFileSync(pathJoin(gateTree, 'api', 'zz-crm-write.js'),
+        "import { EXISTING_CRM_FIELDS } from './_lib/cy2027/crm-fields.js';\nexport const rewire = (id) => { EXISTING_CRM_FIELDS.CONSENT_SMS.id = id; };\n");
+      // The command, as a child process: a module once loaded is cached for the
+      // process, so the copy is judged by a fresh one, exactly as the build does.
+      const CLI = pathJoin(repo, 'scripts', 'check-no-self-modification.mjs');
+      const r = spawnSync(process.execPath, [CLI, '--root', gateTree], { cwd: repo, encoding: 'utf8', timeout: 180000 });
+      ok('CRM-29 (red team): the gate COMMAND fails on a copy whose registry entry, legacy list and vocabularies are unfrozen, naming each',
+        r.status === 1 && /EXISTING_CRM_FIELDS is not frozen all the way down: EXISTING_CRM_FIELDS\.CONSENT_SMS\b/.test(r.stderr) &&
+        /LEGACY_SOA_NAME_FIELDS is not frozen all the way down: LEGACY_SOA_NAME_FIELDS\b/.test(r.stderr) &&
+        /REGISTRY_PROBLEM is not frozen all the way down: REGISTRY_PROBLEM\b/.test(r.stderr) &&
+        /PROVISIONING_REFUSAL is not frozen all the way down: PROVISIONING_REFUSAL\b/.test(r.stderr) && !r.stdout.includes('OK'),
+        `status=${r.status} ${String(r.stderr).slice(0, 700)}`);
+      ok('CRM-29 (red team): …and names the module under api/ that assigns a registry id',
+        /api\/zz-crm-write\.js: writes to EXISTING_CRM_FIELDS\.CONSENT_SMS\.id/.test(r.stderr), String(r.stderr).slice(0, 700));
+    } finally {
+      rmSync(gateTree, { recursive: true, force: true });
     }
   }
 }

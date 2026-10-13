@@ -32,7 +32,7 @@
 //     re-run after a partial failure is safe and idempotent.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CY2027_FIELD_KEYS, planProvisioning, registryProblems } from '../api/_lib/cy2027/crm-fields.js';
+import { CY2027_FIELD_KEYS, planProvisioning, registryProblems, readAccountListing } from '../api/_lib/cy2027/crm-fields.js';
 
 const APPLY = process.argv.includes('--apply');
 const TOKEN = (process.env.GHL_API_TOKEN || '').trim();
@@ -61,13 +61,18 @@ function headers() {
 async function listExisting() {
   const r = await fetch(`${API}/locations/${encodeURIComponent(LOCATION)}/customFields`, { headers: headers() });
   if (!r.ok) throw new Error(`could not list custom fields — HTTP ${r.status}`);
-  const j = await r.json();
-  const arr = Array.isArray(j.customFields) ? j.customFields : Array.isArray(j.customField) ? j.customField : [];
   // AUDIT 2026-10-04 (CRM-29) — this returned a Map keyed by the EXACT key, so a
   // field made by hand as `soa_planyear` was invisible and `soa_plan_year` got
   // created beside it: the "slightly different name" duplicate §18 forbids. It
   // now returns every field in the account and planProvisioning() decides.
-  return arr.map((f) => ({ id: f && f.id, key: String((f && (f.fieldKey || f.key)) || '') }));
+  // AUDIT 2026-10-04 (CRM-29, red team) — and a response of any other shape was
+  // read as "no fields", after which --apply created all thirty-six. The shape
+  // is judged by readAccountListing(); an unknown one stops the script, by name.
+  const listing = readAccountListing(await r.json());
+  if (listing.refusal) {
+    throw new Error(`the custom-field listing is not a shape this script reads (${listing.refusal.reason}): ${listing.refusal.detail.join('; ')}`);
+  }
+  return listing.fields;
 }
 
 async function createField(name, key) {
@@ -119,8 +124,8 @@ async function main() {
   const map = { ...plan.reuse };
 
   console.log(`already present: ${Object.keys(map).length}`);
-  console.log(`missing:         ${plan.create.length}`);
-  for (const n of plan.create) console.log(`  + ${n.padEnd(34)} ${CY2027_FIELD_KEYS[n]}`);
+  console.log(`missing:         ${plan.create.length + plan.withheld.length}`);
+  for (const n of [...plan.create, ...plan.withheld]) console.log(`  + ${n.padEnd(34)} ${CY2027_FIELD_KEYS[n]}`);
 
   // AUDIT 2026-10-04 (CRM-29) — never created, with or without --apply.
   if (plan.blocked.length) {
@@ -138,6 +143,23 @@ async function main() {
       console.log(`  ! ${d.name.padEnd(28)} ${d.reason}  registry ${d.key}=${d.registryId}  account ${d.accountKey || '(none)'}=${d.accountId || '(none)'}`);
     }
     console.log('  The lead and opt-out writers send the REGISTRY ids. Fix the registry or the account before relying on them.');
+  }
+  if (plan.unreadable.length) {
+    console.log(`\nListing entries this script cannot read (no string id or key): ${plan.unreadable.length}`);
+    for (const u of plan.unreadable) console.log(`  ? ${u.described}`);
+  }
+
+  // AUDIT 2026-10-04 (CRM-29, red team) — a listing that shows none of the
+  // twelve fields the writers already use, no field at all, or an entry that
+  // cannot be matched is not an account this script has searched. Until this
+  // check, that exact situation printed the twelve NOT_IN_ACCOUNT lines above
+  // and then created every §18 field — beside whatever the account held.
+  // Refused with or without --apply: a dry run that would be refused says so.
+  if (plan.refusal) {
+    console.error(`\nNOT created — the §18 search cannot be performed on this listing (${plan.refusal.reason}):`);
+    for (const d of plan.refusal.detail) console.error('  ✗ ' + d);
+    console.error(`  ${plan.withheld.length} field(s) withheld. Confirm GHL_LOCATION_ID, the token's scope and the listing shape, then re-run.`);
+    process.exit(1);
   }
 
   if (!APPLY) {

@@ -724,7 +724,14 @@ ok('a missing provenance record is loud at load',
         r.status === 1 && /MEDICARE_KNOWLEDGE_RELEASE is not frozen all the way down/.test(r.out) && /KNOWLEDGE_RELEASES is not frozen all the way down/.test(r.out), r.out.slice(0, 600));
     });
     const selfModRestored = selfModCli(full);
-    ok('(self-mod gate) every scenario restored the copy: the command passes again', selfModRestored.status === 0 && /23\/23|2\d\/2\d governing objects/.test(selfModRestored.out), selfModRestored.out.slice(0, 300));
+    // AUDIT 2026-10-04 (CRM-29, red team) — this accepted only "23/23" or "2x/2x"
+    // governing objects, so registering the CRM field registry (35) failed it.
+    // The claim is that EVERY object the gate knows is frozen, and that the
+    // count never falls below what is registered today (the learning suite pins
+    // the exact number).
+    const frozenCount = selfModRestored.out.match(/(\d+)\/(\d+) governing objects/);
+    ok('(self-mod gate) every scenario restored the copy: the command passes again',
+      selfModRestored.status === 0 && frozenCount !== null && frozenCount[1] === frozenCount[2] && Number(frozenCount[2]) >= 35, selfModRestored.out.slice(0, 300));
   } catch (e) {
     // A rehearsal helper throws when the live tree no longer has the text it
     // edits (the body or the ledger already changed). That is a failure of this

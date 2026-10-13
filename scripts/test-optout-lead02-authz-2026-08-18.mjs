@@ -174,6 +174,37 @@ check('L10 new contact is written under the production field ids, in the { id, k
   _newCf.length >= 6 && _newCf.every((f) => Object.keys(f).join(',') === 'id,key,value'),
   JSON.stringify(_newCf));
 
+// AUDIT 2026-10-04 (CRM-29, red team) — nothing pinned which VALUE each consent
+// NAME carries: L10 drives consent_to_contact=true, under which every flag reads
+// 'true', so CONSENT_SMS and CONSENT_CALLS with their value expressions exchanged
+// passed every suite. What is observable at the handler: the consent gate refuses
+// a lead that does not carry consent_to_contact=true before any CRM call, so a
+// channel-only flag never reaches the writer (L11) — and an accepted lead whose
+// email is unusable records consent_email 'false' under its own id while
+// marketing / sms / calls read 'true' (L12), which pins the pairing that CAN differ.
+for (const [flag, label, ip] of [['consent_sms', 'sms-only', '2.2.2.3'], ['consent_calls', 'calls-only', '2.2.2.5'], ['consent_call', 'call-only (legacy name)', '2.2.2.6']]) {
+  resetLog();
+  res = mkRes();
+  const partial = leadBody({ phone: '6462013355', email: 'partial@example.com' });
+  delete partial.consent_to_contact;
+  partial[flag] = true;
+  await submitLead(mkReq({ body: partial, ip }), res);
+  check(`L11 a ${label} consent without consent_to_contact is refused before any CRM call (400 CONSENT_REQUIRED, zero GHL requests)`,
+    res.statusCode === 400 && res.body && res.body.error === 'CONSENT_REQUIRED' && ghlLog.length === 0, `status=${res.statusCode} body=${JSON.stringify(res.body)} calls=${ghlLog.length}`);
+}
+resetLog();
+res = mkRes();
+await submitLead(mkReq({ body: leadBody({ phone: '6462013366', email: 'not-an-email', first_name: 'NoMail', last_name: 'Lead' }), ip: '2.2.2.4' }), res);
+const _noMailCreate = ghlLog.filter((c) => /\/contacts\/$/.test(c.url) && c.method === 'POST');
+const _consentBytes = (c) => JSON.stringify((((c && c.body) || {}).customFields || []).filter((f) => /^contact\.consent_/.test(String(f.key))));
+check('L12 with no usable email, consent_email is "false" under its own id while marketing/sms/calls stay "true" (name↔value pairing, CRM-29)',
+  res.statusCode === 200 && _noMailCreate.length === 1 && _consentBytes(_noMailCreate[0]) ===
+    '[{"id":"vPKlhpz6aucJK1U3fJRZ","key":"contact.consent_marketing","value":"true"},' +
+    '{"id":"w1hopBfNLGauFRRzQ71l","key":"contact.consent_sms","value":"true"},' +
+    '{"id":"mHdpDjBSA76lQJrKoixL","key":"contact.consent_calls","value":"true"},' +
+    '{"id":"ykiTUcsu3nvawK39hmll","key":"contact.consent_email","value":"false"}]',
+  `status=${res.statusCode} creates=${_noMailCreate.length} ${_consentBytes(_noMailCreate[0])}`);
+
 globalThis.fetch = realFetch;
 console.log('\n═══════════════════════════════════════');
 console.log((fails.length === 0 ? GRN : RED)(`RESULT: ${pass} passed, ${fails.length} failed`));
