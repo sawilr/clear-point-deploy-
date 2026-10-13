@@ -20,7 +20,7 @@ import { scrubPHI } from './_lib/phi-scrub.js';
 import { redactProhibitedForScoring, requiresLicensedReview } from './_lib/cy2027/prohibited-signals.js';
 import { evaluateTrust, buildSecurityReviewTask } from './_lib/cy2027/trust.js';
 import { zipStateConsistency } from './_lib/cy2027/state-rules.js';
-import { isDisposableEmail, neutralizeFakeLeadLabel } from './_lib/cy2027/data-quality.js';
+import { isDisposableEmail, neutralizeFakeLeadLabel, clientTagRefusal } from './_lib/cy2027/data-quality.js';
 // AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS (spec §18). The class is
 // derived from what the free-text scrubbers below reported, written through the
 // canonical field builder, and consulted before the enrichment vendor call.
@@ -830,6 +830,9 @@ export default async function handler(req, res) {
     // "[object Object]" at best and may 400 the contact create at worst — and
     // ghlFetchRetry does not retry a 4xx, so that would lose the lead outright.
     var medicare_status = scrubPHI(_capEarly(medicare_status_raw, 60).replace(/[\r\n\t]+/g, ' ').trim()).text;
+    // AUDIT 2026-10-04 (FTQ-15, red team) — contact.medicare_status is free text
+    // a direct POST filled with the retired label; de-labelled at the source.
+    medicare_status = neutralizeFakeLeadLabel(medicare_status);
     var medicare_status_token = (function (v) {
       var s = String(v).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
       if (!s) return '';
@@ -957,10 +960,16 @@ export default async function handler(req, res) {
     var _dmNotes = redactProhibitedForScoring(lead_notes);
     var _dmSummary = redactProhibitedForScoring(conversation_summary);
     var _dmClientFlags = redactProhibitedForScoring(lead_quality_flags);
+    // AUDIT 2026-10-04 (FTQ-15, red team) — the two short fields are client text
+    // too, and they reach the note, two custom fields and two SERVER-MINTED tags
+    // (CallTime-, Interest-). The de-labelling below covered lead_notes, the
+    // summary and the flags only, so 'probable_fake_lead: true' as a call time
+    // was written to all five places. Removed here, at the one point where each
+    // field is read, so every sink downstream is covered by construction.
     var _phiBestTime = scrubPHI(_cap(body.best_time_to_contact, 64));
-    var _dmBestTime = redactProhibitedForScoring(_phiBestTime.text.replace(/[\r\n\t]+/g, ' ').trim());
+    var _dmBestTime = redactProhibitedForScoring(neutralizeFakeLeadLabel(_phiBestTime.text.replace(/[\r\n\t]+/g, ' ').trim()));
     var _phiInterest = scrubPHI(_cap(body.interest_type, 80));
-    var _interestAsSent = _phiInterest.text.replace(/[\r\n\t]+/g, ' ').trim();
+    var _interestAsSent = neutralizeFakeLeadLabel(_phiInterest.text.replace(/[\r\n\t]+/g, ' ').trim());
     var _dmInterest = redactProhibitedForScoring(_interestAsSent);
     var _interestIsSiteLabel = isSiteInterestLabel(_interestAsSent);
     lead_notes = _dmNotes.text;
@@ -1086,8 +1095,10 @@ export default async function handler(req, res) {
     // the required-field + phone checks below still apply). Logs stay PII-free.
     first_name = _cap(first_name, 100).replace(/[\r\n\t]+/g, ' ').trim();
     last_name = _cap(last_name, 100).replace(/[\r\n\t]+/g, ' ').trim();
-    city = _cap(city, 80).replace(/[\r\n\t]+/g, ' ').trim();
-    county = _cap(county, 80).replace(/[\r\n\t]+/g, ' ').trim();
+    // AUDIT 2026-10-04 (FTQ-15, red team) — city/county are written to the
+    // contact (city, address1) as typed; the retired label is removed here.
+    city = neutralizeFakeLeadLabel(_cap(city, 80).replace(/[\r\n\t]+/g, ' ').trim());
+    county = neutralizeFakeLeadLabel(_cap(county, 80).replace(/[\r\n\t]+/g, ' ').trim());
     email = _cap(email, 254).trim();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       // Invalid format — drop the email (never log its value). consent_email
@@ -1158,6 +1169,29 @@ export default async function handler(req, res) {
     // DM-09 filter had to cut is not a topic, and mints no Interest- tag at all
     // rather than a tag made of the mask. A site label is never cut.
     var _interestTag = (!_interestIsSiteLabel && _dmInterest.redactions) ? '' : _tagify('Interest', interest_type);
+    // AUDIT 2026-10-04 (FTQ-15, red team) — the tags the SERVER mints from client
+    // text (CallTime-, Interest-, UTM-, Source-) were appended after the client-tag
+    // filter and never judged by it, so 'UTM-probable_fake_lead' and
+    // 'CallTime-probablefakelead-true' reached the CRM as server-authored tags.
+    // Every minted tag now passes through the same rule as a client tag —
+    // clientTagRefusal(), the one implementation — and a refused one is not
+    // minted at all (never half-masked). Only the family and the reason code are
+    // recorded, never the value. UTM- and Source- are minted here, beside the
+    // other two, so all four are judged before the audit line below is written.
+    var _utmTag = (function () { var u = String(utm_source || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32); return u ? 'UTM-' + u : ''; })();
+    var _sourceTag = lead_source ? 'Source-' + lead_source : '';
+    var _serverTagRefusals = [];
+    function _ownTag(t) {
+      if (!t) return '';
+      var reason = clientTagRefusal(t);
+      if (reason === null) return t;
+      _serverTagRefusals.push(t.slice(0, t.indexOf('-')) + ':' + reason);
+      return '';
+    }
+    _bestTimeTag = _ownTag(_bestTimeTag);
+    _interestTag = _ownTag(_interestTag);
+    _utmTag = _ownTag(_utmTag);
+    _sourceTag = _ownTag(_sourceTag);
 
     // Red-team round 3 (R3-SL-05): LeadType-* is a server-owned family — only the
     // lead types Clara and the forms actually produce may mint one.
@@ -1228,7 +1262,9 @@ export default async function handler(req, res) {
     var consent_text = typeof body.consent_text === 'string' ? scrubPHI(_cap(body.consent_text, 4000)).text : '';
     var consent_receipt_hash = typeof body.consent_receipt_hash === 'string' && /^[a-f0-9]{64}$/.test(body.consent_receipt_hash) ? body.consent_receipt_hash : '';
     var disclaimer_version = typeof body.disclaimer_version === 'string' && /^[A-Za-z0-9._-]{1,32}$/.test(body.disclaimer_version) ? body.disclaimer_version : '';
-    var signer_user_agent = scrubPHI(_cap(body.signer_user_agent, 240)).text;
+    // AUDIT 2026-10-04 (FTQ-15, red team) — the user agent is printed into the
+    // receipt line ('ua=…'); a client string, so the retired label leaves it too.
+    var signer_user_agent = neutralizeFakeLeadLabel(scrubPHI(_cap(body.signer_user_agent, 240)).text);
     // AUDIT 2026-10-02 (CE-09 / CRM-15) — THE CALLBACK CONSENT, WITH ITS SCOPE.
     //
     // The four consent_* booleans below say THROUGH WHICH CHANNEL; nothing said
@@ -1377,6 +1413,7 @@ export default async function handler(req, res) {
 
     var frontendTags = [];
     var _rejectedTags = 0;
+    var _verdictTags = [];   // FTQ-15 (red team): reason codes of the verdict refusals, never the tags
     var _malformedTags = 0;
     var _truncatedTags = 0;   // R5-SL-16: tags dropped by the 20-tag cap
     // Red-team round 3 (R3-SL-04): the deny check runs on a SEPARATOR-FREE key, so
@@ -1403,12 +1440,17 @@ export default async function handler(req, res) {
     // (§12: "Do not label 'fraudulent' without evidence"). The bot now sends
     // `data_review_suggested`, and only when inconsistencies aggregate. The old
     // spelling is denied HERE as well, because a cached bundle or a direct POST
-    // can still send it — and not as one exact token but as the verdict SHAPE:
-    // a qualifier + fake/fraud/bogus/spam/scam (probable_fake, suspected_fraud),
-    // or such an adjective + lead/caller/contact/person/submission (fake_lead,
-    // spam_caller). The bot's own topic vocabulary keeps flowing because a topic
-    // is not that shape: category_fraud_scam, fraud_alert, fraud_scam.
-    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa|soasigned|soarecorded|soapending|soa[0-9][a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*|(?:probable|probably|likely|possible|possibly|suspected|potential|confirmed)(?:fake|fraud|fraudulent|bogus|spam|scam)(?:lead|leads|caller|contact|person|submission)?|(?:fake|fraud(?:ulent)?|bogus|spam|scam)(?:lead|leads|caller|contact|person|submission))$/;
+    // can still send it.
+    // AUDIT 2026-10-04 (FTQ-15, red team) — it was denied as a verdict alternation
+    // INSIDE this ^…$ regex on the flat key, so any affix ('probable_fake_lead_true',
+    // 'fakelead2', 'is_fake_lead') and any verdict word outside its five adjectives
+    // ('scammer', 'junk_lead', 'not_real_person', 'fraud_risk_high') walked
+    // through: a deny-list of spellings where the rule is a shape. The verdict
+    // rule now has ONE implementation — clientTagRefusal() in
+    // _lib/cy2027/data-quality.js, a pure function tested by calling it — and is
+    // applied below as a contained match on the normalised key. This regex keeps
+    // only the exact server-owned spellings (status, consent, SOA, DNC, temp…).
+    var _denyKeys = /^(statusnewlead|statuscontacted|statusdnc|statusnoshow|statusappointmentbooked|statusenrolled|statussoa[a-z0-9]*|consentcaptured|consentrevoked|consentyes|consentpending|donotcall|donotcontact|donotmail|donottext|nollamar|dnc[a-z0-9]*|dnd|soa|soasigned|soarecorded|soapending|soa[0-9][a-z0-9]*|temphot|tempwarm|tempcold|aiflagged|highpriority|warmlead|enrolled|unsubscribe[a-z0-9]*)$/;
     // Family prefixes are matched on the DASH key, so the family has to be a real
     // token: "urg-high" is denied, the support bot's "urgency_elevated" is not.
     // "status-*" is deliberately absent — only its exact values above are owned,
@@ -1448,14 +1490,19 @@ export default async function handler(req, res) {
           // urgency_elevated, confidence_high, category_billing, …) keeps flowing.
           var _dashKey = foldToken(tag).toLowerCase().replace(/[\s_‐-―−-]+/g, '-').replace(/^-+|-+$/g, '');
           var _flatKey = _dashKey.replace(/-/g, '');
-          var _denied = _denyKeys.test(_flatKey) || _denyFamilyPrefix.test(_dashKey);
+          // FTQ-15 (red team): a client-asserted verdict about the person is refused
+          // by shape, whatever its affixes — see clientTagRefusal().
+          var _verdict = clientTagRefusal(foldToken(tag));
+          var _denied = _denyKeys.test(_flatKey) || _denyFamilyPrefix.test(_dashKey) || _verdict !== null;
           if (tag && tag.length <= 64 && /^[a-zA-Z0-9 _-]+$/.test(tag) && !_denied) frontendTags.push(tag);
-          else if (_denied) _rejectedTags++;
+          else if (_denied) { _rejectedTags++; if (_verdict !== null) _verdictTags.push(_verdict); }
           else if (tag) _malformedTags++;   // charset / length / newline gate (R3-SL-12)
         } else if (body.tags[i] != null) { _malformedTags++; }
       }
     }
-    if (_rejectedTags || _malformedTags || _truncatedTags) leadAudit('tags_rejected', null, { n: _rejectedTags + _malformedTags + _truncatedTags, denied: _rejectedTags, malformed: _malformedTags, truncated: _truncatedTags });
+    // FTQ-15 (red team): the audit line also carries the verdict refusals (client
+    // tags, by reason code) and the server-minted tags that were not minted.
+    if (_rejectedTags || _malformedTags || _truncatedTags || _serverTagRefusals.length) leadAudit('tags_rejected', null, { n: _rejectedTags + _malformedTags + _truncatedTags, denied: _rejectedTags, malformed: _malformedTags, truncated: _truncatedTags, verdict: _verdictTags, server: _serverTagRefusals });
     var allTags = ['Status-NewLead'];
     for (var j = 0; j < frontendTags.length; j++) { if (allTags.indexOf(frontendTags[j]) === -1) allTags.push(frontendTags[j]); }
 
@@ -1877,13 +1924,13 @@ export default async function handler(req, res) {
       tags: ['Status-NewLead','Lang-'+((preferred_language||'en').toUpperCase()),'Source-Web']
         .concat(_bestTimeTag?[_bestTimeTag]:[])
         .concat(_interestTag?[_interestTag]:[])
-        .concat((function () { var u = String(utm_source || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 32); return u ? ['UTM-' + u] : []; })())
+        .concat(_utmTag ? [_utmTag] : [])
         // Red-team FORMS-01-R1: 'Consent Captured' is derived from the validated consent flag, never from a client tag.
         .concat(body.consent_to_contact === true ? ['Consent Captured'] : [])
         .concat(allTags.filter(function(t){return t!=='Status-NewLead'&&t.indexOf('Lang-')!==0&&t!=='Source-Web';}))
         // PHASE A16 — SOA status tags so advisor pipelines can filter on them.
         // Red-team FORMS-01-B1: SOA-* tags come only from a server-verified SOA record (SOA is disabled; client booleans are ignored).
-        .concat(lead_source ? ['Source-' + lead_source] : [])
+        .concat(_sourceTag ? [_sourceTag] : [])
         // PHASE A17 — Lead-intel tags. Empty arrays if intel unavailable.
         .concat(intel ? ['Temp-' + intel.lead_temperature, 'Urg-' + intel.urgency, 'Intent-' + intel.intent_strength] : [])
         .concat(intel && intel.compliance_flags && intel.compliance_flags.length ? ['AI-Flagged'] : []),
@@ -2107,7 +2154,7 @@ export default async function handler(req, res) {
                 + '(an unverified web submission proves nothing about who sent it). '
                 + 'Do not call or text this contact until a new, documented consent exists.\n'
                 + 'Submission ID: ' + (submission_id || 'n/a')
-                + '. Form: ' + String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40)
+                + '. Form: ' + neutralizeFakeLeadLabel(String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40))
                 + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.' }),
             }));
           } catch (e) {
@@ -2304,7 +2351,7 @@ export default async function handler(req, res) {
             body:JSON.stringify({body:(_repeatRequest
               ? '*** REPEAT REQUEST — this person already had a record and submitted again. They are still waiting for contact. ***\n'
                 + 'Message text withheld: this was an unverified web submission and anyone who knows a phone number can send one. '
-                + 'Submission ID: ' + (submission_id || 'n/a') + '. Form: ' + String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40) + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.'
+                + 'Submission ID: ' + (submission_id || 'n/a') + '. Form: ' + neutralizeFakeLeadLabel(String((body && body.form_name) || '').replace(/[^\w .-]/g, '').slice(0, 40)) + '. Language: ' + String(preferred_language || '').slice(0, 8) + '.'
                 + _repeatNoteFacts
               : noteBody)})
           }));
@@ -2360,7 +2407,12 @@ export default async function handler(req, res) {
     } else {
       sourceLabel = 'Website Lead';
     }
-    var oppName = (first_name||'') + (last_name ? ' ' + last_name : '') + ' — ' + sourceLabel;
+    // AUDIT 2026-10-04 (FTQ-15, red team) — the opportunity's title is a string
+    // the server composes from client text (the name and the form name), and
+    // 'probable_fake_lead Form' arrived in it verbatim. The retired label is
+    // removed from the composed title; the contact's own name fields are never
+    // rewritten — a person's name is identity data, not a label.
+    var oppName = neutralizeFakeLeadLabel((first_name||'') + (last_name ? ' ' + last_name : '') + ' — ' + sourceLabel);
     // API-01 (2026-09-26) — decisión conciliada con LEAD-02 (2026-08-18): la
     // oportunidad SÍ se crea en una repetición. Es un objeto de autoría del
     // servidor, la idempotencia de abajo evita duplicarla si ya hay una

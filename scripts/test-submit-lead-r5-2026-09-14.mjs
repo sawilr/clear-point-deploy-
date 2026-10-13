@@ -145,7 +145,12 @@ for (const v of ['MA_LEAD', 'ma_lead', 'PDP_LEAD', 'COST_REVIEW_TRIAGE', 'NEEDS_
 ok('SL-06 control: an unknown lead_type still produces no tag', leadTypeFn('anything_else') === '');
 
 // ── R5-SL-07: the support bot's controlled vocabulary survives ───────────
-const denyFn = new Function('tag',
+// AUDIT 2026-10-04 (FTQ-15, red team) — the handler's filter is now three parts:
+// the two lifted regexes AND clientTagRefusal() from _lib/cy2027/data-quality.js
+// (the verdict rule, one implementation). The lifted filter composes them the
+// way api/submit-lead.js does, so this suite judges the real filter.
+const { clientTagRefusal } = await import('../api/_lib/cy2027/data-quality.js');
+const denyFnRaw = new Function('tag', 'clientTagRefusal',
   'var CONFUSABLES = ' + SRC.match(/var CONFUSABLES = (\{[\s\S]*?\n\};)/)[1] + '\n' +
   'var CONFUSABLE_RE = ' + SRC.match(/var CONFUSABLE_RE = (.+);/)[1] + ';\n' +
   lift('foldConfusables') + '\n' +
@@ -154,7 +159,8 @@ const denyFn = new Function('tag',
   SRC.match(/var _denyFamilyPrefix = .+;/)[0] + '\n' +
   'var _dashKey = foldToken(tag).toLowerCase().replace(/[\\s_\\u2010-\\u2015\\u2212-]+/g, "-").replace(/^-+|-+$/g, "");\n' +
   'var _flatKey = _dashKey.replace(/-/g, "");\n' +
-  'return _denyKeys.test(_flatKey) || _denyFamilyPrefix.test(_dashKey);');
+  'return _denyKeys.test(_flatKey) || _denyFamilyPrefix.test(_dashKey) || clientTagRefusal(foldToken(tag)) !== null;');
+const denyFn = (tag) => denyFnRaw(tag, clientTagRefusal);
 
 const BOT_TAGS = ['customer_service_bot', 'language_es', 'language_en', 'state_NY', 'category_billing',
   'status_existing_client', 'urgency_elevated', 'consent_no', 'consent_unknown',

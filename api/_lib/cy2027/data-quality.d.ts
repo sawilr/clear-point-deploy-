@@ -39,3 +39,29 @@ export declare const CLIENT_LABEL_REMOVED: string;
 
 /** Free text with every spelling of the retired fraud label replaced by CLIENT_LABEL_REMOVED. */
 export declare function neutralizeFakeLeadLabel(text: unknown): string;
+
+/** The words that make a tag a verdict about the person (one table, frozen). */
+export declare const VERDICT_TAG_VOCABULARY: {
+  readonly qualifiers: readonly string[];
+  readonly shortQualifiers: readonly string[];
+  readonly adjectives: readonly string[];
+  readonly subjects: readonly string[];
+  readonly personNouns: readonly string[];
+  readonly shortPersonNouns: readonly string[];
+  readonly negators: readonly string[];
+  readonly genuine: readonly string[];
+  readonly assessments: readonly string[];
+};
+
+export type TagRefusalReason =
+  | 'RETIRED_LABEL' | 'NEUTRALISED_MARKER' | 'QUALIFIED_VERDICT' | 'VERDICT_ON_SUBJECT'
+  | 'PERSON_NOUN' | 'NEGATED_GENUINE' | 'VERDICT_ASSESSMENT';
+
+/** Why a tag was refused; codes only. */
+export declare const TAG_REFUSAL_REASONS: { readonly [K in TagRefusalReason]: K };
+
+/** The key a tag is judged by: look-alikes folded, invisibles removed, lower-cased, dash-separated. */
+export declare function normalizeTagKey(tag: unknown): string;
+
+/** Pure: the reason a client tag is a verdict about the person, or null when it may reach the CRM. */
+export declare function clientTagRefusal(tag: unknown): TagRefusalReason | null;

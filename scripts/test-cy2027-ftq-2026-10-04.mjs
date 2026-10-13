@@ -21,7 +21,7 @@
 // Run: node scripts/test-cy2027-ftq-2026-10-04.mjs
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, rmSync, cpSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -32,10 +32,11 @@ import {
   DISPOSABLE_EMAIL_DOMAINS, emailDomain, isDisposableEmail,
   REVIEW_INCONSISTENCY_KINDS, DATA_REVIEW_WEIGHT_THRESHOLD, inconsistencyKind, aggregateInconsistency,
   CLIENT_LABEL_REMOVED, neutralizeFakeLeadLabel,
+  VERDICT_TAG_VOCABULARY, TAG_REFUSAL_REASONS, normalizeTagKey, clientTagRefusal,
 } from '../api/_lib/cy2027/data-quality.js';
 import { LEAD_TRUST_STATE, REVIEW_SIGNALS, assertSignalAllowed, evaluateTrust, trustCapabilities } from '../api/_lib/cy2027/trust.js';
 import { readShownConsentWording } from './consent-wording-gate.mjs';
-import { stripComments } from './no-self-modification-lib.mjs';
+import { stripComments, unfrozenPaths, runGate, GOVERNING_IDENTIFIERS } from './no-self-modification-lib.mjs';
 
 let passed = 0;
 const failures = [];
@@ -57,6 +58,18 @@ ok('FTQ-11: case and surrounding whitespace do not hide it', isDisposableEmail('
 ok('FTQ-11: a subdomain of a throwaway service is the same service', isDisposableEmail('x@inbox.yopmail.com') === true);
 ok('FTQ-11: a look-alike domain is NOT flagged',
   isDisposableEmail('x@notmailinator.com') === false && isDisposableEmail('x@mailinator.com.example.org') === false);
+// AUDIT 2026-10-04 (FTQ-11, red team) — the handler KEEPS these addresses (its RFC-lite
+// shape test passes) and the domain used to be read verbatim, so one stray byte hid the service.
+for (const v of ['<x@mailinator.com>', 'x@mailinator.com;', 'x@mailinator.com,', '"x@mailinator.com"', 'x@mailinator.com)', "x@mailinator.com'",
+  'x@mailinator.com:25', 'x@mailinator.com/path', 'x@mailinator.com?x', 'x@mailinator.com#', 'x@mailinator.com​', 'x@[mailinator.com]']) {
+  ok(`FTQ-11: ${JSON.stringify(v)} — a wrapper or trailing character does not hide the service`,
+    isDisposableEmail(v) === true && emailDomain(v) === 'mailinator.com', `domain=${JSON.stringify(emailDomain(v))}`);
+}
+ok('FTQ-11: a different domain that merely contains the name is still not flagged',
+  isDisposableEmail('x@xn--mailinator.com') === false && emailDomain('x@xn--mailinator.com') === 'xn--mailinator.com');
+ok('FTQ-11: the signal still follows the handler\'s keep-test — an address it drops (a space) raises nothing',
+  isDisposableEmail('x y@mailinator.com') === false && emailDomain('x y@mailinator.com') === '');
+ok('FTQ-11: a domain in another script is not an entry of the ASCII list', isDisposableEmail('x@münchen.de') === false);
 ok('FTQ-11: ordinary providers are not flagged',
   ['a@gmail.com', 'b@yahoo.com', 'c@aol.com', 'd@icloud.com', 'e@outlook.com', 'f@optonline.net'].every((e) => isDisposableEmail(e) === false));
 ok('FTQ-11/FTQ-16: having no email is never a signal',
@@ -149,6 +162,22 @@ ok('FTQ-15: the marker is not itself a verdict', !/fake|fraud|scam|spam|bogus/i.
 }
 ok('FTQ-15: non-strings become empty, the empty string stays empty (the sibling neutralisers\' contract)',
   neutralizeFakeLeadLabel(null) === '' && neutralizeFakeLeadLabel(42) === '' && neutralizeFakeLeadLabel('') === '');
+// AUDIT 2026-10-04 (FTQ-15, red team) — the spellings that walked through: look-alike
+// letters, invisible characters, other separators, and the old builder's own prose.
+ok('FTQ-15: a Cyrillic а inside the label does not hide it — and the Cyrillic name beside it is not touched',
+  neutralizeFakeLeadLabel('Иван probable_fаke_lead: true Петров') === 'Иван ' + CLIENT_LABEL_REMOVED + ': true Петров');
+ok('FTQ-15: zero-width and soft-hyphen characters between the letters do not hide it',
+  neutralizeFakeLeadLabel('probable​fake​lead') === CLIENT_LABEL_REMOVED &&
+  neutralizeFakeLeadLabel('probable_fake_lead'.split('').join('­')) === CLIENT_LABEL_REMOVED);
+ok('FTQ-15: dots, slashes and fullwidth letters do not hide it',
+  ['probable.fake.lead', 'probable/fake/lead', 'ｐｒｏｂａｂｌｅ fake lead'].every((s) => neutralizeFakeLeadLabel(s) === CLIENT_LABEL_REMOVED));
+ok('FTQ-15: the old builder\'s Advisor-action prose is de-labelled in both languages, the rest of the line kept',
+  neutralizeFakeLeadLabel('Send to review queue — possible data quality issue (low confidence or fake-lead signal).')
+    === 'Send to review queue — possible data quality issue (low confidence or ' + CLIENT_LABEL_REMOVED + ').' &&
+  neutralizeFakeLeadLabel('Enviar a cola de revisión — posible problema de calidad de datos (baja confianza o señal de lead falso).')
+    === 'Enviar a cola de revisión — posible problema de calidad de datos (baja confianza o ' + CLIENT_LABEL_REMOVED + ').');
+ok('FTQ-15: "lead falso" in a caller\'s own words, and a line break inside the label, are left alone',
+  neutralizeFakeLeadLabel('el lead falso no es tema') === 'el lead falso no es tema' && neutralizeFakeLeadLabel('probable\nfake lead') === 'probable\nfake lead');
 
 // ── 5. One list, one rule: the client reaches both through the barrel ────────
 {
@@ -165,8 +194,8 @@ ok('FTQ-15: non-strings become empty, the empty string stays empty (the sibling 
     /DISPOSABLE_EMAIL_DOMAINS[\s\S]{0,160}from '\.\.\/\.\.\/api\/_lib\/cy2027\/data-quality\.js'/.test(BARREL));
   ok('FTQ-15: the aggregate and the kinds reach the client through the barrel',
     /REVIEW_INCONSISTENCY_KINDS,\s*aggregateInconsistency,[\s\S]{0,40}\} from '\.\.\/\.\.\/api\/_lib\/cy2027\/data-quality\.js'/.test(BARREL));
-  ok('FTQ-11: the lead path imports the canonical rule',
-    line(/import \{ isDisposableEmail, neutralizeFakeLeadLabel \} from '\.\/_lib\/cy2027\/data-quality\.js';/).test(SL));
+  ok('FTQ-11/FTQ-15: the lead path imports the canonical rules — the signal, the neutraliser and the tag refusal',
+    line(/import \{ isDisposableEmail, neutralizeFakeLeadLabel, clientTagRefusal \} from '\.\/_lib\/cy2027\/data-quality\.js';/).test(SL));
   ok('FTQ-11: the signal is derived on the server, from the capped raw address, before the trust state is computed',
     line(/if \(isDisposableEmail\(_cap\(email, 254\)\)\) \{\s*_trustSignals\.push\('DISPOSABLE_CONTACT_DATA'\);\s*\}/).test(SL) &&
     SL.indexOf("_trustSignals.push('DISPOSABLE_CONTACT_DATA')") < SL.indexOf('evaluateTrust({ signals: _trustSignals })'));
@@ -216,19 +245,65 @@ ok('FTQ-15: non-strings become empty, the empty string stays empty (the sibling 
     /not a finding about the caller/.test(LNB) && /no una conclusión sobre la persona/.test(LNB));
 }
 
-// ── 7. FTQ-15: the server's tag filter, lifted and CALLED ────────────────────
+// ── 7. FTQ-15: the server's tag filter — the verdict rule CALLED, the owned spellings lifted ──
+// AUDIT 2026-10-04 (red team) — the verdict used to be an alternation inside the
+// handler's ^…$ deny-regex: 22 affixed or other-vocabulary verdicts reached the
+// CRM. The rule is now clientTagRefusal() in data-quality.js and is called here;
+// the lifted regexes are only the server-owned spellings they still hold.
 {
   const SL = read('../api/submit-lead.js');
   const denyKeys = new RegExp(SL.match(/^[ \t]*var _denyKeys = \/(.+)\/;$/m)[1]);
   const denyFamily = new RegExp(SL.match(/^[ \t]*var _denyFamilyPrefix = \/(.+)\/;$/m)[1]);
   const dash = (tag) => String(tag).toLowerCase().replace(/[\s_‐-―−-]+/g, '-').replace(/^-+|-+$/g, '');
-  const denied = (tag) => denyKeys.test(dash(tag).replace(/-/g, '')) || denyFamily.test(dash(tag));
+  const owned = (tag) => denyKeys.test(dash(tag).replace(/-/g, '')) || denyFamily.test(dash(tag));
   const VERDICTS = ['probable_fake_lead', 'Probable-Fake-Lead', 'PROBABLE FAKE LEAD', 'probableFakeLead', 'fake_lead', 'fake lead', 'fakelead',
-    'likely_fake', 'suspected_fraud', 'possible_scam', 'confirmed_bogus', 'spam_caller', 'scam_submission', 'fraudulent_lead', 'fraud_lead', 'bogus_contact', 'spam person'];
+    'likely_fake', 'suspected_fraud', 'possible_scam', 'confirmed_bogus', 'spam_caller', 'scam_submission', 'fraudulent_lead', 'fraud_lead', 'bogus_contact', 'spam person',
+    // the red team's 22
+    'probable_fake_lead_true', 'x_probable_fake_lead', 'fake_lead_1', 'is_fake_lead', 'probable_fake_lead_v2', 'fakelead2', 'fake_leads_list', 'lead_fake',
+    'fake_client', 'fake_customer', 'scammer', 'fraudster', 'suspicious_caller', 'likely_scammer', 'bot_lead', 'junk_lead', 'not_real_person', 'phony_lead',
+    'fraud_risk_high', 'liar', 'probable_fraudster', 'fake_user',
+    // wearing a server family's prefix, spelled with Cyrillic а, or spelled from the neutraliser's marker
+    'CallTime-probable-fake-lead', 'Interest-fake-lead', 'UTM-fake_lead', 'probаble_fаke_leаd', 'CallTime-client-label-removed-true',
+    'is-bot', 'bot_detected', 'not-a-person', 'nonreal', 'scam-score', 'fake_identity', 'false_identity', 'troll_lead', 'customer_fake'];
   const TOPICS = ['data_review_suggested', 'category_fraud_scam', 'fraud_alert', 'fraud_scam', 'confidence_low', 'confidence_medium',
-    'status_existing_client_claimed', 'urgency_elevated', 'customer_service_bot', 'language_es', 'state_FL', 'phi_scrubbed', 'Website Lead', 'CallTime-morning'];
-  for (const t of VERDICTS) ok(`FTQ-15: a client-asserted verdict "${t}" is refused as a tag`, denied(t), 'ALLOWED');
-  for (const t of TOPICS) ok(`FTQ-15: "${t}" (a description, not a verdict) still reaches the CRM`, !denied(t), 'DENIED');
+    'status_existing_client_claimed', 'urgency_elevated', 'customer_service_bot', 'language_es', 'state_FL', 'phi_scrubbed', 'Website Lead', 'CallTime-morning',
+    'clara_bot', 'category_billing', 'status_existing_client', 'consent_no', 'consent_unknown', 'Interest-Part-D', 'Interest-Extra-Help-LIS-question', 'CallTime-Atencion-medica',
+    // the engine's data-validation reasons are about the DATA, not the person
+    'fake_number', 'fake_pattern', 'inappropriate_or_fake', 'suspicious_name', 'name_suspicious_full',
+    // topics that merely contain a verdict word, and ordinary words that contain a short one
+    'spam_filter_question', 'scam_call_report', 'fraud_scam_question', 'familiar', 'Abbott-Labs', 'robotics-question', 'is-enrolled', 'not-enrolled', 'non-member', 'leads_pipeline'];
+  // Tags only the SERVER mints (a client's copy is refused as an owned family) — they pass the verdict rule and nothing else.
+  const MINTED = ['Source-other', 'Source-clearpoint_senior_advisors_website', 'Source-zara_education', 'UTM-google', 'UTM-fb_ad_2026', 'CallTime-morning', 'Interest-Part-D'];
+  for (const t of VERDICTS) {
+    const r = clientTagRefusal(t);
+    ok(`FTQ-15: a client-asserted verdict "${t}" is refused as a tag, by name`, typeof r === 'string' && TAG_REFUSAL_REASONS[r] === r, `got ${r}`);
+  }
+  for (const t of TOPICS) ok(`FTQ-15: "${t}" (a description, not a verdict) still reaches the CRM`, clientTagRefusal(t) === null && !owned(t), `refused=${clientTagRefusal(t)} owned=${owned(t)}`);
+  for (const t of MINTED) ok(`FTQ-15: the server-minted "${t}" passes the verdict rule it is now judged by`, clientTagRefusal(t) === null, `refused=${clientTagRefusal(t)}`);
+  ok('FTQ-15: a client cannot mint a Source-/UTM- tag itself (owned families)', owned('Source-other') && owned('UTM-google'));
+  ok('FTQ-15: the retired label is refused as itself whatever its affixes or prefix',
+    ['probable_fake_lead', 'probable_fake_lead_true', 'x_probable_fake_lead', 'CallTime-probable-fake-lead', 'probаble_fаke_leаd'].every((t) => clientTagRefusal(t) === TAG_REFUSAL_REASONS.RETIRED_LABEL));
+  ok('FTQ-15: each verdict shape answers its own reason',
+    clientTagRefusal('suspected_fraud') === 'QUALIFIED_VERDICT' && clientTagRefusal('is_fake_lead') === 'QUALIFIED_VERDICT' && clientTagRefusal('likely_scammer') === 'QUALIFIED_VERDICT' &&
+    clientTagRefusal('lead_fake') === 'VERDICT_ON_SUBJECT' && clientTagRefusal('fakelead2') === 'VERDICT_ON_SUBJECT' && clientTagRefusal('suspicious_caller') === 'VERDICT_ON_SUBJECT' &&
+    clientTagRefusal('scammer') === 'PERSON_NOUN' && clientTagRefusal('liar') === 'PERSON_NOUN' &&
+    clientTagRefusal('not_real_person') === 'NEGATED_GENUINE' && clientTagRefusal('fraud_risk_high') === 'VERDICT_ASSESSMENT' &&
+    clientTagRefusal('CallTime-client-label-removed-true') === 'NEUTRALISED_MARKER');
+  ok('FTQ-15: the short words count only as whole tokens — a substring of an ordinary word is not a verdict',
+    clientTagRefusal('familiar') === null && clientTagRefusal('liar') === 'PERSON_NOUN' && clientTagRefusal('is-enrolled') === null && clientTagRefusal('is-fake') === 'QUALIFIED_VERDICT');
+  ok('FTQ-15: the key folds look-alikes, accents, invisibles, case and every separator',
+    normalizeTagKey('Probаble-Fаke_Leаd') === 'probable-fake-lead' && normalizeTagKey(' Atención médica ') === 'atencion-medica' &&
+    normalizeTagKey('fake​lead') === 'fakelead' && normalizeTagKey(42) === '');
+  ok('FTQ-15: a non-string is not the rule\'s business (null — the handler\'s charset gate decides)',
+    clientTagRefusal(null) === null && clientTagRefusal(['fake_lead']) === null && clientTagRefusal(42) === null && clientTagRefusal('') === null);
+  ok('FTQ-15: the handler\'s own regex no longer carries a private copy of the verdict vocabulary',
+    !/fake|fraud|bogus|scam|spam|probable/.test(denyKeys.source), denyKeys.source);
+  ok('FTQ-15: the server-owned spellings are still exact and still refused',
+    ['Status-NewLead', 'consent_yes', 'Consent Captured', 'SOA-Signed', 'DNC', 'Lang-ES', 'utm-x', 'source-x', 'Temp-Hot'].every(owned));
+  ok('FTQ-15: the vocabulary and the reason table are frozen all the way down',
+    unfrozenPaths(VERDICT_TAG_VOCABULARY, 'V').length === 0 && unfrozenPaths(TAG_REFUSAL_REASONS, 'R').length === 0);
+  ok('FTQ-15: the long person nouns are long enough to be matched contained (≥ 6 letters)',
+    VERDICT_TAG_VOCABULARY.personNouns.every((w) => w.length >= 6) && VERDICT_TAG_VOCABULARY.qualifiers.every((w) => w.length >= 5));
 }
 
 // ── 8. api/submit-lead.js, run for real against a laboratory CRM ─────────────
@@ -401,6 +476,80 @@ ok('the consent wording the site shows is readable (the laboratory leads consent
     ok('handler (FTQ-15): the client\'s quality flags are labelled as the client\'s and carry no verdict',
       /client:/.test(String(cf(texted.creates[0], 'contact.lead_quality_flags'))) && !FAKE_LABEL.test(String(cf(texted.creates[0], 'contact.lead_quality_flags'))),
       String(cf(texted.creates[0], 'contact.lead_quality_flags')));
+
+    // E2 — AUDIT 2026-10-04 (red team): the 22 affixed / other-vocabulary verdicts that reached the CRM,
+    //      plus two client tags wearing a server family's prefix. None may reach the contact.
+    const RED = ['probable_fake_lead_true', 'x_probable_fake_lead', 'fake_lead_1', 'is_fake_lead', 'probable_fake_lead_v2', 'fakelead2', 'fake_leads_list', 'lead_fake',
+      'fake_client', 'fake_customer', 'scammer', 'fraudster', 'suspicious_caller', 'likely_scammer', 'bot_lead', 'junk_lead', 'not_real_person', 'phony_lead',
+      'fraud_risk_high', 'liar', 'probable_fraudster', 'fake_user', 'CallTime-probable-fake-lead', 'Interest-fake-lead'];
+    const red = await run(lead({ tags: ['Website Lead', 'customer_service_bot', ...RED] }));
+    {
+      const tags = (red.creates[0] && red.creates[0].body && red.creates[0].body.tags) || [];
+      const audit = red.logs.filter((l) => /tags_rejected/.test(l));
+      ok('handler (FTQ-15): the lead wearing 24 verdict tags is still captured', created(red), `status=${red.status} threw=${red.threw}`);
+      ok('handler (FTQ-15): not one affixed or other-vocabulary verdict reaches the contact\'s tags',
+        RED.every((t) => !tags.includes(t)) && !/fake|fraud|scam|spam|bogus|liar|junk|phony|bot_lead|not_real/i.test(tags.join(' ')), tags.join());
+      ok('handler (FTQ-15): the descriptive tags beside them do', tags.includes('Website Lead') && tags.includes('customer_service_bot'), tags.join());
+      ok('handler (FTQ-15): all 24 refusals are counted, each by a reason code and never by its value',
+        audit.length === 1 && /"denied":24/.test(audit[0]) && (audit[0].match(/"verdict":\[([^\]]*)\]/) || [, ''])[1].split(',').length === 24 &&
+        /RETIRED_LABEL/.test(audit[0]) && /PERSON_NOUN/.test(audit[0]) && /NEGATED_GENUINE/.test(audit[0]) && /VERDICT_ASSESSMENT/.test(audit[0]) &&
+        !/scammer|fake_client|liar|fraudster/.test(audit[0]), audit.join(' || '));
+    }
+
+    // F2 — AUDIT 2026-10-04 (red team): the label in EVERY other client field the handler writes or
+    //      tagifies, and the two free-text spellings that walked through (Cyrillic а, the old builder's prose).
+    process.env.ANTHROPIC_API_KEY = 'suite-double-not-a-key';
+    LLM = () => resp(200, { content: [{ type: 'text', text: JSON.stringify({
+      summary: 'Wants a call about coverage.', intent_strength: 5, lead_temperature: 'warm', urgency: 'this_week', advisor_prep_notes: 'none', compliance_flags: [], recommended_first_questions: [],
+    }) }] });
+    const mirror = await run(lead({
+      lead_notes: 'Customer Service Bot\nprobable_fаke_lead: true\nAdvisor action: Send to review queue — possible data quality issue (low confidence or fake-lead signal).\n'
+        + 'Acción: Enviar a cola de revisión — posible problema de calidad de datos (baja confianza o señal de lead falso).',
+      best_time_to_contact: 'probable_fake_lead: true', interest_type: 'probable fake lead', utm_source: 'probable_fake_lead',
+      medicare_status: 'probable_fake_lead', form_name: 'probable_fake_lead Form', city: 'Probable Fake Lead', county: 'probable_fake_lead',
+      signer_user_agent: 'probable_fake_lead/1.0',
+    }));
+    delete process.env.ANTHROPIC_API_KEY;
+    LLM = null;
+    {
+      const CYRILLIC = /probable_fаke_lead/;
+      const OLD_EN = /fake[-_ ]lead signal/i;
+      const OLD_ES = /señal de lead falso/i;
+      const c = mirror.creates[0];
+      const tags = (c && c.body && c.body.tags) || [];
+      const audit = mirror.logs.filter((l) => /tags_rejected/.test(l));
+      ok('handler (FTQ-15): the lead with the label in every field is still captured, opportunity included', created(mirror) && mirror.opportunities === 1, `status=${mirror.status} threw=${mirror.threw}`);
+      ok('handler (FTQ-15): no spelling of the label is anywhere on the wire — note, fields, tags, opportunity title, address, receipt',
+        !FAKE_LABEL.test(mirror.wire) && !CYRILLIC.test(mirror.wire) && !OLD_EN.test(mirror.wire) && !OLD_ES.test(mirror.wire),
+        (mirror.wire.match(/.{0,40}(?:probable[\s_.\/-]*f.ke[\s_.\/-]*lead|fake[-_ ]lead signal|lead falso).{0,40}/gi) || []).join(' || '));
+      ok('handler (FTQ-15): the fields themselves are still written, de-labelled, so nothing is silently dropped',
+        cf(c, 'contact.best_time_to_call') === CLIENT_LABEL_REMOVED + ': true' && cf(c, 'contact.medicare_interest') === CLIENT_LABEL_REMOVED &&
+        cf(c, 'contact.medicare_status') === CLIENT_LABEL_REMOVED && c.body.city === CLIENT_LABEL_REMOVED && c.body.address1 === CLIENT_LABEL_REMOVED,
+        JSON.stringify({ bt: cf(c, 'contact.best_time_to_call'), it: cf(c, 'contact.medicare_interest'), ms: cf(c, 'contact.medicare_status'), city: c.body.city, address1: c.body.address1 }));
+      // The receipt line reduces every client claim to characters that cannot spell a separator, so the marker loses its brackets there.
+      ok('handler (FTQ-15): the opportunity title and the receipt line carry the marker, not the label',
+        mirror.wire.includes('Probe Tester — ' + CLIENT_LABEL_REMOVED + ' Form') && /ua=client-label-removed \/1\.0/.test(mirror.wire),
+        (mirror.wire.match(/.{0,10}ua=.{0,40}|Probe Tester — .{0,40}/g) || []).join(' || '));
+      ok('handler (FTQ-15): no CallTime-/Interest-/UTM- tag was minted from the label — not even from the marker',
+        !tags.some((t) => /^(CallTime|Interest|UTM)-/.test(t)), tags.join());
+      ok('handler (FTQ-15): the three server-minted refusals are recorded by family and reason, never by value',
+        audit.length === 1 && /"server":\["CallTime:NEUTRALISED_MARKER","Interest:NEUTRALISED_MARKER","UTM:RETIRED_LABEL"\]/.test(audit[0]) && !/probable/.test(audit[0]), audit.join(' || '));
+      ok('handler (FTQ-15): the scorer saw none of it either', mirror.scored.length === 1 && !FAKE_LABEL.test(mirror.scored[0]) && !CYRILLIC.test(mirror.scored[0]) && !OLD_EN.test(mirror.scored[0]), `scored=${mirror.scored.length}`);
+    }
+
+    // F3 — the fallback path: no form name, the label sent as lead_source becomes the opportunity's title.
+    const fallback = await run(lead({ form_name: '', lead_source: 'probable fake lead' }));
+    ok('handler (FTQ-15): with no form name, a label sent as lead_source does not become the opportunity\'s title',
+      created(fallback) && fallback.opportunities === 1 && !FAKE_LABEL.test(fallback.wire) && fallback.wire.includes('Probe Tester — ' + CLIENT_LABEL_REMOVED),
+      (fallback.wire.match(/.{0,40}probable[\s_-]*fake[\s_-]*lead.{0,40}/i) || []).join(' || '));
+
+    // G — AUDIT 2026-10-04 (FTQ-11, red team): an address the handler KEEPS with wrapper characters raised nothing.
+    const angle = await run(lead({ email: '<dispo.probe.2a@mailinator.com>' }));
+    ok('handler (FTQ-11): an address kept with wrapper characters still raises the signal — the signal follows what is stored',
+      created(angle) && reviewSignals(angle).join() === 'DISPOSABLE_CONTACT_DATA' && trustFlags(angle).join() === 'TRUST_HUMAN_REVIEW_REQUIRED' &&
+      String(angle.creates[0].body.email) === '<dispo.probe.2a@mailinator.com>',
+      `signals=${reviewSignals(angle).join()} flags=${trustFlags(angle).join()} email=${angle.creates[0] && angle.creates[0].body.email}`);
+    ok('handler (FTQ-11): neither that address nor its domain is logged', !angle.logs.some((l) => /dispo\.probe\.2a|mailinator/i.test(l)));
   } catch (e) {
     harnessError = e;
   } finally {
@@ -483,6 +632,50 @@ ok('the consent wording the site shows is readable (the laboratory leads consent
     ok('engine (FTQ-15): every inconsistency is still recorded — nothing is hidden from the advisor',
       v.outOfAreaThenName.inconsistencies.length === 2 && v.nameThenPhone.inconsistencies.length === 2 && v.outOfAreaThenName.score === 45);
   }
+}
+
+// ── 10. The self-modification gate vouches for the data-quality tables — and is seen FAILING ──
+// AUDIT 2026-10-04 (red team) — DISPOSABLE_EMAIL_DOMAINS and REVIEW_INCONSISTENCY_KINDS
+// were not registered: an unfrozen list passed the build gate as "15/15". A copy
+// of this tree with the freezes removed is judged by the gate itself.
+{
+  const TABLES = ['DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS'];
+  ok('gate: the four data-quality tables are governing identifiers (never written to, anywhere)', TABLES.every((n) => GOVERNING_IDENTIFIERS.includes(n)));
+  // Two copies: the gate LOADS the governing modules, and a module once loaded
+  // from a path is cached for the process — a defect planted in the same copy
+  // after a clean run would be judged on the cached, clean module.
+  const cleanTree = mkdtempSync(join(tmpdir(), 'cp-ftq-gate-clean-'));
+  const badTree = mkdtempSync(join(tmpdir(), 'cp-ftq-gate-bad-'));
+  let gateError = null;
+  try {
+    for (const tree of [cleanTree, badTree]) {
+      cpSync(join(REPO, 'api'), join(tree, 'api'), { recursive: true });
+      cpSync(join(REPO, 'src'), join(tree, 'src'), { recursive: true });
+      writeFileSync(join(tree, 'package.json'), JSON.stringify({ type: JSON.parse(read('../package.json')).type }));
+    }
+    const clean = await runGate({ root: cleanTree });
+    ok('gate: an untouched copy passes, and the data-quality tables are among the objects it froze',
+      clean.problems.length === 0 && clean.objectCount >= 19 && clean.frozenCount === clean.objectCount, `${clean.frozenCount}/${clean.objectCount} ${clean.problems.join(' | ')}`);
+    const dq = join(badTree, 'api', '_lib', 'cy2027', 'data-quality.js');
+    let src = readFileSync(dq, 'utf8');
+    for (const [name, open] of [['DISPOSABLE_EMAIL_DOMAINS', '['], ['REVIEW_INCONSISTENCY_KINDS', '['], ['VERDICT_TAG_VOCABULARY', '{']]) {
+      const anchor = `export const ${name} = Object.freeze(${open}`;
+      ok(`gate lab: the freeze on ${name} is one exact line in the copy`, src.split(anchor).length === 2);
+      src = src.replace(anchor, `export const ${name} = (${open}`);
+    }
+    writeFileSync(dq, src);
+    const bad = await runGate({ root: badTree });
+    for (const name of ['DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY']) {
+      ok(`gate: an unfrozen ${name} FAILS the gate, by name`, bad.problems.some((p) => p.startsWith(`${name} is not frozen all the way down`)), bad.problems.join(' | '));
+    }
+    ok('gate: exactly those three stopped counting as frozen', bad.frozenCount === bad.objectCount - 3 && bad.problems.length === 3, `${bad.frozenCount}/${bad.objectCount} problems=${bad.problems.length}`);
+  } catch (e) {
+    gateError = e;
+  } finally {
+    rmSync(cleanTree, { recursive: true, force: true });
+    rmSync(badTree, { recursive: true, force: true });
+  }
+  ok('the gate laboratory ran to the end', gateError === null, gateError && (gateError.stack || String(gateError)));
 }
 
 // ── Report ───────────────────────────────────────────────────────────────────

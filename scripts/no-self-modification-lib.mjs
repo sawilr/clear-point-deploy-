@@ -341,6 +341,10 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   'SOA_TEXT', 'SOA_CATEGORIES', 'TPMO_DISCLAIMER_CONFIG', 'LANGUAGE_SOURCE', 'SOA_METHOD',
   'CARRIER_OVERLAYS', 'MEDICARE_KNOWLEDGE', 'SYSTEM_PROMPT',
   'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
+  // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables
+  // govern a review signal and a tag refusal, and were not registered here:
+  // an unfrozen DISPOSABLE_EMAIL_DOMAINS passed the gate ("15/15").
+  'DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS',
 ]);
 
 const MUTATING_METHODS = Object.freeze(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear']);
@@ -514,7 +518,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -522,6 +526,7 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/tpmo.js'),
     load('api/_lib/cy2027/soa-instance.js'),
     load('api/_lib/cy2027/learning.js'),
+    load('api/_lib/cy2027/data-quality.js'),
   ]);
   return {
     CMS_RULESET_2026: rulesets.CMS_RULESET_2026,
@@ -539,6 +544,11 @@ async function governingObjects(root) {
     LEARNING_PIPELINE: learning.LEARNING_PIPELINE,
     LEARNING_REJECTION_REASONS: learning.LEARNING_REJECTION_REASONS,
     AUTOMATED_OBSERVATIONS: learning.AUTOMATED_OBSERVATIONS,
+    // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — see GOVERNING_IDENTIFIERS.
+    DISPOSABLE_EMAIL_DOMAINS: quality.DISPOSABLE_EMAIL_DOMAINS,
+    REVIEW_INCONSISTENCY_KINDS: quality.REVIEW_INCONSISTENCY_KINDS,
+    VERDICT_TAG_VOCABULARY: quality.VERDICT_TAG_VOCABULARY,
+    TAG_REFUSAL_REASONS: quality.TAG_REFUSAL_REASONS,
   };
 }
 
