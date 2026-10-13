@@ -113,6 +113,18 @@ check('O3 body carries no membership signal (no crmApplied/reason/no_match)', !/
 check('O4 suppression STILL applied for known contact (DND PUT sent)', known.log.some((c) => c.method === 'PUT' && c.body && c.body.dnd === true), 'no DND PUT for known contact');
 check('O5 no PUT/mutation attempted for unknown contact', !unknown.log.some((c) => c.method === 'PUT'), 'unexpected mutation for unknown');
 check('O6 opt-out only SUPPRESSES (never sets consent TRUE / reverses DND)', !known.log.some((c) => c.method === 'PUT' && /consent_[a-z]+"[^}]*"value":"true"/.test(JSON.stringify(c.body)) || (c.body && c.body.dnd === false)), 'opt-out wrote consent or dnd:false');
+// AUDIT 2026-10-04 (CRM-29) — the four ids now come from the registry in
+// api/_lib/cy2027/crm-fields.js. This pins the WIRE bytes of the suppression
+// PUT (ids, keys, values, order, property order) so a mistyped registry entry
+// fails here, at handler level, not in a source grep. No CY2027 ids are
+// configured in this harness, so the callback-consent fields are not present.
+const _revokePut = (known.log.find((c) => c.method === 'PUT') || {}).body || {};
+check('O7 revocation PUT carries exactly the four consent fields, production ids unchanged (CRM-29)',
+  JSON.stringify(_revokePut.customFields) === '[{"id":"vPKlhpz6aucJK1U3fJRZ","key":"contact.consent_marketing","value":"false"},' +
+    '{"id":"w1hopBfNLGauFRRzQ71l","key":"contact.consent_sms","value":"false"},' +
+    '{"id":"mHdpDjBSA76lQJrKoixL","key":"contact.consent_calls","value":"false"},' +
+    '{"id":"ykiTUcsu3nvawK39hmll","key":"contact.consent_email","value":"false"}]',
+  JSON.stringify(_revokePut.customFields));
 
 // ══ LEAD-02 ══════════════════════════════════════════════════════════════════
 console.log('\n[LEAD-02] phone-upsert third-party overwrite');
@@ -147,6 +159,20 @@ const postCreate = ghlLog.filter((c) => /\/contacts\/$/.test(c.url) && c.method 
 check('L7 NEW phone still creates a contact (revenue path intact)', postCreate.length >= 1, 'no POST create for new lead');
 check('L8 new contact carries its OWN consent (established by the person)', postCreate.some((c) => JSON.stringify(c.body || {}).includes('consent_marketing')), 'new create missing consent customFields');
 check('L9 new lead succeeds', res.statusCode === 200 && res.body && res.body.success === true, `status=${res.statusCode}`);
+// AUDIT 2026-10-04 (CRM-29) — the create body is written under the production
+// ids from the registry, in the { id, key, value } shape the CRM has always
+// received. calculated_age is not pinned (it depends on today's date) and the
+// summary is pinned by its prefix only (the handler appends the TCPA receipt).
+const _newCf = (postCreate[0] && postCreate[0].body && postCreate[0].body.customFields) || [];
+check('L10 new contact is written under the production field ids, in the { id, key, value } shape (CRM-29)',
+  ['QULAmkAuVNCQrAMZ487K|contact.preferred_language|en', 'vPKlhpz6aucJK1U3fJRZ|contact.consent_marketing|true',
+    'w1hopBfNLGauFRRzQ71l|contact.consent_sms|true', 'mHdpDjBSA76lQJrKoixL|contact.consent_calls|true',
+    'ykiTUcsu3nvawK39hmll|contact.consent_email|true']
+    .every((want) => _newCf.some((f) => [f.id, f.key, f.value].join('|') === want)) &&
+  _newCf.some((f) => f.id === '6vSP5DJvAc6Jl9BXg409' && f.key === 'contact.chat_conversation_summary' &&
+    String(f.value).startsWith('Caller asked about Part D drug costs and wants a callback.')) &&
+  _newCf.length >= 6 && _newCf.every((f) => Object.keys(f).join(',') === 'id,key,value'),
+  JSON.stringify(_newCf));
 
 globalThis.fetch = realFetch;
 console.log('\n═══════════════════════════════════════');

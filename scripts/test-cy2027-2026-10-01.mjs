@@ -56,6 +56,8 @@ import { complianceFilter } from '../api/_lib/compliance-filter.js';
 import {
   buildCustomFields, soaInstanceToFields, consentsToFields, unmappedFieldsWarning, fieldIdMap,
   CY2027_FIELD_KEYS, CONFIRMED_ONLY_FIELDS, callbackRevocationToFields,
+  EXISTING_CRM_FIELDS, PRODUCTION_FIELD_IDS, existingField, LEGACY_SOA_NAME_FIELDS, legacySoaNameFields,
+  normalizeFieldName, registeredFields, findEquivalentFields, registryProblems, planProvisioning, REGISTRY_PROBLEM,
 } from '../api/_lib/cy2027/crm-fields.js';
 import {
   recordWebCallbackConsent, CALLBACK_CONSENT_UNAVAILABLE, CALLBACK_CONSENT_NOT_RECORDED_FLAG,
@@ -75,7 +77,7 @@ import { stripComments } from './no-self-modification-lib.mjs';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, writeFileSync, mkdtempSync, mkdirSync, cpSync, rmSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join as pathJoin, dirname as pathDirname, resolve as pathResolve } from 'node:path';
 
@@ -3434,6 +3436,259 @@ consentScope: {
     }
     ok('CE-09: both handlers ran to the end of the harness', harnessError === null,
       harnessError && String(harnessError.stack || harnessError).slice(0, 500));
+  }
+}
+
+// ── 26. One canonical CRM field registry (spec §18, audit CRM-29) ────────────
+// "Search for existing equivalent fields before creating new ones. Never
+//  duplicate fields with slightly different names." Until this audit the twelve
+// production field ids existed only as literals inside three handlers, plus a
+// fourth bare copy in PRODUCTION_FIELD_IDS, so there was nothing to search.
+{
+  // An INDEPENDENT copy of what production sends today, in the order the lead
+  // writer sends it. If this table and the registry disagree, one of them was
+  // edited without the other — which is exactly what this is here to catch.
+  const GOLDEN = [
+    ['PREFERRED_LANGUAGE', 'QULAmkAuVNCQrAMZ487K', 'contact.preferred_language'],
+    ['MEDICARE_STATUS', 'R510tHz6GFBaqZgN5e5S', 'contact.medicare_status'],
+    ['CONSENT_MARKETING', 'vPKlhpz6aucJK1U3fJRZ', 'contact.consent_marketing'],
+    ['CONSENT_SMS', 'w1hopBfNLGauFRRzQ71l', 'contact.consent_sms'],
+    ['CONSENT_CALLS', 'mHdpDjBSA76lQJrKoixL', 'contact.consent_calls'],
+    ['CONSENT_EMAIL', 'ykiTUcsu3nvawK39hmll', 'contact.consent_email'],
+    ['CLIENT_AGE', 'GSss3tRLKg8mNCzEv3D9', 'contact.client_age'],
+    ['CALCULATED_AGE', 'HoYmwc19InLwUwXNyKcr', 'contact.calculated_age'],
+    ['LEAD_QUALITY_FLAGS', 'qGryQuR67jXFFVRFBLkz', 'contact.lead_quality_flags'],
+    ['CHAT_CONVERSATION_SUMMARY', '6vSP5DJvAc6Jl9BXg409', 'contact.chat_conversation_summary'],
+    ['BEST_TIME_TO_CALL', 'PpDDusEEsMz4xNIcrwRW', 'contact.best_time_to_call'],
+    ['MEDICARE_INTEREST', 'fLxx7s1GpVJYlxJl08G6', 'contact.medicare_interest'],
+  ];
+  ok('CRM-29: the registry holds exactly the twelve production fields, ids and keys unchanged',
+    JSON.stringify(Object.entries(EXISTING_CRM_FIELDS).map(([n, f]) => [n, f.id, f.key])) === JSON.stringify(GOLDEN));
+  ok('CRM-29: the registry cannot be mutated at runtime',
+    Object.isFrozen(EXISTING_CRM_FIELDS) && Object.values(EXISTING_CRM_FIELDS).every((f) => Object.isFrozen(f)));
+  ok('CRM-29: PRODUCTION_FIELD_IDS is the registry\'s own ids, in order — one source, not a second copy',
+    Object.isFrozen(PRODUCTION_FIELD_IDS) && JSON.stringify(PRODUCTION_FIELD_IDS) === JSON.stringify(GOLDEN.map(([, id]) => id)));
+  ok('CRM-29: the registry is internally consistent', registryProblems().length === 0, registryProblems().join(', '));
+  ok('CRM-29: the problem vocabulary is closed and frozen',
+    Object.isFrozen(REGISTRY_PROBLEM) && Object.keys(REGISTRY_PROBLEM).length === 7 && Object.entries(REGISTRY_PROBLEM).every(([k, v]) => k === v));
+
+  // The consistency check is observed FAILING on a defective registry, by name.
+  const E = EXISTING_CRM_FIELDS;
+  const C = CY2027_FIELD_KEYS;
+  const bad = (existing, cy2027, legacy) => registryProblems({ existing, cy2027, legacy });
+  ok('CRM-29: a name passed where an id belongs is MALFORMED_ID',
+    bad({ ...E, X: { id: 'soa_pdf_hash', key: 'contact.x' } }, C).includes('MALFORMED_ID:EXISTING.X') &&
+    bad({ ...E, X: { id: 7, key: 'contact.x' } }, C).includes('MALFORMED_ID:EXISTING.X'));
+  ok('CRM-29: two fields with one id is DUPLICATE_ID',
+    bad({ ...E, X: { id: E.CONSENT_SMS.id, key: 'contact.x' } }, C).includes('DUPLICATE_ID:EXISTING.X=EXISTING.CONSENT_SMS'));
+  ok('CRM-29: two fields with one key is DUPLICATE_KEY',
+    bad(E, { ...C, X: 'contact.consent_sms' }).includes('DUPLICATE_KEY:CY2027.X=EXISTING.CONSENT_SMS'));
+  ok('CRM-29: two fields that differ only slightly in name is NEAR_DUPLICATE_NAME',
+    bad(E, { ...C, SOA_PLANYEAR: 'contact.soa_planyear' }).includes('NEAR_DUPLICATE_NAME:CY2027.SOA_PLANYEAR~CY2027.SOA_PLAN_YEAR') &&
+    bad(E, { ...C, CONSENT_CALL: 'contact.consent_call' }).includes('NEAR_DUPLICATE_NAME:CY2027.CONSENT_CALL~EXISTING.CONSENT_CALLS'));
+  ok('CRM-29: a key outside the contact.<snake_case> convention is MALFORMED_KEY',
+    bad(E, { ...C, X: 'Contact.X-Field' }).includes('MALFORMED_KEY:CY2027.X') && bad(E, { ...C, X: 'soa_x' }).includes('MALFORMED_KEY:CY2027.X'));
+  ok('CRM-29: a name that does not say what its key says is NAME_KEY_MISMATCH',
+    bad(E, { ...C, CONSENT_FAX: 'contact.consent_pager' }).includes('NAME_KEY_MISMATCH:CY2027.CONSENT_FAX'));
+  ok('CRM-29: a legacy name covered by a field that does not exist is LEGACY_POINTS_NOWHERE',
+    bad(E, C, [{ sentAs: 'soa_signed', coveredBy: { table: 'CY2027', name: 'SOA_STATUS_X' } }]).includes('LEGACY_POINTS_NOWHERE:soa_signed') &&
+    bad(E, C, [{ sentAs: 'zz', coveredBy: { table: 'NOWHERE', name: 'SOA_STATUS' } }]).includes('LEGACY_POINTS_NOWHERE:zz'));
+  ok('CRM-29: the check is specific — the same tables passed explicitly report nothing',
+    bad(E, C, LEGACY_SOA_NAME_FIELDS).length === 0 && registryProblems(null).length === 0 && registryProblems({ existing: 'x', cy2027: 7, legacy: 'y' }).length === 0);
+
+  // The writer-facing entry: same bytes as the literal it replaced.
+  ok('CRM-29: an entry serialises exactly as the old inline literal did',
+    JSON.stringify(existingField('CONSENT_SMS', 'false')) ===
+      '{"id":"w1hopBfNLGauFRRzQ71l","key":"contact.consent_sms","value":"false"}');
+  ok('CRM-29: the value is passed through untouched (submit-lead filters and coerces it itself)',
+    existingField('CLIENT_AGE', '').value === '' && existingField('CALCULATED_AGE', 70).value === 70 &&
+    existingField('MEDICARE_STATUS', undefined).value === undefined);
+  throws('CRM-29: an unregistered field is refused, never written under a guessed id',
+    () => existingField('CONSENT_FAX', 'true'), /not a registered existing CRM field/);
+  throws('CRM-29: a CY2027 name is not an EXISTING field', () => existingField('SOA_ID', 'x'), /not a registered/);
+  throws('CRM-29: an inherited property is not a field', () => existingField('constructor', 'x'), /not a registered/);
+  throws('CRM-29: a name that only COERCES to a registered one is refused', () => existingField(['CONSENT_SMS'], 'x'), /not a registered/);
+  throws('CRM-29: a non-string name is refused', () => existingField({ toString: () => 'CONSENT_SMS' }, 'x'), /not a registered/);
+
+  // Existing fields must never be offered to the provisioning script as "to create".
+  ok('CRM-29: no existing field is also listed as a field to create',
+    Object.keys(E).every((n) => !Object.prototype.hasOwnProperty.call(C, n)) &&
+    Object.values(E).every((f) => !Object.values(C).includes(f.key)));
+  ok('CRM-29: the env map still cannot smuggle an existing field in as a CY2027 one',
+    Object.keys(fieldIdMap({ CY2027_CRM_FIELD_IDS: '{"CONSENT_SMS":"x"}' })).length === 0);
+
+  // The search §18 asks for.
+  ok('CRM-29: a slightly different name finds the existing field',
+    ['consent_call', 'consentCalls', 'contact.Consent-Calls', 'CONSENT_CALLS', ' consent calls '].every((c) =>
+      findEquivalentFields(c).some((f) => f.table === 'EXISTING' && f.id === 'mHdpDjBSA76lQJrKoixL')));
+  ok('CRM-29: a CY2027 field is found the same way',
+    findEquivalentFields('soaPlanYear').some((f) => f.table === 'CY2027' && f.name === 'SOA_PLAN_YEAR'));
+  ok('CRM-29: a genuinely new name finds nothing', findEquivalentFields('contact.favorite_color').length === 0);
+  ok('CRM-29: an empty candidate finds nothing rather than everything',
+    findEquivalentFields('').length === 0 && findEquivalentFields(null).length === 0 && findEquivalentFields('contact.').length === 0);
+  ok('CRM-29: distinct concepts are not folded together',
+    normalizeFieldName('contact.soa_state') !== normalizeFieldName('contact.residence_state') &&
+    normalizeFieldName('contact.soa_language') !== normalizeFieldName('contact.preferred_language') &&
+    normalizeFieldName('contact.consent_calls') !== normalizeFieldName('contact.callback_consent_status') &&
+    normalizeFieldName('contact.soa_status') !== normalizeFieldName('contact.soa_state'));
+  ok('CRM-29: every registered field is listed once', registeredFields().length === Object.keys(E).length + Object.keys(C).length &&
+    new Set(registeredFields().map((f) => f.table + '.' + f.name)).size === registeredFields().length);
+  ok('CRM-29: the registry stays server-side — the client barrel does not re-export it',
+    !('EXISTING_CRM_FIELDS' in barrelModule) && !('existingField' in barrelModule) && !('planProvisioning' in barrelModule));
+
+  // The third convention (sign-soa) is registered, with what covers each name.
+  ok('CRM-29: the legacy SOA entries serialise exactly as the old inline literals did',
+    JSON.stringify(legacySoaNameFields({ soa_pdf_hash: 'h', soa_signed_at: 't', soa_id: 'i', preferred_language: 'es' })) ===
+      '[{"id":"soa_signed","field_value":"true"},{"id":"soa_pdf_hash","field_value":"h"},' +
+      '{"id":"soa_signed_at","field_value":"t"},{"id":"soa_id","field_value":"i"},' +
+      '{"id":"preferred_language","field_value":"es"}]');
+  ok('CRM-29: a missing legacy value is omitted exactly as before, not sent as a string',
+    JSON.stringify(legacySoaNameFields({})) ===
+      '[{"id":"soa_signed","field_value":"true"},{"id":"soa_pdf_hash"},{"id":"soa_signed_at"},{"id":"soa_id"},{"id":"preferred_language"}]' &&
+    JSON.stringify(legacySoaNameFields(null)) === JSON.stringify(legacySoaNameFields(undefined)));
+  ok('CRM-29: soa_signed is the constant it always was — the payload cannot change it',
+    legacySoaNameFields({ soa_signed: false }).find((f) => f.id === 'soa_signed').field_value === 'true');
+  ok('CRM-29: the legacy list did not grow', LEGACY_SOA_NAME_FIELDS.length === 5 && Object.isFrozen(LEGACY_SOA_NAME_FIELDS) &&
+    LEGACY_SOA_NAME_FIELDS.every((f) => Object.isFrozen(f)));
+  ok('CRM-29: the SOA "preferred_language" is declared to BE the existing field',
+    findEquivalentFields('preferred_language').some((f) => f.table === 'EXISTING' && f.id === 'QULAmkAuVNCQrAMZ487K'));
+  ok('CRM-29: soa_signed_at is declared as covered by SOA_COMPLETED_AT',
+    findEquivalentFields('soa_signed_at').some((f) => f.table === 'CY2027' && f.name === 'SOA_COMPLETED_AT'));
+
+  // Provisioning decisions are made from the account listing, not from hope.
+  const total = Object.keys(C).length;
+  const liveNow = GOLDEN.map(([, id, key]) => ({ id, key }));
+  const plan0 = planProvisioning(liveNow);
+  ok('CRM-29: with only the production fields live, every §18 field is creatable and none is blocked',
+    plan0.create.length === total && plan0.blocked.length === 0 && Object.keys(plan0.reuse).length === 0 && plan0.drift.length === 0,
+    JSON.stringify({ create: plan0.create.length, blocked: plan0.blocked, drift: plan0.drift }));
+  const plan1 = planProvisioning([...liveNow, { id: 'handMadeField0000001', key: 'contact.soa_planyear' }, { id: 'exactKeyField0000001', key: 'soa_state' }]);
+  ok('CRM-29: an exact key is reused, not recreated', plan1.reuse.SOA_STATE === 'exactKeyField0000001' && !plan1.create.includes('SOA_STATE'));
+  ok('CRM-29: a slightly different key BLOCKS creation instead of duplicating the field',
+    plan1.blocked.some((b) => b.name === 'SOA_PLAN_YEAR' && b.near.some((n) => n.id === 'handMadeField0000001' && n.where === 'ACCOUNT')) &&
+    !plan1.create.includes('SOA_PLAN_YEAR') && !('SOA_PLAN_YEAR' in plan1.reuse));
+  ok('CRM-29: every field lands in exactly one bucket',
+    plan1.create.length + plan1.blocked.length + Object.keys(plan1.reuse).length === total);
+  ok('CRM-29: a CY2027 key that only slightly differs from an EXISTING field is blocked by the registry itself',
+    planProvisioning(liveNow, { cy2027: { ...C, CONSENT_CALL: 'contact.consent_call' } }).blocked
+      .some((b) => b.name === 'CONSENT_CALL' && b.near.some((n) => n.where === 'REGISTRY:CONSENT_CALLS' && n.id === 'mHdpDjBSA76lQJrKoixL')));
+  const plan2 = planProvisioning([
+    { id: 'someOtherId000000001', key: 'contact.consent_sms' },
+    { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_by_phone' },
+  ]);
+  ok('CRM-29: a registry id that the account contradicts is reported',
+    plan2.drift.some((d) => d.name === 'CONSENT_SMS' && d.reason === 'ID_MISMATCH' && d.accountId === 'someOtherId000000001'));
+  ok('CRM-29: a registry key that the account contradicts is reported',
+    plan2.drift.some((d) => d.name === 'CONSENT_CALLS' && d.reason === 'KEY_MISMATCH' && d.accountKey === 'contact.consent_by_phone'));
+  ok('CRM-29: a registry field missing from the account is reported',
+    plan2.drift.some((d) => d.name === 'PREFERRED_LANGUAGE' && d.reason === 'NOT_IN_ACCOUNT') && plan2.drift.length === GOLDEN.length);
+  ok('CRM-29: a malformed account listing never throws', planProvisioning(null).drift.length === GOLDEN.length &&
+    planProvisioning([null, {}, { id: 7, key: 'x' }, { id: 'a', key: '' }]).drift.length === GOLDEN.length);
+
+  // The three writers read the registry and spell no id of their own. Scanned
+  // through strip() so a comment quoting an id can neither pass nor fail this.
+  const LEAD = strip(readFileSync(new URL('../api/submit-lead.js', import.meta.url), 'utf8'));
+  const OPT = strip(readFileSync(new URL('../api/opt-out.js', import.meta.url), 'utf8'));
+  const SIGN6 = strip(readFileSync(new URL('../api/sign-soa.js', import.meta.url), 'utf8'));
+  const INLINE_ID = /\bid:\s*['"][A-Za-z0-9]{20}['"]/;
+  for (const [file, code] of [['api/submit-lead.js', LEAD], ['api/opt-out.js', OPT], ['api/sign-soa.js', SIGN6]]) {
+    ok(`CRM-29: ${file} spells no GoHighLevel field id of its own`, !INLINE_ID.test(code), (code.match(INLINE_ID) || [''])[0]);
+    ok(`CRM-29: no production field id appears anywhere in ${file}`,
+      GOLDEN.every(([, id]) => !code.includes(id)), GOLDEN.filter(([, id]) => code.includes(id)).map(([n]) => n).join(', '));
+    ok(`CRM-29: ${file} hand-writes no contact.* key for an existing field`,
+      GOLDEN.every(([, , key]) => !code.includes("'" + key + "'") && !code.includes('"' + key + '"')));
+  }
+  // Anchored: each entry starts its own line of the array literal, so a
+  // prefixed `if (false)` or a wrapping expression breaks the match.
+  const lineEntries = (code) => [...code.matchAll(/^[ \t]*existingField\('([A-Z_]+)',/gm)].map((m) => m[1]);
+  const anyEntries = (code) => [...code.matchAll(/existingField\('([A-Z_]+)'/g)].map((m) => m[1]);
+  ok('CRM-29: the lead writer sends all twelve existing fields, in the same order as before',
+    JSON.stringify(lineEntries(LEAD)) === JSON.stringify(GOLDEN.map(([n]) => n)) && anyEntries(LEAD).length === 12, lineEntries(LEAD).join(','));
+  ok('CRM-29: the revocation writer clears the three unconditional consent fields, in the same order as before',
+    JSON.stringify(lineEntries(OPT)) === JSON.stringify(['CONSENT_MARKETING', 'CONSENT_SMS', 'CONSENT_CALLS']) && anyEntries(OPT).length === 4, anyEntries(OPT).join(','));
+  ok('CRM-29: the email flag is still cleared only when email is blocked',
+    /^[ \t]*\.\.\.\(blockEmail \? \[existingField\('CONSENT_EMAIL', 'false'\)\] : \[\]\),/m.test(OPT));
+  ok('CRM-29: every field a writer names is registered',
+    [...anyEntries(LEAD), ...anyEntries(OPT)].every((n) => Object.prototype.hasOwnProperty.call(E, n)));
+  const optValues = [...OPT.matchAll(/existingField\('[A-Z_]+',\s*([^)]*)\)/g)].map((m) => m[1].trim());
+  ok('CRM-29: a revocation still only ever writes "false"', optValues.length === 4 && optValues.every((v) => v === "'false'"), optValues.join('|'));
+  ok('CRM-29: sign-soa takes its legacy entries from the registry, and the mapped CY2027 fields still follow them',
+    /^[ \t]*\.\.\.legacySoaNameFields\(payload\),\s*\.\.\.\(Array\.isArray\(payload\.cy2027CustomFields\) \? payload\.cy2027CustomFields : \[\]\),/m.test(SIGN6));
+  ok('CRM-29: sign-soa spells no name-as-id entry of its own', !/\{\s*id:\s*'[a-z_]+',\s*field_value:/.test(SIGN6));
+  ok('CRM-29: submit-lead still drops empty values and coerces non-strings after the registry call',
+    /^[ \t]*\]\.filter\(function \(f\) \{ return f\.value; \}\)\.map\(function \(f\) \{/m.test(LEAD));
+
+  // The provisioning script — the only path that creates a field — consults the
+  // registry first. Source, anchored:
+  const PROV = strip(readFileSync(new URL('./cy2027-provision-crm-fields.mjs', import.meta.url), 'utf8'));
+  ok('CRM-29: provisioning decides from planProvisioning(), not from an exact-key lookup alone',
+    /^[ \t]*const plan = planProvisioning\(await listExisting\(\)\);/m.test(PROV) && !/\.has\(k\)/.test(PROV));
+  ok('CRM-29: provisioning refuses to run on an inconsistent registry, before anything is listed or created',
+    /^[ \t]*const regProblems = registryProblems\(\);/m.test(PROV) &&
+    PROV.indexOf('registryProblems()') < PROV.indexOf('listExisting()', PROV.indexOf('async function main')) &&
+    PROV.indexOf('registryProblems()') < PROV.indexOf('await createField('));
+  ok('CRM-29: provisioning only ever creates from plan.create',
+    /^[ \t]*for \(const n of plan\.create\) \{/m.test(PROV) && !/for \(const n of (names|toCreate)\)\s*\{[\s\S]{0,160}createField/.test(PROV));
+
+  // …and run for real, as a child process against a mocked GoHighLevel listing.
+  // A near-duplicate is reported and never created, with or without --apply;
+  // drift between the registry and the account is printed; a defective registry
+  // stops the script before it lists or creates anything.
+  {
+    const dir = mkdtempSync(pathJoin(tmpdir(), 'cy2027-crm29-'));
+    try {
+      const repo = fileURLToPath(new URL('..', import.meta.url));
+      mkdirSync(pathJoin(dir, 'scripts'), { recursive: true });
+      // The copied .js files are ESM only because the repo's package.json says so.
+      writeFileSync(pathJoin(dir, 'package.json'), '{"type":"module"}\n');
+      cpSync(pathJoin(repo, 'api', '_lib'), pathJoin(dir, 'api', '_lib'), { recursive: true });
+      cpSync(pathJoin(repo, 'scripts', 'cy2027-provision-crm-fields.mjs'), pathJoin(dir, 'scripts', 'cy2027-provision-crm-fields.mjs'));
+      const live = GOLDEN.map(([, id, key]) => ({ id, fieldKey: key.replace(/^contact\./, '') }));
+      live[0] = { id: 'driftedId00000000001', fieldKey: 'preferred_language' };
+      live.push({ id: 'handMadeField0000001', fieldKey: 'soa_planyear' }, { id: 'exactKeyField0000001', fieldKey: 'soa_state' });
+      writeFileSync(pathJoin(dir, 'mock-ghl.mjs'),
+        'const LIVE = ' + JSON.stringify(live) + ';\n' +
+        'globalThis.fetch = async (url, init) => {\n' +
+        '  const method = (init && init.method) || "GET";\n' +
+        '  process.stdout.write("MOCK_" + method + " " + (method === "POST" ? JSON.parse(init.body).fieldKey : "list") + "\\n");\n' +
+        '  if (method === "POST") return new Response(JSON.stringify({ customField: { id: "new_" + JSON.parse(init.body).fieldKey } }), { status: 200 });\n' +
+        '  return new Response(JSON.stringify({ customFields: LIVE }), { status: 200 });\n' +
+        '};\n');
+      const runProv = (script, ...args) => spawnSync(process.execPath,
+        ['--import', pathToFileURL(pathJoin(dir, 'mock-ghl.mjs')).href, script, ...args],
+        { cwd: dir, encoding: 'utf8', timeout: 60000, env: { ...process.env, GHL_API_TOKEN: 'test-token', GHL_LOCATION_ID: 'test-location' } });
+      const SCRIPT = pathJoin(dir, 'scripts', 'cy2027-provision-crm-fields.mjs');
+      const dry = runProv(SCRIPT);
+      const posts = (r) => [...String(r.stdout).matchAll(/^MOCK_POST (\S+)$/gm)].map((m) => m[1]);
+      ok('CRM-29 (provisioning, dry run): lists the account, creates nothing, and names the near-duplicate as NOT created',
+        dry.status === 0 && /^MOCK_GET list$/m.test(dry.stdout) && posts(dry).length === 0 &&
+        /NOT created — a field with a slightly different name already exists \(spec §18\): 1/.test(dry.stdout) &&
+        /SOA_PLAN_YEAR\s+contact\.soa_plan_year/.test(dry.stdout) && /~ contact\.soa_planyear\s+id=handMadeField0000001\s+\(ACCOUNT\)/.test(dry.stdout),
+        String(dry.stdout).slice(-900) + String(dry.stderr).slice(0, 400));
+      ok('CRM-29 (provisioning, dry run): the exact key is reused and the drift between registry and account is printed, by reason',
+        /already present: 1/.test(dry.stdout) && /"SOA_STATE":"exactKeyField0000001"/.test(dry.stdout) &&
+        /EXISTING_CRM_FIELDS is not confirmed by this sub-account: 1/.test(dry.stdout) &&
+        /! PREFERRED_LANGUAGE\s+ID_MISMATCH\s+registry contact\.preferred_language=QULAmkAuVNCQrAMZ487K\s+account contact\.preferred_language=driftedId00000000001/.test(dry.stdout),
+        String(dry.stdout).slice(-900));
+      const apply = runProv(SCRIPT, '--apply');
+      ok('CRM-29 (provisioning, --apply): creates every field in plan.create and STILL never the blocked one',
+        apply.status === 0 && posts(apply).length === total - 2 && !posts(apply).includes('soa_plan_year') && !posts(apply).includes('soa_state') &&
+        posts(apply).includes('soa_id') && !/created SOA_PLAN_YEAR/.test(apply.stdout) && /created SOA_ID -> new_soa_id/.test(apply.stdout),
+        `status=${apply.status} posts=${posts(apply).length} ${String(apply.stderr).slice(0, 300)}`);
+      // A defective registry: CONSENT_EMAIL given CONSENT_SMS's id in the copy.
+      const CF = pathJoin(dir, 'api', '_lib', 'cy2027', 'crm-fields.js');
+      const original = readFileSync(CF, 'utf8');
+      const defective = original.replace("CONSENT_EMAIL: Object.freeze({ id: 'ykiTUcsu3nvawK39hmll',", "CONSENT_EMAIL: Object.freeze({ id: 'w1hopBfNLGauFRRzQ71l',");
+      ok('CRM-29 (provisioning harness): the defect was actually planted', defective !== original);
+      writeFileSync(CF, defective);
+      const broken = runProv(SCRIPT, '--apply');
+      ok('CRM-29 (provisioning, --apply, defective registry): exits 1 naming the problem, without listing or creating anything',
+        broken.status === 1 && /registry is inconsistent/.test(broken.stderr) && /DUPLICATE_ID:EXISTING\.CONSENT_EMAIL=EXISTING\.CONSENT_SMS/.test(broken.stderr) &&
+        !/MOCK_/.test(broken.stdout) && posts(broken).length === 0,
+        `status=${broken.status} ${String(broken.stderr).slice(0, 300)} ${String(broken.stdout).slice(0, 200)}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 }
 

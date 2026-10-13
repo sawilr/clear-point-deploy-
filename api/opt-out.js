@@ -52,7 +52,11 @@ import {
 // endpoint's asymmetry intact: a forged request can only make handling
 // stricter, never looser. The class is derived once, below, from the record
 // class; the I/O that writes it is in step 4.
-import { buildCustomFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+// AUDIT 2026-10-04 (CRM-29) — the four consent field ids used to be retyped here
+// by hand ("Same field ids submit-lead.js writes"). A copy that drifts would
+// leave a revocation clearing the wrong field while still answering 200. They
+// now come from the one registry the lead writer reads.
+import { buildCustomFields, unmappedFieldsWarning, existingField } from './_lib/cy2027/crm-fields.js';
 import { RECORD_CLASS } from './_lib/cy2027/retention.js';
 import { sensitivityForEvidenceRecord } from './_lib/cy2027/sensitivity.js';
 
@@ -229,13 +233,13 @@ export default async function handler(req, res) {
       cbRevocation = CALLBACK_REVOCATION_UNAVAILABLE;
       console.error('[OPTOUT] callback-consent revocation fields not built: ' + String(e).slice(0, 120));
     }
-    // The four flags this endpoint has always cleared. Same field ids
-    // submit-lead.js writes.
+    // The four flags this endpoint has always cleared. The same registry
+    // entries submit-lead.js writes (CRM-29) — not a second copy of their ids.
     const consentFlagFields = [
-      { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: 'false' },
-      { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: 'false' },
-      { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: 'false' },
-      ...(blockEmail ? [{ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: 'false' }] : []),
+      existingField('CONSENT_MARKETING', 'false'),
+      existingField('CONSENT_SMS', 'false'),
+      existingField('CONSENT_CALLS', 'false'),
+      ...(blockEmail ? [existingField('CONSENT_EMAIL', 'false')] : []),
     ];
     const update = {
       dnd: true,

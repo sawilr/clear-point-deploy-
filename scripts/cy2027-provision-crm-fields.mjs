@@ -22,13 +22,17 @@
 //   • Never deletes or edits an existing field. If a field with the same key
 //     already exists it is REUSED and reported, which is the spec's "search for
 //     existing equivalent fields before creating new ones".
+//   • AUDIT 2026-10-04 (CRM-29) — a field whose key differs only SLIGHTLY from
+//     one that exists (soa_planyear vs soa_plan_year) is neither reused nor
+//     created: it is reported and left for a person to decide. The decision is
+//     made by planProvisioning() in the canonical registry, not in this script.
 //   • Stops on the first creation error rather than leaving a half-provisioned
 //     account in an unknown state.
 //   • Prints the full ID map at the end whether it created anything or not, so a
 //     re-run after a partial failure is safe and idempotent.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { CY2027_FIELD_KEYS } from '../api/_lib/cy2027/crm-fields.js';
+import { CY2027_FIELD_KEYS, planProvisioning, registryProblems } from '../api/_lib/cy2027/crm-fields.js';
 
 const APPLY = process.argv.includes('--apply');
 const TOKEN = (process.env.GHL_API_TOKEN || '').trim();
@@ -59,12 +63,11 @@ async function listExisting() {
   if (!r.ok) throw new Error(`could not list custom fields — HTTP ${r.status}`);
   const j = await r.json();
   const arr = Array.isArray(j.customFields) ? j.customFields : Array.isArray(j.customField) ? j.customField : [];
-  const byKey = new Map();
-  for (const f of arr) {
-    const k = String(f.fieldKey || f.key || '').replace(/^contact\./, '');
-    if (k) byKey.set(k, f.id);
-  }
-  return byKey;
+  // AUDIT 2026-10-04 (CRM-29) — this returned a Map keyed by the EXACT key, so a
+  // field made by hand as `soa_planyear` was invisible and `soa_plan_year` got
+  // created beside it: the "slightly different name" duplicate §18 forbids. It
+  // now returns every field in the account and planProvisioning() decides.
+  return arr.map((f) => ({ id: f && f.id, key: String((f && (f.fieldKey || f.key)) || '') }));
 }
 
 async function createField(name, key) {
@@ -91,6 +94,15 @@ palette: undefined,
 }
 
 async function main() {
+  // AUDIT 2026-10-04 (CRM-29) — an inconsistent registry (two fields that differ
+  // only slightly in name, a duplicated id) stops here, before anything is
+  // created from it.
+  const regProblems = registryProblems();
+  if (regProblems.length) {
+    console.error('The CRM field registry is inconsistent. Nothing will be created until it is fixed:');
+    for (const p of regProblems) console.error('  ✗ ' + p);
+    process.exit(1);
+  }
   const names = Object.keys(CY2027_FIELD_KEYS);
   console.log(`CY2027 §18 fields: ${names.length}`);
   console.log(APPLY ? 'MODE: --apply (will CREATE missing fields)\n' : 'MODE: dry run (nothing will be created)\n');
@@ -103,23 +115,35 @@ async function main() {
     process.exit(1);
   }
 
-  const existing = await listExisting();
-  const map = {};
-  const toCreate = [];
-  for (const n of names) {
-    const k = bareKey(CY2027_FIELD_KEYS[n]);
-    if (existing.has(k)) map[n] = existing.get(k);
-    else toCreate.push(n);
-  }
+  const plan = planProvisioning(await listExisting());
+  const map = { ...plan.reuse };
 
   console.log(`already present: ${Object.keys(map).length}`);
-  console.log(`missing:         ${toCreate.length}`);
-  for (const n of toCreate) console.log(`  + ${n.padEnd(34)} ${CY2027_FIELD_KEYS[n]}`);
+  console.log(`missing:         ${plan.create.length}`);
+  for (const n of plan.create) console.log(`  + ${n.padEnd(34)} ${CY2027_FIELD_KEYS[n]}`);
+
+  // AUDIT 2026-10-04 (CRM-29) — never created, with or without --apply.
+  if (plan.blocked.length) {
+    console.log(`\nNOT created — a field with a slightly different name already exists (spec §18): ${plan.blocked.length}`);
+    for (const b of plan.blocked) {
+      console.log(`  ✗ ${b.name.padEnd(34)} ${b.key}`);
+      for (const x of b.near) console.log(`      ~ ${x.key}  id=${x.id}  (${x.where})`);
+    }
+    console.log('  Decide per field: reuse the existing one (add its id to CY2027_CRM_FIELD_IDS by hand)');
+    console.log('  or rename the new key in api/_lib/cy2027/crm-fields.js. This script will not guess.');
+  }
+  if (plan.drift.length) {
+    console.log(`\nEXISTING_CRM_FIELDS is not confirmed by this sub-account: ${plan.drift.length}`);
+    for (const d of plan.drift) {
+      console.log(`  ! ${d.name.padEnd(28)} ${d.reason}  registry ${d.key}=${d.registryId}  account ${d.accountKey || '(none)'}=${d.accountId || '(none)'}`);
+    }
+    console.log('  The lead and opt-out writers send the REGISTRY ids. Fix the registry or the account before relying on them.');
+  }
 
   if (!APPLY) {
     console.log('\nDry run — nothing created. Re-run with --apply to create the missing fields.');
   } else {
-    for (const n of toCreate) {
+    for (const n of plan.create) {
       const id = await createField(n, CY2027_FIELD_KEYS[n]);
       map[n] = id;
       console.log(`  created ${n} -> ${id}`);

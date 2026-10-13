@@ -54,7 +54,7 @@ import {
 import { ALL_CATEGORY_CODES, SOA_TEXT, categoryText } from './_lib/cy2027/soa-text.js';
 import { buildEvidenceRecord, emitAudit } from './_lib/cy2027/evidence.js';
 import { putEvidence } from './_lib/cy2027/evidence-store.js';
-import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+import { buildCustomFields, soaInstanceToFields, unmappedFieldsWarning, legacySoaNameFields } from './_lib/cy2027/crm-fields.js';
 import { sendCopy } from './_lib/cy2027/beneficiary-copy.js';
 import { RECORD_CLASS, RETENTION_YEARS } from './_lib/cy2027/retention.js';
 import { sensitivityForEvidenceRecord } from './_lib/cy2027/sensitivity.js';
@@ -775,11 +775,11 @@ async function sendToGhl(payload) {
       // removing them would change nothing and hide the history; the real
       // fields arrive through cy2027CustomFields below, which carries only
       // entries with a configured ID. See api/_lib/cy2027/crm-fields.js.
-      { id: 'soa_signed', field_value: 'true' },
-      { id: 'soa_pdf_hash', field_value: payload.soa_pdf_hash },
-      { id: 'soa_signed_at', field_value: payload.soa_signed_at },
-      { id: 'soa_id', field_value: payload.soa_id },
-      { id: 'preferred_language', field_value: payload.preferred_language },
+      // AUDIT 2026-10-04 (CRM-29) — the five names are no longer spelled here.
+      // They are registered in LEGACY_SOA_NAME_FIELDS, which also records the
+      // real field each one is covered by, so this third convention cannot
+      // grow a sixth entry unnoticed. Same five entries, same order, same bytes.
+      ...legacySoaNameFields(payload),
       ...(Array.isArray(payload.cy2027CustomFields) ? payload.cy2027CustomFields : []),
     ],
   };

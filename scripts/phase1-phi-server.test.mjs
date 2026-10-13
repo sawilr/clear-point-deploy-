@@ -56,7 +56,12 @@ ok('submit-lead imports scrubPHI', /import \{ scrubPHI \} from '\.\/_lib\/phi-sc
 ok('submit-lead scrubs lead_notes at source', /var _scrubNotes = scrubPHI\(lead_notes\)/.test(submitSrc));
 ok('submit-lead scrubs conversation_summary at source', /var _scrubSummary = scrubPHI\(conversation_summary\)/.test(submitSrc));
 ok('submit-lead scrub runs BEFORE lead-intel call', submitSrc.indexOf('_scrubNotes') < submitSrc.indexOf('analyzeLeadIntelligence({'));
-ok('submit-lead scrub runs BEFORE customFields', submitSrc.indexOf('var _scrubNotes') < submitSrc.indexOf("id: '6vSP5DJvAc6Jl9BXg409'"));
+// AUDIT 2026-10-04 (CRM-29) — the field id no longer appears in submit-lead.js
+// (it lives in the registry), so this anchors on the registry call. Both
+// anchors must EXIST: a missing one made the old comparison meaningless.
+const _scrubAt = submitSrc.indexOf('var _scrubNotes');
+const _summaryFieldAt = submitSrc.indexOf("existingField('CHAT_CONVERSATION_SUMMARY'");
+ok('submit-lead scrub runs BEFORE customFields', _scrubAt > -1 && _summaryFieldAt > -1 && _scrubAt < _summaryFieldAt);
 ok('submit-lead scrub runs BEFORE note POST', submitSrc.indexOf('_scrubNotes') < submitSrc.indexOf('/notes'));
 ok('submit-lead PHI log is category-only (no raw text)', /PHI redacted before LLM\/CRM/.test(submitSrc));
 ok('chat.js scrubs replayed history turns', /_turnScrub = scrubPHI\(String\(turn\.content\)/.test(chatSrc));

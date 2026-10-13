@@ -8,7 +8,7 @@
 //
 // ─── THE PROBLEM THIS MAKES VISIBLE ──────────────────────────────────────────
 // GoHighLevel addresses a custom field by its OPAQUE ID, not by its name.
-// api/submit-lead.js does this correctly:
+// api/submit-lead.js does this correctly (since CRM-29 through EXISTING_CRM_FIELDS below):
 //     { id: 'QULAmkAuVNCQrAMZ487K', key: 'contact.preferred_language', … }
 // api/sign-soa.js does not:
 //     { id: 'soa_pdf_hash', field_value: … }
@@ -86,6 +86,92 @@ export const CY2027_FIELD_KEYS = Object.freeze({
   SELF_REPORTED_LIS_STATUS: 'contact.self_reported_lis_status',
 });
 
+// ─── THE FIELDS THAT ALREADY EXIST IN PRODUCTION ─────────────────────────────
+// AUDIT 2026-10-04 (CRM-29) — spec §18: "Search for existing equivalent fields
+// before creating new ones. Never duplicate fields with slightly different
+// names." Nothing in the code could perform that search. The twelve custom
+// fields already live in the sub-account existed only as inline literals: all
+// twelve in api/submit-lead.js, four of them retyped by hand in api/opt-out.js,
+// a third name-as-id convention in api/sign-soa.js, and a FOURTH copy of the
+// bare ids in PRODUCTION_FIELD_IDS below. This module knew the NEW fields and
+// nothing about the OLD ones, so "is there already a field for this?" had
+// nowhere to be asked.
+//
+// The ids below are DATA, copied verbatim from the writers — not configuration.
+// They are live: a typo here silently stops a consent flag from being recorded
+// or, worse, from being cleared on a revocation. So they are pinned against an
+// independent table in scripts/test-cy2027-2026-10-01.mjs and against the wire
+// bytes in scripts/test-optout-lead02-authz-2026-08-18.mjs, and the writers may
+// no longer spell an id themselves.
+//
+// Deliberately NOT merged into CY2027_FIELD_KEYS: the provisioning script and
+// the preflight iterate that table as "fields the owner still has to create",
+// and these already exist.
+export const EXISTING_CRM_FIELDS = Object.freeze({
+  PREFERRED_LANGUAGE: Object.freeze({ id: 'QULAmkAuVNCQrAMZ487K', key: 'contact.preferred_language' }),
+  MEDICARE_STATUS: Object.freeze({ id: 'R510tHz6GFBaqZgN5e5S', key: 'contact.medicare_status' }),
+  CONSENT_MARKETING: Object.freeze({ id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing' }),
+  CONSENT_SMS: Object.freeze({ id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms' }),
+  CONSENT_CALLS: Object.freeze({ id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls' }),
+  CONSENT_EMAIL: Object.freeze({ id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email' }),
+  CLIENT_AGE: Object.freeze({ id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age' }),
+  CALCULATED_AGE: Object.freeze({ id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age' }),
+  LEAD_QUALITY_FLAGS: Object.freeze({ id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags' }),
+  CHAT_CONVERSATION_SUMMARY: Object.freeze({ id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary' }),
+  BEST_TIME_TO_CALL: Object.freeze({ id: 'PpDDusEEsMz4xNIcrwRW', key: 'contact.best_time_to_call' }),
+  MEDICARE_INTEREST: Object.freeze({ id: 'fLxx7s1GpVJYlxJl08G6', key: 'contact.medicare_interest' }),
+});
+
+/**
+ * One entry for an EXISTING production field, in the exact shape and property
+ * order the lead and opt-out writers have always sent: { id, key, value }.
+ *
+ * The value is passed through UNTOUCHED — not stringified, not dropped when
+ * empty. api/submit-lead.js filters empties and coerces non-strings itself
+ * (R6-SL-05) and that behaviour must not move. An unknown name THROWS: a field
+ * that is not in the registry is never written under a guessed id. The name
+ * must be a string — `['CONSENT_SMS']` coerces through hasOwnProperty and is
+ * not a registered name.
+ */
+export function existingField(name, value) {
+  if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(EXISTING_CRM_FIELDS, name)) {
+    throw new Error('crm-fields: "' + String(name) + '" is not a registered existing CRM field');
+  }
+  const f = EXISTING_CRM_FIELDS[name];
+  return { id: f.id, key: f.key, value };
+}
+
+/**
+ * The THIRD convention (api/sign-soa.js): a short NAME sent where GoHighLevel
+ * expects an opaque id, with `field_value`. Per CRM-27 these have never landed
+ * on a custom field; they stay on the wire only so the payload does not change.
+ * They are registered here so the registry — not a comment in a handler — says
+ * which real field each one is covered by. Do NOT add to this list: a new field
+ * goes in CY2027_FIELD_KEYS and gets a real id.
+ *
+ *   constant  — the literal sent; absent means "read payload[sentAs]".
+ *   coveredBy — the registered field that carries the same fact, or null.
+ *               soa_pdf_hash has none: it is the SHA-256 of the PDF bytes, a
+ *               different hash from SOA_INTEGRITY_HASH, and §18 defines no field
+ *               for it (it is in the contact note and the evidence store).
+ */
+export const LEGACY_SOA_NAME_FIELDS = Object.freeze([
+  Object.freeze({ sentAs: 'soa_signed', constant: 'true', coveredBy: Object.freeze({ table: 'CY2027', name: 'SOA_STATUS' }) }),
+  Object.freeze({ sentAs: 'soa_pdf_hash', coveredBy: null }),
+  Object.freeze({ sentAs: 'soa_signed_at', coveredBy: Object.freeze({ table: 'CY2027', name: 'SOA_COMPLETED_AT' }) }),
+  Object.freeze({ sentAs: 'soa_id', coveredBy: Object.freeze({ table: 'CY2027', name: 'SOA_ID' }) }),
+  Object.freeze({ sentAs: 'preferred_language', coveredBy: Object.freeze({ table: 'EXISTING', name: 'PREFERRED_LANGUAGE' }) }),
+]);
+
+/** The five legacy entries, byte-for-byte as api/sign-soa.js has always sent them. */
+export function legacySoaNameFields(payload) {
+  const p = payload !== null && typeof payload === 'object' ? payload : {};
+  return LEGACY_SOA_NAME_FIELDS.map((f) => ({
+    id: f.sentAs,
+    field_value: Object.prototype.hasOwnProperty.call(f, 'constant') ? f.constant : p[f.sentAs],
+  }));
+}
+
 /**
  * Real GoHighLevel field IDs, supplied by the owner as JSON in
  * CY2027_CRM_FIELD_IDS, e.g.
@@ -109,27 +195,18 @@ export function fieldIdMap(env = process.env) {
  * for Medicaid), and that held for every CY2027 field, not only the two new ones.
  *
  * These are the GoHighLevel ids this code ALREADY writes (api/submit-lead.js
- * and api/opt-out.js). They are a copy, kept for one purpose — refusing them as
- * a CY2027 id — and the suite fails if a handler writes an id that is not here.
+ * and api/opt-out.js), kept for one purpose — refusing them as a CY2027 id —
+ * and the suite fails if a handler writes an id that is not here.
+ *
+ * AUDIT 2026-10-04 (CRM-29) — this was a second hand-typed copy of the twelve
+ * ids. It is now DERIVED from EXISTING_CRM_FIELDS, the one registry the writers
+ * read, so an id cannot be refused here and written there under two spellings.
  *
  * LIMIT, stated: this knows the ids the CODE writes. A field that exists only in
  * the GoHighLevel sub-account (made by hand, written by a workflow) is unknown
  * here; giving each CY2027 key its OWN NEW field stays an owner action.
  */
-export const PRODUCTION_FIELD_IDS = Object.freeze([
-  'QULAmkAuVNCQrAMZ487K', // contact.preferred_language
-  'R510tHz6GFBaqZgN5e5S', // contact.medicare_status
-  'vPKlhpz6aucJK1U3fJRZ', // contact.consent_marketing
-  'w1hopBfNLGauFRRzQ71l', // contact.consent_sms
-  'mHdpDjBSA76lQJrKoixL', // contact.consent_calls
-  'ykiTUcsu3nvawK39hmll', // contact.consent_email
-  'GSss3tRLKg8mNCzEv3D9', // contact.client_age
-  'HoYmwc19InLwUwXNyKcr', // contact.calculated_age
-  'qGryQuR67jXFFVRFBLkz', // contact.lead_quality_flags
-  '6vSP5DJvAc6Jl9BXg409', // contact.chat_conversation_summary
-  'PpDDusEEsMz4xNIcrwRW', // contact.best_time_to_call
-  'fLxx7s1GpVJYlxJl08G6', // contact.medicare_interest
-]);
+export const PRODUCTION_FIELD_IDS = Object.freeze(Object.values(EXISTING_CRM_FIELDS).map((f) => f.id));
 
 /** Named reasons a configured id is not used. */
 export const FIELD_ID_REFUSAL = Object.freeze({
@@ -549,4 +626,180 @@ export function unmappedFieldsWarning(unmapped) {
     '(keys: ' + unmapped.map((n) => CY2027_FIELD_KEYS[n]).join(', ') + ') and set CY2027_CRM_FIELD_IDS. ' +
     'The full record is in the contact note meanwhile, but it is not queryable there.'
   );
+}
+
+// ─── THE SEARCH §18 ASKS FOR (audit CRM-29) ──────────────────────────────────
+// Pure functions over the two registries above. No handler calls them: they
+// serve the battery and scripts/cy2027-provision-crm-fields.mjs, which is the
+// only path that creates a field. They take an optional `tables` override for
+// ONE reason — so the battery can observe each check FAILING on a defective
+// registry instead of only passing on the clean one. Defaults are the frozen
+// module registries.
+
+/**
+ * "Slightly different names" (§18), made mechanical. contact.consent_calls,
+ * consentCalls, Consent-Call and CONSENT_CALLS all fold to the same string, so
+ * a near-duplicate is found by comparison instead of by someone remembering.
+ * It cannot see SEMANTIC equivalents (soa_language vs preferred_language); those
+ * stay a compliance judgement.
+ */
+export function normalizeFieldName(nameOrKey) {
+  return String(nameOrKey == null ? '' : nameOrKey)
+    .trim()
+    .replace(/^contact\./i, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((t) => (t.length > 3 && /ies$/.test(t) ? t.slice(0, -3) + 'y' : t))
+    .map((t) => (t.length > 3 && /s$/.test(t) && !/(ss|us|is)$/.test(t) ? t.slice(0, -1) : t))
+    .join('');
+}
+
+/** The registries a search runs over — the module's own unless a test says otherwise. */
+function registryTables(tables) {
+  const t = tables !== null && typeof tables === 'object' ? tables : {};
+  return {
+    existing: t.existing !== null && typeof t.existing === 'object' ? t.existing : EXISTING_CRM_FIELDS,
+    cy2027: t.cy2027 !== null && typeof t.cy2027 === 'object' ? t.cy2027 : CY2027_FIELD_KEYS,
+    legacy: Array.isArray(t.legacy) ? t.legacy : LEGACY_SOA_NAME_FIELDS,
+  };
+}
+
+/** Every custom field this codebase knows about — old and new — as one list. */
+export function registeredFields(tables) {
+  const { existing, cy2027 } = registryTables(tables);
+  const out = [];
+  for (const [name, f] of Object.entries(existing)) out.push({ table: 'EXISTING', name, key: f && f.key, id: f && f.id });
+  for (const [name, key] of Object.entries(cy2027)) out.push({ table: 'CY2027', name, key, id: null });
+  return out;
+}
+
+/**
+ * The search to run BEFORE a field is created: every registered field whose
+ * name is the candidate's, exactly or "slightly differently", plus the field a
+ * legacy sign-soa name is covered by. An empty result means nothing equivalent
+ * is registered — not that the sub-account has none; planProvisioning() checks
+ * the account.
+ */
+export function findEquivalentFields(candidate, tables) {
+  const want = normalizeFieldName(candidate);
+  if (!want) return [];
+  const { legacy } = registryTables(tables);
+  const all = registeredFields(tables);
+  const hits = all.filter((f) => normalizeFieldName(f.key) === want);
+  for (const l of legacy) {
+    if (!l || !l.coveredBy || normalizeFieldName(l.sentAs) !== want) continue;
+    const covering = all.find((f) => f.table === l.coveredBy.table && f.name === l.coveredBy.name);
+    if (covering && !hits.includes(covering)) hits.push(covering);
+  }
+  return hits;
+}
+
+/** Named reasons a registry is not fit to create fields from. */
+export const REGISTRY_PROBLEM = Object.freeze({
+  MALFORMED_KEY: 'MALFORMED_KEY',
+  NAME_KEY_MISMATCH: 'NAME_KEY_MISMATCH',
+  MALFORMED_ID: 'MALFORMED_ID',
+  DUPLICATE_ID: 'DUPLICATE_ID',
+  DUPLICATE_KEY: 'DUPLICATE_KEY',
+  NEAR_DUPLICATE_NAME: 'NEAR_DUPLICATE_NAME',
+  LEGACY_POINTS_NOWHERE: 'LEGACY_POINTS_NOWHERE',
+});
+
+/**
+ * Internal consistency of the registry, as a list of NAMED problems. Empty
+ * means: every existing id is an id (not a name) and is distinct, every key is
+ * distinct, no two fields differ only "slightly" in name, and every legacy name
+ * points at a field that exists. Asserted by the battery and by the
+ * provisioning script before it creates anything — deliberately not thrown at
+ * import, because a registry typo must fail a build, not a beneficiary's request.
+ */
+export function registryProblems(tables) {
+  const { existing, cy2027, legacy } = registryTables(tables);
+  const P = REGISTRY_PROBLEM;
+  const problems = [];
+  const seenId = new Map();
+  const seenKey = new Map();
+  const seenNorm = new Map();
+  for (const f of registeredFields(tables)) {
+    const label = f.table + '.' + f.name;
+    if (typeof f.key !== 'string' || !/^contact\.[a-z][a-z0-9_]*$/.test(f.key)) problems.push(P.MALFORMED_KEY + ':' + label);
+    if (normalizeFieldName(f.name) !== normalizeFieldName(f.key)) problems.push(P.NAME_KEY_MISMATCH + ':' + label);
+    if (f.table === 'EXISTING') {
+      // An id is opaque: no dots, underscores or dashes. 'soa_pdf_hash' passed
+      // where an id belongs is exactly the CRM-27 defect.
+      if (typeof f.id !== 'string' || !/^[A-Za-z0-9]+$/.test(f.id)) problems.push(P.MALFORMED_ID + ':' + label);
+      else if (seenId.has(f.id)) problems.push(P.DUPLICATE_ID + ':' + label + '=' + seenId.get(f.id));
+      else seenId.set(f.id, label);
+    }
+    if (seenKey.has(f.key)) problems.push(P.DUPLICATE_KEY + ':' + label + '=' + seenKey.get(f.key));
+    else seenKey.set(f.key, label);
+    const norm = normalizeFieldName(f.key);
+    const prior = seenNorm.get(norm);
+    if (prior && prior.key !== f.key) problems.push(P.NEAR_DUPLICATE_NAME + ':' + label + '~' + prior.label);
+    if (!prior) seenNorm.set(norm, { key: f.key, label });
+  }
+  for (const l of legacy) {
+    if (!l || !l.coveredBy) continue;
+    const table = l.coveredBy.table === 'EXISTING' ? existing
+      : l.coveredBy.table === 'CY2027' ? cy2027 : null;
+    if (!table || !Object.prototype.hasOwnProperty.call(table, l.coveredBy.name)) {
+      problems.push(P.LEGACY_POINTS_NOWHERE + ':' + l.sentAs);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Decide, for each CY2027 field, whether to REUSE, CREATE or REFUSE — from the
+ * list of custom fields that exist in the sub-account right now. Pure: the
+ * caller does the network I/O (scripts/cy2027-provision-crm-fields.mjs).
+ *
+ * @param {Array<{ id: string, key: string }>} liveFields every field in the account
+ * @returns {{ reuse: Record<string,string>, create: string[], blocked: Array, drift: Array }}
+ *   reuse   — name -> id; the exact key already exists.
+ *   create  — nothing with that name exists, exactly or slightly differently.
+ *   blocked — a field with a SLIGHTLY DIFFERENT key exists, in the account or in
+ *             EXISTING_CRM_FIELDS. Never created: that is the duplicate §18
+ *             forbids. A person decides whether to reuse it or rename the new one.
+ *   drift   — an EXISTING_CRM_FIELDS entry the account does not confirm (id
+ *             and/or key differ, or it is absent). Reported, never "fixed" here.
+ */
+export function planProvisioning(liveFields, tables) {
+  const { existing, cy2027 } = registryTables(tables);
+  const bare = (k) => String(k == null ? '' : k).replace(/^contact\./i, '');
+  const live = (Array.isArray(liveFields) ? liveFields : [])
+    .map((f) => ({ id: f && f.id, key: bare(f && f.key) }))
+    .filter((f) => f.key && typeof f.id === 'string' && f.id);
+  const byKey = new Map(live.map((f) => [f.key, f.id]));
+  const byId = new Map(live.map((f) => [f.id, f.key]));
+
+  const reuse = {};
+  const create = [];
+  const blocked = [];
+  for (const [name, key] of Object.entries(cy2027)) {
+    const k = bare(key);
+    if (byKey.has(k)) { reuse[name] = byKey.get(k); continue; }
+    const want = normalizeFieldName(k);
+    const near = live
+      .filter((f) => normalizeFieldName(f.key) === want)
+      .map((f) => ({ key: 'contact.' + f.key, id: f.id, where: 'ACCOUNT' }));
+    for (const [n2, f2] of Object.entries(existing)) {
+      if (f2 && normalizeFieldName(f2.key) === want) near.push({ key: f2.key, id: f2.id, where: 'REGISTRY:' + n2 });
+    }
+    if (near.length) blocked.push({ name, key, near });
+    else create.push(name);
+  }
+
+  const drift = [];
+  for (const [name, f] of Object.entries(existing)) {
+    if (!f) continue;
+    const k = bare(f.key);
+    if (byKey.get(k) === f.id) continue;
+    if (byKey.has(k)) drift.push({ name, key: f.key, registryId: f.id, accountId: byKey.get(k), accountKey: f.key, reason: 'ID_MISMATCH' });
+    else if (byId.has(f.id)) drift.push({ name, key: f.key, registryId: f.id, accountId: f.id, accountKey: 'contact.' + byId.get(f.id), reason: 'KEY_MISMATCH' });
+    else drift.push({ name, key: f.key, registryId: f.id, accountId: null, accountKey: null, reason: 'NOT_IN_ACCOUNT' });
+  }
+  return { reuse, create, blocked, drift };
 }

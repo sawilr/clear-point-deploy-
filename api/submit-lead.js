@@ -24,7 +24,10 @@ import { isDisposableEmail, neutralizeFakeLeadLabel, clientTagRefusal } from './
 // AUDIT 2026-10-04 (CRM-25) — DATA_SENSITIVITY_CLASS (spec §18). The class is
 // derived from what the free-text scrubbers below reported, written through the
 // canonical field builder, and consulted before the enrichment vendor call.
-import { buildCustomFields, unmappedFieldsWarning } from './_lib/cy2027/crm-fields.js';
+// AUDIT 2026-10-04 (CRM-29) — the GoHighLevel field ids are no longer spelled in
+// this file. They live once, as data, in the canonical registry; an id retyped
+// here is how api/opt-out.js ended up carrying a hand-made copy of four of them.
+import { buildCustomFields, unmappedFieldsWarning, existingField } from './_lib/cy2027/crm-fields.js';
 import { classifyLeadRecord, enrichmentExposure, neutralizeClassLookalikes } from './_lib/cy2027/sensitivity.js';
 // AUDIT 2026-10-04 (CRM-25, red team) — the topic labels the site itself sends
 // as interest_type; anything else in that field is free text (see below).
@@ -1871,27 +1874,27 @@ export default async function handler(req, res) {
       // to 'false'. consent_to_contact is the unified TCPA consent covering
       // marketing calls + SMS (per displayed consent text on the form).
       customFields: [
-        { id: 'QULAmkAuVNCQrAMZ487K', key: 'contact.preferred_language', value: preferred_language || 'en' },
-        { id: 'R510tHz6GFBaqZgN5e5S', key: 'contact.medicare_status', value: medicare_status || '' },
-        { id: 'vPKlhpz6aucJK1U3fJRZ', key: 'contact.consent_marketing', value: ((body.consent === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
-        { id: 'w1hopBfNLGauFRRzQ71l', key: 'contact.consent_sms',       value: ((body.consent_sms === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
-        { id: 'mHdpDjBSA76lQJrKoixL', key: 'contact.consent_calls',     value: ((body.consent_call === true) || (body.consent_calls === true) || (body.consent_to_contact === true)) ? 'true' : 'false' },
+        existingField('PREFERRED_LANGUAGE', preferred_language || 'en'),
+        existingField('MEDICARE_STATUS', medicare_status || ''),
+        existingField('CONSENT_MARKETING', ((body.consent === true) || (body.consent_to_contact === true)) ? 'true' : 'false'),
+        existingField('CONSENT_SMS', ((body.consent_sms === true) || (body.consent_to_contact === true)) ? 'true' : 'false'),
+        existingField('CONSENT_CALLS', ((body.consent_call === true) || (body.consent_calls === true) || (body.consent_to_contact === true)) ? 'true' : 'false'),
         // AUDIT 2026-07-23 (GHL-02) — email consent must come from the affirmative
         // TCPA consent (same gate as calls/sms), NOT from the mere presence of an
         // email address. Recorded true only when the caller both provided an email
         // AND checked the consent box.
-        { id: 'ykiTUcsu3nvawK39hmll', key: 'contact.consent_email', value: (email && body.consent_to_contact === true) ? 'true' : 'false' },
-        { id: 'GSss3tRLKg8mNCzEv3D9', key: 'contact.client_age', value: age || '' },
-        { id: 'HoYmwc19InLwUwXNyKcr', key: 'contact.calculated_age', value: calculated_age != null ? String(calculated_age) : '' },
-        { id: 'qGryQuR67jXFFVRFBLkz', key: 'contact.lead_quality_flags', value: [lead_quality_flags || '', _dmFlags.join(' ')].filter(Boolean).join(' ').trim() },
-        { id: '6vSP5DJvAc6Jl9BXg409', key: 'contact.chat_conversation_summary', value: lead_notes || '' },
+        existingField('CONSENT_EMAIL', (email && body.consent_to_contact === true) ? 'true' : 'false'),
+        existingField('CLIENT_AGE', age || ''),
+        existingField('CALCULATED_AGE', calculated_age != null ? String(calculated_age) : ''),
+        existingField('LEAD_QUALITY_FLAGS', [lead_quality_flags || '', _dmFlags.join(' ')].filter(Boolean).join(' ').trim()),
+        existingField('CHAT_CONVERSATION_SUMMARY', lead_notes || ''),
         // Sawil 2026-07-04 — populate the Best Time / Interest custom fields created
         // in GHL this session. Previously these lived only in notes + CallTime-/Interest-
         // tags because no field id existed (see intake comment above). Both are TEXT, so
         // free-form values carry no dropdown 400-risk on the revenue path. Empty values
         // are dropped by the filter below (so a lead without either still submits fine).
-        { id: 'PpDDusEEsMz4xNIcrwRW', key: 'contact.best_time_to_call', value: best_time_to_contact || '' },
-        { id: 'fLxx7s1GpVJYlxJl08G6', key: 'contact.medicare_interest', value: interest_type || '' }
+        existingField('BEST_TIME_TO_CALL', best_time_to_contact || ''),
+        existingField('MEDICARE_INTEREST', interest_type || '')
       // R6-SL-05: a custom-field value that is not a string is a bug upstream —
       // an object coerces to "[object Object]" in the CRM, and GHL may reject
       // the whole contact create, which ghlFetchRetry does not retry. Coerce
