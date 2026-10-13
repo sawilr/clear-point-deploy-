@@ -22,7 +22,9 @@ import { noStorePII } from './_lib/security-headers.js';
 // Clear Point assistant). Zara AND Clara both flow through this endpoint, so
 // injecting the module here means: update a CMS rule once in
 // api/_lib/medicare-knowledge.js → every assistant benefits immediately.
-import { MEDICARE_KNOWLEDGE } from './_lib/medicare-knowledge.js';
+import { MEDICARE_KNOWLEDGE, knowledgeProvenance, knowledgeLoadWarning } from './_lib/medicare-knowledge.js';
+// AUDIT 2026-10-04 (CBF-10) — only to fingerprint the knowledge body, once per cold start.
+import { createHash } from 'node:crypto';
 // AUDIT 2026-07-27 — deterministic date-math grounding (BUG 1) and per-message
 // language mirroring (BUG 4b). See each module for the audit transcripts.
 import { extractBirthDate, buildAgeGroundingNote, redactBirthDate } from './_lib/date-grounding.js';
@@ -120,6 +122,27 @@ const FIGURES_YEAR = 2026;
 if (MEDICARE_FIGURES_YEAR !== FIGURES_YEAR) {
   console.error('[CHAT] FIGURES_YEAR MISMATCH: api/chat.js=' + FIGURES_YEAR + ' api/_lib/medicare-figures.js=' + MEDICARE_FIGURES_YEAR + ' — update both together');
 }
+
+// AUDIT 2026-10-04 (CBF-10) — the knowledge body was an unversioned string, so
+// "which knowledge produced this reply?" had no answer. Fingerprint the string
+// that is ACTUALLY interpolated into SYSTEM_PROMPT below, once per cold start,
+// and let the release ledger decide what may be claimed about it: the version
+// label is withheld (null) when the digest is not the pinned release, so the
+// audit record never names a version it cannot prove. Same shape as the
+// FIGURES_YEAR check above — loud at load, the reply path keeps working —
+// because withholding the body would leave the model answering from recall,
+// which is worse than an honestly-labelled record. Deliberately NOT added to
+// the prompt (the model must not quote version ids, and it would churn the
+// cached prefix) and NOT added to the client-visible meta (finding #14).
+const KB_PROVENANCE = (() => {
+  try {
+    return knowledgeProvenance('sha256:' + createHash('sha256').update(MEDICARE_KNOWLEDGE, 'utf8').digest('hex'));
+  } catch (_e) {
+    return knowledgeProvenance(null);   // DIGEST_NOT_COMPUTED — claims nothing
+  }
+})();
+const KB_LOAD_WARNING = knowledgeLoadWarning(KB_PROVENANCE);
+if (KB_LOAD_WARNING) console.error(KB_LOAD_WARNING);
 
 // ── System prompt — ClearPoint identity, CMS TPMO compliance, behavior ──
 // Cached on Anthropic's side so it only costs the full price on the FIRST
@@ -1250,6 +1273,15 @@ export default async function handler(req, res) {
         latency_ms: _provLatencyMs,
         figures_year: FIGURES_YEAR,
         prompt_len: SYSTEM_PROMPT.length,   // proxy for prompt version
+        // AUDIT 2026-10-04 (CBF-10) — which knowledge release produced this
+        // reply. Together with reply_fingerprint, a specific reply text can be
+        // matched to the exact body (digest) and to its approval state.
+        kb_version: KB_PROVENANCE.kb_version,
+        kb_plan_year: KB_PROVENANCE.kb_plan_year,
+        kb_digest: KB_PROVENANCE.kb_digest,
+        kb_integrity: KB_PROVENANCE.kb_integrity,
+        kb_status: KB_PROVENANCE.kb_status,
+        kb_approved_on: KB_PROVENANCE.kb_approved_on,
         lang: lang,
         turn_lang: _turnLang || null,
         history_turns: recent.length,

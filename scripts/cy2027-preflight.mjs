@@ -38,6 +38,7 @@ import { fieldIdMap, fieldIdConfig, CY2027_FIELD_KEYS } from '../api/_lib/cy2027
 import { overlayInventory } from '../api/_lib/cy2027/carrier-overlay.js';
 import { hasCountyDataset } from '../api/_lib/cy2027/state-rules.js';
 import { activePlanYear } from '../api/_lib/cy2027/rulesets.js';
+import { MEDICARE_KNOWLEDGE_RELEASE, knowledgeReleaseReadiness } from '../api/_lib/medicare-knowledge.js';
 import { yearlyReadiness } from '../api/_lib/cy2027/yearly-readiness.js';
 import { checkTpmo, htmlToText, TPMO_ANY } from './tpmo-gate.mjs';
 
@@ -202,6 +203,16 @@ const pending = overlays.filter((o) => /PENDING/.test(o.status));
 if (pending.length) warns.push(`carrier overlays: ${pending.length}/${overlays.length} pending private verification — every carrier is blocked`);
 
 if (!hasCountyDataset()) warns.push('no ZIP→county dataset installed — the form asks the beneficiary (fail-safe, but manual)');
+
+// ── 3c. Knowledge release (spec §20, §22; audit CBF-10) ──────────────────────
+// AUDIT 2026-10-04 (CBF-10) — integrity (body ↔ pinned digest) is the parity
+// guard's job, already run in step 2. Reported here is what only a person can
+// settle: no recorded approval, and a plan-year tag that is not the plan year
+// in force. Top-level statements, like 3a, so the suite sees them with the
+// parser; the rule itself is a pure function the suite calls on both states.
+const kbReadiness = knowledgeReleaseReadiness(MEDICARE_KNOWLEDGE_RELEASE, year);
+oks.push(...kbReadiness.oks);
+warns.push(...kbReadiness.warns);
 
 // ── Report ───────────────────────────────────────────────────────────────────
 line('');

@@ -77,6 +77,13 @@ const SUITES = [
   // never a rejection; the retired fraud label refused as tag and de-labelled
   // in free text), and the support engine driven through real turns.
   'test-cy2027-ftq-2026-10-04.mjs',
+  // Knowledge release ledger (spec §20, §22; audit CBF-10): the ledger rules and
+  // the provenance record called directly, the chat handler run against a model
+  // double (every reply stamped with the release; a tampered copy stamped with
+  // nothing it cannot prove), the parity gate observed failing on copies of the
+  // tree with an edited body, a re-pinned digest and a self-promoted approval,
+  // and the yearly-update procedure rehearsed end to end.
+  'test-cy2027-knowledge-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

@@ -19,6 +19,8 @@
 //      byte for byte, the wording registered with its scope in
 //      api/_lib/cy2027/consent.js — or a second copy of that wording exists
 //      anywhere under src/, api/ or in index.html (CE-09 / CRM-15).
+//   8. The Medicare knowledge body changed without a NEW release in its ledger,
+//      a shipped release was re-pinned, or an outgoing body was not archived (CBF-10).
 //
 // Why a build guard and not a comment: the pre-existing comment in
 // src/lib/soaContent.ts said the three TPMO sources "must be unified first",
@@ -409,6 +411,75 @@ if (tpmoCopies.length) {
     if (copies.scanned < 50) problems.push(`contact-consent single-source scan read only ${copies.scanned} files — the walk is broken`);
     if (copies.problems.length) problems.push(...copies.problems);
     else notes.push(`contact-consent wording has a single source (${copies.scanned} files scanned)`);
+  }
+}
+
+// ── 8. Knowledge release ledger (CBF-10) ─────────────────────────────────────
+// AUDIT 2026-10-04 (CBF-10) — the knowledge body every assistant answers from
+// was an unversioned string. It now carries a release ledger, and this is the
+// control that makes the ledger mean something: the body cannot change without
+// a NEW release, a shipped release cannot be re-pinned, and an outgoing body
+// must be archived verbatim before it is replaced (spec §22 "Do not overwrite
+// prior-year logic").
+{
+  const kb = await import('../api/_lib/medicare-knowledge.js');
+  const sha = (s) => 'sha256:' + createHash('sha256').update(String(s), 'utf8').digest('hex');
+  const bodyDigest = sha(kb.MEDICARE_KNOWLEDGE);
+
+  // Independent copy of every release ever shipped. APPEND-ONLY: add a line for
+  // a new version; never edit or delete an existing one. This second copy is
+  // what stops "edit the body, re-pin the digest, keep the version".
+  const PINNED_KNOWLEDGE_RELEASES = Object.freeze({
+    'CP-UMKE-CY2026-v1.0': 'sha256:fe91877b42234ee61e8320829f33b2a390acb72e534a1f02827fd0515c1148ae',
+  });
+
+  const releases = Array.isArray(kb.KNOWLEDGE_RELEASES) ? kb.KNOWLEDGE_RELEASES : [];
+  const isVersion = (v) => typeof v === 'string' && /^CP-UMKE-CY\d{4}-v\d+\.\d+$/.test(v);
+  const archived = new Map();
+  for (const r of releases.slice(0, -1)) {
+    // Only a well-formed version names a file; anything else is refused by the ledger rules below.
+    if (!r || !isVersion(r.version)) continue;
+    try {
+      const mod = await import(`../api/_lib/knowledge-archive/${r.version}.js`);
+      archived.set(r.version, sha(mod.KNOWLEDGE_BODY));
+    } catch { /* absent — knowledgeLedgerProblems names it */ }
+  }
+
+  const kbProblems = typeof kb.knowledgeLedgerProblems === 'function'
+    ? kb.knowledgeLedgerProblems({ bodyDigest, archiveDigest: (v) => archived.get(v) || null })
+    : ['KNOWLEDGE_LEDGER_MISSING'];
+  for (const r of releases) {
+    const v = r && r.version;
+    if (!Object.prototype.hasOwnProperty.call(PINNED_KNOWLEDGE_RELEASES, String(v))) kbProblems.push('KNOWLEDGE_RELEASE_NOT_PINNED:' + v);
+  }
+  for (const [version, digest] of Object.entries(PINNED_KNOWLEDGE_RELEASES)) {
+    const r = releases.find((x) => x && x.version === version);
+    if (!r) kbProblems.push('KNOWLEDGE_RELEASE_REMOVED:' + version);
+    else if (r.digest !== digest) kbProblems.push('KNOWLEDGE_RELEASE_DIGEST_REWRITTEN:' + version);
+  }
+
+  // The version stamped on a reply is only true if the prompt is built FROM
+  // this module. A pasted second copy would be answered from and traced to nothing.
+  const kbHeading = String(kb.MEDICARE_KNOWLEDGE || '').trim().split('\n')[0];
+  for (const f of ['api/chat.js', 'src/components/ChatBot.tsx', 'src/components/CustomerServiceBot.tsx']) {
+    let txt;
+    try { txt = read(f); } catch { continue; }
+    if (kbHeading && stripComments(txt).includes(kbHeading)) kbProblems.push('KNOWLEDGE_BODY_DUPLICATED_IN:' + f);
+  }
+
+  if (kbProblems.length) {
+    problems.push(
+      'The Medicare knowledge body and its release ledger disagree (api/_lib/medicare-knowledge.js):\n' +
+        kbProblems.map((p) => `      ${p}`).join('\n') + '\n' +
+        `      digest of the body as it is now: ${bodyDigest}\n` +
+        '      This text is what every assistant answers from. To change it: APPEND a release with a new\n' +
+        '      version, mark the outgoing one SUPERSEDED, copy its body verbatim to\n' +
+        '      api/_lib/knowledge-archive/<version>.js (export const KNOWLEDGE_BODY), and add the new\n' +
+        '      version → digest pair to PINNED_KNOWLEDGE_RELEASES here and in scripts/test-cy2027-knowledge-2026-10-04.mjs.\n' +
+        '      approvedBy / approvedOn are owner-supplied — never fill them in to make this pass.',
+    );
+  } else {
+    notes.push(`knowledge release ${kb.MEDICARE_KNOWLEDGE_VERSION} matches its pinned digest (${releases.length} release(s) in the ledger)`);
   }
 }
 

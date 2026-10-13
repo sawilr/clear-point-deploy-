@@ -108,6 +108,8 @@ try {
     // it. This assertion used to pin the OLD behavior (usage in meta) and
     // went stale when 8a3ce8f stripped it. It now pins the strip itself.
     check('1.7 usage metadata is NOT surfaced in meta (server-log-only)', res.jsonBody.meta && res.jsonBody.meta.usage === undefined && res.jsonBody.meta.model === undefined);
+    // AUDIT 2026-10-04 (CBF-10) — the knowledge release is server-log-only, like usage.
+    check('1.8 knowledge version is NOT surfaced in meta (server-log-only)', res.jsonBody.meta && res.jsonBody.meta.kb_version === undefined && res.jsonBody.meta.kb_digest === undefined);
   }
 
   // ══ 2. History replay + PHI scrub on the OpenAI path ════════════════════════
@@ -207,6 +209,9 @@ try {
     check('7.2 [AI-AUDIT] records the provider and model', /\[AI-AUDIT\].*"provider":"openai".*"model":"gpt-5\.6-luna"/.test(allLogs),
       'audit record missing provider/model — observability gap');
     check('7.3 no raw user message text in audit records', !/seguro social es/.test(allLogs.split('\n').filter((l) => l.includes('[AI-AUDIT]')).join('\n')));
+    // AUDIT 2026-10-04 (CBF-10) — a reply must be traceable to the knowledge release that produced it.
+    check('7.4 [AI-AUDIT] names the knowledge release behind the reply', /\[AI-AUDIT\].*"kb_version":"CP-UMKE-CY\d{4}-v\d+\.\d+".*"kb_integrity":"OK"/.test(allLogs),
+      'audit record carries no verified knowledge version — a reply cannot be traced to what it was answered from');
   }
 
   // ══ C. CLIENT-SIDE PIN — widget → llmHandler → /api/chat → this handler ═════
