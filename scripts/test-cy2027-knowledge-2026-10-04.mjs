@@ -33,6 +33,7 @@ import {
 import { activePlanYear } from '../api/_lib/cy2027/rulesets.js';
 import {
   stripComments, topLevelStatements, findGoverningMutation, unfrozenPaths, walkTree, GOVERNING_IDENTIFIERS, REPO_ROOT,
+  runGate as selfModGate,
 } from './no-self-modification-lib.mjs';
 
 let passed = 0;
@@ -162,6 +163,86 @@ ok('approval needs the status AND the approver AND the date — nothing less, in
   hasRecordedKnowledgeApproval(null) === false && hasRecordedKnowledgeApproval([]) === false &&
   hasRecordedKnowledgeApproval(rel({ status: 'PRODUCTION_ACTIVE', approvedBy: 'X', approvedOn: '2026-10-05' })) === true);
 
+// AUDIT 2026-10-04 (CBF-10, red team) — approvedBy was any non-blank string, so
+// 'Claude', 'system', 'Zara' and a zero-width space were each "a named person"
+// and the audit record claimed PRODUCTION_ACTIVE with a date. "Is this a
+// person?" has ONE implementation (cy2027/actors.js); these CALL the rules.
+const active = (approvedBy, approvedOn = '2026-10-05') => rel({ status: 'PRODUCTION_ACTIVE', approvedBy, approvedOn });
+const V1_ACTIVE_UNAPPROVED = 'KNOWLEDGE_ACTIVE_WITHOUT_APPROVAL:' + V1;
+for (const who of ['Claude', 'AI Agent', 'claude-code', 'Claude Code (AI)', 'system', 'Hermes', 'OpenClaw', 'GPT-5', 'automation',
+  'Zara', 'Sofía', 'Emely', 'Clara', 'ChatGPT', 'Copilot', 'svc_bot', '​', 'Sa​wil Reyes', '1234', '---', 'A'.repeat(81)]) {
+  const r = active(who);
+  ok(`an automation, an assistant or a non-name cannot approve: ${JSON.stringify(who).slice(0, 28)}`,
+    hasRecordedKnowledgeApproval(r) === false &&
+    has({ releases: [r], bodyDigest: A }, 'KNOWLEDGE_APPROVER_NOT_HUMAN:' + V1) && has({ releases: [r], bodyDigest: A }, V1_ACTIVE_UNAPPROVED) &&
+    knowledgeProvenance(A, r).kb_approved_on === null && knowledgeProvenance(A, r).kb_status === 'APPROVAL_NOT_RECORDED' &&
+    knowledgeProvenance(A, r).kb_version === V1 && knowledgeProvenance(A, r).kb_integrity === 'OK',
+    probs({ releases: [r], bodyDigest: A }).join(', ') + ' ' + JSON.stringify(knowledgeProvenance(A, r)));
+}
+ok('a blank or non-string approver is MISSING, not a person',
+  ['', '   ', '\n', 7, true, ['Named Approver'], { name: 'Named Approver' }].every((who) =>
+    hasRecordedKnowledgeApproval(active(who)) === false &&
+    has({ releases: [active(who)], bodyDigest: A }, 'KNOWLEDGE_APPROVER_MISSING:' + V1) && has({ releases: [active(who)], bodyDigest: A }, V1_ACTIVE_UNAPPROVED)));
+ok('a person with a name is accepted — in any script, with or without accents — and only then is the approval reported',
+  ['Sawil Reyes', 'María José Núñez', 'Clara Gómez', 'Li Wei', 'Νίκος Παπαδόπουλος', 'X'].every((who) =>
+    hasRecordedKnowledgeApproval(active(who)) === true && probs({ releases: [active(who)], bodyDigest: A }).length === 0 &&
+    knowledgeProvenance(A, active(who)).kb_approved_on === '2026-10-05' && knowledgeProvenance(A, active(who)).kb_status === 'PRODUCTION_ACTIVE'));
+ok('a superseded release is judged by the same approver rule — an approval does not become true by being old',
+  has({ releases: [rel({ status: 'SUPERSEDED', approvedBy: 'Claude', approvedOn: '2026-10-01' }), rel({ version: 'CP-UMKE-CY2026-v1.1' })], bodyDigest: A }, 'KNOWLEDGE_APPROVER_NOT_HUMAN:' + V1) &&
+  probs({ releases: [rel({ status: 'SUPERSEDED', approvedBy: 'Sawil Reyes', approvedOn: '2026-10-01' }), rel({ version: 'CP-UMKE-CY2026-v1.1' })], bodyDigest: A }).length === 0);
+
+// AUDIT 2026-10-04 (CBF-10, red team) — a "named date" was ten characters
+// shaped like one. The clock is handed in, so this suite does not drift with the calendar.
+const T = '2026-10-13';
+const P = (o, extra = {}) => knowledgeLedgerProblems({ bodyDigest: A, today: T, ...extra, releases: Array.isArray(o) ? o : [o] });
+ok('an approval date that is not a calendar day is refused by name',
+  ['2026-13-45', '0000-00-00', '2026-02-30', '2026-00-10', '2026-04-31', '2027-02-29', '2026-10-1', '13/10/2026'].every((d) =>
+    hasRecordedKnowledgeApproval(active('Sawil Reyes', d), T) === false &&
+    P(active('Sawil Reyes', d)).includes('KNOWLEDGE_DATE_INVALID:' + V1) && P(active('Sawil Reyes', d)).includes(V1_ACTIVE_UNAPPROVED) &&
+    knowledgeProvenance(A, active('Sawil Reyes', d)).kb_approved_on === null));
+ok('a leap day is a calendar day', hasRecordedKnowledgeApproval(active('Sawil Reyes', '2028-02-29'), '2028-03-01') === true &&
+  P(active('Sawil Reyes', '2028-02-29'), { today: '2028-03-01' }).length === 0);
+ok('an approval dated on a day that has not happened is not an approval',
+  hasRecordedKnowledgeApproval(active('Sawil Reyes', '2026-10-14'), T) === false && P(active('Sawil Reyes', '2026-10-14')).includes('KNOWLEDGE_DATE_IN_FUTURE:' + V1) &&
+  hasRecordedKnowledgeApproval(active('Sawil Reyes', '2026-10-13'), T) === true && P(active('Sawil Reyes', '2026-10-13')).length === 0 &&
+  hasRecordedKnowledgeApproval(active('Sawil Reyes', '9999-12-31')) === false && knowledgeProvenance(A, active('Sawil Reyes', '9999-12-31')).kb_approved_on === null);
+ok('an approval dated before the release was issued is refused',
+  hasRecordedKnowledgeApproval(active('Sawil Reyes', '2020-01-01'), T) === false && P(active('Sawil Reyes', '2020-01-01')).includes('KNOWLEDGE_APPROVED_BEFORE_ISSUED:' + V1) &&
+  P(active('Sawil Reyes', '2026-09-12')).includes('KNOWLEDGE_APPROVED_BEFORE_ISSUED:' + V1) &&
+  P(active('Sawil Reyes', '2026-09-13')).length === 0 && hasRecordedKnowledgeApproval(active('Sawil Reyes', '2026-09-13'), T) === true);
+ok('an issue date that is not a calendar day, or has not happened, is refused by name',
+  P(rel({ issuedOn: '2026-99-99' })).includes('KNOWLEDGE_DATE_INVALID:' + V1) && P(rel({ issuedOn: '2026-02-30' })).includes('KNOWLEDGE_DATE_INVALID:' + V1) &&
+  P(rel({ issuedOn: '2026-10-14' })).includes('KNOWLEDGE_DATE_IN_FUTURE:' + V1) && P(rel({ issuedOn: '2026-10-13' })).length === 0 &&
+  hasRecordedKnowledgeApproval(active('Sawil Reyes', '2026-10-05'), T) === true && hasRecordedKnowledgeApproval({ ...active('Sawil Reyes', '2026-10-05'), issuedOn: '2026-09-31' }, T) === false);
+ok('the clock itself must be a calendar day — a caller handing garbage is refused, not passed',
+  P(rel(), { today: 'now' }).includes('KNOWLEDGE_TODAY_INVALID') && P(rel(), { today: 20261013 }).includes('KNOWLEDGE_TODAY_INVALID') &&
+  hasRecordedKnowledgeApproval(active('Sawil Reyes'), 'now') === false && P(rel(), { today: undefined }).length === 0);
+
+// AUDIT 2026-10-04 (CBF-10, red team) — the ledger's order was unchecked and the
+// both-or-neither rule existed for one state only.
+const sup = rel({ status: 'SUPERSEDED' });
+const v27 = (o = {}) => rel({ version: 'CP-UMKE-CY2027-v1.0', planYear: 2027, issuedOn: '2026-10-10', ...o });
+ok('a release appended with an earlier issue date than the one before it is refused',
+  P([sup, v27({ issuedOn: '2019-01-01' })]).includes('KNOWLEDGE_LEDGER_NOT_CHRONOLOGICAL:CP-UMKE-CY2027-v1.0') &&
+  P([sup, v27({ issuedOn: '2026-09-12' })]).includes('KNOWLEDGE_LEDGER_NOT_CHRONOLOGICAL:CP-UMKE-CY2027-v1.0') &&
+  P([sup, v27({ issuedOn: '2026-09-13' })]).length === 0 && P([sup, v27()]).length === 0);
+ok('a release numbered no higher than the one before it is refused — compared as numbers, year then major then minor',
+  P([rel({ version: 'CP-UMKE-CY2026-v2.0', status: 'SUPERSEDED' }), rel()]).includes('KNOWLEDGE_VERSION_NOT_INCREASING:' + V1) &&
+  P([rel({ version: 'CP-UMKE-CY2026-v1.10', status: 'SUPERSEDED' }), rel({ version: 'CP-UMKE-CY2026-v1.9' })]).includes('KNOWLEDGE_VERSION_NOT_INCREASING:CP-UMKE-CY2026-v1.9') &&
+  P([v27({ status: 'SUPERSEDED' }), rel({ issuedOn: '2026-10-11' })]).includes('KNOWLEDGE_VERSION_NOT_INCREASING:' + V1) &&
+  P([sup, rel()]).includes('KNOWLEDGE_VERSION_NOT_INCREASING:' + V1) &&
+  P([sup, rel({ version: 'CP-UMKE-CY2026-v1.1' })]).length === 0 && P([sup, rel({ version: 'CP-UMKE-CY2026-v1.10' })]).length === 0 &&
+  P([sup, rel({ version: 'CP-UMKE-CY2026-v2.0' })]).length === 0);
+ok('a half-filled approval is refused in EVERY state',
+  P([rel({ status: 'SUPERSEDED', approvedBy: 'Sawil Reyes', approvedOn: null }), v27()]).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1) &&
+  P([rel({ status: 'SUPERSEDED', approvedBy: null, approvedOn: '2026-10-01' }), v27()]).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1) &&
+  P(active('Sawil Reyes', null)).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1) && P(active(null, '2026-10-05')).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1) &&
+  (() => { const r = rel({ status: 'SUPERSEDED' }); delete r.approvedOn; return P([r, v27()]).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1); })() &&
+  (() => { const r = active('Sawil Reyes'); delete r.approvedBy; return P(r).includes('KNOWLEDGE_APPROVAL_INCONSISTENT:' + V1); })() &&
+  P([rel({ status: 'SUPERSEDED', approvedBy: 'Sawil Reyes', approvedOn: '2026-10-01' }), v27()]).length === 0 &&
+  P([rel({ status: 'SUPERSEDED', approvedBy: 'Sawil Reyes', approvedOn: '2026-13-01' }), v27()]).includes('KNOWLEDGE_DATE_INVALID:' + V1));
+ok('the shipped ledger passes the ordering, date and approver rules as of today', knowledgeLedgerProblems({ bodyDigest: LIVE, archiveDigest: (v) => archivedDigests.get(v) || null }).length === 0);
+
 // ── 4. What an audit record may say ──────────────────────────────────────────
 const prov = knowledgeProvenance(LIVE);
 ok('an intact body is traced to its release',
@@ -187,6 +268,19 @@ ok('an approval date is reported only when one was recorded',
   knowledgeProvenance(A, rel()).kb_approved_on === null &&
   knowledgeProvenance(A, rel({ status: 'PRODUCTION_ACTIVE', approvedBy: 'X', approvedOn: '2026-10-05' })).kb_approved_on === '2026-10-05' &&
   knowledgeProvenance(A, rel({ approvedOn: '2026-10-05' })).kb_approved_on === null);
+// AUDIT 2026-10-04 (CBF-10, red team) — the version was tested through String(),
+// the status and year copied as found: {} , 'WHATEVER' and '2026' reached the record.
+ok('a release whose version, year or status the ledger rules would refuse is given no label at all',
+  [rel({ version: { toString: () => V1 } }), rel({ version: [V1] }), rel({ status: 'WHATEVER' }), rel({ status: 'production_active' }), rel({ status: null }),
+    rel({ planYear: '2026' }), rel({ planYear: 2027 }), rel({ planYear: 2099 })].every((r) => {
+    const p = knowledgeProvenance(A, r);
+    return p.kb_integrity === 'RELEASE_MALFORMED' && p.kb_version === null && p.kb_plan_year === null && p.kb_status === null && p.kb_approved_on === null && p.kb_digest === A;
+  }));
+ok('a PRODUCTION_ACTIVE claim without a recorded approval is reported as what it is — not recorded — never as the claim',
+  knowledgeProvenance(A, rel({ status: 'PRODUCTION_ACTIVE' })).kb_status === 'APPROVAL_NOT_RECORDED' &&
+  knowledgeProvenance(A, rel({ status: 'PRODUCTION_ACTIVE', approvedBy: 'Claude', approvedOn: '2026-10-05' })).kb_status === 'APPROVAL_NOT_RECORDED' &&
+  knowledgeProvenance(A, rel({ status: 'PRODUCTION_ACTIVE', approvedBy: 'X', approvedOn: '2026-10-05' })).kb_status === 'PRODUCTION_ACTIVE' &&
+  knowledgeProvenance(A, rel({ status: 'SUPERSEDED' })).kb_status === 'SUPERSEDED' && knowledgeProvenance(A, rel()).kb_status === 'APPROVAL_NOT_RECORDED');
 
 // ── 5. Loud at load, silent when intact ──────────────────────────────────────
 ok('an intact body prints nothing at load', knowledgeLoadWarning(prov) === null);
@@ -413,6 +507,85 @@ ok('a missing provenance record is loud at load',
       ok('(gate) a second copy of the body pasted into the handler FAILS',
         r.status !== 0 && r.out.includes('KNOWLEDGE_BODY_DUPLICATED_IN:api/chat.js'), r.out.slice(0, 900));
     });
+
+    // AUDIT 2026-10-04 (CBF-10, red team) — an automation named as approver, an
+    // impossible date and a copy pasted outside three named files all passed the
+    // gate. Each defect planted in a copy, and the gate seen FAILING by name.
+    const LEDGER_APPROVAL = '    status: KNOWLEDGE_STATUS.APPROVAL_NOT_RECORDED,\n    approvedBy: null,\n    approvedOn: null,';
+    const approveAs = (who, on) => (s) => {
+      if (s.split(LEDGER_APPROVAL).length !== 2) throw new Error('the ledger approval lines were not found exactly once');
+      return s.replace(LEDGER_APPROVAL, `    status: KNOWLEDGE_STATUS.PRODUCTION_ACTIVE,\n    approvedBy: ${JSON.stringify(who)},\n    approvedOn: ${JSON.stringify(on)},`);
+    };
+    for (const who of ['Claude Code (AI)', 'system', 'Zara']) {
+      scenario((keep) => {
+        keep(edit(full, KB, approveAs(who, '2026-10-13')));
+        const r = runGate(full);
+        ok(`(gate) "${who}" named as the approver of a PRODUCTION_ACTIVE release FAILS the build, by name`,
+          r.status !== 0 && r.out.includes('KNOWLEDGE_APPROVER_NOT_HUMAN:' + V1) && r.out.includes('KNOWLEDGE_ACTIVE_WITHOUT_APPROVAL:' + V1), r.out.slice(0, 900));
+      });
+    }
+    scenario((keep) => {
+      keep(edit(artifact, KB, approveAs('AI Agent', '2026-10-13')));
+      const r = runGate(artifact, { VERCEL: '1' });
+      ok('(gate) …and so does the deployed artifact shape (no docs/, VERCEL set)',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_APPROVER_NOT_HUMAN:' + V1), r.out.slice(0, 900));
+    });
+    scenario((keep) => {
+      keep(edit(full, KB, approveAs('system', '2026-99-99')));
+      const r = runGate(full);
+      ok('(gate) an impossible approval date FAILS by name, beside the automation approver',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_DATE_INVALID:' + V1) && r.out.includes('KNOWLEDGE_APPROVER_NOT_HUMAN:' + V1), r.out.slice(0, 900));
+    });
+    scenario((keep) => {
+      keep(edit(full, KB, approveAs('Named Approver', '2026-09-01')));
+      const r = runGate(full);
+      ok('(gate) an approval dated before the release was issued FAILS',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_APPROVED_BEFORE_ISSUED:' + V1), r.out.slice(0, 900));
+    });
+    scenario((keep) => {
+      keep(edit(full, KB, approveAs('Named Approver', '2026-10-05')));
+      const r = runGate(full);
+      ok('(gate) a person\'s approval on a real day after issue PASSES — the control refuses automations, not approval',
+        r.status === 0 && r.out.includes(passNote), r.out.slice(-700));
+    });
+
+    const H1 = MEDICARE_KNOWLEDGE.trim().split('\n')[0];
+    const bodyLines = MEDICARE_KNOWLEDGE.split('\n');
+    const sectionStarts = bodyLines.map((l, i) => (/^## /.test(l) ? i : -1)).filter((i) => i >= 0);
+    const sectionWithoutFirstLine = bodyLines.slice(sectionStarts[1], sectionStarts[1] + 4).join('\n');
+    const sentences = bodyLines.filter((l) => !/^#/.test(l) && !l.includes('//') && l.trim().length >= 40);
+    if (sectionStarts.length < 3 || sentences.length < 10) throw new Error('the body no longer has the shape these rehearsals assume');
+    const pasteInto = (text) => (s) => s + '\nexport const PASTED_COPY = `\n' + text.replace(/`/g, '').replace(/\$\{/g, '') + '\n`;\n';
+    scenario((keep) => {
+      keep(edit(full, 'src/lib/customerServiceEngine.ts', pasteInto(H1 + '\n## PART A\nfoo')));
+      keep(edit(full, 'api/_lib/compliance-filter.js', pasteInto(H1)));
+      const r = runGate(full);
+      ok('(gate) a copy pasted OUTSIDE the three files the old check read FAILS — every source file is scanned',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_BODY_DUPLICATED_IN:src/lib/customerServiceEngine.ts') &&
+        r.out.includes('KNOWLEDGE_BODY_DUPLICATED_IN:api/_lib/compliance-filter.js'), r.out.slice(0, 1200));
+    });
+    scenario((keep) => {
+      keep(edit(full, 'api/chat.js', pasteInto(sectionWithoutFirstLine)));
+      const r = runGate(full);
+      ok('(gate) a copy WITHOUT the body\'s first line FAILS — any section heading is enough',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_BODY_DUPLICATED_IN:api/chat.js'), r.out.slice(0, 900));
+    });
+    scenario((keep) => {
+      keep(edit(full, 'src/components/ChatBot.tsx', pasteInto(sentences.slice(0, 2).join('\n'))));
+      const r = runGate(full);
+      ok('(gate) two sentences of the body with every heading stripped FAIL — the fingerprint is the text, not its titles',
+        r.status !== 0 && r.out.includes('KNOWLEDGE_BODY_DUPLICATED_IN:src/components/ChatBot.tsx'), r.out.slice(0, 900));
+    });
+    scenario((keep) => {
+      keep(edit(full, 'src/components/ChatBot.tsx', pasteInto(sentences[0])));
+      const r = runGate(full);
+      ok('(gate, control) one quoted sentence is not a second copy — the gate still passes', r.status === 0 && r.out.includes(passNote), r.out.slice(-900));
+    });
+    scenario((keep) => {
+      keep(edit(full, 'api/chat.js', (s) => s + '\n// ' + H1 + '\n/* ' + sentences.slice(0, 3).join('\n').replace(/\*\//g, '') + ' */\n'));
+      const r = runGate(full);
+      ok('(gate, control) the body quoted in COMMENTS is not a copy — comments are stripped before the scan', r.status === 0 && r.out.includes(passNote), r.out.slice(-900));
+    });
     // The yearly update, rehearsed the way the gate's message describes it.
     scenario((keep) => {
       keep(edit(full, KB, (s) => appendRelease(tamperBody(s))));
@@ -503,6 +676,55 @@ ok('a missing provenance record is loud at load',
         tampered.result && Object.keys((tampered.result.body && tampered.result.body.meta) || {}).every((k) => !/^kb_/.test(k)) &&
         intact.result && Object.keys((intact.result.body && intact.result.body.meta) || {}).every((k) => !/^kb_/.test(k)));
     });
+    scenario((keep) => {
+      keep(edit(full, KB, approveAs('Claude Code (AI)', '2026-10-13')));
+      const claimed = drive(full);
+      ok('(copy, AI "approved") the handler stamps the version but NO approval date and NOT PRODUCTION_ACTIVE — the record says no approval is recorded',
+        claimed.status === 0 && claimed.audit && claimed.audit.kb_version === V1 && claimed.audit.kb_integrity === 'OK' &&
+        claimed.audit.kb_approved_on === null && claimed.audit.kb_status === 'APPROVAL_NOT_RECORDED', JSON.stringify(claimed.audit) + ' ' + claimed.stderr.slice(0, 300));
+    });
+
+    // AUDIT 2026-10-04 (CBF-10, red team) — the ledger, its states, the current
+    // release and the provenance record were registered with the BUILD gate only
+    // through a list local to this suite, which the artifact does not ship: a
+    // push to the ledger from a new module and an unfrozen ledger both passed
+    // the gate ("19/19"). Its own list now carries them; its rule and its
+    // command, on copies with each defect.
+    const SELF_MOD_CLI = join(REPO_ROOT, 'scripts', 'check-no-self-modification.mjs');
+    const selfModCli = (root) => {
+      const r = spawnSync(process.execPath, [SELF_MOD_CLI, '--root', root], { cwd: REPO_ROOT, encoding: 'utf8' });
+      return { status: r.status, out: String(r.stdout || '') + String(r.stderr || '') };
+    };
+    const cleanSelfMod = await selfModGate({ root: full });
+    ok('(self-mod gate) a faithful copy passes, with the ledger, its states, the release and the provenance record among the objects it froze',
+      cleanSelfMod.problems.length === 0 && cleanSelfMod.frozenCount === cleanSelfMod.objectCount && cleanSelfMod.objectCount >= 23 &&
+      ['KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE'].every((n) => GOVERNING_IDENTIFIERS.includes(n)),
+      cleanSelfMod.problems.join(' | ') + ` ${cleanSelfMod.frozenCount}/${cleanSelfMod.objectCount}`);
+    const WRITER = join(full, 'api', '_lib', 'zz-ledger-write.js');
+    try {
+      writeFileSync(WRITER, "import { KNOWLEDGE_RELEASES, KNOWLEDGE_STATUS, MEDICARE_KNOWLEDGE_RELEASE } from './medicare-knowledge.js';\n" +
+        "export function promote() { KNOWLEDGE_RELEASES.push({ version: 'CP-UMKE-CY2027-v9.9' }); KNOWLEDGE_STATUS.X = 'y'; MEDICARE_KNOWLEDGE_RELEASE.status = 'PRODUCTION_ACTIVE'; return KNOWLEDGE_RELEASES.length; }\n");
+      const bad = await selfModGate({ root: full });
+      ok('(self-mod gate) a module that pushes to the ledger, writes a state or promotes the release is refused, each by name',
+        bad.problems.some((p) => /zz-ledger-write\.js: mutates KNOWLEDGE_RELEASES in place/.test(p)) &&
+        bad.problems.some((p) => /zz-ledger-write\.js: writes to KNOWLEDGE_STATUS\.X/.test(p)) &&
+        bad.problems.some((p) => /zz-ledger-write\.js: writes to MEDICARE_KNOWLEDGE_RELEASE\.status/.test(p)), bad.problems.join(' | '));
+      const badCli = selfModCli(full);
+      ok('(self-mod gate) …and the COMMAND fails on that copy', badCli.status === 1 && badCli.out.includes('zz-ledger-write.js'), badCli.out.slice(0, 600));
+    } finally { rmSync(WRITER, { force: true }); }
+    scenario((keep) => {
+      keep(edit(full, KB, (s) => s.replace('export const KNOWLEDGE_RELEASES = Object.freeze([', 'export const KNOWLEDGE_RELEASES = ([')));
+      const r = selfModCli(full);
+      ok('(self-mod gate) an unfrozen ledger FAILS the build, by name', r.status === 1 && /KNOWLEDGE_RELEASES is not frozen all the way down/.test(r.out), r.out.slice(0, 600));
+    });
+    scenario((keep) => {
+      keep(edit(full, KB, (s) => s.replace(`  Object.freeze({\n    version: '${V1}',`, `  ({\n    version: '${V1}',`)));
+      const r = selfModCli(full);
+      ok('(self-mod gate) an unfrozen release entry FAILS — the current release is checked as its own object',
+        r.status === 1 && /MEDICARE_KNOWLEDGE_RELEASE is not frozen all the way down/.test(r.out) && /KNOWLEDGE_RELEASES is not frozen all the way down/.test(r.out), r.out.slice(0, 600));
+    });
+    const selfModRestored = selfModCli(full);
+    ok('(self-mod gate) every scenario restored the copy: the command passes again', selfModRestored.status === 0 && /23\/23|2\d\/2\d governing objects/.test(selfModRestored.out), selfModRestored.out.slice(0, 300));
   } catch (e) {
     // A rehearsal helper throws when the live tree no longer has the text it
     // edits (the body or the ledger already changed). That is a failure of this
@@ -546,17 +768,18 @@ ok('a missing provenance record is loud at load',
     PRE.filter((s) => /kbReadiness/.test(s)).join(' | '));
   ok('(source) the battery runs this suite', /^[ \t]*'test-cy2027-knowledge-2026-10-04\.mjs',$/m.test(read('./run-battery.mjs').replace(/\r\n/g, '\n')));
 
-  // The ledger is governing data. The gate's own rule is applied here with the
-  // ledger's names added, so a write to it anywhere under api/ or src/ is found.
-  const EXTENDED = Object.freeze([...GOVERNING_IDENTIFIERS, 'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE']);
+  // AUDIT 2026-10-04 (CBF-10, red team) — the ledger is governing data, and it
+  // was registered only HERE, in a list local to this suite; the BUILD gate's own
+  // list did not carry it. There is now ONE list, the gate's, and this applies it.
   const apiFiles = walkTree(REPO_ROOT, 'api').code;
   const srcFiles = walkTree(REPO_ROOT, 'src').code;
-  const writes = findGoverningMutation([...apiFiles, ...srcFiles], EXTENDED);
+  const writes = findGoverningMutation([...apiFiles, ...srcFiles]);
   ok('(source) nothing under api/ or src/ writes to the ledger, its states or the provenance record', writes.length === 0 && apiFiles.length >= 10, writes.join(' | '));
-  ok('(source) …and that rule bites: a write to any of them is refused',
-    findGoverningMutation([{ path: 'api/x.js', source: 'KNOWLEDGE_RELEASES.push(1);' }], EXTENDED).length === 1 &&
-    findGoverningMutation([{ path: 'api/x.js', source: 'KB_PROVENANCE.kb_version = "v";' }], EXTENDED).length === 1 &&
-    findGoverningMutation([{ path: 'api/x.js', source: 'MEDICARE_KNOWLEDGE_RELEASE.status = "PRODUCTION_ACTIVE";' }], EXTENDED).length === 1);
+  ok('(source) …and the gate\'s own rule, with its own list, refuses a write to any of them',
+    findGoverningMutation([{ path: 'api/x.js', source: 'KNOWLEDGE_RELEASES.push(1);' }]).length === 1 &&
+    findGoverningMutation([{ path: 'api/x.js', source: 'KNOWLEDGE_STATUS.X = "y";' }]).length === 1 &&
+    findGoverningMutation([{ path: 'api/x.js', source: 'KB_PROVENANCE.kb_version = "v";' }]).length === 1 &&
+    findGoverningMutation([{ path: 'api/x.js', source: 'MEDICARE_KNOWLEDGE_RELEASE.status = "PRODUCTION_ACTIVE";' }]).length === 1);
   ok('(source) the body itself is already a governing identifier of the gate', GOVERNING_IDENTIFIERS.includes('MEDICARE_KNOWLEDGE'));
 }
 

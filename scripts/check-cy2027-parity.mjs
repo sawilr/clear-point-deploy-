@@ -374,6 +374,20 @@ if (tpmoCopies.length) {
   notes.push('TPMO disclaimer has a single source');
 }
 
+// Every source file the deployed artifact is built from: src/, api/ and the
+// static shell. Sections 7 and 8 scan this one list for a second copy of a
+// controlled text, so neither can quietly cover fewer files than the other.
+const { readdirSync, statSync } = await import('node:fs');
+const walkSources = (dir, out = []) => {
+  for (const name of readdirSync(join(ROOT, dir))) {
+    const rel = dir + '/' + name;
+    if (statSync(join(ROOT, rel)).isDirectory()) walkSources(rel, out);
+    else if (/\.(?:ts|tsx|js|jsx|mjs|html)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(rel);
+  }
+  return out;
+};
+const SOURCE_FILES = [...walkSources('src'), ...walkSources('api'), 'index.html'];
+
 // ── 7. Contact-consent wording ↔ scope registry (CE-09 / CRM-15) ─────────────
 // AUDIT 2026-10-02 — the scope written to CALLBACK_CONSENT_SCOPE is read off the
 // consent wording by its digest. If the wording in src/lib/disclaimerVersion.ts
@@ -397,17 +411,7 @@ if (tpmoCopies.length) {
     // while the registered constant was attested, and this gate stayed green.
     // Every source file under src/ and api/, plus the static shell, is scanned
     // for a second copy. All of them are part of the deployed artifact.
-    const { readdirSync, statSync } = await import('node:fs');
-    const walkSources = (dir, out = []) => {
-      for (const name of readdirSync(join(ROOT, dir))) {
-        const rel = dir + '/' + name;
-        if (statSync(join(ROOT, rel)).isDirectory()) walkSources(rel, out);
-        else if (/\.(?:ts|tsx|js|jsx|mjs|html)$/.test(name) && !/\.d\.ts$/.test(name)) out.push(rel);
-      }
-      return out;
-    };
-    const sources = [...walkSources('src'), ...walkSources('api'), 'index.html'];
-    const copies = consentWordingCopyProblems({ files: sources.map((p) => ({ path: p, source: read(p) })) });
+    const copies = consentWordingCopyProblems({ files: SOURCE_FILES.map((p) => ({ path: p, source: read(p) })) });
     if (copies.scanned < 50) problems.push(`contact-consent single-source scan read only ${copies.scanned} files — the walk is broken`);
     if (copies.problems.length) problems.push(...copies.problems);
     else notes.push(`contact-consent wording has a single source (${copies.scanned} files scanned)`);
@@ -460,12 +464,29 @@ if (tpmoCopies.length) {
 
   // The version stamped on a reply is only true if the prompt is built FROM
   // this module. A pasted second copy would be answered from and traced to nothing.
-  const kbHeading = String(kb.MEDICARE_KNOWLEDGE || '').trim().split('\n')[0];
-  for (const f of ['api/chat.js', 'src/components/ChatBot.tsx', 'src/components/CustomerServiceBot.tsx']) {
-    let txt;
-    try { txt = read(f); } catch { continue; }
-    if (kbHeading && stripComments(txt).includes(kbHeading)) kbProblems.push('KNOWLEDGE_BODY_DUPLICATED_IN:' + f);
+  // AUDIT 2026-10-04 (CBF-10, red team) — this read THREE named files for the
+  // body's FIRST line: a copy anywhere else, or one missing its heading, passed.
+  // Every source file the artifact is built from (the same list section 7 scans)
+  // is read, comments stripped and whitespace folded, for ANY heading of the
+  // body or two or more of its sentences. The module itself and the verbatim
+  // archive of outgoing bodies are the only places a copy belongs.
+  const KB_MODULE = 'api/_lib/medicare-knowledge.js';
+  const KB_ARCHIVE_PREFIX = 'api/_lib/knowledge-archive/';
+  const fold = (s) => s.replace(/\s+/g, ' ').trim();
+  const kbLines = String(kb.MEDICARE_KNOWLEDGE || '').split('\n').map(fold).filter((l) => l && !l.includes('//'));
+  const kbHeadings = kbLines.filter((l) => /^#{1,2} /.test(l));
+  const kbSentences = kbLines.filter((l) => !l.startsWith('#') && l.length >= 40);
+  if (kbHeadings.length < 5 || kbSentences.length < 10) kbProblems.push(`KNOWLEDGE_BODY_FINGERPRINT_TOO_SMALL:${kbHeadings.length}_headings_${kbSentences.length}_sentences`);
+  let kbScanned = 0;
+  for (const f of SOURCE_FILES) {
+    if (f === KB_MODULE || f.startsWith(KB_ARCHIVE_PREFIX)) continue;
+    kbScanned += 1;
+    const txt = fold(stripComments(read(f)));
+    const headingHits = kbHeadings.filter((h) => txt.includes(h)).length;
+    const sentenceHits = kbSentences.filter((s) => txt.includes(s)).length;
+    if (headingHits > 0 || sentenceHits >= 2) kbProblems.push(`KNOWLEDGE_BODY_DUPLICATED_IN:${f} (${headingHits} heading(s), ${sentenceHits} sentence(s) of the body)`);
   }
+  if (kbScanned < 50) kbProblems.push(`KNOWLEDGE_COPY_SCAN_READ_ONLY_${kbScanned}_FILES`);
 
   if (kbProblems.length) {
     problems.push(

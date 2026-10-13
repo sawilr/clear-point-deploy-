@@ -37,6 +37,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import ts from 'typescript';
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, posix } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -345,6 +346,12 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // govern a review signal and a tag refusal, and were not registered here:
   // an unfrozen DISPOSABLE_EMAIL_DOMAINS passed the gate ("15/15").
   'DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS',
+  // AUDIT 2026-10-04 (CBF-10, red team) — the knowledge release ledger, its
+  // states, the current release and the provenance record the handler stamps
+  // on every reply govern what an audit record may claim, and were registered
+  // only in a test suite the artifact does not ship: KNOWLEDGE_RELEASES.push(…)
+  // from a new api/_lib module and an unfrozen ledger both passed this gate ("19/19").
+  'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE',
 ]);
 
 const MUTATING_METHODS = Object.freeze(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear']);
@@ -518,7 +525,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -527,7 +534,13 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/soa-instance.js'),
     load('api/_lib/cy2027/learning.js'),
     load('api/_lib/cy2027/data-quality.js'),
+    load('api/_lib/medicare-knowledge.js'),
   ]);
+  // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
+  // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
+  // it serves). The same call is made here, because loading the handler itself
+  // has side effects; the suite pins that the handler computes it this way.
+  const bodyDigest = 'sha256:' + createHash('sha256').update(String(knowledge.MEDICARE_KNOWLEDGE), 'utf8').digest('hex');
   return {
     CMS_RULESET_2026: rulesets.CMS_RULESET_2026,
     CMS_RULESET_2027: rulesets.CMS_RULESET_2027,
@@ -549,6 +562,10 @@ async function governingObjects(root) {
     REVIEW_INCONSISTENCY_KINDS: quality.REVIEW_INCONSISTENCY_KINDS,
     VERDICT_TAG_VOCABULARY: quality.VERDICT_TAG_VOCABULARY,
     TAG_REFUSAL_REASONS: quality.TAG_REFUSAL_REASONS,
+    KNOWLEDGE_RELEASES: knowledge.KNOWLEDGE_RELEASES,
+    KNOWLEDGE_STATUS: knowledge.KNOWLEDGE_STATUS,
+    MEDICARE_KNOWLEDGE_RELEASE: knowledge.MEDICARE_KNOWLEDGE_RELEASE,
+    KB_PROVENANCE: typeof knowledge.knowledgeProvenance === 'function' ? knowledge.knowledgeProvenance(bodyDigest) : undefined,
   };
 }
 

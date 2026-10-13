@@ -587,6 +587,8 @@ ok('the governing list is exactly the prompt, the knowledge, the rulesets, the S
     'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
     // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables govern a review signal and a tag refusal.
     'DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS',
+    // AUDIT 2026-10-04 (CBF-10, red team) — the knowledge release ledger, its states, the current release and the provenance record.
+    'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE',
   ]) && Object.isFrozen(GOVERNING_IDENTIFIERS));
 for (const id of GOVERNING_IDENTIFIERS) {
   ok(`a write to ${id} is refused`, findGoverningMutation(file(`${id}.x = 1;`)).length === 1 && findGoverningMutation(file(`${id} = 1;`)).length === 1);
@@ -607,7 +609,8 @@ ok('a getter is not frozen data, however frozen the object is',
   ok('the repository passes the gate', r.problems.length === 0, r.problems.join(' | '));
   ok('it looked at a real tree', r.apiFiles >= 10 && r.srcFiles >= 20);
   // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — 15 → 19: the four data-quality tables are registered.
-  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 19, `${r.frozenCount}/${r.objectCount}`);
+  // AUDIT 2026-10-04 (CBF-10, red team) — 19 → 23: the knowledge ledger, its states, the current release and the provenance record.
+  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 23, `${r.frozenCount}/${r.objectCount}`);
 }
 {
   // The same gate, handed a tree that contains each kind of defect.

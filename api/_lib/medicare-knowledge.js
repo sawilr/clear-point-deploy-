@@ -14,6 +14,11 @@
 // LEDGER at the end of this file (and archiving the outgoing body), or the build fails.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// AUDIT 2026-10-04 (CBF-10, red team) — "is this a person?" has ONE implementation
+// in the layer (spec §13/§22/§23); the ledger's approver is judged by it, not by
+// a non-empty check. Environment-neutral, no imports of its own.
+import { humanActorProblem, ACTOR_MAX_CHARS } from './cy2027/actors.js';
+
 export const MEDICARE_KNOWLEDGE = `
 # UNIFIED MEDICARE KNOWLEDGE ENGINE (authoritative — reason with this, never keyword-match)
 
@@ -131,20 +136,71 @@ export const MEDICARE_KNOWLEDGE_VERSION = MEDICARE_KNOWLEDGE_RELEASE.version;
 export const MEDICARE_KNOWLEDGE_PLAN_YEAR = MEDICARE_KNOWLEDGE_RELEASE.planYear;
 export const MEDICARE_KNOWLEDGE_DIGEST = MEDICARE_KNOWLEDGE_RELEASE.digest;
 
-const KB_VERSION_RE = /^CP-UMKE-CY(\d{4})-v\d+\.\d+$/;
+const KB_VERSION_RE = /^CP-UMKE-CY(\d{4})-v(\d+)\.(\d+)$/;
 const KB_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
-const KB_ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const KB_ISO_DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const KB_STATUSES = Object.freeze(Object.values(KNOWLEDGE_STATUS));
 const isRecord = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isDigest = (v) => typeof v === 'string' && KB_DIGEST_RE.test(v);
+const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
-/** TRUE only when a named person approved this release on a named date. */
-export function hasRecordedKnowledgeApproval(release = MEDICARE_KNOWLEDGE_RELEASE) {
+// AUDIT 2026-10-04 (CBF-10, red team) — a "named date" was any ten characters
+// shaped like one: '2026-13-45', '0000-00-00' and '9999-12-31' all counted as
+// approval dates. A date is real only if it survives the calendar (a Date.UTC
+// round-trip) and has already happened — nobody approves on a day to come.
+const isIsoDayShape = (v) => typeof v === 'string' && KB_ISO_DAY_RE.test(v);
+const isCalendarDay = (v) => {
+  const m = isIsoDayShape(v) ? KB_ISO_DAY_RE.exec(v) : null;
+  if (!m) return false;
+  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === v;
+};
+/** Today as a UTC calendar day — the clock the ledger is judged against. Injectable, so the suite does not drift with the calendar. */
+const utcToday = () => new Date().toISOString().slice(0, 10);
+/** Version order: plan year, then major, then minor — as numbers (v1.10 follows v1.9). */
+const compareVersions = (a, b) => {
+  for (let k = 1; k <= 3; k += 1) {
+    const d = Number(a[k]) - Number(b[k]);
+    if (d !== 0) return d;
+  }
+  return 0;
+};
+
+/**
+ * AUDIT 2026-10-04 (CBF-10, red team) — approvedBy was any non-blank string:
+ * 'Claude', 'AI Agent', 'system', 'Zara' and a zero-width space were each "a
+ * named person", the build passed and every audit record claimed
+ * PRODUCTION_ACTIVE with an approval date (§22 "No AI self-promotion"). The
+ * approver is now judged by the layer's one human-actor rule.
+ * Why `approvedBy` cannot name the person who approved — or null when it can.
+ */
+function approverProblem(approvedBy) {
+  const problem = humanActorProblem(approvedBy);
+  if (problem === 'ACTOR_MISSING') return 'KNOWLEDGE_APPROVER_MISSING';
+  if (problem !== null || approvedBy.length > ACTOR_MAX_CHARS) return 'KNOWLEDGE_APPROVER_NOT_HUMAN';
+  return null;
+}
+
+/** Why `approvedOn` is not a day on which this release could have been approved — or null. */
+function approvalDateProblem(approvedOn, issuedOn, today) {
+  if (!isCalendarDay(approvedOn) || !isCalendarDay(today)) return 'KNOWLEDGE_DATE_INVALID';
+  if (approvedOn > today) return 'KNOWLEDGE_DATE_IN_FUTURE';
+  if (isCalendarDay(issuedOn) && approvedOn < issuedOn) return 'KNOWLEDGE_APPROVED_BEFORE_ISSUED';
+  return null;
+}
+
+/**
+ * TRUE only when a person — never an automation or one of the assistants —
+ * approved this release on a real calendar day that has happened and is not
+ * before the day the release was issued.
+ */
+export function hasRecordedKnowledgeApproval(release = MEDICARE_KNOWLEDGE_RELEASE, today = utcToday()) {
   return (
     isRecord(release) &&
     release.status === KNOWLEDGE_STATUS.PRODUCTION_ACTIVE &&
-    typeof release.approvedBy === 'string' && release.approvedBy.trim() !== '' &&
-    typeof release.approvedOn === 'string' && KB_ISO_DAY_RE.test(release.approvedOn)
+    isCalendarDay(release.issuedOn) &&
+    approverProblem(release.approvedBy) === null &&
+    approvalDateProblem(release.approvedOn, release.issuedOn, today) === null
   );
 }
 
@@ -162,14 +218,22 @@ export function knowledgeProvenance(servedDigest, release = MEDICARE_KNOWLEDGE_R
   });
   if (!digest) return unproven('DIGEST_NOT_COMPUTED');
   if (!isRecord(release) || digest !== release.digest) return unproven('DIGEST_MISMATCH');
-  if (!KB_VERSION_RE.test(String(release.version))) return unproven('RELEASE_MALFORMED');
+  // AUDIT 2026-10-04 (CBF-10, red team) — the version was tested through
+  // String() and the year and status were copied as found: an object, '2026'
+  // and 'WHATEVER' reached the audit record. The record repeats only what the
+  // ledger's own rules accept.
+  const m = typeof release.version === 'string' ? KB_VERSION_RE.exec(release.version) : null;
+  if (!m || release.planYear !== Number(m[1]) || !KB_STATUSES.includes(release.status)) return unproven('RELEASE_MALFORMED');
+  const approved = hasRecordedKnowledgeApproval(release);
   return Object.freeze({
     kb_version: release.version,
     kb_plan_year: release.planYear,
     kb_digest: digest,
     kb_integrity: 'OK',
-    kb_status: release.status,
-    kb_approved_on: hasRecordedKnowledgeApproval(release) ? release.approvedOn : null,
+    // A PRODUCTION_ACTIVE claim stands only on a recorded approval. Without one
+    // the record says what is true — no approval is recorded — never the claim.
+    kb_status: approved || release.status !== KNOWLEDGE_STATUS.PRODUCTION_ACTIVE ? release.status : KNOWLEDGE_STATUS.APPROVAL_NOT_RECORDED,
+    kb_approved_on: approved ? release.approvedOn : null,
   });
 }
 
@@ -190,13 +254,16 @@ export function knowledgeLoadWarning(provenance) {
  *   bodyDigest     sha256 of MEDICARE_KNOWLEDGE as exported (required — a
  *                  caller that did not compute it gets a named refusal)
  *   archiveDigest  (version) => sha256 of that release's archived body, or null
+ *   today          the UTC calendar day the ledger is judged against (defaults to the clock)
  */
-export function knowledgeLedgerProblems({ releases = KNOWLEDGE_RELEASES, bodyDigest, archiveDigest } = {}) {
+export function knowledgeLedgerProblems({ releases = KNOWLEDGE_RELEASES, bodyDigest, archiveDigest, today = utcToday() } = {}) {
   if (!Array.isArray(releases) || releases.length === 0) return ['KNOWLEDGE_LEDGER_EMPTY'];
   const problems = [];
   if (!isDigest(bodyDigest)) problems.push('KNOWLEDGE_BODY_DIGEST_NOT_COMPUTED');
+  if (!isCalendarDay(today)) problems.push('KNOWLEDGE_TODAY_INVALID');
   const archived = typeof archiveDigest === 'function' ? archiveDigest : () => null;
   const seen = new Set();
+  let prev = null; // the previous well-formed entry: the ledger is appended in order
   releases.forEach((r, i) => {
     const v = isRecord(r) ? r.version : undefined;
     const m = KB_VERSION_RE.exec(typeof v === 'string' ? v : '');
@@ -205,15 +272,38 @@ export function knowledgeLedgerProblems({ releases = KNOWLEDGE_RELEASES, bodyDig
     seen.add(v);
     if (Number(m[1]) !== r.planYear) problems.push('KNOWLEDGE_PLAN_YEAR_TAG_MISMATCH:' + v);
     if (!isDigest(r.digest)) problems.push('KNOWLEDGE_DIGEST_MALFORMED:' + v);
-    if (!(typeof r.issuedOn === 'string' && KB_ISO_DAY_RE.test(r.issuedOn))) problems.push('KNOWLEDGE_ISSUED_ON_MISSING:' + v);
+    if (!isIsoDayShape(r.issuedOn)) problems.push('KNOWLEDGE_ISSUED_ON_MISSING:' + v);
+    else if (!isCalendarDay(r.issuedOn)) problems.push('KNOWLEDGE_DATE_INVALID:' + v);
+    else if (isCalendarDay(today) && r.issuedOn > today) problems.push('KNOWLEDGE_DATE_IN_FUTURE:' + v);
     if (!KB_STATUSES.includes(r.status)) problems.push('KNOWLEDGE_STATUS_UNKNOWN:' + v);
-    if (r.status === KNOWLEDGE_STATUS.PRODUCTION_ACTIVE && !hasRecordedKnowledgeApproval(r)) {
+    if (r.status === KNOWLEDGE_STATUS.PRODUCTION_ACTIVE && !hasRecordedKnowledgeApproval(r, today)) {
       problems.push('KNOWLEDGE_ACTIVE_WITHOUT_APPROVAL:' + v);
     }
-    // "Not recorded" is an explicit state: both fields present and null, nothing half-filled.
-    if (r.status === KNOWLEDGE_STATUS.APPROVAL_NOT_RECORDED && (r.approvedBy !== null || r.approvedOn !== null)) {
-      problems.push('KNOWLEDGE_APPROVAL_INCONSISTENT:' + v);
+    // AUDIT 2026-10-04 (CBF-10, red team) — the both-or-neither rule existed for
+    // APPROVAL_NOT_RECORDED only; a SUPERSEDED entry with an approver and no date
+    // passed. In EVERY state both fields are present and either both null or
+    // both valid, and a non-null approver or date is judged by the same rules as
+    // on the live release — an approval does not become true by being old.
+    const by = hasOwn(r, 'approvedBy') ? r.approvedBy : undefined;
+    const on = hasOwn(r, 'approvedOn') ? r.approvedOn : undefined;
+    const halfFilled = by === undefined || on === undefined || (by === null) !== (on === null);
+    const filledWhileNotRecorded = r.status === KNOWLEDGE_STATUS.APPROVAL_NOT_RECORDED && (by !== null || on !== null);
+    if (halfFilled || filledWhileNotRecorded) problems.push('KNOWLEDGE_APPROVAL_INCONSISTENT:' + v);
+    if (by !== null && by !== undefined) {
+      const problem = approverProblem(by);
+      if (problem) problems.push(problem + ':' + v);
     }
+    if (on !== null && on !== undefined) {
+      const problem = approvalDateProblem(on, r.issuedOn, today);
+      if (problem) problems.push(problem + ':' + v);
+    }
+    // AUDIT 2026-10-04 (CBF-10, red team) — an append-only ledger runs forward:
+    // each entry is issued no earlier, and numbered higher, than the one before.
+    if (prev) {
+      if (isCalendarDay(prev.issuedOn) && isCalendarDay(r.issuedOn) && r.issuedOn < prev.issuedOn) problems.push('KNOWLEDGE_LEDGER_NOT_CHRONOLOGICAL:' + v);
+      if (compareVersions(m, prev.m) <= 0) problems.push('KNOWLEDGE_VERSION_NOT_INCREASING:' + v);
+    }
+    prev = { issuedOn: r.issuedOn, m };
     if (i === releases.length - 1) {
       if (r.status === KNOWLEDGE_STATUS.SUPERSEDED) problems.push('KNOWLEDGE_CURRENT_RELEASE_SUPERSEDED:' + v);
       if (r.digest !== bodyDigest) problems.push('KNOWLEDGE_BODY_CHANGED_WITHOUT_NEW_RELEASE:' + v);
