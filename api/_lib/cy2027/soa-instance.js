@@ -341,19 +341,123 @@ export function completeSoaInstance(instance, { completedAt = new Date().toISOSt
 }
 
 /**
- * Create the replacement instance when scope changes (spec §9: "Editing
- * categories creates a new version/instance with supersession history").
- * Returns BOTH records so the caller persists the supersession on each side.
+ * Why one appointment's records cannot be read as "the active instance".
+ * A problem is a refusal: the caller must not pick one and carry on.
+ */
+export const SOA_SCOPE_PROBLEM = Object.freeze({
+  RECORDS_UNREADABLE: 'SOA_RECORDS_UNREADABLE',
+  RECORD_UNREADABLE: 'SOA_RECORD_UNREADABLE',
+  RECORD_DUPLICATED: 'SOA_RECORD_DUPLICATED',
+  RECORD_CONTRADICTORY: 'SOA_RECORD_CONTRADICTORY',
+  APPOINTMENT_MIXED: 'SOA_APPOINTMENT_MIXED',
+  ACTIVE_SCOPE_CONFLICT: 'SOA_ACTIVE_SCOPE_CONFLICT',
+});
+
+/** The one spelling of "same person" this module compares names by. */
+function sameBeneficiaryName(a, b) {
+  const norm = (v) => String(v == null ? '' : v).trim().toLowerCase().replace(/\s+/g, ' ');
+  return norm(a) !== '' && norm(a) === norm(b);
+}
+
+/**
+ * Replace a signed instance with a newly built one for the SAME appointment
+ * (spec §9: "Editing categories creates a new version/instance with
+ * supersession history"; §31: "preserve first/second versions; define active
+ * instance explicitly").
+ *
+ * AUDIT 2026-10-04 (EV-09, WVG-11) — superseded() built the replacement and
+ * marked the previous without looking at either: a PENDING, REVOKED or already
+ * SUPERSEDED record was "superseded" again, and the replacement could name a
+ * different appointment, plan year, state or person, so the supersession
+ * chain could silently re-scope another appointment. Every one of those is a
+ * named refusal now, and the rule lives in ONE function that both the input
+ * form (superseded) and the ledger call.
+ *
+ * `previous` is the prior record (an instance or a ledger entry carrying the
+ * same fields). `instance` is the replacement as createSoaInstance built it:
+ * not yet completed, with its OWN language election. Returns BOTH records so
+ * the caller persists the supersession on each side; the previous is frozen,
+ * like every signed record (SOA-05).
+ */
+export function supersede(previous, instance, { at = new Date().toISOString() } = {}) {
+  if (!previous || typeof previous !== 'object') throw new Error('soa: nothing to supersede');
+  if (!instance || typeof instance !== 'object') throw new Error('soa: no replacement instance');
+  const errors = {};
+  if (previous.status === SOA_STATUS.REVOKED || previous.revokedAt != null) errors.previous = 'revoked';
+  else if (previous.status === SOA_STATUS.SUPERSEDED || previous.supersededById != null) errors.previous = 'already_superseded';
+  else if (previous.status !== SOA_STATUS.COMPLETED) errors.previous = 'not_completed';
+  if (typeof previous.soaId !== 'string' || !previous.soaId) errors.previous = errors.previous || 'unidentified';
+
+  if (instance.status === SOA_STATUS.INCOMPLETE) errors.instance = 'nothing_authorized';
+  else if (instance.status !== SOA_STATUS.PENDING_SIGNATURE) errors.instance = 'not_a_fresh_instance';
+  else if (typeof instance.soaId !== 'string' || !instance.soaId || instance.soaId === previous.soaId) errors.instance = 'same_id';
+  else if (instance.supersedesId != null && instance.supersedesId !== previous.soaId) errors.instance = 'supersedes_another';
+  // The replacement is signed in its own right: its election is its own.
+  if (!isSoaLanguage(instance.language) || !languageWasElected(instance.languageSource)) errors.languageSource = 'election_required';
+
+  if (instance.appointmentId !== previous.appointmentId) errors.appointmentId = 'supersession_changes_appointment';
+  if (instance.planYear !== previous.planYear) errors.planYear = 'supersession_changes_plan_year';
+  if (String(instance.state || '').toUpperCase() !== String(previous.state || '').toUpperCase()) errors.state = 'supersession_changes_state';
+  if (!sameBeneficiaryName(instance.beneficiaryName, previous.beneficiaryName)) errors.beneficiaryName = 'supersession_changes_beneficiary';
+
+  if (Object.keys(errors).length) return { ok: false, errors };
+  return {
+    ok: true,
+    previous: Object.freeze({ ...previous, status: SOA_STATUS.SUPERSEDED, supersededById: instance.soaId, supersededAt: at }),
+    instance: { ...instance, supersedesId: previous.soaId },
+  };
+}
+
+/**
+ * Create the replacement from form INPUT, then supersede with it. Kept as the
+ * input-shaped entry point; the rule is supersede().
  */
 export function superseded(previous, nextInput, { at = new Date().toISOString() } = {}) {
   if (!previous) throw new Error('soa: nothing to supersede');
   const built = createSoaInstance({ ...nextInput, supersedesId: previous.soaId });
   if (!built.ok) return built;
-  return {
-    ok: true,
-    previous: { ...previous, status: SOA_STATUS.SUPERSEDED, supersededById: built.instance.soaId, supersededAt: at },
-    instance: built.instance,
-  };
+  return supersede(previous, built.instance, { at });
+}
+
+/**
+ * THE definition of an appointment's active instance (spec §26: "Duplicate
+ * contact/SOA -> reconcile; never create conflicting active scopes silently";
+ * §31: "define active instance explicitly").
+ *
+ * Given every record for ONE appointment, the active instance is the single
+ * record that is COMPLETED, not revoked and not superseded. None is a valid
+ * answer ({ active: null }). Two is not: that is a conflict, and it is
+ * returned as a refusal rather than resolved by "the latest wins", because a
+ * record that contradicts another one is exactly what must not be acted on
+ * silently. A record that contradicts itself (COMPLETED yet naming a
+ * successor; SUPERSEDED yet naming none) is refused the same way.
+ */
+export function activeSoaInstance(records) {
+  if (!Array.isArray(records)) return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORDS_UNREADABLE };
+  const seen = new Set();
+  const appointments = new Set();
+  const active = [];
+  for (const r of records) {
+    if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.soaId !== 'string' || !r.soaId) {
+      return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_UNREADABLE };
+    }
+    if (seen.has(r.soaId)) return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_DUPLICATED, soaId: r.soaId };
+    seen.add(r.soaId);
+    appointments.add(r.appointmentId);
+    const completed = r.status === SOA_STATUS.COMPLETED;
+    const revoked = r.status === SOA_STATUS.REVOKED || r.revokedAt != null;
+    const replaced = r.status === SOA_STATUS.SUPERSEDED;
+    const namesSuccessor = r.supersededById != null;
+    if ((completed && namesSuccessor) || (replaced && !namesSuccessor)) {
+      return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_CONTRADICTORY, soaId: r.soaId };
+    }
+    if (completed && !revoked) active.push(r);
+  }
+  if (appointments.size > 1) return { ok: false, reason: SOA_SCOPE_PROBLEM.APPOINTMENT_MIXED };
+  if (active.length > 1) {
+    return { ok: false, reason: SOA_SCOPE_PROBLEM.ACTIVE_SCOPE_CONFLICT, soaIds: active.map((r) => r.soaId) };
+  }
+  return { ok: true, active: active.length ? active[0] : null };
 }
 
 export function revokeSoaInstance(instance, { at = new Date().toISOString() } = {}) {

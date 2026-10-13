@@ -52,6 +52,8 @@ export interface SoaInstance {
   completedAt: string | null;
   supersedesId: string | null;
   supersededById: string | null;
+  /** Set on the replaced record by supersede(); absent on a live one. */
+  supersededAt?: string | null;
   revokedAt: string | null;
   integrityHash: string | null;
   evidenceReference: string | null;
@@ -105,11 +107,34 @@ export declare function completeSoaInstance(
   instance: SoaInstance,
   opts: { completedAt?: string; integrityHash: string; evidenceReference: string },
 ): SoaInstance;
+export declare const SOA_SCOPE_PROBLEM: Readonly<{
+  RECORDS_UNREADABLE: 'SOA_RECORDS_UNREADABLE';
+  RECORD_UNREADABLE: 'SOA_RECORD_UNREADABLE';
+  RECORD_DUPLICATED: 'SOA_RECORD_DUPLICATED';
+  RECORD_CONTRADICTORY: 'SOA_RECORD_CONTRADICTORY';
+  APPOINTMENT_MIXED: 'SOA_APPOINTMENT_MIXED';
+  ACTIVE_SCOPE_CONFLICT: 'SOA_ACTIVE_SCOPE_CONFLICT';
+}>;
+/** The prior record: a signed instance, or a ledger entry carrying the same fields. */
+export type SoaPriorRecord = Pick<
+  SoaInstance,
+  'soaId' | 'appointmentId' | 'planYear' | 'state' | 'beneficiaryName' | 'status' | 'supersededById' | 'revokedAt'
+> & Record<string, unknown>;
+export declare function supersede(
+  previous: SoaPriorRecord,
+  instance: SoaInstance,
+  opts?: { at?: string },
+): { ok: true; previous: Readonly<SoaPriorRecord>; instance: SoaInstance } | { ok: false; errors: Record<string, string> };
 export declare function superseded(
-  previous: SoaInstance,
+  previous: SoaPriorRecord,
   nextInput: Record<string, unknown>,
   opts?: { at?: string },
-): { ok: true; previous: SoaInstance; instance: SoaInstance } | { ok: false; errors: Record<string, string> };
+): { ok: true; previous: Readonly<SoaPriorRecord>; instance: SoaInstance } | { ok: false; errors: Record<string, string> };
+export declare function activeSoaInstance(
+  records: unknown,
+):
+  | { ok: true; active: SoaPriorRecord | null }
+  | { ok: false; reason: string; soaId?: string; soaIds?: string[] };
 export declare function revokeSoaInstance(instance: SoaInstance, opts?: { at?: string }): SoaInstance;
 export declare function coversCategory(instance: SoaInstance | null, code: string): boolean;
 export declare function requiresScopeUpdate(instance: SoaInstance | null, code: string): boolean;

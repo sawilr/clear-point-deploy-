@@ -583,6 +583,8 @@ ok('the governing list is exactly the prompt, the knowledge, the rulesets, the S
     'CMS_RULESET_2026', 'CMS_RULESET_2027', 'CMS_RULESET_2028', 'RULESETS', 'STATE_RULESETS',
     'GRANDFATHERED_RULESET_VERSIONS', 'RULESET_LIFECYCLE',
     'SOA_TEXT', 'SOA_CATEGORIES', 'TPMO_DISCLAIMER_CONFIG', 'LANGUAGE_SOURCE', 'SOA_METHOD',
+    // AUDIT 2026-10-04 (EV-09 / WVG-11) — the vocabulary activeSoaInstance() refuses with: whether an appointment has an active SOA.
+    'SOA_SCOPE_PROBLEM',
     'CARRIER_OVERLAYS', 'MEDICARE_KNOWLEDGE', 'SYSTEM_PROMPT',
     'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
     // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables govern a review signal and a tag refusal.
@@ -616,7 +618,8 @@ ok('a getter is not frozen data, however frozen the object is',
   // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — 15 → 19: the four data-quality tables are registered.
   // AUDIT 2026-10-04 (CBF-10, red team) — 19 → 23: the knowledge ledger, its states, the current release and the provenance record.
   // AUDIT 2026-10-04 (CRM-29, red team) — 23 → 35: the CRM field registry, the legacy list, the id and provenance tables and the two vocabularies.
-  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 35, `${r.frozenCount}/${r.objectCount}`);
+  // AUDIT 2026-10-04 (EV-09 / WVG-11) — 35 → 36: the active-instance problem vocabulary (SOA_SCOPE_PROBLEM).
+  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 36, `${r.frozenCount}/${r.objectCount}`);
 }
 {
   // The same gate, handed a tree that contains each kind of defect.

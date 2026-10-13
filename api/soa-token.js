@@ -18,6 +18,7 @@ import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.j
 import { noStorePII } from './_lib/security-headers.js';
 import { SOA_TOKEN_TTL_SEC, setRecord, leadKey } from './_lib/soa-store.js';
 import { issueLink } from './_lib/cy2027/secure-link.js';
+import { appointmentIdForReissue } from './_lib/cy2027/soa-ledger.js';
 import { emitAudit } from './_lib/cy2027/evidence.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
@@ -81,11 +82,21 @@ export default async function handler(req, res) {
   var beneficiaryRef = crypto.randomUUID();
   var issuedAt = new Date().toISOString();
 
+  // AUDIT 2026-10-04 (EV-09) — every link minted a fresh appointment, so no
+  // second SOA could ever be for the SAME appointment and the supersession
+  // path (spec §9: "Editing categories creates a new version/instance with
+  // supersession history") was unreachable. A link may now be issued for an
+  // existing appointment, in the server's own id form only. Whether its holder
+  // may replace that appointment's scope is decided at signature, where the
+  // person is proven against the ledger (api/sign-soa.js) — never here.
+  var reissuedFor = appointmentIdForReissue(body.appointmentId);
+  var appointmentId = reissuedFor || ('appt_' + crypto.randomUUID());
+
   var link;
   try {
     link = issueLink({
       soaId: 'soa_' + crypto.randomUUID(),
-      appointmentId: 'appt_' + crypto.randomUUID(),
+      appointmentId: appointmentId,
       beneficiaryRef: beneficiaryRef,
       channel: 'WEB',
       secondFactorKind: 'PHONE_LAST4',
@@ -123,7 +134,7 @@ export default async function handler(req, res) {
   emitAudit({
     action: 'SOA_LINK_ISSUED', actor: 'system:soa-token', result: 'OK', source: 'WEB',
     correlationId: beneficiaryRef, soaId: link.record.soaId,
-    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language },
+    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language, appointment: reissuedFor ? 'EXISTING' : 'NEW' },
   });
 
   return res.status(200).json({

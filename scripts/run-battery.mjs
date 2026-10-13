@@ -84,6 +84,12 @@ const SUITES = [
   // tree with an edited body, a re-pinned digest and a self-promoted approval,
   // and the yearly-update procedure rehearsed end to end.
   'test-cy2027-knowledge-2026-10-04.mjs',
+  // SOA supersession and the appointment ledger (spec §9, §26, §31; audit
+  // EV-09 / WVG-11): supersede() and activeSoaInstance() called with every
+  // refusal, the ledger driven in process against the memory store and, in a
+  // child with a laboratory KV, against injected read/write failures at each
+  // filing stage; the handler wiring by anchored, comment-stripped scans.
+  'test-cy2027-supersession-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);
