@@ -172,6 +172,11 @@ export const AUDIT_ACTIONS = Object.freeze([
   'MARKETING_GATE_ALLOWED', 'MARKETING_GATE_BLOCKED',
   'SECURITY_QUARANTINE', 'SECURITY_REVIEW_RESOLVED',
   'CONSENT_RECORDED', 'CONSENT_REVOKED',
+  // AUDIT 2026-10-04 (SPEC-12) — a one-time code issued for a signing link
+  // (result: SENT or the delivery reason) and a send refused by the
+  // SMS-bombing control (result: the cap that refused it). Never the code,
+  // never the destination.
+  'OTP_ISSUED', 'OTP_SEND_REFUSED',
 ]);
 
 /**

@@ -16,8 +16,11 @@
 import crypto from 'node:crypto';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
-import { SOA_TOKEN_TTL_SEC, setRecord, leadKey } from './_lib/soa-store.js';
+import { SOA_TOKEN_TTL_SEC, getRecord, setRecord, leadKey } from './_lib/soa-store.js';
 import { issueLink } from './_lib/cy2027/secure-link.js';
+import {
+  OTP_POLICY, otpFactorForIssue, otpDestination, otpDestinationKey, otpSendPlan, recordDestinationSend, issueOtp, deliverOtp,
+} from './_lib/cy2027/otp.js';
 import { appointmentIdForReissue } from './_lib/cy2027/soa-ledger.js';
 import { emitAudit } from './_lib/cy2027/evidence.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
@@ -92,23 +95,6 @@ export default async function handler(req, res) {
   var reissuedFor = appointmentIdForReissue(body.appointmentId);
   var appointmentId = reissuedFor || ('appt_' + crypto.randomUUID());
 
-  var link;
-  try {
-    link = issueLink({
-      soaId: 'soa_' + crypto.randomUUID(),
-      appointmentId: appointmentId,
-      beneficiaryRef: beneficiaryRef,
-      channel: 'WEB',
-      secondFactorKind: 'PHONE_LAST4',
-      secondFactorValue: phone,
-      language: language,
-      ttlSec: SOA_TOKEN_TTL_SEC,
-    });
-  } catch (e) {
-    console.error('[soa-token] link issue failed:', e && e.message);
-    return res.status(400).json({ error: 'Could not issue a secure link' });
-  }
-
   var leadRecord = {
     beneficiaryRef: beneficiaryRef,
     issuedAt: issuedAt,
@@ -121,14 +107,89 @@ export default async function handler(req, res) {
     issuerIp: ip,
   };
 
+  // AUDIT 2026-10-04 (SPEC-12) — the factor is no longer the constant
+  // PHONE_LAST4, which a holder of a forwarded link can often guess and which
+  // proves nothing about who controls the phone. A one-time code
+  // (api/_lib/cy2027/otp.js) is offered when, and only when, the delivery gate
+  // allows a message out: the owner's flag, a configured https channel and a
+  // recorded contact permission. This handler holds NO server-side consent
+  // record for the person — the request body is a client claim and is never
+  // read for one — so the basis below is null, the gate answers
+  // NO_CONTACT_PERMISSION and today's factor stays, with the reason audited.
+  // Wiring the CRM's callback-consent state into this handler is the step that
+  // makes the code reachable (docs/compliance/CY2027-ARCHITECTURE.md §2.3a).
+  var OTP_CONSENT_BASIS = null;
+  var factor = otpFactorForIssue({ channel: 'SMS', consent: OTP_CONSENT_BASIS, env: process.env });
+
+  var link;
+  try {
+    link = issueLink({
+      soaId: 'soa_' + crypto.randomUUID(),
+      appointmentId: appointmentId,
+      beneficiaryRef: beneficiaryRef,
+      channel: 'WEB',
+      secondFactorKind: factor.kind,
+      // For a code there is no value to hash: the server generates it below.
+      secondFactorValue: factor.kind === 'OTP' ? undefined : phone,
+      otpChannel: factor.otpChannel,
+      otpConsentBasis: factor.kind === 'OTP' ? OTP_CONSENT_BASIS : null,
+      language: language,
+      ttlSec: SOA_TOKEN_TTL_SEC,
+    });
+  } catch (e) {
+    console.error('[soa-token] link issue failed:', e && e.message);
+    return res.status(400).json({ error: 'Could not issue a secure link' });
+  }
+
+  // The code: issued against the destination ON THE LEAD RECORD (never the
+  // body), counted against the per-link and per-destination caps BEFORE it is
+  // delivered (a send the provider drops still counts — §30, SMS bombing), and
+  // refused by name when a cap is reached. Nothing is minted in that case.
+  var otpCode = null;
+  var destKey = null;
+  var destRecord = null;
+  var destTo = null;
+  if (factor.kind === 'OTP') {
+    var dest = otpDestination(leadRecord, factor.otpChannel);
+    if (!dest.ok) {
+      emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'system:soa-token', result: dest.reason, source: 'WEB', correlationId: beneficiaryRef, soaId: link.record.soaId, details: { channel: factor.otpChannel } });
+      return res.status(400).json({ error: 'OTP_DESTINATION_UNAVAILABLE' });
+    }
+    destTo = dest.to;
+    destKey = otpDestinationKey(factor.otpChannel, dest.to);
+    destRecord = await getRecord(destKey);
+    var plan = otpSendPlan({ linkRecord: link.record, destRecord: destRecord });
+    if (!plan.allowed) {
+      emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'system:soa-token', result: plan.reason, source: 'WEB', correlationId: beneficiaryRef, soaId: link.record.soaId, details: { channel: factor.otpChannel } });
+      res.setHeader('Retry-After', String(OTP_POLICY.windowSec));
+      return res.status(429).json({ error: plan.reason });
+    }
+    var issued = issueOtp(link.record);
+    link = { token: link.token, storeKey: link.storeKey, record: issued.record };
+    otpCode = issued.code;
+  }
+
   // Both writes must be durable. A link whose lead record lives only in one
   // lambda's memory breaks on the next request, and a beneficiary who clicks a
   // dead link is a beneficiary who signs nothing.
   var w1 = await setRecord(leadKey(beneficiaryRef), leadRecord, SOA_TOKEN_TTL_SEC);
   var w2 = await setRecord(link.storeKey, link.record, SOA_TOKEN_TTL_SEC);
-  if (!w1.ok || !w2.ok) {
-    console.error('[soa-token] storage failed:', w1.reason || w2.reason);
+  var w3 = destKey ? await setRecord(destKey, recordDestinationSend(destRecord), OTP_POLICY.windowSec) : { ok: true };
+  if (!w1.ok || !w2.ok || !w3.ok) {
+    console.error('[soa-token] storage failed:', w1.reason || w2.reason || w3.reason);
     return res.status(503).json({ error: 'Token storage failed' });
+  }
+
+  // Delivery comes AFTER the counts are stored. A code that did not arrive
+  // leaves a link that reveals nothing; the page offers a resend, which the
+  // same caps bound. The code and the destination reach no log line.
+  var delivery = null;
+  if (otpCode !== null) {
+    delivery = await deliverOtp({ channel: factor.otpChannel, to: destTo, code: otpCode, language: language, consent: OTP_CONSENT_BASIS, env: process.env });
+    emitAudit({
+      action: 'OTP_ISSUED', actor: 'system:soa-token', result: delivery.sent ? 'SENT' : delivery.reason, source: 'WEB',
+      correlationId: beneficiaryRef, soaId: link.record.soaId, details: { channel: factor.otpChannel, sendsOnLink: link.record.otp.sends.length },
+    });
   }
 
   emitAudit({
@@ -138,7 +199,7 @@ export default async function handler(req, res) {
     // the server's form, including one never issued: the issuer reads no
     // ledger, so the audit states what it checked (the caller asked for a
     // re-issue in the server's id form), not an existence it did not verify.
-    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language, appointment: reissuedFor ? 'REISSUE_REQUESTED' : 'NEW' },
+    details: { channel: 'WEB', factor: link.record.secondFactorKind, factorReason: factor.reason, language: language, appointment: reissuedFor ? 'REISSUE_REQUESTED' : 'NEW' },
   });
 
   return res.status(200).json({
@@ -147,5 +208,7 @@ export default async function handler(req, res) {
     soaUrl: '/soa/' + link.token,
     // The UI must know which question to ask before it can show anything.
     factorRequired: link.record.secondFactorKind,
+    // For a code: whether one went out. Never the code, never the destination.
+    ...(delivery ? { codeSent: delivery.sent === true } : {}),
   });
 }

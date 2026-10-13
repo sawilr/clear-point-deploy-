@@ -56,6 +56,35 @@ export default function SignSOA() {
   const [factorValue, setFactorValue] = useState('');
   const [factorError, setFactorError] = useState('');
   const [factorBusy, setFactorBusy] = useState(false);
+  // AUDIT 2026-10-04 (SPEC-12) — an 'OTP' link asks for the one-time code the
+  // server sent (to the phone or email on file; this page never names either),
+  // and may ask the server for a new one. The server bounds resends.
+  const [otpChannel, setOtpChannel] = useState<string | null>(null);
+  const [resendState, setResendState] = useState<'' | 'busy' | 'sent' | 'limited' | 'failed'>('');
+  const isOtp = factorRequired === 'OTP';
+  const factorDigits = isOtp ? 6 : 5;
+  const factorMinDigits = isOtp ? 6 : 4;
+
+  const resendCode = async () => {
+    setResendState('busy');
+    setFactorError('');
+    try {
+      const r = await fetch('/api/soa-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'omit',
+        body: JSON.stringify({ token, resendCode: true }),
+      });
+      const data = await r.json();
+      if (r.status === 429) { setResendState('limited'); return; }
+      if (data.reason === 'SECOND_FACTOR_LOCKED') { setResendState(''); setFactorError('locked'); return; }
+      if (!r.ok || !data.resent) { setResendState('failed'); return; }
+      setFactorValue('');
+      setResendState('sent');
+    } catch {
+      setResendState('failed');
+    }
+  };
   // EV-14 — whether a confirmation copy actually went out. The page may not
   // promise one otherwise.
   const [copySent, setCopySent] = useState(false);
@@ -77,7 +106,10 @@ export default function SignSOA() {
       const data = await r.json();
       if (r.status === 429) { setFactorError('too_many'); return; }
       if (!r.ok || !data.verified) {
-        setFactorError(data.reason === 'SECOND_FACTOR_LOCKED' ? 'locked' : 'mismatch');
+        // A code that expired, was already used or was never delivered is not a
+        // wrong guess: say so, and offer a new one instead of "try again".
+        const codeStale = data.reason === 'OTP_EXPIRED' || data.reason === 'OTP_ALREADY_USED' || data.reason === 'OTP_NOT_ISSUED';
+        setFactorError(data.reason === 'SECOND_FACTOR_LOCKED' ? 'locked' : codeStale ? 'code_stale' : 'mismatch');
         return;
       }
       setLead(data.lead);
@@ -123,6 +155,7 @@ export default function SignSOA() {
           return;
         }
         setFactorRequired(data.factorRequired || 'PHONE_LAST4');
+        setOtpChannel(data.otpChannel === 'SMS' || data.otpChannel === 'EMAIL' ? data.otpChannel : null);
         setPhase('challenge');
       } catch (e) {
         clearTimeout(timer);
@@ -235,24 +268,30 @@ export default function SignSOA() {
                 {language === 'es' ? 'Confirmemos que es usted' : "Let's confirm it's you"}
               </h1>
               <p className="text-earth-600 mb-6 leading-relaxed">
-                {factorRequired === 'ZIP'
-                  ? (language === 'es' ? 'Escriba su código postal.' : 'Enter your ZIP code.')
-                  : (language === 'es'
-                    ? 'Escriba los últimos cuatro dígitos del teléfono donde recibió este enlace.'
-                    : 'Enter the last four digits of the phone number where you received this link.')}
+                {isOtp
+                  ? (language === 'es'
+                    ? (otpChannel === 'EMAIL' ? 'Escriba el código de seis dígitos que enviamos a su correo electrónico.' : 'Escriba el código de seis dígitos que enviamos a su teléfono.')
+                    : (otpChannel === 'EMAIL' ? 'Enter the six-digit code we sent to your email.' : 'Enter the six-digit code we sent to your phone.'))
+                  : factorRequired === 'ZIP'
+                    ? (language === 'es' ? 'Escriba su código postal.' : 'Enter your ZIP code.')
+                    : (language === 'es'
+                      ? 'Escriba los últimos cuatro dígitos del teléfono donde recibió este enlace.'
+                      : 'Enter the last four digits of the phone number where you received this link.')}
               </p>
               <label className="block">
                 <span className="sr-only">
-                  {factorRequired === 'ZIP'
-                    ? (language === 'es' ? 'Código postal' : 'ZIP code')
-                    : (language === 'es' ? 'Últimos cuatro dígitos' : 'Last four digits')}
+                  {isOtp
+                    ? (language === 'es' ? 'Código de verificación' : 'Verification code')
+                    : factorRequired === 'ZIP'
+                      ? (language === 'es' ? 'Código postal' : 'ZIP code')
+                      : (language === 'es' ? 'Últimos cuatro dígitos' : 'Last four digits')}
                 </span>
                 <input
                   type="text"
                   inputMode="numeric"
-                  autoComplete="off"
+                  autoComplete={isOtp ? 'one-time-code' : 'off'}
                   value={factorValue}
-                  onChange={(e) => { setFactorValue(e.target.value.replace(/\D/g, '').slice(0, 5)); setFactorError(''); }}
+                  onChange={(e) => { setFactorValue(e.target.value.replace(/\D/g, '').slice(0, factorDigits)); setFactorError(''); setResendState(''); }}
                   aria-invalid={!!factorError}
                   className="w-full px-4 py-4 text-2xl tracking-[0.3em] text-center rounded-lg border border-cream-300 bg-white text-earth-900 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-200"
                 />
@@ -267,16 +306,47 @@ export default function SignSOA() {
                       ? (language === 'es' ? 'Demasiados intentos seguidos. Espere unos minutos.' : 'Too many attempts in a row. Please wait a few minutes.')
                       : factorError === 'network'
                         ? (language === 'es' ? 'No pudimos conectar. Inténtelo de nuevo.' : 'We could not connect. Please try again.')
-                        : (language === 'es' ? 'Esos números no coinciden. Inténtelo de nuevo.' : "That doesn't match. Please try again.")}
+                        : factorError === 'code_stale'
+                          ? (language === 'es' ? 'Ese código ya no es válido. Pida uno nuevo.' : 'That code is no longer valid. Request a new one.')
+                          : (language === 'es' ? 'Esos números no coinciden. Inténtelo de nuevo.' : "That doesn't match. Please try again.")}
                 </p>
               )}
               <button
                 type="submit"
-                disabled={factorBusy || factorValue.length < 4}
+                disabled={factorBusy || factorValue.length < factorMinDigits}
                 className="mt-6 w-full px-6 py-4 bg-gold-500 text-white rounded-full font-bold hover:bg-gold-600 disabled:opacity-60 disabled:cursor-not-allowed transition-colors min-h-[52px]"
               >
                 {factorBusy ? (language === 'es' ? 'Verificando…' : 'Checking…') : (language === 'es' ? 'Continuar' : 'Continue')}
               </button>
+              {isOtp && (
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={resendCode}
+                    disabled={factorBusy || resendState === 'busy' || factorError === 'locked'}
+                    className="text-sm text-earth-700 underline underline-offset-4 disabled:opacity-60 disabled:cursor-not-allowed min-h-[44px] px-4"
+                  >
+                    {resendState === 'busy'
+                      ? (language === 'es' ? 'Enviando…' : 'Sending…')
+                      : (language === 'es' ? 'Enviar un código nuevo' : 'Send a new code')}
+                  </button>
+                  {resendState === 'sent' && (
+                    <p role="status" className="text-sm text-earth-600 mt-2">
+                      {language === 'es' ? 'Le enviamos un código nuevo. El anterior ya no sirve.' : 'We sent you a new code. The previous one no longer works.'}
+                    </p>
+                  )}
+                  {resendState === 'limited' && (
+                    <p role="status" className="text-sm text-earth-600 mt-2">
+                      {language === 'es' ? 'Ya enviamos varios códigos. Espere unos minutos antes de pedir otro.' : 'We have already sent several codes. Please wait a few minutes before requesting another.'}
+                    </p>
+                  )}
+                  {resendState === 'failed' && (
+                    <p role="status" className="text-sm text-earth-600 mt-2">
+                      {language === 'es' ? 'No pudimos enviar el código. Llámenos al 1-855-720-8555.' : 'We could not send the code. Please call us at 1-855-720-8555.'}
+                    </p>
+                  )}
+                </div>
+              )}
             </form>
           )}
 

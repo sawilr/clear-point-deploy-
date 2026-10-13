@@ -90,6 +90,14 @@ const SUITES = [
   // child with a laboratory KV, against injected read/write failures at each
   // filing stage; the handler wiring by anchored, comment-stripped scans.
   'test-cy2027-supersession-2026-10-04.mjs',
+  // OTP, letter and call verification (spec §12, §30, Phase 6; SPEC-12): the
+  // code issued, verified, capped per link and per destination, and delivered
+  // only through the gate, by calling each rule; the letter decision, the
+  // verification-call rule and the callback re-open rule called with every
+  // refusal; the status handler driven in process against the memory store
+  // and a provider double (code path, resend caps, destination never from
+  // the request); the issuer observed keeping today's factor.
+  'test-cy2027-verifyflow-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);

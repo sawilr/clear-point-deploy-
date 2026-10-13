@@ -275,6 +275,109 @@ Two invariants are enforced in code, not prose:
 - `resolveSecurityReview()` throws for an actor matching `ai|bot|system|automation`
   (§13, "No AI self-approval of quarantined cases").
 
+### 2.3a Channel, letter and call verification (SPEC-12, 2026-10-04)
+
+Spec §12 asks for a one-time code to the phone/email supplied, `CONTACT_CHANNEL_VERIFIED`
+kept apart from `IDENTITY_VERIFIED`, a verification call only on a contact basis and never
+for marketing, a neutral letter only to a previously verified address on file, and a
+re-open when the person calls back through the official number; §30 asks that the OTP
+endpoint be protected against brute force and SMS bombing. Before this change
+`secure-link.js` listed `'OTP'` as a factor kind and locked a link after repeated failures,
+but nothing issued a code — `api/soa-token.js` minted every link with `PHONE_LAST4` — and
+no letter or call rule existed.
+
+**The code — `api/_lib/cy2027/otp.js` (server only), wired into `secure-link.js`.**
+
+- `issueOtp()`: six CSPRNG digits; the link record keeps a per-code 128-bit salt and an
+  HMAC-SHA256 of the code, never the code (the `otp` block has a fixed key set, so the code
+  has nowhere to live). A code lives ten minutes; a re-issue replaces the previous one. The
+  issue is counted as a send on the link. `issueLink()` refuses a caller-supplied value for
+  the `'OTP'` kind: nothing a caller sends may become the code.
+- `verifySecondFactor()` (one verifier for every kind) delegates the `'OTP'` kind to
+  `verifyOtp()`: constant-time compare, `OTP_EXPIRED` / `OTP_ALREADY_USED` /
+  `OTP_NOT_ISSUED` / `OTP_MISMATCH` by name, single use. The attempt counter and the lockout
+  (`MAX_FACTOR_ATTEMPTS = 5`, `REPEATED_FAILED_OTP` → human review) stay on the link, so a
+  resend never resets a brute-force count. A received code stamps `channelVerification:
+  VERIFIED` and, explicitly, `identityVerification: NOT_VERIFIED`; a last-4 or ZIP match
+  stamps neither. `verificationClaim()` is the vocabulary a handler may use —
+  `CONTACT_CHANNEL_VERIFIED`, `LINK_FACTOR_MATCHED`, `NONE` — and has no identity value.
+  The status endpoint's audit actor now follows it (`beneficiary:channel-verified` only for
+  a code; `beneficiary:factor-matched` for a last-4), and the response carries
+  `verification`. `api/sign-soa.js` still labels every signature `beneficiary:channel-verified`
+  (pinned by the main suite; not changed here).
+- **The SMS-bombing control** (`otpSendPlan()`): a 60-second floor between sends on a link,
+  at most 3 sends per link and 5 per DESTINATION per sliding hour — the destination cap is
+  keyed by `sha256(channel:destination)` across links (`otp-dest:…`), so minting many links
+  for one phone does not become many messages. Both caps are counted and stored BEFORE
+  delivery: a send the provider drops still counts. `OTP_POLICY` is frozen and registered
+  with the no-self-modification gate.
+- **The destination** is the phone or email on the lead record the server wrote at issue,
+  reached through the opaque reference inside the link (`otpDestination(leadRecord, channel)`
+  takes nothing else). `api/soa-status.js` accepts `POST { token, resendCode: true }` on the
+  same endpoint (same origin check, rate limit, no-store, body cap, `SOA_ENABLED` gate); a
+  `to`, `phone` or `email` in that body is never read. A locked link gets no code. The code
+  and the destination reach no response and no log line (`OTP_ISSUED` carries the channel
+  and the send count; `OTP_SEND_REFUSED` the cap that refused).
+- **Delivery is gated exactly like the confirmation copy** (`mayDeliverOtp()`):
+  `CY2027_SEND_OTP` on, a configured https channel (`CY2027_OTP_SMS_URL` / `_TOKEN`,
+  `CY2027_OTP_EMAIL_URL` / `_TOKEN`) and a recorded `CALLBACK_CONTACT_PERMISSION` — all
+  three, none inferred (§6: a request to sign is not permission to message). When the gate
+  refuses, `otpFactorForIssue()` keeps today's factor and the issuer audits why
+  (`factorReason`). **Nothing is sent today**, for two independent reasons: the flag and
+  channel are unset, and `api/soa-token.js` holds no server-side consent record for the
+  person — the request body is a client claim and is never read for one, so its basis is
+  `null` and the gate answers `NO_CONTACT_PERMISSION` even with the flag on. Making the
+  code reachable means wiring the CRM's callback-consent state (`callbackConsentStateOf`)
+  into the issuer, and using the same lookup on the resend path: today the link carries a
+  snapshot of the basis the issuer verified (`otp.consentBasis`), which cannot see a
+  revocation recorded after issue. Both are listed in §6.
+- The page (`src/pages/SignSOA.tsx`) asks for a six-digit code on an `'OTP'` link, says
+  which kind of channel it went to (never the number or address), tells a stale code apart
+  from a wrong one, and can request a new one; the server bounds that.
+
+**The letter, the call and the callback — `api/_lib/cy2027/out-of-band-verification.js`
+(environment-neutral, imports only from the layer). Pure decisions; nothing mails, dials or
+stores a case.**
+
+- `mayIssueVerificationLetter()` releases a rendered letter for a STAFF mailing only when:
+  the decider passes the layer's reviewer rule (`reviewerProblem`: a person, on the owner's
+  `CY2027_REVIEWERS` list — refused for everybody until the list exists); the wording is
+  approved (`letterApprovalProblem`: a named person, a real past day); the client is an
+  existing known client on file before the suspicious request; the address is `ON_FILE`,
+  verified strictly BEFORE the request arrived, and explicitly `suppliedByRequest: false`
+  (an unknown provenance is a refusal, not a pass; an address the request brought is
+  refused by name); the case reference is an opaque token; and the rendered text passes
+  `letterContentProblem()` — the layer's one marketing rule (`assertNotMarketing`) plus a
+  refusal of any plan, carrier, benefit, price, coverage or enrollment word in either
+  language, and a requirement that the published number be in the text.
+- `VERIFICATION_LETTER` (EN/ES) says a request was received and not acted on, gives the
+  case reference and `1-855-720-8555`, and says what will never be asked for; it names no
+  person, address, request detail, plan, carrier, benefit or price. It ships
+  `PENDING_OWNER_APPROVAL` with nobody and no date recorded, and the decision function
+  refuses to release it until `approval` is edited to `APPROVED` by a named person on a
+  past day — a reviewed change to the frozen, gate-registered object, never a runtime write.
+- `mayPlaceVerificationCall()`: purpose must be `SECURITY_REQUEST_VERIFICATION` (an
+  allow-list of one value — a marketing purpose is refused by name); the caller must be a
+  human (`callerMode: 'HUMAN'` and the one human-actor rule — an automated or AI caller is
+  refused); the number dialled must be THE number on the request; and the contact basis is
+  decided by `consent.mayPlaceOutbound()` for a human caller (unknown or set do-not-contact
+  refused; a missing, revoked or wrong-typed consent refused). The decision records the
+  purpose, the basis and `planMarketing: false`.
+- `reopenCaseOnCallback()`: only an INBOUND call whose dialled number is the official one,
+  taken by a person, re-opens a `QUARANTINED`, `HUMAN_REVIEW` or `CLOSED_UNVERIFIED` case.
+  The re-opened case records when, who, how and the previous status, changes NO
+  verification field and NO trust state (a call received proves neither channel nor
+  identity), and names the next gate (`VERIFY_CONTEXT_THEN_HUMAN_CONFIRMATION`). There is
+  no case store in this repository: the rule is the definition staff tooling must call.
+
+Evidence: `scripts/test-cy2027-verifyflow-2026-10-04.mjs` — every rule called with every
+refusal; the two handlers driven in process against the memory store and a provider double
+(nothing leaves the machine): the issuer keeping today's factor with the reason audited, the
+code path, the resend with a request body carrying another number (the code went to the
+phone on file), the floor, the per-link cap, the per-destination cap across links, the
+locked link, the basis-less link (counted, not delivered), the provider failure, and the
+endpoint's own guards; only what must be absent from the source is scanned, anchored.
+
 ### 2.4 Consent — four objects, never inferred from each other
 
 | Object | Never inferred from |
@@ -560,6 +663,10 @@ Stated plainly rather than implied:
 | Voice agents' learning loop (§23) | **OWNER PROCESS.** Emely's and Sofía's prompts live in GoHighLevel, outside this repository and outside its build gate. Keeping any auto-learning setting off and changing a voice prompt only through the reviewed pipeline is the owner's procedure; nothing in code verifies it. See §2.2b. |
 | Candidate-learning store and review queue | **NOT BUILT.** A candidate is one `[CANDIDATE-LEARNING]` log line; there is no database of candidates and no review screen. A person collects them from the function logs. Only `api/chat.js` emits one (when the compliance filter corrects a reply); the voice agents and the forms emit none. |
 | Sensitivity class names (`contact.data_sensitivity_class`) | **OWNER/COUNSEL CONFIRMATION (CRM-25, 2026-10-04).** §18 names the field, not its values; `CONTACT_PII` / `RESTRICTED_TOPIC_FLAGGED` / `COMPLIANCE_EVIDENCE` are this implementation's (§2.6). Whether flagged leads should be withheld from the enrichment vendor altogether is an owner decision (one row in `SENSITIVITY_HANDLING`; today both lead classes get the same service path, §15). The field must exist in GoHighLevel and be mapped in `CY2027_CRM_FIELD_IDS` before it is queryable — its own new field, never an existing id; until then every new lead and every matched opt-out logs the gap, and the class lives in the contact note. No contact already in the CRM is back-filled. How GoHighLevel answers a stale id on the live create could not be verified here: submit one test lead on a preview deployment after mapping the id. |
+| One-time code to the beneficiary (SPEC-12) | **BUILT, FLAG OFF, AND NOT YET REACHABLE.** `CY2027_SEND_OTP` plus a configured https channel (`CY2027_OTP_SMS_URL`/`_TOKEN`, `CY2027_OTP_EMAIL_URL`/`_TOKEN`) plus a recorded `CALLBACK_CONTACT_PERMISSION` — all three, none assumed. Even with the first two set, `api/soa-token.js` has no server-side consent record to consult (the body is a client claim and is never read for one), so the gate answers `NO_CONTACT_PERMISSION` and the link keeps `PHONE_LAST4`, with the reason audited. **OWNER / FOLLOW-UP:** wire the CRM's callback-consent state into the issuer and the resend path (today a resend re-checks a snapshot of the basis verified at issue, which cannot see a later revocation inside the link's 24 hours), choose SMS or email, configure the provider, then flip the flag. See §2.3a. |
+| Verification letter wording (SPEC-12) | **PENDING OWNER APPROVAL.** `VERIFICATION_LETTER` in `api/_lib/cy2027/out-of-band-verification.js` ships with `approval.status = PENDING_OWNER_APPROVAL`; `mayIssueVerificationLetter()` refuses to release it until `approval` records a named person (judged by `humanActorProblem()`) and a real past day. Approving is an edit to that frozen object in a reviewed change. Deciding a letter also needs `CY2027_REVIEWERS` (above). Mailing is a staff action: nothing in code prints or posts a letter. |
+| Verification call and callback case tooling (SPEC-12) | **DEFINITION ONLY.** `mayPlaceVerificationCall()` and `reopenCaseOnCallback()` are the rules; there is no case store, no dialler integration and no screen that calls them. Staff tooling that places a verification call or re-opens a case must call them and record the decision object. The do-not-contact answer must come from the suppression list (an absent answer is a refusal). |
+| Signature audit actor (`api/sign-soa.js`) | **NOT CHANGED.** Every signature is still audited as `beneficiary:channel-verified`, including one reached through a last-4 factor; the status endpoint now distinguishes the two (`verificationClaim()`), the signer does not. The label is pinned by the main suite; changing it is its own reviewed change. |
 | Production deploy | Not done. Requires owner GO. |
 
 ---

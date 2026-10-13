@@ -593,6 +593,8 @@ ok('the governing list is exactly the prompt, the knowledge, the rulesets, the S
     'DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS',
     // AUDIT 2026-10-04 (CBF-10, red team) — the knowledge release ledger, its states, the current release and the provenance record.
     'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE',
+    // AUDIT 2026-10-04 (SPEC-12) — the one-time-code policy (the SMS-bombing caps) and the verification letter with its approval status.
+    'OTP_POLICY', 'VERIFICATION_LETTER',
     // AUDIT 2026-10-04 (CRM-29, red team) — the CRM field registry: which id every write goes to, which configured id is refused,
     // which field holds only a confirmed value or only a self-report, and what a provisioning run may create.
     'CY2027_FIELD_KEYS', 'EXISTING_CRM_FIELDS', 'LEGACY_SOA_NAME_FIELDS', 'PRODUCTION_FIELD_IDS', 'FIELD_ID_REFUSAL',
@@ -622,7 +624,8 @@ ok('a getter is not frozen data, however frozen the object is',
   // AUDIT 2026-10-04 (CRM-29, red team) — 23 → 35: the CRM field registry, the legacy list, the id and provenance tables and the two vocabularies.
   // AUDIT 2026-10-04 (EV-09 / WVG-11) — 35 → 36: the active-instance problem vocabulary (SOA_SCOPE_PROBLEM).
   // AUDIT 2026-10-04 (WVG-11, red team) — 36 → 37: the consumed-link outcome vocabulary (LINK_OUTCOME).
-  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 37, `${r.frozenCount}/${r.objectCount}`);
+  // AUDIT 2026-10-04 (SPEC-12) — 37 → 39: the one-time-code policy (OTP_POLICY) and the verification letter (VERIFICATION_LETTER).
+  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 39, `${r.frozenCount}/${r.objectCount}`);
 }
 {
   // The same gate, handed a tree that contains each kind of defect.

@@ -27,7 +27,10 @@ import { getRecord, setRecord, leadKey, SOA_TOKEN_TTL_SEC } from './_lib/soa-sto
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { readJsonBody } from './_lib/read-body.js';
-import { storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView } from './_lib/cy2027/secure-link.js';
+import { storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, factorLocked } from './_lib/cy2027/secure-link.js';
+import {
+  OTP_POLICY, VERIFICATION_CLAIM, verificationClaim, otpDestination, otpDestinationKey, otpSendPlan, recordDestinationSend, issueOtp, deliverOtp,
+} from './_lib/cy2027/otp.js';
 import { emitAudit } from './_lib/cy2027/evidence.js';
 
 // PHASE 7 — SOA gate. Mirror of src/lib/soaContent.ts SOA_ENABLED.
@@ -84,12 +87,18 @@ export default async function handler(req, res) {
 
   var ptoken = typeof body.token === 'string' ? body.token : '';
   var factor = typeof body.factor === 'string' ? body.factor : '';
+  // AUDIT 2026-10-04 (SPEC-12) — `{ token, resendCode: true }` asks for a new
+  // one-time code on an OTP link. Same endpoint, so the origin check, the
+  // rate limit, the no-store header and the body cap above all apply to it.
+  var resendCode = body.resendCode === true;
   if (!TOKEN_RE.test(ptoken)) return res.status(400).json({ error: 'token required' });
-  if (!factor) return res.status(400).json({ error: 'factor required' });
+  if (!resendCode && !factor) return res.status(400).json({ error: 'factor required' });
 
   var prec = await getRecord(storeKeyFor(ptoken));
   var pstate = checkLink(prec);
   if (!pstate.ok) return res.status(404).json({ exists: false, reason: pstate.reason });
+
+  if (resendCode) return resendOtp(res, ptoken, prec);
 
   var verdict = verifySecondFactor(prec, factor);
   // Persist the attempt counter either way — a counter that resets on every
@@ -116,14 +125,20 @@ export default async function handler(req, res) {
   var lead = await getRecord(leadKey(full.beneficiaryRef));
   if (!lead) return res.status(404).json({ exists: false, reason: 'LEAD_RECORD_MISSING' });
 
+  // AUDIT 2026-10-04 (SPEC-12) — the actor used to say "channel-verified" for
+  // every factor kind, including a last-4 match that verifies no channel. The
+  // audit now states what the link's verification proves (otp.verificationClaim):
+  // CONTACT_CHANNEL_VERIFIED only for a received code, and never an identity.
+  var claim = verificationClaim(verdict.record);
   emitAudit({
-    action: 'SOA_VIEWED', actor: 'beneficiary:channel-verified', result: 'PREFILL_RELEASED', source: 'WEB',
-    correlationId: full.beneficiaryRef, soaId: full.soaId, details: { factor: prec.secondFactorKind },
+    action: 'SOA_VIEWED', actor: claim === VERIFICATION_CLAIM.CONTACT_CHANNEL_VERIFIED ? 'beneficiary:channel-verified' : 'beneficiary:factor-matched', result: 'PREFILL_RELEASED', source: 'WEB',
+    correlationId: full.beneficiaryRef, soaId: full.soaId, details: { factor: prec.secondFactorKind, claim: claim },
   });
 
   return res.status(200).json({
     exists: true,
     verified: true,
+    verification: claim,
     soaId: full.soaId,
     appointmentId: full.appointmentId,
     lead: {
@@ -135,4 +150,45 @@ export default async function handler(req, res) {
       leadSource: lead.leadSource,
     },
   });
+}
+
+/**
+ * AUDIT 2026-10-04 (SPEC-12) — a new code for an OTP link.
+ *
+ * The destination is the phone or email on the LEAD RECORD the server wrote at
+ * issue, reached through the opaque reference inside the link; a `to`, `phone`
+ * or `email` in the request body is never read. A locked link gets no code (a
+ * resend never resets the attempt counter either — that lives on the link). The
+ * per-link and per-destination caps (§30, SMS bombing) are counted and stored
+ * BEFORE delivery, so a send the provider drops still counts. The code and the
+ * destination reach no log line and no response.
+ */
+async function resendOtp(res, ptoken, prec) {
+  if (prec.secondFactorKind !== 'OTP') return res.status(400).json({ exists: true, resent: false, reason: 'FACTOR_NOT_OTP' });
+  var otpChannel = prec.otp && typeof prec.otp.channel === 'string' ? prec.otp.channel : null;
+  if (factorLocked(prec)) {
+    emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'beneficiary:unverified', result: 'SECOND_FACTOR_LOCKED', source: 'WEB', correlationId: prec.beneficiaryRef, soaId: prec.soaId, details: { channel: otpChannel } });
+    return res.status(401).json({ exists: true, resent: false, reason: 'SECOND_FACTOR_LOCKED' });
+  }
+  var lead = await getRecord(leadKey(prec.beneficiaryRef));
+  var dest = otpDestination(lead, otpChannel);
+  if (!dest.ok) return res.status(404).json({ exists: true, resent: false, reason: dest.reason });
+  var destKey = otpDestinationKey(otpChannel, dest.to);
+  var destRecord = await getRecord(destKey);
+  var plan = otpSendPlan({ linkRecord: prec, destRecord: destRecord });
+  if (!plan.allowed) {
+    emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'beneficiary:unverified', result: plan.reason, source: 'WEB', correlationId: prec.beneficiaryRef, soaId: prec.soaId, details: { channel: otpChannel } });
+    res.setHeader('Retry-After', String(plan.reason === 'OTP_RESEND_TOO_SOON' ? OTP_POLICY.minResendIntervalSec : OTP_POLICY.windowSec));
+    return res.status(429).json({ exists: true, resent: false, reason: plan.reason });
+  }
+  var issued = issueOtp(prec);
+  var w1 = await setRecord(storeKeyFor(ptoken), issued.record, SOA_TOKEN_TTL_SEC);
+  var w2 = await setRecord(destKey, recordDestinationSend(destRecord), OTP_POLICY.windowSec);
+  if (!w1.ok || !w2.ok) return res.status(503).json({ exists: true, resent: false, reason: 'STORAGE_FAILED' });
+  var delivery = await deliverOtp({ channel: otpChannel, to: dest.to, code: issued.code, language: prec.language, consent: prec.otp.consentBasis, env: process.env });
+  emitAudit({
+    action: 'OTP_ISSUED', actor: 'beneficiary:unverified', result: delivery.sent ? 'SENT' : delivery.reason, source: 'WEB',
+    correlationId: prec.beneficiaryRef, soaId: prec.soaId, details: { channel: otpChannel, sendsOnLink: issued.record.otp.sends.length },
+  });
+  return res.status(200).json({ exists: true, resent: delivery.sent === true, reason: delivery.reason });
 }

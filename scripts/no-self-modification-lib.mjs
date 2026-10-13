@@ -359,6 +359,11 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // only in a test suite the artifact does not ship: KNOWLEDGE_RELEASES.push(…)
   // from a new api/_lib module and an unfrozen ledger both passed this gate ("19/19").
   'KNOWLEDGE_RELEASES', 'KNOWLEDGE_STATUS', 'MEDICARE_KNOWLEDGE_RELEASE', 'KB_PROVENANCE',
+  // AUDIT 2026-10-04 (SPEC-12) — the one-time-code policy (the caps that are
+  // the SMS-bombing control, the code lifetime) and the verification letter
+  // (customer-facing text carried with its approval status) govern what a
+  // handler may send and what staff may mail; neither may be edited in memory.
+  'OTP_POLICY', 'VERIFICATION_LETTER',
   // AUDIT 2026-10-04 (CRM-29, red team) — the CRM field registry decides which
   // GoHighLevel id every consent write and every revocation goes to, which
   // configured id is refused, which field may only hold a confirmed value and
@@ -541,7 +546,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link, otp, oob] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -553,6 +558,8 @@ async function governingObjects(root) {
     load('api/_lib/medicare-knowledge.js'),
     load('api/_lib/cy2027/crm-fields.js'),
     load('api/_lib/cy2027/secure-link.js'),
+    load('api/_lib/cy2027/otp.js'),
+    load('api/_lib/cy2027/out-of-band-verification.js'),
   ]);
   // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
   // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
@@ -574,6 +581,9 @@ async function governingObjects(root) {
     SOA_SCOPE_PROBLEM: instance.SOA_SCOPE_PROBLEM,
     // AUDIT 2026-10-04 (WVG-11, red team) — see GOVERNING_IDENTIFIERS.
     LINK_OUTCOME: link.LINK_OUTCOME,
+    // AUDIT 2026-10-04 (SPEC-12) — see GOVERNING_IDENTIFIERS.
+    OTP_POLICY: otp.OTP_POLICY,
+    VERIFICATION_LETTER: oob.VERIFICATION_LETTER,
     CANDIDATE_KINDS: learning.CANDIDATE_KINDS,
     LEARNING_PIPELINE: learning.LEARNING_PIPELINE,
     LEARNING_REJECTION_REASONS: learning.LEARNING_REJECTION_REASONS,
