@@ -134,7 +134,11 @@ export default async function handler(req, res) {
   emitAudit({
     action: 'SOA_LINK_ISSUED', actor: 'system:soa-token', result: 'OK', source: 'WEB',
     correlationId: beneficiaryRef, soaId: link.record.soaId,
-    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language, appointment: reissuedFor ? 'EXISTING' : 'NEW' },
+    // AUDIT 2026-10-04 (EV-09, red team) — this said 'EXISTING' for any id in
+    // the server's form, including one never issued: the issuer reads no
+    // ledger, so the audit states what it checked (the caller asked for a
+    // re-issue in the server's id form), not an existence it did not verify.
+    details: { channel: 'WEB', factor: link.record.secondFactorKind, language: language, appointment: reissuedFor ? 'REISSUE_REQUESTED' : 'NEW' },
   });
 
   return res.status(200).json({

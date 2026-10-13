@@ -19,10 +19,20 @@
 // Every rule is exercised by CALLING it: supersede()/activeSoaInstance() with
 // each refusal; the ledger driven in process against the memory store, and in
 // a child process against a laboratory KV (globalThis.fetch replaced — nothing
-// leaves this machine) with a failure injected at each filing stage. The
-// signing handler is gated off in production (SOA_ENABLED=false), so its
-// wiring is checked by structural scans anchored to a line start, through
-// strip(): a comment cannot satisfy them and an `if (false)` prefix breaks them.
+// leaves this machine) with a failure injected at each filing stage.
+//
+// AUDIT 2026-10-04 (red team) — the handlers' wiring used to be checked by
+// structural scans. Three single-line mutants ADDED after the scanned lines
+// (lock overridden, ledger read overridden, reconciliation refusal overridden)
+// passed every scan while the control failed open in the real handler. The
+// three SOA handlers are now DRIVEN, in a third child, against the same
+// laboratory doubles: every claim is a response, a stored record or an audit
+// line observed. Only what must be ABSENT from the source is still scanned.
+// The same red team found the signer bound by a body claim, the mirror stage
+// reported as "not filed" after the ledger had switched, a burnt link that
+// claimed a signature, a status deny-list, absent == absent in supersede(),
+// an 'EXISTING' audit for an unchecked id and an unowned lock release; each is
+// a behaviour asserted here, by calling the rule or driving the handler.
 //
 // Run: node scripts/test-cy2027-supersession-2026-10-04.mjs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,9 +49,10 @@ import { CMS_RULESET_2027 } from '../api/_lib/cy2027/rulesets.js';
 import { buildEvidenceRecord, AUDIT_ACTIONS } from '../api/_lib/cy2027/evidence.js';
 import {
   LEDGER_TTL_SEC, APPOINTMENT_LOCK_TTL_SEC, SIGNATURE_FILING_STAGE, LEDGER_REFUSAL,
-  appointmentIdForReissue, appointmentLedgerKey, appointmentLockKey, signedRecordKey, beneficiaryKeyFor,
+  appointmentIdForReissue, appointmentLedgerKey, appointmentLockKey, signedRecordKey, beneficiaryKeyFor, signerIdentityProblem,
   ledgerEntryFor, readLedger, reconcileSignature, fileSignature, claimAppointmentLock, releaseAppointmentLock,
 } from '../api/_lib/cy2027/soa-ledger.js';
+import { storeKeyFor } from '../api/_lib/cy2027/secure-link.js';
 import * as store from '../api/_lib/soa-store.js';
 import { stripComments, unfrozenPaths, GOVERNING_IDENTIFIERS } from './no-self-modification-lib.mjs';
 
@@ -146,21 +157,30 @@ async function storeSection(mode) {
   // ── the lock ─────────────────────────────────────────────────────────────
   {
     const l1 = await claimAppointmentLock(APPT);
-    ok(`${mode}: the appointment lock is claimed`, l1.ok === true);
+    ok(`${mode}: the appointment lock is claimed, with a holder token`, l1.ok === true && typeof l1.holder === 'string' && l1.holder.length >= 16);
     const l2 = await claimAppointmentLock(APPT);
     ok(`${mode}: a second claim while held is BUSY, named`, l2.ok === false && l2.reason === 'SOA_APPOINTMENT_BUSY');
-    const rel = await releaseAppointmentLock(APPT);
-    ok(`${mode}: the lock is released`, rel.ok === true);
+    // AUDIT 2026-10-04 (WVG-11, red team) — the release was an unconditional DEL:
+    // a request that outlived the TTL released the lock a later request held.
+    const wrong = await releaseAppointmentLock(APPT, 'not-the-holder');
+    ok(`${mode} (red team): a release by anyone but the holder is refused, named, and the lock stays`,
+      wrong.ok === false && wrong.reason === 'SOA_APPOINTMENT_LOCK_NOT_HELD' && (await claimAppointmentLock(APPT)).reason === 'SOA_APPOINTMENT_BUSY');
+    const noHolder = await releaseAppointmentLock(APPT);
+    ok(`${mode} (red team): a release that names no holder is refused`, noHolder.ok === false && noHolder.reason === 'SOA_APPOINTMENT_LOCK_FAILED');
+    const rel = await releaseAppointmentLock(APPT, l1.holder);
+    ok(`${mode}: the holder releases it`, rel.ok === true);
+    const gone = await releaseAppointmentLock(APPT, l1.holder);
+    ok(`${mode} (red team): releasing a lock that is no longer there says EXPIRED — this request outlived its lock`, gone.ok === false && gone.reason === 'SOA_APPOINTMENT_LOCK_EXPIRED');
     const l3 = await claimAppointmentLock(APPT);
-    ok(`${mode}: and can be claimed again`, l3.ok === true);
-    await releaseAppointmentLock(APPT);
+    ok(`${mode}: and it can be claimed again, by a new holder`, l3.ok === true && l3.holder !== l1.holder);
+    await releaseAppointmentLock(APPT, l3.holder);
     const other = await claimAppointmentLock(APPT_2);
     ok(`${mode}: another appointment is not blocked by this one`, other.ok === true);
-    await releaseAppointmentLock(APPT_2);
+    await releaseAppointmentLock(APPT_2, other.holder);
     if (mode === 'kv') {
-      ok('kv: the claim is a SET … NX, the release a DEL',
-        lab.log.some((e) => e[0] === 'SETNX' && e[1] === appointmentLockKey(APPT)) && lab.log.some((e) => e[0] === 'DEL' && e[1] === appointmentLockKey(APPT)) &&
-        !lab.log.some((e) => e[0] === 'SET' && e[1] === appointmentLockKey(APPT)));
+      ok('kv: the claim is a SET … NX, the release a read of the holder then a DEL',
+        lab.log.some((e) => e[0] === 'SETNX' && e[1] === appointmentLockKey(APPT)) && lab.log.some((e) => e[0] === 'GET' && e[1] === appointmentLockKey(APPT)) &&
+        lab.log.some((e) => e[0] === 'DEL' && e[1] === appointmentLockKey(APPT)) && !lab.log.some((e) => e[0] === 'SET' && e[1] === appointmentLockKey(APPT)));
       lab.reset();
       lab.failWhen = (op) => op === 'SETNX';
       const lf = await claimAppointmentLock(APPT);
@@ -168,10 +188,14 @@ async function storeSection(mode) {
       lab.reset();
       lab.failWhen = (op) => op === 'DEL';
       const held = await claimAppointmentLock(APPT);
-      const rf = await releaseAppointmentLock(APPT);
+      const rf = await releaseAppointmentLock(APPT, held.holder);
       ok('kv: a release the store could not make is reported', held.ok === true && rf.ok === false && rf.reason === 'KV_WRITE_FAILED');
       lab.reset();
-      await releaseAppointmentLock(APPT);
+      lab.failWhen = (op, key) => op === 'GET' && key === appointmentLockKey(APPT);
+      const rr = await releaseAppointmentLock(APPT, held.holder);
+      ok('kv (red team): a release whose ownership could not be read is reported, and nothing is deleted', rr.ok === false && rr.reason === 'KV_READ_FAILED' && !lab.log.some((e) => e[0] === 'DEL'));
+      lab.reset();
+      await releaseAppointmentLock(APPT, held.holder);
     }
   }
 
@@ -270,6 +294,26 @@ async function storeSection(mode) {
       (await store.readRecord(signedRecordKey('soa_3'))).value === null);
   }
 
+  // ── the ledger is re-read before it is written (WVG-11, red team) ────────
+  {
+    const cur = (await readLedger(APPT)).ledger;
+    const rec = reconcileSignature(cur, mk({ soaId: 'soa_4' }), { beneficiaryKey: keyA, at: '2026-11-13T09:00:00Z' });
+    const inst = sign(rec.instance, { completedAt: '2026-11-13T09:00:00Z' });
+    const args = { ledger: cur, instance: inst, beneficiaryKey: keyA, previous: rec.previous, signedRecord: signedRecordFor(inst), signedRecordTtlSec: TTL, at: '2026-11-13T09:00:00Z' };
+    // Another writer changes the ledger between this request's read and its write.
+    await store.setRecord(appointmentLedgerKey(APPT), { ...cur, updatedAt: '2026-11-13T09:00:01Z' }, TTL);
+    const changed = await fileSignature(args);
+    const now = (await readLedger(APPT)).ledger;
+    ok(`${mode} (red team): a ledger that changed since it was read is refused at the LEDGER stage, named, and NOT overwritten`,
+      rec.ok === true && changed.ok === false && changed.stage === 'LEDGER' && changed.reason === 'LEDGER_CHANGED' &&
+      now.updatedAt === '2026-11-13T09:00:01Z' && activeSoaInstance(now.instances).active.soaId === 'soa_2', JSON.stringify(changed));
+    await store.setRecord(appointmentLedgerKey(APPT), cur, TTL);
+    const healthy = await fileSignature(args);
+    ok(`${mode}: restored to what was read, the same filing goes through`, healthy.ok === true && healthy.mirror && healthy.mirror.ok === true &&
+      activeSoaInstance((await readLedger(APPT)).ledger.instances).active.soaId === 'soa_4', JSON.stringify(healthy));
+    ledger1 = (await readLedger(APPT)).ledger;
+  }
+
   // ── a ledger that cannot define an active instance is a refusal, not empty
   {
     const conflicted = { appointmentId: APPT_2, instances: [ledgerEntryFor(sign(mk({ soaId: 'c1', appointmentId: APPT_2 })), keyA), ledgerEntryFor(sign(mk({ soaId: 'c2', appointmentId: APPT_2 })), keyA)], updatedAt: 'x' };
@@ -361,35 +405,459 @@ async function storeSection(mode) {
       s2.filed.ok === false && s2.filed.stage === 'LEDGER' && same(s2.writes, [signedRecordKey('k3'), appointmentLedgerKey(A3)]) &&
       s2.after.ledger.instances.length === 1 && activeSoaInstance(s2.after.ledger.instances).active.soaId === 'k1' &&
       s2.signed.value !== null && s2.prev.value.instance.status === 'COMPLETED', JSON.stringify(s2.filed));
+    // AUDIT 2026-10-04 (EV-09, red team) — a mirror failure used to be reported
+    // like the two stages before it, and the handler denied a record the
+    // ledger already held. The ledger write IS the filing; the lag is reported
+    // beside it, named, for the operator.
     const s3 = await stage((op, key) => op === 'SET' && key === signedRecordKey('k1'), 'k4');
-    ok('kv: failure at the mirror: the ledger has ALREADY switched (reported with it), the old record lags and the stage says so',
-      s3.filed.ok === false && s3.filed.stage === 'SUPERSEDED_MIRROR' && s3.filed.ledger && s3.filed.ledger.instances.length === 2 &&
+    ok('kv (red team): failure at the mirror is NOT a filing failure — the ledger has switched, the signature is filed, and the lag is reported beside it, named',
+      s3.filed.ok === true && s3.filed.mode === 'SUPERSEDES' && s3.filed.mirror && s3.filed.mirror.ok === false && s3.filed.mirror.stage === 'SUPERSEDED_MIRROR' &&
+      s3.filed.mirror.reason === 'KV_WRITE_FAILED' && s3.filed.mirror.previousSoaId === 'k1' && s3.filed.ledger && s3.filed.ledger.instances.length === 2 &&
       same(s3.writes, [signedRecordKey('k4'), appointmentLedgerKey(A3), signedRecordKey('k1')]) &&
       activeSoaInstance(s3.after.ledger.instances).active.soaId === 'k4' && s3.after.ledger.instances[0].status === 'SUPERSEDED' &&
       s3.prev.value.instance.status === 'COMPLETED', JSON.stringify(s3.filed));
     const s4 = await stage((op, key) => op === 'GET' && key === signedRecordKey('k4'), 'k5');
-    ok('kv: a mirror whose previous record cannot be read is reported at the mirror stage',
-      s4.filed.ok === false && s4.filed.stage === 'SUPERSEDED_MIRROR' && s4.filed.reason === 'KV_READ_FAILED' &&
-      activeSoaInstance(s4.after.ledger.instances).active.soaId === 'k5', JSON.stringify(s4.filed));
+    ok('kv: a mirror whose previous record cannot be read is filed, the lag named',
+      s4.filed.ok === true && s4.filed.mirror.ok === false && s4.filed.mirror.stage === 'SUPERSEDED_MIRROR' && s4.filed.mirror.reason === 'KV_READ_FAILED' &&
+      s4.filed.mirror.previousSoaId === 'k4' && activeSoaInstance(s4.after.ledger.instances).active.soaId === 'k5', JSON.stringify(s4.filed));
     lab.reset();
     lab.data.delete(signedRecordKey('k5'));
     const s5 = await stage(() => false, 'k6');
-    ok('kv: a mirror whose previous record is missing is reported, the ledger having switched',
-      s5.filed.ok === false && s5.filed.stage === 'SUPERSEDED_MIRROR' && s5.filed.reason === 'PREVIOUS_RECORD_MISSING' &&
+    ok('kv: a mirror whose previous record is missing is filed, the lag named, the ledger having switched',
+      s5.filed.ok === true && s5.filed.mirror.ok === false && s5.filed.mirror.reason === 'PREVIOUS_RECORD_MISSING' &&
       activeSoaInstance(s5.after.ledger.instances).active.soaId === 'k6', JSON.stringify(s5.filed));
     const s6 = await stage(() => false, 'k7');
-    ok('kv: with the store healthy the same filing succeeds end to end',
-      s6.filed.ok === true && s6.filed.mode === 'SUPERSEDES' && activeSoaInstance(s6.after.ledger.instances).active.soaId === 'k7' &&
+    ok('kv: with the store healthy the same filing succeeds end to end, mirror included',
+      s6.filed.ok === true && s6.filed.mode === 'SUPERSEDES' && s6.filed.mirror && s6.filed.mirror.ok === true && activeSoaInstance(s6.after.ledger.instances).active.soaId === 'k7' &&
       s6.prev.value.instance.status === 'SUPERSEDED' && s6.prev.value.instance.supersededById === 'k7', JSON.stringify(s6.filed));
+    const A4 = 'appt_4f3a2b4c-5d6e-4f70-8a9b-0c1d2e3f4a5b';
+    const f0 = sign(mk({ soaId: 'k0', appointmentId: A4 }));
+    const freshFiled = await fileSignature({ ledger: { appointmentId: A4, instances: [], updatedAt: null }, instance: f0, beneficiaryKey: keyA, previous: null, signedRecord: signedRecordFor(f0), signedRecordTtlSec: TTL });
+    ok('kv: a FRESH filing reports no mirror at all', freshFiled.ok === true && freshFiled.mode === 'FRESH' && freshFiled.mirror === null, JSON.stringify(freshFiled));
     ok('kv: every version is still in the ledger',
       same(s6.after.ledger.instances.map((e) => e.soaId + ':' + e.status), ['k1:SUPERSEDED', 'k4:SUPERSEDED', 'k5:SUPERSEDED', 'k6:SUPERSEDED', 'k7:COMPLETED']),
       s6.after.ledger.instances.map((e) => e.soaId + ':' + e.status).join(','));
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// The handler-driven section (AUDIT 2026-10-04, red team). The three SOA
+// handlers run IN PROCESS against a laboratory KV, evidence store and CRM
+// double, and every wiring claim is a response, a stored record or an audit
+// line observed — never a line of source found. The handlers are gated off in
+// production (SOA_ENABLED=false, pinned by test-cp-findings). To drive them,
+// this child registers a loader hook that rewrites that ONE declaration to
+// true in memory for the three handler modules as they load: the files on
+// disk are untouched, the modules keep their own URLs (so their relative
+// imports and pdfkit resolve exactly as deployed), and the hook refuses a
+// handler whose gate is not declared exactly where it expects.
+// ═════════════════════════════════════════════════════════════════════════════
+async function handlerSection() {
+  const { register } = await import('node:module');
+  register('data:text/javascript,' + encodeURIComponent(`
+    export async function load(url, context, nextLoad) {
+      const r = await nextLoad(url, context);
+      if (!/\\/api\\/(sign-soa|soa-token|soa-status)\\.js$/.test(url)) return r;
+      const src = typeof r.source === 'string' ? r.source : new TextDecoder().decode(r.source);
+      const parts = src.split('const SOA_ENABLED = false;');
+      if (parts.length !== 2) throw new Error('the SOA gate is not declared exactly once in ' + url);
+      return { ...r, source: parts.join('const SOA_ENABLED = true;') };
+    }
+  `));
+
+  const lab = {
+    data: new Map(), seq: [], evidence: [], ghl: [],
+    failWhen: () => false, evidenceFail: () => false, onOp: () => {},
+    reset() { this.seq = []; this.evidence = []; this.ghl = []; this.failWhen = () => false; this.evidenceFail = () => false; this.onOp = () => {}; },
+  };
+  const respond = (status, body) => ({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
+  globalThis.fetch = async (url, opts = {}) => {
+    const u = String(url);
+    if (u.startsWith('https://kv.invalid/get/')) {
+      const key = decodeURIComponent(u.slice('https://kv.invalid/get/'.length));
+      lab.seq.push('GET ' + key); lab.onOp('GET', key);
+      if (lab.failWhen('GET', key)) return respond(500, { error: 'lab outage' });
+      return respond(200, { result: lab.data.has(key) ? lab.data.get(key) : null });
+    }
+    if (u === 'https://kv.invalid/pipeline') {
+      const results = [];
+      for (const c of JSON.parse(opts.body)) {
+        const [verb, key] = c;
+        if (verb === 'SET') {
+          const op = c.includes('NX') ? 'SETNX' : 'SET';
+          lab.seq.push(op + ' ' + key); lab.onOp(op, key);
+          if (lab.failWhen(op, key)) return respond(500, { error: 'lab outage' });
+          if (op === 'SETNX' && lab.data.has(key)) { results.push({ result: null }); continue; }
+          lab.data.set(key, c[2]); results.push({ result: 'OK' });
+        } else if (verb === 'DEL') {
+          lab.seq.push('DEL ' + key); lab.onOp('DEL', key);
+          if (lab.failWhen('DEL', key)) return respond(500, { error: 'lab outage' });
+          results.push({ result: lab.data.delete(key) ? 1 : 0 });
+        } else if (verb === 'INCR') {
+          const n = Number(lab.data.get(key) || 0) + 1; lab.data.set(key, String(n)); results.push({ result: n });
+        } else if (verb === 'EXPIRE') {
+          results.push({ result: 1 });
+        } else results.push({ error: 'unknown verb ' + verb });
+      }
+      return respond(200, results);
+    }
+    if (u.startsWith('https://evidence.invalid/')) {
+      lab.seq.push('PUT evidence'); lab.evidence.push(u.slice('https://evidence.invalid/'.length));
+      if (lab.evidenceFail(u)) return respond(500, { error: 'lab outage' });
+      return respond(200, {});
+    }
+    if (u.startsWith('https://services.leadconnectorhq.com/')) {
+      const path = u.slice('https://services.leadconnectorhq.com'.length);
+      let body = null; try { body = JSON.parse(opts.body); } catch { body = null; }
+      lab.seq.push('GHL ' + path); lab.ghl.push({ path, body });
+      if (path === '/contacts/upsert') return respond(200, { contact: { id: 'C1' } });
+      if (/\/notes$/.test(path)) return respond(200, { note: { id: 'N1' } });
+      return respond(404, { error: 'unrouted' });
+    }
+    throw new Error('the handler child must not reach ' + u.slice(0, 60));
+  };
+  const LOGS = [];
+  for (const k of ['log', 'warn', 'error']) console[k] = (...a) => { LOGS.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); };
+  const audits = () => LOGS.filter((l) => l.includes('[SOA-AUDIT] {')).map((l) => JSON.parse(l.slice(l.indexOf('{'))));
+  const audited = (action, result) => audits().find((a) => a.action === action && (result === undefined || a.result === result)) || null;
+
+  const ROOT = new URL('../', import.meta.url);
+  const handlerOf = async (p) => (await import(new URL(p, ROOT).href)).default;
+  const signSoa = await handlerOf('api/sign-soa.js');
+  const soaToken = await handlerOf('api/soa-token.js');
+  const soaStatus = await handlerOf('api/soa-status.js');
+  ok('handler: the three handlers loaded through the gate hook', typeof signSoa === 'function' && typeof soaToken === 'function' && typeof soaStatus === 'function');
+
+  let ipSeq = 0;
+  const mkReq = (body, method = 'POST', url = '/api/x') => {
+    ipSeq += 1;
+    return {
+      method, url,
+      headers: { origin: 'https://clearpointsenioradvisors.com', 'x-forwarded-for': '203.0.' + (113 + Math.floor(ipSeq / 200)) + '.' + (ipSeq % 200 + 1), 'user-agent': 'cy2027-suite', 'content-type': 'application/json' },
+      readableEnded: true, complete: true, on() {}, get body() { return body; },
+    };
+  };
+  const mkRes = () => { const h = {}; return { statusCode: 200, payload: undefined, setHeader(k, v) { h[k] = v; }, getHeader(k) { return h[k]; }, status(c) { this.statusCode = c; return this; }, json(o) { this.payload = o; return this; }, end(d) { this.payload = d; return this; } }; };
+  const run = async (fn, body, method, url) => {
+    const res = mkRes(); let threw = null;
+    try { await fn(mkReq(body, method, url), res); } catch (e) { threw = String((e && e.stack) || e); }
+    return { status: res.statusCode, payload: res.payload, threw };
+  };
+  const NAME = 'Jane Q Public';
+  const issue = async ({ fullName = NAME, phone = PHONE_A, appointmentId } = {}) => {
+    const r = await run(soaToken, { fullName, phone, email: '', zip: '11717', language: 'en', ...(appointmentId ? { appointmentId } : {}) });
+    ok('handler: (fixture) a signing link is issued', r.status === 200 && typeof r.payload.token === 'string', JSON.stringify(r));
+    return r.payload.token;
+  };
+  const verify = async (token, phone = PHONE_A) => {
+    const r = await run(soaStatus, { token, factor: phone.slice(-4) });
+    ok('handler: (fixture) the second factor verifies and releases the appointment id', r.status === 200 && typeof r.payload.appointmentId === 'string', JSON.stringify(r));
+    return r.payload;
+  };
+  const signBody = (token, over = {}) => ({
+    token, fullName: NAME, phone: PHONE_A, email: '', zip: '11717', address: '',
+    acknowledgements: { no_obligation: true, e_signature: true }, signature: NAME,
+    language: 'en', languageSource: 'BENEFICIARY_ELECTED', residenceState: 'NY', county: 'Suffolk',
+    appointmentFormat: 'TELEPHONE', selectedCategories: ['MA_WITH_RX'], appointmentAt: '2026-11-10T15:00:00Z', ...over,
+  });
+  // Every signing request starts with an empty operation trace: issuing and
+  // verifying a link write the link record too, and must not be mistaken for a burn.
+  const sign = (token, over) => { lab.seq = []; lab.ghl = []; lab.evidence = []; return run(signSoa, signBody(token, over)); };
+  const status = (token) => run(soaStatus, null, 'GET', '/api/soa-status?token=' + token);
+  const kvJson = (key) => (lab.data.has(key) ? JSON.parse(lab.data.get(key)) : null);
+  const ledger = (appt) => kvJson(appointmentLedgerKey(appt));
+  const linkOf = (token) => kvJson(storeKeyFor(token));
+  const activeIds = (appt) => (ledger(appt) || { instances: [] }).instances.filter((e) => e.status === 'COMPLETED').map((e) => e.soaId);
+  const note = () => { const n = lab.ghl.find((c) => /\/notes$/.test(c.path) && c.body && typeof c.body.body === 'string' && c.body.body.includes('soa_id')); return n ? n.body.body : ''; };
+  const at = (prefix) => lab.seq.findIndex((s) => s.startsWith(prefix));
+  const fresh = () => { lab.reset(); LOGS.length = 0; };
+  const keyA = beneficiaryKeyFor(PHONE_A);
+
+  // ── the first signature for an appointment ───────────────────────────────
+  fresh();
+  const t1 = await issue();
+  const v1 = await verify(t1);
+  const appt = v1.appointmentId;
+  const r1 = await sign(t1);
+  const soa1 = r1.payload && r1.payload.soaId;
+  ok('handler: the first signature is FRESH — 200, the LINK\'s appointment, no predecessor, delivered',
+    r1.status === 200 && r1.payload.ok === true && r1.payload.appointmentId === appt && r1.payload.supersedesId === null && r1.payload.ghlDelivered === true && !r1.threw, JSON.stringify(r1));
+  ok('handler: the ledger lists it COMPLETED, bound to the lead phone, under the captured name',
+    (() => { const L = ledger(appt); return !!L && L.instances.length === 1 && L.instances[0].soaId === soa1 && L.instances[0].status === 'COMPLETED' && L.instances[0].beneficiaryKey === keyA && L.instances[0].beneficiaryName === NAME; })());
+  ok('handler: the signed record exists under its own key, COMPLETED', (kvJson(signedRecordKey(soa1)) || {}).instance?.status === 'COMPLETED');
+  ok('handler: the order is lock → ledger read → burn → evidence → signed record → ledger write → release → CRM',
+    at('SETNX ' + appointmentLockKey(appt)) >= 0 && at('SETNX ' + appointmentLockKey(appt)) < at('GET ' + appointmentLedgerKey(appt)) &&
+    at('GET ' + appointmentLedgerKey(appt)) < at('SET soa-link:') && at('SET soa-link:') < at('PUT evidence') && at('PUT evidence') < at('SET ' + signedRecordKey(soa1)) &&
+    at('SET ' + signedRecordKey(soa1)) < at('SET ' + appointmentLedgerKey(appt)) && at('SET ' + appointmentLedgerKey(appt)) < at('DEL ' + appointmentLockKey(appt)) &&
+    at('DEL ' + appointmentLockKey(appt)) < at('GHL /contacts/upsert'), lab.seq.map((s) => s.replace(/:[^:]{20,}$/, ':…')).join(' | '));
+  ok('handler (red team): the link is stamped FILED with the signing time, and only then does the status endpoint say "already used"',
+    linkOf(t1).consumedOutcome === 'FILED' && linkOf(t1).signedAt === r1.payload.signedAt && linkOf(t1).soaId === soa1 && (await status(t1)).payload.reason === 'LINK_ALREADY_USED');
+  ok('handler: SOA_SIGNED is audited, SOA_SUPERSEDED is not', !!audited('SOA_SIGNED', 'OK') && !audited('SOA_SUPERSEDED'));
+  ok('handler: the CRM note says it supersedes nothing and mirrors nothing', /soa_supersedes_id: \(none\)/.test(note()) && /soa_superseded_mirror: \(none\)/.test(note()));
+  ok('handler: the lock is released by its holder, without complaint', !lab.data.has(appointmentLockKey(appt)) && !LOGS.some((l) => l.includes('appointment lock not released')));
+  const replay = await sign(t1);
+  ok('handler: a replay of the filed link is refused as already used, and files nothing', replay.status === 409 && replay.payload.error === 'SOA_LINK_UNUSABLE' && replay.payload.reason === 'LINK_ALREADY_USED' && ledger(appt).instances.length === 1);
+
+  // ── the second signature by the same person: supersession ───────────────
+  fresh();
+  const t2 = await issue({ appointmentId: appt });
+  await verify(t2);
+  const r2 = await sign(t2, { selectedCategories: ['MA_WITH_RX', 'STANDALONE_RX'], fullName: 'JANE  q public', signature: 'jane Q PUBLIC' });
+  const soa2 = r2.payload && r2.payload.soaId;
+  ok('handler: a second signature by the same person SUPERSEDES — 200 naming the predecessor', r2.status === 200 && r2.payload.supersedesId === soa1 && r2.payload.appointmentId === appt, JSON.stringify(r2));
+  ok('handler: the ledger keeps BOTH — the first SUPERSEDED naming its successor, the second COMPLETED naming what it replaced',
+    (() => { const L = ledger(appt); const [a, b] = L.instances; return L.instances.length === 2 && a.soaId === soa1 && a.status === 'SUPERSEDED' && a.supersededById === soa2 && b.soaId === soa2 && b.status === 'COMPLETED' && b.supersedesId === soa1; })());
+  ok('handler (red team): the replacement is filed under the SERVER-captured spelling of the name, not the body\'s',
+    ledger(appt).instances[1].beneficiaryName === NAME && (kvJson(signedRecordKey(soa2)) || {}).instance?.beneficiaryName === NAME);
+  ok('handler: the first record is mirrored SUPERSEDED under its own key', (kvJson(signedRecordKey(soa1)) || {}).instance?.status === 'SUPERSEDED' && kvJson(signedRecordKey(soa1)).instance.supersededById === soa2);
+  ok('handler: SOA_SUPERSEDED is audited naming the previous instance', (audited('SOA_SUPERSEDED', 'OK') || {}).details?.previousSoaId === soa1);
+  ok('handler: SOA_SUPERSEDES_ID reaches the CRM note, with the mirror reported OK', note().includes('soa_supersedes_id: ' + soa1) && /soa_superseded_mirror: OK/.test(note()));
+  ok('handler: the replacement is FILED on its link too', linkOf(t2).consumedOutcome === 'FILED' && linkOf(t2).signedAt === r2.payload.signedAt);
+
+  // ── who cannot supersede, and what each refusal leaves untouched ─────────
+  const untouched = (before) => JSON.stringify(ledger(appt)) === before;
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt, phone: PHONE_B });
+    await verify(t, PHONE_B);
+    const r = await sign(t, { phone: PHONE_B });
+    const trace = lab.seq.slice(); // before the status read below writes the view counter
+    ok('handler: another phone cannot replace this person\'s scope — 409 by name, the link intact, nothing burnt, no evidence, no CRM',
+      r.status === 409 && r.payload.error === 'SOA_SUPERSESSION_BENEFICIARY_MISMATCH' && (await status(t)).payload.exists === true && untouched(before) &&
+      !trace.some((s) => s.startsWith('SET soa-link:')) && !trace.includes('PUT evidence') && !trace.some((s) => s.startsWith('GHL ')) &&
+      !lab.data.has(appointmentLockKey(appt)) && !!audited('SOA_REFUSED', 'SOA_SUPERSESSION_BENEFICIARY_MISMATCH'), JSON.stringify(r) + ' ' + trace.join('|'));
+  }
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt, fullName: 'Someone Else' });
+    await verify(t);
+    const r = await sign(t, { fullName: 'Someone Else', signature: 'Someone Else' });
+    ok('handler: another name on the same phone is refused by the supersession rule, field named', r.status === 409 && r.payload.error === 'SOA_SUPERSESSION_REFUSED' && r.payload.fields.beneficiaryName === 'supersession_changes_beneficiary' && untouched(before), JSON.stringify(r));
+    fresh();
+    const t2b = await issue({ appointmentId: appt, fullName: 'Someone Else' });
+    await verify(t2b);
+    const forged = await sign(t2b, { fullName: NAME, signature: 'Someone Else', selectedCategories: ['MA_WITH_RX', 'STANDALONE_RX', 'MEDICARE_SUPPLEMENT'] });
+    const forgedTrace = lab.seq.slice();
+    ok('handler (red team): body.fullName = the victim\'s name, signature = the link\'s name — refused as an identity mismatch BEFORE the lock, link intact, nothing written',
+      forged.status === 400 && forged.payload.error === 'SOA_IDENTITY_MISMATCH' && forged.payload.field === 'fullName' && untouched(before) &&
+      (await status(t2b)).payload.exists === true && forgedTrace.every((s) => !s.startsWith('SETNX') && !s.startsWith('SET soa-') && !s.startsWith('PUT') && !s.startsWith('GHL')),
+      JSON.stringify(forged) + ' ' + forgedTrace.join('|'));
+    ok('handler (red team): the identity refusal is audited by field, and no name appears in the audit line',
+      (() => { const a = audited('SOA_REFUSED', 'SOA_IDENTITY_MISMATCH'); const raw = LOGS.find((l) => l.includes('SOA_IDENTITY_MISMATCH')) || ''; return !!a && a.details.field === 'fullName' && !raw.includes('Someone') && !raw.includes('Jane'); })());
+    const wrongSig = await sign(t2b, { fullName: 'Someone Else', signature: NAME });
+    ok('handler: a signature that is not the captured name is still refused first', wrongSig.status === 400 && wrongSig.payload.error === 'Signature must match the captured name');
+  }
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    const r = await sign(t, { phone: PHONE_B });
+    ok('handler (red team): a body phone that is not the proven phone is refused as an identity mismatch, the link intact',
+      r.status === 400 && r.payload.error === 'SOA_IDENTITY_MISMATCH' && r.payload.field === 'phone' && untouched(before) && (await status(t)).payload.exists === true && lab.ghl.length === 0, JSON.stringify(r));
+    const formatted = await sign(t, { phone: '+1 (718) 555-0123' });
+    ok('handler: the same phone in another format is the same person', formatted.status === 200 && formatted.payload.supersedesId === soa2, JSON.stringify(formatted));
+  }
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    const r = await sign(t, { appointmentId: 'appt_00000000-0000-4000-8000-000000000000' });
+    ok('handler: a body naming another appointment is refused, the link intact', r.status === 409 && r.payload.error === 'SOA_APPOINTMENT_MISMATCH' && untouched(before) && (await status(t)).payload.exists === true);
+  }
+
+  // ── the mirror stage: the ledger has switched, so the signature IS filed ─
+  {
+    fresh();
+    const prevActive = activeIds(appt)[0];
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    lab.failWhen = (op, key) => op === 'SET' && key === signedRecordKey(prevActive);
+    const r = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    lab.failWhen = () => false;
+    ok('handler (red team): a mirror that cannot be written is NOT "not recorded" — 200 naming the predecessor, the ledger switched, the CRM written',
+      r.status === 200 && r.payload.supersedesId === prevActive && activeIds(appt).length === 1 && activeIds(appt)[0] === r.payload.soaId &&
+      ledger(appt).instances.find((e) => e.soaId === prevActive).status === 'SUPERSEDED' && lab.ghl.some((c) => c.path === '/contacts/upsert'), JSON.stringify(r));
+    ok('handler (red team): the lag is named — the old record still reads COMPLETED on its own, and the log, the audit trail and the CRM note all say so',
+      (kvJson(signedRecordKey(prevActive)) || {}).instance?.status === 'COMPLETED' && !!audited('SOA_SUPERSEDED', 'OK') &&
+      (audited('SOA_EVIDENCE_WRITE_FAILED', 'SUPERSEDED_MIRROR_LAGGING') || {}).details?.previousSoaId === prevActive &&
+      LOGS.some((l) => l.includes('reconcile the mirror') && l.includes(prevActive)) && note().includes('soa_superseded_mirror: LAGGING:KV_WRITE_FAILED'));
+    ok('handler: the link of a filed-with-lag signature is FILED', linkOf(t).consumedOutcome === 'FILED' && (await status(t)).payload.reason === 'LINK_ALREADY_USED');
+  }
+
+  // ── failures after the burn: the link says "used, nothing filed" ─────────
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    lab.evidenceFail = () => true;
+    const r = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    lab.evidenceFail = () => false;
+    const link = linkOf(t);
+    ok('handler (red team): an evidence-store failure after the burn is a 503 that records nothing', r.status === 503 && r.payload.error === 'SOA_EVIDENCE_NOT_STORED' && untouched(before) && !lab.data.has(appointmentLockKey(appt)), JSON.stringify(r));
+    ok('handler (red team): the consumed link is stamped FAILED at its stage, with NO signing time on it',
+      !!link.consumedAt && link.consumedOutcome === 'FAILED' && link.failedStage === 'EVIDENCE_STORE' && link.signedAt === null, JSON.stringify(link));
+    ok('handler (red team): the status endpoint then says "used, unfiled" — never "already signed"', (await status(t)).payload.reason === 'LINK_CONSUMED_UNFILED');
+    const again = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    ok('handler: the failed link cannot be re-used, and the refusal names it as unfiled', again.status === 409 && again.payload.reason === 'LINK_CONSUMED_UNFILED' && untouched(before));
+  }
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    lab.failWhen = (op, key) => op === 'SET' && key.startsWith('soa-signed:') && !activeIds(appt).includes(key.slice('soa-signed:'.length));
+    const r = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    lab.failWhen = () => false;
+    ok('handler: a failure at the signed-record stage is a 503 naming the stage, nothing active changes, no CRM, the link FAILED at that stage',
+      r.status === 503 && r.payload.error === 'SOA_NOT_FILED' && r.payload.stage === 'SIGNED_RECORD' && untouched(before) && lab.ghl.length === 0 &&
+      linkOf(t).consumedOutcome === 'FAILED' && linkOf(t).failedStage === 'SIGNED_RECORD' && !!audited('SOA_EVIDENCE_WRITE_FAILED', 'SIGNATURE_NOT_FILED:SIGNED_RECORD'), JSON.stringify(r));
+    fresh();
+    const t3 = await issue({ appointmentId: appt });
+    await verify(t3);
+    lab.failWhen = (op, key) => op === 'SET' && key === appointmentLedgerKey(appt);
+    const r3 = await sign(t3, { selectedCategories: ['STANDALONE_RX'] });
+    lab.failWhen = () => false;
+    ok('handler: a failure at the ledger stage is a 503 naming the stage, the previous instance still active, the link FAILED:LEDGER',
+      r3.status === 503 && r3.payload.stage === 'LEDGER' && untouched(before) && linkOf(t3).failedStage === 'LEDGER' && (await status(t3)).payload.reason === 'LINK_CONSUMED_UNFILED', JSON.stringify(r3));
+  }
+
+  // ── the ledger changed between the read under the lock and the write ─────
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    let reads = 0;
+    lab.onOp = (op, key) => {
+      if (op === 'GET' && key === appointmentLedgerKey(appt)) {
+        reads += 1;
+        if (reads === 2) lab.data.set(appointmentLedgerKey(appt), JSON.stringify({ ...ledger(appt), updatedAt: '2099-01-01T00:00:00Z' }));
+      }
+    };
+    const r = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    lab.onOp = () => {};
+    ok('handler (red team): a ledger that changed under the request is refused at the LEDGER stage as LEDGER_CHANGED, and not overwritten',
+      reads === 2 && r.status === 503 && r.payload.error === 'SOA_NOT_FILED' && r.payload.stage === 'LEDGER' && r.payload.reason === 'LEDGER_CHANGED' &&
+      ledger(appt).updatedAt === '2099-01-01T00:00:00Z' && linkOf(t).failedStage === 'LEDGER', JSON.stringify(r) + ' reads=' + reads);
+    lab.data.set(appointmentLedgerKey(appt), before);
+  }
+
+  // ── the lock: concurrency, loss of ownership, store failures ─────────────
+  {
+    fresh();
+    const prevActive = activeIds(appt)[0];
+    const ta = await issue({ appointmentId: appt });
+    const tb = await issue({ appointmentId: appt });
+    await verify(ta); await verify(tb);
+    const [a, b] = await Promise.all([sign(ta, { selectedCategories: ['STANDALONE_RX'] }), sign(tb, { selectedCategories: ['MA_WITH_RX'] })]);
+    const statuses = [a.status, b.status].sort();
+    const busy = a.status === 409 ? a : b;
+    const won = a.status === 200 ? a : b;
+    ok('handler: two concurrent signatures for one appointment — exactly one files, the other is BUSY by name',
+      same(statuses, [200, 409]) && busy.payload.error === 'SOA_APPOINTMENT_BUSY' && won.payload.supersedesId === prevActive && activeIds(appt).length === 1 && !lab.data.has(appointmentLockKey(appt)), JSON.stringify([a.payload, b.payload]));
+    const busyToken = a.status === 409 ? ta : tb;
+    ok('handler: the BUSY link is intact and signs afterwards, superseding the winner', (await status(busyToken)).payload.exists === true &&
+      (await (async () => { const r = await sign(busyToken, { selectedCategories: ['STANDALONE_RX'] }); return r.status === 200 && r.payload.supersedesId === won.payload.soaId; })()));
+  }
+  {
+    fresh();
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    let fired = false;
+    lab.onOp = (op, key) => {
+      if (!fired && op === 'GET' && key === appointmentLedgerKey(appt)) {
+        fired = true;
+        lab.data.set(appointmentLockKey(appt), JSON.stringify({ appointmentId: appt, holder: 'another-request', claimedAt: '2026-11-10T14:00:00Z' }));
+      }
+    };
+    const r = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    lab.onOp = () => {};
+    ok('handler (red team): a lock that another request holds by the time this one releases is NOT deleted, and the loss is named in the log',
+      fired && r.status === 200 && (kvJson(appointmentLockKey(appt)) || {}).holder === 'another-request' &&
+      LOGS.some((l) => l.includes('[sign-soa] appointment lock not released') && l.includes('SOA_APPOINTMENT_LOCK_NOT_HELD')), JSON.stringify(r));
+    lab.data.delete(appointmentLockKey(appt));
+  }
+  {
+    fresh();
+    const before = JSON.stringify(ledger(appt));
+    const t = await issue({ appointmentId: appt });
+    await verify(t);
+    lab.failWhen = (op) => op === 'SETNX';
+    const r = await sign(t);
+    lab.failWhen = () => false;
+    ok('handler: a lock the store could not claim is a 503 by name, audited, the link intact', r.status === 503 && r.payload.error === 'SOA_APPOINTMENT_LOCK_FAILED' && !!audited('SOA_REFUSED', 'SOA_APPOINTMENT_LOCK_FAILED') && (await status(t)).payload.exists === true);
+    lab.data.set(appointmentLockKey(appt), JSON.stringify({ appointmentId: appt, holder: 'someone', claimedAt: '2026-11-10T14:00:00Z' }));
+    const r2 = await sign(t);
+    lab.data.delete(appointmentLockKey(appt));
+    ok('handler: a lock someone else holds is BUSY, the link intact', r2.status === 409 && r2.payload.error === 'SOA_APPOINTMENT_BUSY' && (await status(t)).payload.exists === true);
+    lab.failWhen = (op, key) => op === 'GET' && key === appointmentLedgerKey(appt);
+    const r3 = await sign(t);
+    lab.failWhen = () => false;
+    const trace3 = lab.seq.slice();
+    ok('handler: a ledger that cannot be read is a 503 by name — not an empty ledger — the link intact, the lock released, nothing burnt',
+      r3.status === 503 && r3.payload.error === 'SOA_LEDGER_UNAVAILABLE' && r3.payload.reason === 'KV_READ_FAILED' && (await status(t)).payload.exists === true &&
+      !lab.data.has(appointmentLockKey(appt)) && !trace3.some((s) => s.startsWith('SET soa-link:')) && trace3.includes('DEL ' + appointmentLockKey(appt)) && untouched(before),
+      JSON.stringify(r3) + ' ' + trace3.join('|'));
+    const r4 = await sign(t, { selectedCategories: ['STANDALONE_RX'] });
+    ok('handler: the same link then signs once the store is healthy', r4.status === 200 && r4.payload.supersedesId === activeIdsBefore(before), JSON.stringify(r4));
+  }
+
+  // ── a ledger the handler cannot read as "the active instance" ────────────
+  {
+    let plantedSeq = 0;
+    const planted = async (label, instances, reason) => {
+      fresh();
+      plantedSeq += 1;
+      const A = 'appt_aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeee' + plantedSeq.toString(16);
+      const stored = JSON.stringify({ appointmentId: A, instances: instances.map((e) => ({ ...e, appointmentId: A })), updatedAt: 'x' });
+      lab.data.set(appointmentLedgerKey(A), stored);
+      const t = await issue({ appointmentId: A });
+      await verify(t);
+      const r = await sign(t);
+      ok(`handler (red team): a planted ledger with ${label} is refused as ${reason}, the ledger untouched, nothing burnt`,
+        r.status === 409 && r.payload.error === reason && lab.data.get(appointmentLedgerKey(A)) === stored && at('SET soa-link:') < 0 && !lab.data.has(appointmentLockKey(A)),
+        JSON.stringify(r.payload) + ' appt=' + A);
+    };
+    const entry = (over = {}) => ({
+      soaId: 'p1', planYear: 2027, state: 'NY', beneficiaryName: NAME, beneficiaryKey: keyA, status: 'COMPLETED', completedAt: '2026-11-10T14:00:00Z',
+      supersedesId: null, supersededById: null, supersededAt: null, revokedAt: null, integrityHash: 'sha256:p', evidenceReference: 'ev://p', ...over,
+    });
+    await planted('a lower-case status', [entry({ status: 'completed' })], 'SOA_RECORD_UNREADABLE');
+    await planted('a numeric status', [entry({ status: 7 })], 'SOA_RECORD_UNREADABLE');
+    await planted('a COMPLETED entry naming a successor', [entry({ supersededById: 'p2' })], 'SOA_RECORD_CONTRADICTORY');
+    await planted('two COMPLETED entries', [entry(), entry({ soaId: 'p2' })], 'SOA_ACTIVE_SCOPE_CONFLICT');
+    await planted('an entry with no person binding', [entry({ beneficiaryKey: undefined })], 'SOA_SUPERSESSION_BENEFICIARY_MISMATCH');
+  }
+
+  // ── the issuer: what its audit claims ────────────────────────────────────
+  {
+    fresh();
+    await issue({ appointmentId: appt });
+    ok('handler (red team): a link issued for a caller-named appointment audits REISSUE_REQUESTED — not an existence it did not check',
+      (audited('SOA_LINK_ISSUED', 'OK') || {}).details?.appointment === 'REISSUE_REQUESTED');
+    fresh();
+    const tn = await issue();
+    const vn = await verify(tn);
+    ok('handler: a link with no appointment named audits NEW and mints a server id', (audited('SOA_LINK_ISSUED', 'OK') || {}).details?.appointment === 'NEW' && /^appt_[0-9a-f-]{36}$/.test(vn.appointmentId));
+    fresh();
+    const tm = await issue({ appointmentId: 'APPT_' + appt.slice(5) });
+    const vm = await verify(tm);
+    ok('handler: an appointment id outside the server\'s form is not accepted — a fresh one is minted and audited NEW',
+      (audited('SOA_LINK_ISSUED', 'OK') || {}).details?.appointment === 'NEW' && vm.appointmentId !== appt && vm.appointmentId !== 'APPT_' + appt.slice(5));
+  }
+
+  function activeIdsBefore(json) { return JSON.parse(json).instances.filter((e) => e.status === 'COMPLETED').map((e) => e.soaId)[0]; }
+}
+
 if (CHILD) {
   try {
-    await storeSection(CHILD);
+    if (CHILD === 'handler') await handlerSection();
+    else await storeSection(CHILD);
   } catch (e) {
     failures.push(`${CHILD} child threw: ` + (e && e.stack || String(e)));
   }
@@ -455,6 +923,15 @@ if (CHILD) {
     const e = err({ ...done, supersededById: 'x' }, { ...mk({ soaId: 'soa_9', appointmentId: APPT_2 }), planYear: 2028, state: 'NJ', beneficiaryName: 'Nobody', languageSource: 'SYSTEM_DEFAULT' });
     return same(Object.keys(e).sort(), ['appointmentId', 'beneficiaryName', 'languageSource', 'planYear', 'previous', 'state']);
   })());
+  // AUDIT 2026-10-04 (EV-09, red team) — absent == absent used to be "the same".
+  ok('EV-09 (red team): two records that both lack an appointment are not the same appointment', err({ ...done, appointmentId: undefined }, { ...fresh(), appointmentId: undefined }).appointmentId === 'appointment_required');
+  ok('EV-09 (red team): two records that both lack a plan year are not the same plan year', err({ ...done, planYear: undefined }, { ...fresh(), planYear: undefined }).planYear === 'plan_year_required');
+  ok('EV-09 (red team): two records that both have an empty state are not the same state', err({ ...done, state: '' }, { ...fresh(), state: '' }).state === 'state_required');
+  ok('EV-09 (red team): a plan year that is a string is no plan year, on either side',
+    err({ ...done, planYear: '2027' }, fresh()).planYear === 'plan_year_required' && err(done, { ...fresh(), planYear: '2027' }).planYear === 'plan_year_required');
+  ok('EV-09 (red team): a state that is not a string is no state, never coerced', err({ ...done, state: ['NY'] }, fresh()).state === 'state_required' && err(done, { ...fresh(), state: { toString: () => 'NY' } }).state === 'state_required');
+  ok('EV-09 (red team): an appointment id that is not a string is no appointment', err(done, { ...fresh(), appointmentId: [APPT] }).appointmentId === 'appointment_required' && err({ ...done, appointmentId: 7 }, fresh()).appointmentId === 'appointment_required');
+  ok('EV-09: the same state in another case still matches', supersede({ ...done, state: 'ny' }, fresh()).ok === true);
   throws('EV-09: nothing to supersede throws', () => supersede(null, fresh()), /nothing to supersede/);
   throws('EV-09: no replacement throws', () => supersede(done, null), /no replacement/);
   throws('EV-09: superseded() with no prior throws', () => superseded(undefined, baseInput), /nothing to supersede/);
@@ -494,6 +971,14 @@ if (CHILD) {
   ok('WVG-11: not a list → refused', [undefined, null, 'x', {}, 7].every((v) => A(v).reason === 'SOA_RECORDS_UNREADABLE'));
   ok('WVG-11: a record that is not a record → refused',
     [[null], ['x'], [[]], [{}], [{ soaId: 7 }], [{ soaId: '' }]].every((v) => A(v).reason === 'SOA_RECORD_UNREADABLE'));
+  // AUDIT 2026-10-04 (EV-09, red team) — statuses were a deny-list of three.
+  ok('WVG-11 (red team): a status outside SOA_STATUS is unreadable, named, never silently inactive',
+    ['completed', 7, '', null, undefined, 'ACTIVE', ['COMPLETED'], { toString: () => 'COMPLETED' }].every((s) => { const r = A([c('a', { status: s })]); return r.ok === false && r.reason === 'SOA_RECORD_UNREADABLE' && r.soaId === 'a'; }));
+  ok('WVG-11 (red team): an unreadable record is refused even beside a clean active one', A([c('b'), c('a', { status: 'completed' })]).reason === 'SOA_RECORD_UNREADABLE');
+  ok('WVG-11 (red team): a PENDING record naming a successor contradicts itself', A([{ ...mk({ soaId: 'a' }), supersededById: 'b' }]).reason === 'SOA_RECORD_CONTRADICTORY');
+  ok('WVG-11 (red team): a REVOKED record naming a successor contradicts itself', A([{ ...revokeSoaInstance(c('a')), supersededById: 'b' }]).reason === 'SOA_RECORD_CONTRADICTORY');
+  ok('WVG-11: every SOA_STATUS value is readable, and only COMPLETED is active',
+    Object.values(SOA_STATUS).every((s) => { const r = A([{ ...c('a', { status: s }), supersededById: s === 'SUPERSEDED' ? 'b' : null }]); return r.ok === true && (r.active !== null) === (s === 'COMPLETED'); }));
   ok('WVG-11: the problem vocabulary is frozen and complete',
     unfrozenPaths(SOA_SCOPE_PROBLEM, 'SOA_SCOPE_PROBLEM').length === 0 &&
     same(Object.keys(SOA_SCOPE_PROBLEM), ['RECORDS_UNREADABLE', 'RECORD_UNREADABLE', 'RECORD_DUPLICATED', 'RECORD_CONTRADICTORY', 'APPOINTMENT_MIXED', 'ACTIVE_SCOPE_CONFLICT']));
@@ -548,6 +1033,26 @@ if (CHILD) {
     (() => { const r = R({ appointmentId: APPT, instances: [entry, ledgerEntryFor(sign(mk({ soaId: 'soa_x' })), k)] }, mk({ soaId: 'soa_2' }), { beneficiaryKey: k }); return r.reason === 'SOA_ACTIVE_SCOPE_CONFLICT' && same(r.soaIds, ['soa_1', 'soa_x']); })());
   ok('EV-09: the supersession rule applies through the ledger too',
     (() => { const r = R(withActive, mk({ soaId: 'soa_2', beneficiaryName: 'Someone Else' }), { beneficiaryKey: k }); return r.reason === 'SOA_SUPERSESSION_REFUSED' && r.errors.beneficiaryName === 'supersession_changes_beneficiary'; })());
+
+  // AUDIT 2026-10-04 (EV-09, red team) — the signer must be the person the link was issued to: ONE rule, called.
+  const lead = { fullName: 'Jane Q Public', phone: '7185550123' };
+  const I = signerIdentityProblem;
+  ok('EV-09 (red team): the captured name and the proven phone, however formatted, are the same person',
+    I({ fullName: 'Jane Q Public', phone: '7185550123' }, lead) === null && I({ fullName: '  jane   q PUBLIC ', phone: '+1 (718) 555-0123' }, lead) === null && I({ fullName: 'Jane Q Public', phone: '+17185550123' }, lead) === null);
+  ok('EV-09 (red team): another name on the same phone is refused, the field named, never the values',
+    (() => { const p = I({ fullName: 'Someone Else', phone: '7185550123' }, lead); const s = JSON.stringify(p); return p.reason === 'SOA_IDENTITY_MISMATCH' && p.field === 'fullName' && !s.includes('Someone') && !s.includes('Jane'); })());
+  ok('EV-09 (red team): another phone under the same name is refused', (I({ fullName: 'Jane Q Public', phone: '2125550199' }, lead) || {}).field === 'phone');
+  ok('EV-09 (red team): an empty, missing or non-string claim never matches',
+    [{ phone: '7185550123' }, { fullName: '', phone: '7185550123' }, { fullName: ['Jane Q Public'], phone: '7185550123' }, { fullName: 'Jane Q Public' }, { fullName: 'Jane Q Public', phone: 7185550123 },
+      { fullName: 'Jane Q Public', phone: ['7185550123'] }, null, 'Jane Q Public', ['Jane Q Public']].every((v) => I(v, lead) !== null));
+  ok('EV-09 (red team): a lead record with no name, no phone or no record matches nobody',
+    I({ fullName: '', phone: '' }, { fullName: '', phone: '' }) !== null && (I({ fullName: 'Jane Q Public', phone: '7185550123' }, { fullName: 'Jane Q Public' }) || {}).field === 'phone' &&
+    (I({ fullName: 'Jane Q Public', phone: '7185550123' }, null) || {}).field === 'record' && (I({ fullName: 'Jane Q Public', phone: '7185550123' }, [lead]) || {}).field === 'record');
+  ok('EV-09 (red team): the name is compared whole, not as a prefix or a part', I({ fullName: 'Jane Q Public Jr', phone: '7185550123' }, lead) !== null && I({ fullName: 'Jane', phone: '7185550123' }, lead) !== null);
+  ok('EV-09 (red team): a phone with fewer than ten digits is no phone', I({ fullName: 'Jane Q Public', phone: '5550123' }, lead) !== null && I({ fullName: 'Jane Q Public', phone: '7185550123' }, { ...lead, phone: '0123' }) !== null);
+  ok('EV-09: the refusal vocabulary names identity and lock ownership, frozen',
+    LEDGER_REFUSAL.IDENTITY_MISMATCH === 'SOA_IDENTITY_MISMATCH' && LEDGER_REFUSAL.APPOINTMENT_LOCK_NOT_HELD === 'SOA_APPOINTMENT_LOCK_NOT_HELD' &&
+    LEDGER_REFUSAL.APPOINTMENT_LOCK_EXPIRED === 'SOA_APPOINTMENT_LOCK_EXPIRED' && Object.isFrozen(LEDGER_REFUSAL));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -556,9 +1061,9 @@ if (CHILD) {
 {
   const self = fileURLToPath(import.meta.url);
   const clean = { ...process.env };
-  for (const k of Object.keys(clean)) if (/^(KV_REST_API|UPSTASH_REDIS_REST)_/.test(k)) delete clean[k];
+  for (const k of Object.keys(clean)) if (/^(KV_REST_API|UPSTASH_REDIS_REST)_|^(CY2027_|HIGHLEVEL_|VERCEL)/.test(k)) delete clean[k];
   const child = (mode, env) => {
-    const r = spawnSync(process.execPath, [self], { encoding: 'utf8', timeout: 120000, env: { ...clean, ...env, CY2027_SUPERSESSION_CHILD: mode } });
+    const r = spawnSync(process.execPath, [self], { encoding: 'utf8', timeout: 180000, env: { ...clean, ...env, CY2027_SUPERSESSION_CHILD: mode } });
     const out = String(r.stdout || '');
     const m = out.split('\n').reverse().find((l) => l.startsWith('CHILD_RESULT '));
     if (!m) { failures.push(`${mode} child produced no result (exit ${r.status}): ` + String(r.stderr || out).slice(-1500)); return; }
@@ -569,98 +1074,44 @@ if (CHILD) {
   };
   child('memory', {});
   child('kv', { KV_REST_API_URL: 'https://kv.invalid', KV_REST_API_TOKEN: 'laboratory' });
+  // AUDIT 2026-10-04 (red team) — the handlers themselves, driven. Every host
+  // is a laboratory double; the child throws on any other.
+  child('handler', {
+    KV_REST_API_URL: 'https://kv.invalid', KV_REST_API_TOKEN: 'laboratory',
+    CY2027_EVIDENCE_STORE_URL: 'https://evidence.invalid', CY2027_EVIDENCE_STORE_TOKEN: 'laboratory',
+    HIGHLEVEL_TOKEN: 'laboratory', HIGHLEVEL_LOCATION_ID: 'LOC_LABORATORY',
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 5. The handler wiring — anchored, comment-stripped scans
+// 5. What must be ABSENT from the source — the one thing a behavioural drive
+//    cannot observe. Everything the handlers DO is asserted by the handler child
+//    (section 4), by driving them. AUDIT 2026-10-04 (red team): the presence
+//    scans that used to live here let three fail-open mutants through.
 // ═════════════════════════════════════════════════════════════════════════════
 {
   const SIGN = strip(read('../api/sign-soa.js'));
-  const idx = (s) => { const i = SIGN.indexOf(s); if (i < 0) failures.push(`sign-soa no longer contains ${JSON.stringify(s)}`); return i; };
-  const at = (re) => { const i = SIGN.search(re); if (i < 0) failures.push(`sign-soa no longer matches ${re}`); return i; };
-  // The release after filing — not the one inside bail(), which comes first in the source.
-  const RELEASE_AFTER_FILING = /await releaseAppointmentLock\(appointmentId\);\s*\n\s*if \(!filed\.ok\) \{/;
-
-  ok('EV-09: the appointment is the LINK\'s, not the body\'s', line(/var appointmentId = link\.appointmentId;/).test(SIGN));
-  ok('EV-09: a link with no appointment cannot sign',
-    line(/if \(typeof appointmentId !== 'string' \|\| !appointmentId\) \{\s*\n\s*return res\.status\(409\)\.json\(\{ error: 'SOA_LINK_UNUSABLE', reason: 'LINK_HAS_NO_APPOINTMENT' \}\);/).test(SIGN));
-  ok('EV-09: a body naming another appointment is refused',
-    line(/if \(typeof body\.appointmentId === 'string' && body\.appointmentId\.trim\(\) && body\.appointmentId\.trim\(\) !== appointmentId\) \{\s*\n\s*return res\.status\(409\)\.json\(\{ error: 'SOA_APPOINTMENT_MISMATCH' \}\);/).test(SIGN));
   ok('EV-09: the handler mints no appointment of its own', !/appt_' \+ crypto\.randomUUID\(\)/.test(SIGN));
-  ok('EV-09: the person is bound by the LEAD record\'s phone, the one the factor proved',
-    line(/var beneficiaryKey = beneficiaryKeyFor\(record\.phone\);/).test(SIGN) && !/beneficiaryKeyFor\(phone\)/.test(SIGN) && !/beneficiaryKeyFor\(body\./.test(SIGN));
-  ok('WVG-11: the appointment is locked before the ledger is read, and a failed claim refuses',
-    line(/var lock = await claimAppointmentLock\(appointmentId\);/).test(SIGN) &&
-    line(/if \(!lock\.ok\) \{\s*\n\s*emitAudit\(\{\s*\n\s*action: 'SOA_REFUSED', actor: 'system:sign-soa', result: lock\.reason, source: 'WEB',[\s\S]{0,200}?\}\);\s*\n\s*return res\.status\(lock\.reason === 'SOA_APPOINTMENT_BUSY' \? 409 : 503\)\.json\(\{ error: lock\.reason \}\);\s*\n\s*\}/).test(SIGN));
-  ok('WVG-11: the link is re-read under the lock, through the reporting read',
-    line(/var linkNow = await readRecord\(linkKey\);/).test(SIGN) && line(/if \(!linkNow\.ok\) return bail\(503, \{ error: 'SOA_LINK_UNREADABLE' \}\);/).test(SIGN) &&
-    line(/var linkNowState = checkLink\(linkNow\.value\);/).test(SIGN) && line(/if \(!linkNowState\.ok\) \{/).test(SIGN) &&
-    line(/if \(!linkNow\.value\.factorVerifiedAt\) return bail\(401, \{ error: 'SECOND_FACTOR_REQUIRED' \}\);/).test(SIGN) && line(/link = linkNow\.value;/).test(SIGN));
-  ok('EV-09: the ledger is read through the reporting read and a failure refuses',
-    line(/var ledgerRead = await readLedger\(appointmentId\);/).test(SIGN) &&
-    line(/if \(!ledgerRead\.ok\) \{\s*\n\s*emitAudit\(\{\s*\n\s*action: 'SOA_REFUSED', actor: 'system:sign-soa', result: 'SOA_LEDGER_UNAVAILABLE', source: 'WEB',[\s\S]{0,260}?\}\);\s*\n\s*return bail\(503, \{ error: 'SOA_LEDGER_UNAVAILABLE', reason: ledgerRead\.reason \}\);\s*\n\s*\}/).test(SIGN));
-  ok('EV-09: the instance is reconciled against the ledger, and the reconciled one is what gets signed',
-    line(/var reconciled = reconcileSignature\(ledgerRead\.ledger, instance, \{ beneficiaryKey: beneficiaryKey, at: signedAt \}\);/).test(SIGN) &&
-    line(/if \(!reconciled\.ok\) \{\s*\n\s*emitAudit\(\{\s*\n\s*action: 'SOA_REFUSED', actor: 'system:sign-soa', result: reconciled\.reason, source: 'WEB',[\s\S]{0,260}?\}\);\s*\n\s*return bail\(409, \{ error: reconciled\.reason, fields: reconciled\.errors \|\| null \}\);\s*\n\s*\}/).test(SIGN) &&
-    line(/instance = reconciled\.instance;/).test(SIGN));
-  ok('EV-09: a refused reconciliation is audited with the named reason only',
-    /action: 'SOA_REFUSED', actor: 'system:sign-soa', result: reconciled\.reason, source: 'WEB',/.test(SIGN));
-  ok('WVG-11: the link is burnt, durably, before any evidence is written',
-    line(/var burned = consumeLink\(link\);/).test(SIGN) && line(/if \(!burned\.ok\) return bail\(409, \{ error: 'SOA_LINK_UNUSABLE', reason: burned\.reason \}\);/).test(SIGN) &&
-    line(/var linkWrite = await setRecord\(linkKey, burned\.record, SOA_TOKEN_TTL_SEC\);/).test(SIGN) &&
-    line(/if \(!linkWrite\.ok\) \{/).test(SIGN) && /return bail\(503, \{ error: 'SOA_LINK_BURN_FAILED' \}\);/.test(SIGN) &&
-    idx('consumeLink(link)') < idx('buildEvidenceRecord(') && idx('var linkWrite = await setRecord(linkKey') < idx('putEvidence('));
-  ok('EV-09: the order is lock → ledger → reconcile → burn → evidence → complete → file → release → CRM',
-    idx('claimAppointmentLock(appointmentId)') < idx('readLedger(appointmentId)') && idx('readLedger(appointmentId)') < idx('reconcileSignature(') &&
-    idx('reconcileSignature(') < idx('consumeLink(link)') && idx('consumeLink(link)') < idx('putEvidence(') && idx('putEvidence(') < idx('completeSoaInstance(') &&
-    idx('completeSoaInstance(') < idx('var filed = await fileSignature({') && idx('var filed = await fileSignature({') < at(RELEASE_AFTER_FILING) &&
-    at(RELEASE_AFTER_FILING) < idx('sendToGhl('));
-  ok('EV-09: the signature is filed with the ledger, the previous record and the evidence TTL',
-    line(/var filed = await fileSignature\(\{/).test(SIGN) &&
-    /var filed = await fileSignature\(\{[\s\S]{0,400}?ledger: ledgerRead\.ledger,[\s\S]{0,400}?previous: reconciled\.previous,[\s\S]{0,900}?signedRecordTtlSec: SIGNED_RECORD_TTL_SEC,/.test(SIGN));
-  ok('EV-09: a filing that failed is a 503 that names the stage, audited, never "saved"',
-    line(/if \(!filed\.ok\) \{/).test(SIGN) &&
-    /if \(!filed\.ok\) \{[\s\S]{0,900}?action: 'SOA_EVIDENCE_WRITE_FAILED', actor: 'system:sign-soa', result: 'SIGNATURE_NOT_FILED:' \+ filed\.stage,[\s\S]{0,600}?return res\.status\(503\)\.json\(\{\s*error: 'SOA_NOT_FILED',\s*stage: filed\.stage,/.test(SIGN));
+  ok('EV-09: the person is never bound by a phone the body sent', !/beneficiaryKeyFor\(phone\)/.test(SIGN) && !/beneficiaryKeyFor\(body\./.test(SIGN));
+  ok('EV-09 (red team): the beneficiary name filed is never the body\'s', !/beneficiaryName: fullName/.test(SIGN) && !/beneficiaryName: body\./.test(SIGN));
   ok('EV-09: no unchecked signed-record write remains', !/await setRecord\('soa-signed:/.test(SIGN));
-  ok('EV-09: a supersession is audited as SOA_SUPERSEDED, naming the previous instance',
-    /if \(reconciled\.previous\) \{\s*\n\s*emitAudit\(\{\s*\n\s*action: 'SOA_SUPERSEDED',[\s\S]{0,300}?details: \{ previousSoaId: reconciled\.previous\.soaId, appointmentId: appointmentId,/.test(SIGN));
-  ok('EV-09: SOA_SUPERSEDES_ID reaches the CRM note and the response',
-    line(/'soa_supersedes_id: ' \+ \(instance\.supersedesId \|\| '\(none\)'\),/).test(SIGN) && /supersedesId: instance\.supersedesId,/.test(SIGN) && /appointmentId: instance\.appointmentId,\s*\n\s*supersedesId: instance\.supersedesId,/.test(SIGN));
-  {
-    // Every exit between the claim and the release goes through bail(), which releases the lock.
-    const from = idx('var lock = await claimAppointmentLock(appointmentId);');
-    const to = at(RELEASE_AFTER_FILING);
-    const held = from >= 0 && to > from ? SIGN.slice(from, to) : '';
-    const direct = (held.match(/return res\.status\(/g) || []).length;
-    ok('WVG-11: inside the lock, the only direct response is the lock-refusal itself and bail()\'s own',
-      held.length > 1000 && direct === 2 && line(/var bail = async function \(status, payload\) \{\s*\n\s*await releaseAppointmentLock\(appointmentId\);\s*\n\s*return res\.status\(status\)\.json\(payload\);/).test(held),
-      `direct responses inside the held section: ${direct}`);
-    ok('WVG-11: the evidence/PDF/completion failures bail out through it',
-      (held.match(/return bail\(500, \{ error: 'SOA_EVIDENCE_FAILED' \}\);/g) || []).length === 2 &&
-      /return bail\(500, \{ error: 'PDF generation failed' \}\);/.test(held) && /return bail\(503, \{\s*\n\s*error: 'SOA_EVIDENCE_NOT_STORED',/.test(held));
-  }
+  ok('WVG-11 (red team): the handler never writes a signing time onto the link itself — only the FILED stamp carries one', !/\.signedAt = /.test(SIGN));
+  ok('WVG-11: the handler releases the lock only through the owned release', !/releaseAppointmentLock\(appointmentId\)/.test(SIGN));
   ok('G08 (unchanged): the election still comes from readLanguageElection and nowhere else', !/body\.language\b/.test(SIGN) && !/body\.languageSource/.test(SIGN));
 
   const TOK = strip(read('../api/soa-token.js'));
-  ok('EV-09: the issuer accepts an existing appointment only in the server\'s id form, else mints one',
-    line(/var reissuedFor = appointmentIdForReissue\(body\.appointmentId\);/).test(TOK) &&
-    line(/var appointmentId = reissuedFor \|\| \('appt_' \+ crypto\.randomUUID\(\)\);/).test(TOK) &&
-    /issueLink\(\{\s*\n\s*soaId: 'soa_' \+ crypto\.randomUUID\(\),\s*\n\s*appointmentId: appointmentId,/.test(TOK));
-  ok('EV-09: whether the link was for an existing appointment is audited', /appointment: reissuedFor \? 'EXISTING' : 'NEW'/.test(TOK));
   ok('EV-09: the issuer reads no ledger — the person is proven at signature, not at issue', !/readLedger|reconcileSignature|activeSoaInstance/.test(TOK));
+  ok('EV-09 (red team): the issuer\'s audit claims no existence it did not check', !/'EXISTING'/.test(TOK));
 
   const STORE = strip(read('../api/_lib/soa-store.js'));
   ok('WVG-11: the lossy token helpers are gone from the source, not only from the exports', !/setSoaToken|getSoaToken/.test(STORE));
-  ok('WVG-11: the claim is SET … NX and a per-command error is not a claim',
-    /'EX', String\(ttlSec\), 'NX'\]/.test(STORE) && line(/if \(!first \|\| typeof first !== 'object' \|\| !\('result' in first\)\) throw new Error\('kv_setnx_unreadable'\);/).test(STORE) &&
-    line(/return first\.result === 'OK';/).test(STORE));
+  ok('WVG-11: the claim is SET … NX on the wire', /'EX', String\(ttlSec\), 'NX'\]/.test(STORE));
   ok('WVG-11: readRecord falls back to nothing when KV is configured', !/readRecord[\s\S]{0,600}?memoryGet\(storeKey\)[\s\S]{0,600}?KV_READ_FAILED/.test(STORE.replace(/if \(!KV_AVAILABLE\) return \{ ok: true, value: memoryGet\(storeKey\), durable: false \};/, '')));
 
   const LEDGER = strip(read('../api/_lib/cy2027/soa-ledger.js'));
   ok('EV-09: the ledger module reads through readRecord only, never the lossy getRecord', /readRecord\(/.test(LEDGER) && !/getRecord/.test(LEDGER));
   ok('EV-09: the ledger module is server-only and self-contained', !/from '\.\.\/\.\.\/src/.test(LEDGER) && /from '\.\.\/soa-store\.js'/.test(LEDGER));
 }
-
 // ── Report ───────────────────────────────────────────────────────────────────
 if (failures.length) {
   console.error(`CY2027 EV-09 / WVG-11: ${passed} passed, ${failures.length} failed\n`);

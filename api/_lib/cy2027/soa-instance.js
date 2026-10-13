@@ -395,9 +395,19 @@ export function supersede(previous, instance, { at = new Date().toISOString() } 
   // The replacement is signed in its own right: its election is its own.
   if (!isSoaLanguage(instance.language) || !languageWasElected(instance.languageSource)) errors.languageSource = 'election_required';
 
-  if (instance.appointmentId !== previous.appointmentId) errors.appointmentId = 'supersession_changes_appointment';
-  if (instance.planYear !== previous.planYear) errors.planYear = 'supersession_changes_plan_year';
-  if (String(instance.state || '').toUpperCase() !== String(previous.state || '').toUpperCase()) errors.state = 'supersession_changes_state';
+  // AUDIT 2026-10-04 (EV-09, red team) — these compared the two records by
+  // equality alone, so two records that both LACKED an appointment, a plan year
+  // or a state were "the same" and the supersession went through. A field the
+  // supersession is defined by must be present, in its own type, on both sides
+  // before it can match; a string is compared as a string, never coerced.
+  const stateOf = (v) => (typeof v === 'string' ? v.trim().toUpperCase() : '');
+  if (typeof previous.appointmentId !== 'string' || !previous.appointmentId || typeof instance.appointmentId !== 'string' || !instance.appointmentId) {
+    errors.appointmentId = 'appointment_required';
+  } else if (instance.appointmentId !== previous.appointmentId) errors.appointmentId = 'supersession_changes_appointment';
+  if (!Number.isInteger(previous.planYear) || !Number.isInteger(instance.planYear)) errors.planYear = 'plan_year_required';
+  else if (instance.planYear !== previous.planYear) errors.planYear = 'supersession_changes_plan_year';
+  if (!stateOf(previous.state) || !stateOf(instance.state)) errors.state = 'state_required';
+  else if (stateOf(instance.state) !== stateOf(previous.state)) errors.state = 'supersession_changes_state';
   if (!sameBeneficiaryName(instance.beneficiaryName, previous.beneficiaryName)) errors.beneficiaryName = 'supersession_changes_beneficiary';
 
   if (Object.keys(errors).length) return { ok: false, errors };
@@ -432,6 +442,8 @@ export function superseded(previous, nextInput, { at = new Date().toISOString() 
  * silently. A record that contradicts itself (COMPLETED yet naming a
  * successor; SUPERSEDED yet naming none) is refused the same way.
  */
+const SOA_STATUS_VALUES = Object.freeze(Object.values(SOA_STATUS));
+
 export function activeSoaInstance(records) {
   if (!Array.isArray(records)) return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORDS_UNREADABLE };
   const seen = new Set();
@@ -444,11 +456,20 @@ export function activeSoaInstance(records) {
     if (seen.has(r.soaId)) return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_DUPLICATED, soaId: r.soaId };
     seen.add(r.soaId);
     appointments.add(r.appointmentId);
+    // AUDIT 2026-10-04 (EV-09, red team) — statuses were recognised by naming
+    // the three that matter and letting everything else fall through as "not
+    // active", so a record whose status was 'completed' or 7 stood silently
+    // beside a FRESH signature. A status outside SOA_STATUS is not a record
+    // this function can read; it is refused, like any other unreadable one.
+    if (!SOA_STATUS_VALUES.includes(r.status)) return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_UNREADABLE, soaId: r.soaId };
     const completed = r.status === SOA_STATUS.COMPLETED;
     const revoked = r.status === SOA_STATUS.REVOKED || r.revokedAt != null;
     const replaced = r.status === SOA_STATUS.SUPERSEDED;
     const namesSuccessor = r.supersededById != null;
-    if ((completed && namesSuccessor) || (replaced && !namesSuccessor)) {
+    // Exactly the SUPERSEDED records name a successor: a COMPLETED, PENDING or
+    // REVOKED record that names one, or a SUPERSEDED one that does not, is a
+    // record that contradicts itself.
+    if (namesSuccessor !== replaced) {
       return { ok: false, reason: SOA_SCOPE_PROBLEM.RECORD_CONTRADICTORY, soaId: r.soaId };
     }
     if (completed && !revoked) active.push(r);

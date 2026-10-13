@@ -49,6 +49,11 @@ export const LEDGER_REFUSAL = Object.freeze({
   SUPERSESSION_REFUSED: 'SOA_SUPERSESSION_REFUSED',
   APPOINTMENT_BUSY: 'SOA_APPOINTMENT_BUSY',
   APPOINTMENT_LOCK_FAILED: 'SOA_APPOINTMENT_LOCK_FAILED',
+  // AUDIT 2026-10-04 (EV-09 / WVG-11, red team) — the signer is not the person
+  // the link was issued to; the lock being released is not this request's.
+  IDENTITY_MISMATCH: 'SOA_IDENTITY_MISMATCH',
+  APPOINTMENT_LOCK_NOT_HELD: 'SOA_APPOINTMENT_LOCK_NOT_HELD',
+  APPOINTMENT_LOCK_EXPIRED: 'SOA_APPOINTMENT_LOCK_EXPIRED',
 });
 
 /** The server's own appointment id form (api/soa-token.js mints these). */
@@ -89,6 +94,43 @@ export function beneficiaryKeyFor(phone) {
   const digits = String(phone == null ? '' : phone).replace(/\D/g, '');
   if (digits.length < 10) return null;
   return 'sha256:' + crypto.createHash('sha256').update(digits.slice(-10), 'utf8').digest('hex');
+}
+
+/** One spelling of a name for comparison; anything that is not a string is no name. */
+function foldName(v) {
+  return typeof v === 'string' ? v.trim().toLowerCase().replace(/\s+/g, ' ') : '';
+}
+
+/** The ten subscriber digits of a phone, or null; anything that is not a string is no phone. */
+function tenDigits(v) {
+  if (typeof v !== 'string') return null;
+  const digits = v.replace(/\D/g, '');
+  return digits.length >= 10 ? digits.slice(-10) : null;
+}
+
+/**
+ * AUDIT 2026-10-04 (EV-09, red team) — the signer the signing body describes
+ * must be the person the link was issued to. The handler matched the
+ * SIGNATURE to the captured name but filed the BODY's fullName as the
+ * beneficiary and sent the BODY's phone to the CRM, so a link issued under
+ * another name for the same phone and appointment could sign as "Someone
+ * Else" and replace the victim's scope under the victim's name, on a different
+ * CRM contact. Both are claims the server can check against its own lead
+ * record — the name it captured at issuance and the phone the second factor
+ * proved — and that is the only comparison made here: never two fields of the
+ * same request against each other. Returns null when they agree, else the
+ * named refusal and the field that disagreed (never the values).
+ */
+export function signerIdentityProblem(claimed, record) {
+  const c = claimed && typeof claimed === 'object' && !Array.isArray(claimed) ? claimed : {};
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return { reason: LEDGER_REFUSAL.IDENTITY_MISMATCH, field: 'record' };
+  }
+  const recordName = foldName(record.fullName);
+  if (!recordName || foldName(c.fullName) !== recordName) return { reason: LEDGER_REFUSAL.IDENTITY_MISMATCH, field: 'fullName' };
+  const recordPhone = tenDigits(record.phone);
+  if (!recordPhone || tenDigits(c.phone) !== recordPhone) return { reason: LEDGER_REFUSAL.IDENTITY_MISMATCH, field: 'phone' };
+  return null;
 }
 
 /** What the ledger keeps about one instance: enough to define "active" and to supersede. */
@@ -185,9 +227,19 @@ export function reconcileSignature(ledger, instance, { beneficiaryKey, at = new 
  *   3. the superseded record's mirror, so it cannot be read as COMPLETED on
  *      its own.
  * A failure at 1 leaves the previous instance active and nothing dangling; at
- * 2, the new record exists but is unreachable and the previous stays active;
- * at 3, the ledger has already switched (reported with `ledger`). Every outcome
- * names its stage so the operator knows what to reconcile.
+ * 2, the new record exists but is unreachable and the previous stays active.
+ * Both are `ok: false` with the stage named: the signature is NOT filed.
+ *
+ * AUDIT 2026-10-04 (EV-09, red team) — a failure at 3 used to be reported the
+ * same way, and the handler told the beneficiary "the scope was not recorded"
+ * while the ledger — the declared definition of "active" — had already
+ * switched to it: the CRM and the ledger disagreed, and a beneficiary who
+ * re-signed on that advice superseded an instance they were told did not
+ * exist. The ledger write IS the filing; the superseded record's own copy is a
+ * mirror of it. So a mirror that could not be written is `ok: true` WITH
+ * `mirror: { ok: false, stage, reason, previousSoaId }` beside it, for the
+ * caller to audit and the operator to reconcile — never a denial of a record
+ * the system of record holds.
  */
 export async function fileSignature({
   ledger, instance, beneficiaryKey, previous = null, signedRecord, signedRecordTtlSec, at = new Date().toISOString(),
@@ -231,14 +283,28 @@ export async function fileSignature({
     instances: Object.freeze(ledger.instances.map((e) => (previous && e.soaId === previous.soaId ? previous : e)).concat([entry])),
     updatedAt: at,
   });
+  // AUDIT 2026-10-04 (WVG-11, red team) — the ledger handed in is the snapshot
+  // read under the appointment lock. A lock that expired, or one a stale
+  // request released, lets another filing change the ledger in between, and the
+  // write below would overwrite that filing with this request's view of the
+  // ledger. The store has no compare-and-set over REST, so the ledger is
+  // re-read right before the write and one that no longer says the same thing
+  // is a named refusal: the window is one round trip, not the whole request.
+  const again = await readLedger(ledger.appointmentId);
+  if (!again.ok) return fail(STAGE.LEDGER, again.reason);
+  if (JSON.stringify(again.ledger) !== JSON.stringify(ledger)) return fail(STAGE.LEDGER, 'LEDGER_CHANGED');
   const w2 = await setRecord(appointmentLedgerKey(ledger.appointmentId), next, LEDGER_TTL_SEC);
   if (!w2.ok) return fail(STAGE.LEDGER, w2.reason || 'KV_WRITE_FAILED');
 
+  const filed = { ok: true, ledger: next, mode: previous ? 'SUPERSEDES' : 'FRESH', mirror: null };
   if (previous) {
+    // The signature is filed from here on: the mirror of the superseded record
+    // is reported beside it, never as a filing failure (see the doc above).
+    const lag = (reason) => ({ ...filed, mirror: { ok: false, stage: STAGE.SUPERSEDED_MIRROR, reason, previousSoaId: previous.soaId } });
     const prevKey = signedRecordKey(previous.soaId);
     const r = await readRecord(prevKey);
-    if (!r.ok) return fail(STAGE.SUPERSEDED_MIRROR, r.reason || 'KV_READ_FAILED', { ledger: next });
-    if (!r.value || typeof r.value !== 'object') return fail(STAGE.SUPERSEDED_MIRROR, 'PREVIOUS_RECORD_MISSING', { ledger: next });
+    if (!r.ok) return lag(r.reason || 'KV_READ_FAILED');
+    if (!r.value || typeof r.value !== 'object') return lag('PREVIOUS_RECORD_MISSING');
     const prevInstance = r.value.instance && typeof r.value.instance === 'object' ? r.value.instance : {};
     const mirrored = {
       ...r.value,
@@ -250,9 +316,10 @@ export async function fileSignature({
       },
     };
     const w3 = await setRecord(prevKey, mirrored, signedRecordTtlSec);
-    if (!w3.ok) return fail(STAGE.SUPERSEDED_MIRROR, w3.reason || 'KV_WRITE_FAILED', { ledger: next });
+    if (!w3.ok) return lag(w3.reason || 'KV_WRITE_FAILED');
+    return { ...filed, mirror: { ok: true } };
   }
-  return { ok: true, ledger: next, mode: previous ? 'SUPERSEDES' : 'FRESH' };
+  return filed;
 }
 
 /**
@@ -262,14 +329,35 @@ export async function fileSignature({
  */
 export async function claimAppointmentLock(appointmentId, { now = new Date() } = {}) {
   if (typeof appointmentId !== 'string' || !appointmentId) return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_FAILED };
-  const r = await claimRecord(appointmentLockKey(appointmentId), { appointmentId, claimedAt: now.toISOString() }, APPOINTMENT_LOCK_TTL_SEC);
+  // AUDIT 2026-10-04 (WVG-11, red team) — the lock carries WHO holds it. A
+  // release used to be an unconditional DEL, so a request that outlived the
+  // TTL deleted the lock a later request now held and let a third one in
+  // beside it. The holder token is returned to the claimant and the release
+  // deletes only a lock that still carries it.
+  const holder = crypto.randomUUID();
+  const r = await claimRecord(appointmentLockKey(appointmentId), { appointmentId, holder, claimedAt: now.toISOString() }, APPOINTMENT_LOCK_TTL_SEC);
   if (!r.ok) return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_FAILED };
   if (!r.claimed) return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_BUSY };
-  return { ok: true, durable: r.durable };
+  return { ok: true, holder, durable: r.durable };
 }
 
-export async function releaseAppointmentLock(appointmentId) {
-  if (typeof appointmentId !== 'string' || !appointmentId) return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_FAILED };
-  const r = await deleteRecord(appointmentLockKey(appointmentId));
-  return r.ok ? { ok: true } : { ok: false, reason: r.reason || 'KV_WRITE_FAILED' };
+/**
+ * Release the lock this `holder` claimed — compare, then delete. An expired
+ * lock (nothing to release: this request outlived the TTL) and a lock another
+ * request now holds are each a named refusal, and neither is deleted. Not
+ * atomic over REST; the window is one round trip, where it was the whole TTL.
+ */
+export async function releaseAppointmentLock(appointmentId, holder) {
+  if (typeof appointmentId !== 'string' || !appointmentId || typeof holder !== 'string' || !holder) {
+    return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_FAILED };
+  }
+  const key = appointmentLockKey(appointmentId);
+  const r = await readRecord(key);
+  if (!r.ok) return { ok: false, reason: r.reason || 'KV_READ_FAILED' };
+  if (r.value === null || r.value === undefined) return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_EXPIRED };
+  if (typeof r.value !== 'object' || Array.isArray(r.value) || r.value.holder !== holder) {
+    return { ok: false, reason: LEDGER_REFUSAL.APPOINTMENT_LOCK_NOT_HELD };
+  }
+  const d = await deleteRecord(key);
+  return d.ok ? { ok: true } : { ok: false, reason: d.reason || 'KV_WRITE_FAILED' };
 }

@@ -343,6 +343,10 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // AUDIT 2026-10-04 (EV-09, WVG-11) — the vocabulary activeSoaInstance() refuses
   // with decides whether an appointment has an active SOA at all.
   'SOA_SCOPE_PROBLEM',
+  // AUDIT 2026-10-04 (WVG-11, red team) — the outcome stamped on a consumed
+  // signing link decides whether the status endpoint says "already signed" or
+  // "used, nothing filed — restart"; only its FILED value may claim a signature.
+  'LINK_OUTCOME',
   'CARRIER_OVERLAYS', 'MEDICARE_KNOWLEDGE', 'SYSTEM_PROMPT',
   'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
   // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables
@@ -537,7 +541,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -548,6 +552,7 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/data-quality.js'),
     load('api/_lib/medicare-knowledge.js'),
     load('api/_lib/cy2027/crm-fields.js'),
+    load('api/_lib/cy2027/secure-link.js'),
   ]);
   // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
   // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
@@ -567,6 +572,8 @@ async function governingObjects(root) {
     LANGUAGE_SOURCE: instance.LANGUAGE_SOURCE,
     SOA_METHOD: instance.SOA_METHOD,
     SOA_SCOPE_PROBLEM: instance.SOA_SCOPE_PROBLEM,
+    // AUDIT 2026-10-04 (WVG-11, red team) — see GOVERNING_IDENTIFIERS.
+    LINK_OUTCOME: link.LINK_OUTCOME,
     CANDIDATE_KINDS: learning.CANDIDATE_KINDS,
     LEARNING_PIPELINE: learning.LEARNING_PIPELINE,
     LEARNING_REJECTION_REASONS: learning.LEARNING_REJECTION_REASONS,

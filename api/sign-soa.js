@@ -21,11 +21,11 @@ import PDFDocument from 'pdfkit';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { getRecord, setRecord, readRecord, leadKey, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
-import { storeKeyFor, checkLink, consumeLink } from './_lib/cy2027/secure-link.js';
+import { storeKeyFor, checkLink, consumeLink, markLinkOutcome, LINK_OUTCOME } from './_lib/cy2027/secure-link.js';
 // AUDIT 2026-10-04 (EV-09, WVG-11) — the appointment ledger: which instance is
 // active for an appointment, and how a replacement supersedes it (spec §26, §31).
 import {
-  beneficiaryKeyFor, readLedger, reconcileSignature, fileSignature, claimAppointmentLock, releaseAppointmentLock,
+  beneficiaryKeyFor, signerIdentityProblem, readLedger, reconcileSignature, fileSignature, claimAppointmentLock, releaseAppointmentLock,
 } from './_lib/cy2027/soa-ledger.js';
 // AUDIT 2026-08-15 — shared JSON body reader (fixes the malformed-JSON hang).
 import { readJsonBody } from './_lib/read-body.js';
@@ -131,8 +131,7 @@ export default async function handler(req, res) {
   var link = await getRecord(linkKey);
   var linkState = checkLink(link);
   if (!linkState.ok) {
-    return res.status(linkState.reason === 'LINK_ALREADY_USED' ? 409 : 404)
-      .json({ error: 'SOA_LINK_UNUSABLE', reason: linkState.reason });
+    return res.status(linkRefusalStatus(linkState.reason)).json({ error: 'SOA_LINK_UNUSABLE', reason: linkState.reason });
   }
   if (!link.factorVerifiedAt) {
     return res.status(401).json({ error: 'SECOND_FACTOR_REQUIRED' });
@@ -199,6 +198,25 @@ export default async function handler(req, res) {
   if (!/^\d{5}$/.test(zip)) return res.status(400).json({ error: 'Invalid ZIP' });
   if (!ack.no_obligation || !ack.e_signature) return res.status(400).json({ error: 'Both acknowledgements required' });
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Invalid email' });
+  // AUDIT 2026-10-04 (EV-09, red team) — the signature was matched to the
+  // captured name, but the beneficiaryName filed in the ledger, the evidence
+  // and the CRM was the BODY's fullName, and body.phone went to the CRM upsert
+  // checked for format only: a link issued under another name for the same
+  // phone and appointment could sign as "Someone Else" and replace the victim's
+  // scope under the victim's name, on another CRM contact. The person the body
+  // describes must be the person the link was issued to — the name the server
+  // captured and the phone the second factor proved — decided by ONE rule
+  // (signerIdentityProblem) before anything is locked or written. The field is
+  // named in the refusal and the audit; the values never are.
+  var identity = signerIdentityProblem({ fullName: fullName, phone: phone }, record);
+  if (identity) {
+    emitAudit({
+      action: 'SOA_REFUSED', actor: 'system:sign-soa', result: identity.reason, source: 'WEB',
+      correlationId: link.beneficiaryRef || 'unlinked',
+      details: { field: identity.field },
+    });
+    return res.status(400).json({ error: identity.reason, field: identity.field });
+  }
   // G08 — refuse before anything downstream can coalesce a missing election
   // into 'es'. The reason is named so a client bug is diagnosable from the log
   // rather than appearing as a signed Spanish document nobody chose.
@@ -259,7 +277,9 @@ export default async function handler(req, res) {
     languageSource: languageSource,
     representativeRelationship: representativeRelationship || null,
     method: 'WEB_ELECTRONIC_SIGNATURE',
-    beneficiaryName: fullName || record.fullName,
+    // EV-09 (red team) — the name the SERVER captured at issuance, which the
+    // identity rule above proved the body agrees with; never the body's spelling.
+    beneficiaryName: record.fullName,
     selectedCategories: selectedCategories,
     // Spec §22 — the exact CMS ruleset version this signature is taken under.
     cmsRulesetVersion: ruleset.version,
@@ -308,8 +328,17 @@ export default async function handler(req, res) {
     return res.status(lock.reason === 'SOA_APPOINTMENT_BUSY' ? 409 : 503).json({ error: lock.reason });
   }
   // From here to the ledger write the lock is held; every exit goes through bail().
+  // WVG-11 (red team) — the release names the holder: a lock this request no
+  // longer holds (expired, or claimed by a later request) is not deleted, and
+  // the window that opened is named in the log rather than passed over.
+  var lockHolder = lock.holder;
+  var release = async function () {
+    var rel = await releaseAppointmentLock(appointmentId, lockHolder);
+    if (!rel.ok) console.error('[sign-soa] appointment lock not released for ' + appointmentId + ': ' + rel.reason);
+    return rel;
+  };
   var bail = async function (status, payload) {
-    await releaseAppointmentLock(appointmentId);
+    await release();
     return res.status(status).json(payload);
   };
   // The link is re-read under the lock: the copy checked above may predate a
@@ -318,7 +347,7 @@ export default async function handler(req, res) {
   if (!linkNow.ok) return bail(503, { error: 'SOA_LINK_UNREADABLE' });
   var linkNowState = checkLink(linkNow.value);
   if (!linkNowState.ok) {
-    return bail(linkNowState.reason === 'LINK_ALREADY_USED' ? 409 : 404, { error: 'SOA_LINK_UNUSABLE', reason: linkNowState.reason });
+    return bail(linkRefusalStatus(linkNowState.reason), { error: 'SOA_LINK_UNUSABLE', reason: linkNowState.reason });
   }
   if (!linkNow.value.factorVerifiedAt) return bail(401, { error: 'SECOND_FACTOR_REQUIRED' });
   link = linkNow.value;
@@ -344,7 +373,13 @@ export default async function handler(req, res) {
   var burned = consumeLink(link);
   if (!burned.ok) return bail(409, { error: 'SOA_LINK_UNUSABLE', reason: burned.reason });
   burned.record.soaId = soaId;
-  burned.record.signedAt = signedAt;
+  // AUDIT 2026-10-04 (WVG-11, red team) — the burn used to stamp signedAt here,
+  // before anything was signed, so a storage failure after it left a link that
+  // said "signed at …", a status endpoint that said LINK_ALREADY_USED and a
+  // page that said "This document is already signed". The consumed link is
+  // IN_PROGRESS from here (consumeLink); the time is written by the FILED stamp
+  // once the signature is filed, and every failure between the two stamps
+  // FAILED with its stage, so the status endpoint offers a restart instead.
   var linkWrite = await setRecord(linkKey, burned.record, SOA_TOKEN_TTL_SEC);
   if (!linkWrite.ok) {
     // Without a durable burn the same link could sign twice and create two
@@ -352,6 +387,15 @@ export default async function handler(req, res) {
     console.error('[sign-soa] could not burn link for soa_id=' + soaId);
     return bail(503, { error: 'SOA_LINK_BURN_FAILED' });
   }
+  var stampLink = async function (outcome, opts) {
+    var marked = await setRecord(linkKey, markLinkOutcome(burned.record, outcome, opts), SOA_TOKEN_TTL_SEC);
+    if (!marked.ok) console.error('[sign-soa] consumed link could not be stamped ' + outcome + (opts.stage ? ':' + opts.stage : '') + ' for soa_id=' + soaId);
+    return marked;
+  };
+  var failAfterBurn = async function (stage, status, payload) {
+    await stampLink(LINK_OUTCOME.FAILED, { stage: stage });
+    return bail(status, payload);
+  };
 
   // AUDIT 2026-10-02 (G27) — the evidence record is built BEFORE the PDF. Its
   // integrity hash covers the agreement (text shown, selections, identifiers),
@@ -370,7 +414,7 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[sign-soa] evidence build failed:', e && e.message);
-    return bail(500, { error: 'SOA_EVIDENCE_FAILED' });
+    return failAfterBurn('EVIDENCE_RECORD', 500, { error: 'SOA_EVIDENCE_FAILED' });
   }
 
   var pdfBuffer;
@@ -408,7 +452,7 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[sign-soa] pdf build failed:', e && e.message);
-    return bail(500, { error: 'PDF generation failed' });
+    return failAfterBurn('PDF', 500, { error: 'PDF generation failed' });
   }
 
   var pdfHash = crypto.createHash('sha256').update(pdfBuffer).digest('hex');
@@ -439,7 +483,7 @@ export default async function handler(req, res) {
     });
     // 503, not 500: this is a configuration/availability condition the operator
     // can fix, and the beneficiary must not be told their SOA is on file.
-    return bail(503, {
+    return failAfterBurn('EVIDENCE_STORE', 503, {
       error: 'SOA_EVIDENCE_NOT_STORED',
       reason: stored.reason,
       message: 'The signed document could not be filed, so the scope was not recorded.',
@@ -454,7 +498,7 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error('[sign-soa] instance completion failed:', e && e.message);
-    return bail(500, { error: 'SOA_EVIDENCE_FAILED' });
+    return failAfterBurn('COMPLETION', 500, { error: 'SOA_EVIDENCE_FAILED' });
   }
 
   emitAudit({
@@ -507,13 +551,14 @@ export default async function handler(req, res) {
     signedRecordTtlSec: SIGNED_RECORD_TTL_SEC,
     at: signedAt,
   });
-  await releaseAppointmentLock(appointmentId);
+  await release();
   if (!filed.ok) {
     console.error('[sign-soa] signature NOT filed for soa-signed:' + soaId + ' stage=' + filed.stage + ' reason=' + filed.reason);
     emitAudit({
       action: 'SOA_EVIDENCE_WRITE_FAILED', actor: 'system:sign-soa', result: 'SIGNATURE_NOT_FILED:' + filed.stage, source: instance.source,
       correlationId: soaId, soaId: soaId, details: { stage: filed.stage, reason: filed.reason, appointmentId: appointmentId },
     });
+    await stampLink(LINK_OUTCOME.FAILED, { stage: filed.stage });
     return res.status(503).json({
       error: 'SOA_NOT_FILED',
       stage: filed.stage,
@@ -521,11 +566,27 @@ export default async function handler(req, res) {
       message: 'The signature could not be filed, so the scope was not recorded.',
     });
   }
+  // The signature is filed: only now does the link say so, and when.
+  await stampLink(LINK_OUTCOME.FILED, { signedAt: signedAt });
   if (reconciled.previous) {
     emitAudit({
       action: 'SOA_SUPERSEDED', actor: 'system:sign-soa', result: 'OK', source: instance.source,
       correlationId: soaId, soaId: soaId,
       details: { previousSoaId: reconciled.previous.soaId, appointmentId: appointmentId, supersededAt: reconciled.previous.supersededAt },
+    });
+  }
+  // AUDIT 2026-10-04 (EV-09, red team) — a superseded record whose own copy
+  // could not be mirrored is NOT an unfiled signature: the ledger has switched
+  // (fileSignature reports the lag beside `ok`). The operator is told which
+  // record still reads COMPLETED on its own, in the log, the audit trail and
+  // the CRM note, instead of the beneficiary being told nothing was recorded.
+  var mirrorLag = filed.mirror && filed.mirror.ok === false ? filed.mirror : null;
+  if (mirrorLag) {
+    console.error('[sign-soa] superseded record soa-signed:' + mirrorLag.previousSoaId + ' still reads COMPLETED on its own (' + mirrorLag.reason + '); the ledger has switched to ' + soaId + ' — reconcile the mirror');
+    emitAudit({
+      action: 'SOA_EVIDENCE_WRITE_FAILED', actor: 'system:sign-soa', result: 'SUPERSEDED_MIRROR_LAGGING', source: instance.source,
+      correlationId: soaId, soaId: soaId,
+      details: { previousSoaId: mirrorLag.previousSoaId, reason: mirrorLag.reason, appointmentId: appointmentId },
     });
   }
 
@@ -550,6 +611,9 @@ export default async function handler(req, res) {
     'appointment_id: ' + instance.appointmentId,
     // EV-09 — the version this one replaces, or none (spec §18 SOA_SUPERSEDES_ID).
     'soa_supersedes_id: ' + (instance.supersedesId || '(none)'),
+    // EV-09 (red team) — whether the replaced record's own copy was mirrored
+    // SUPERSEDED, so a lagging mirror is visible where the operator works.
+    'soa_superseded_mirror: ' + (instance.supersedesId ? (mirrorLag ? 'LAGGING:' + mirrorLag.reason : 'OK') : '(none)'),
     'appointment_at: ' + (instance.appointmentAt || '(not supplied)'),
     'appointment_format: ' + instance.appointmentFormat,
     'cms_ruleset_version: ' + instance.cmsRulesetVersion,
@@ -693,6 +757,14 @@ export default async function handler(req, res) {
     // EV-14 — the page may only promise a copy if one actually went out.
     copySent: _copy.sent === true,
   });
+}
+
+// A link that WAS consumed — whether its signature was filed or not — is a
+// conflict with the link's state (409); a link that cannot be found, expired,
+// revoked or over its view limit is simply not usable (404). The two consumed
+// reasons are decided by checkLink(); this only maps them to a status.
+function linkRefusalStatus(reason) {
+  return reason === 'LINK_ALREADY_USED' || reason === 'LINK_CONSUMED_UNFILED' ? 409 : 404;
 }
 
 // ── PDF builder ──────────────────────────────────────────────────────────

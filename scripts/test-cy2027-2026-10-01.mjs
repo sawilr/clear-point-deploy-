@@ -46,6 +46,7 @@ import {
 import { checkTpmo, htmlToText, canonicalTpmoSentence } from './tpmo-gate.mjs';
 import {
   issueLink, storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, consumeLink, revokeLink, mayReissue,
+  markLinkOutcome, LINK_OUTCOME,
 } from '../api/_lib/cy2027/secure-link.js';
 import {
   redactProhibitedForScoring, requiresLicensedReview, findProhibited, SIGNAL_FLAGS,
@@ -678,8 +679,31 @@ const baseInput = {
   // Replay protection.
   const used = consumeLink(record);
   ok('a link can be consumed once', used.ok === true && !!used.record.consumedAt);
-  ok('a second consumption is refused', consumeLink(used.record).reason === 'LINK_ALREADY_USED');
-  ok('a consumed link no longer checks out', checkLink(used.record).reason === 'LINK_ALREADY_USED');
+  // AUDIT 2026-10-04 (WVG-11, red team) — "consumed" no longer means "signed":
+  // the burn precedes the evidence write, so until the FILED stamp a consumed
+  // link is one with nothing filed behind it, and says so.
+  ok('WVG-11: a consumed link is IN_PROGRESS, with no signing time on it', used.record.consumedOutcome === 'IN_PROGRESS' && !('signedAt' in used.record));
+  ok('a second consumption is refused, as used-and-unfiled', consumeLink(used.record).reason === 'LINK_CONSUMED_UNFILED');
+  ok('a consumed link no longer checks out', checkLink(used.record).reason === 'LINK_CONSUMED_UNFILED');
+  const filedLink = markLinkOutcome(used.record, LINK_OUTCOME.FILED, { signedAt: '2026-11-10T14:00:00Z' });
+  ok('WVG-11: a FILED stamp is the only thing that makes a consumed link "already used"',
+    checkLink(filedLink).reason === 'LINK_ALREADY_USED' && filedLink.signedAt === '2026-11-10T14:00:00Z' && consumeLink(filedLink).reason === 'LINK_ALREADY_USED');
+  const failedLink = markLinkOutcome(used.record, LINK_OUTCOME.FAILED, { stage: 'EVIDENCE_STORE' });
+  ok('WVG-11: a FAILED stamp names its stage and carries no signing time',
+    checkLink(failedLink).reason === 'LINK_CONSUMED_UNFILED' && failedLink.failedStage === 'EVIDENCE_STORE' && failedLink.signedAt === null);
+  ok('WVG-11: a FILED stamp after a FAILED one clears the stage', markLinkOutcome(failedLink, LINK_OUTCOME.FILED, { signedAt: '2026-11-10T14:00:00Z' }).failedStage === null);
+  ok('WVG-11: only the exact FILED value is a signature — an allow-list, not a deny-list',
+    ['filed', 'Filed', ' FILED', 'FILED ', 'IN_PROGRESS', 'FAILED', true, 1, ['FILED'], { toString: () => 'FILED' }, undefined, null]
+      .every((v) => checkLink({ ...used.record, consumedOutcome: v }).reason === 'LINK_CONSUMED_UNFILED'));
+  ok('WVG-11: a consumed link without any outcome is unfiled, never "already signed"',
+    checkLink({ ...record, consumedAt: '2026-11-10T14:00:00Z' }).reason === 'LINK_CONSUMED_UNFILED');
+  throws('WVG-11: a link that was never consumed has no outcome', () => markLinkOutcome(record, LINK_OUTCOME.FILED, { signedAt: '2026-11-10T14:00:00Z' }), /only a consumed link/);
+  throws('WVG-11: FILED without a filing time is refused', () => markLinkOutcome(used.record, LINK_OUTCOME.FILED), /filing time/);
+  throws('WVG-11: FILED with an unreadable time is refused', () => markLinkOutcome(used.record, LINK_OUTCOME.FILED, { signedAt: 'later' }), /filing time/);
+  throws('WVG-11: FAILED without a stage is refused', () => markLinkOutcome(used.record, LINK_OUTCOME.FAILED), /stage/);
+  throws('WVG-11: an outcome outside the vocabulary is refused', () => markLinkOutcome(used.record, 'SIGNED', { signedAt: '2026-11-10T14:00:00Z' }), /unknown link outcome/);
+  throws('WVG-11: IN_PROGRESS is set by the burn, never stamped afterwards', () => markLinkOutcome(used.record, LINK_OUTCOME.IN_PROGRESS), /unknown link outcome/);
+  ok('WVG-11: the outcome vocabulary is frozen and exactly three values', Object.isFrozen(LINK_OUTCOME) && Object.keys(LINK_OUTCOME).join() === 'IN_PROGRESS,FILED,FAILED');
 
   // Resending a copy must not mint a new SOA.
   ok('re-issuing for a signed SOA is refused',
@@ -695,7 +719,7 @@ const baseInput = {
   ok('SL-03: a missing expiry fails closed', checkLink({ ...record, expiresAt: undefined }).reason === 'LINK_EXPIRY_UNREADABLE');
   ok('SL-03: an unparseable expiry fails closed', checkLink({ ...record, expiresAt: 'later' }).reason === 'LINK_EXPIRY_UNREADABLE');
   ok('SL-03: a falsy-but-present revokedAt still counts as revoked', checkLink({ ...record, revokedAt: '' }).reason === 'LINK_REVOKED');
-  ok('SL-03: a falsy-but-present consumedAt still counts as used', checkLink({ ...record, consumedAt: 0 }).reason === 'LINK_ALREADY_USED');
+  ok('SL-03: a falsy-but-present consumedAt still counts as consumed (and, with no FILED stamp, as unfiled)', checkLink({ ...record, consumedAt: 0 }).reason === 'LINK_CONSUMED_UNFILED');
   ok('SL-03: a non-numeric view count fails closed', checkLink({ ...record, views: 'many' }).reason === 'LINK_VIEW_LIMIT');
 
   ok('views are counted for abuse detection', recordView(record).views === 1);
@@ -791,6 +815,10 @@ const baseInput = {
   ok('the page has a second-factor step', /'challenge'/.test(PAGE));
   ok('the page POSTs the factor', /\/api\/soa-status'/.test(PAGE) && /factor: factorValue/.test(PAGE));
   ok('a used link says "already signed", not "not found"', /LINK_ALREADY_USED.*alreadyConsumed|alreadyConsumed.*LINK_ALREADY_USED/s.test(PAGE));
+  // AUDIT 2026-10-04 (WVG-11, red team) — a used link with nothing filed must not say "already signed".
+  ok('WVG-11: a used-and-unfiled link gets its own page, which offers a restart and claims no signature',
+    /data\.reason === 'LINK_CONSUMED_UNFILED' \? 'consumedUnfiled'/.test(PAGE) && /phase === 'consumedUnfiled'/.test(PAGE) &&
+    /We do not hold a signed document from you/.test(PAGE) && /No tenemos ningún documento firmado suyo/.test(PAGE));
   ok('a locked link sends the person to a human', /SECOND_FACTOR_LOCKED|'locked'/.test(PAGE));
 }
 

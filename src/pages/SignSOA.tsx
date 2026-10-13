@@ -35,7 +35,12 @@ interface LeadHydrate {
 // longer hands the beneficiary's details to whoever holds the link: a GET only
 // says WHICH factor is needed, and the prefill arrives from a POST once the
 // factor matches. So the page now has a step between "link is live" and "form".
-type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'challenge' | 'ready' | 'submitting' | 'success' | 'error' | 'unavailable';
+// AUDIT 2026-10-04 (WVG-11, red team) — 'consumedUnfiled' is new. The server
+// burns the link BEFORE it files the signature, so a link can be used with no
+// signature behind it (a storage failure after the burn). /api/soa-status now
+// says LINK_CONSUMED_UNFILED for that link; rendering it as "already signed"
+// told the beneficiary a signature existed that did not.
+type Phase = 'loading' | 'notFound' | 'alreadyConsumed' | 'consumedUnfiled' | 'challenge' | 'ready' | 'submitting' | 'success' | 'error' | 'unavailable';
 
 export default function SignSOA() {
   const params = useParams<{ token: string }>();
@@ -111,8 +116,10 @@ export default function SignSOA() {
         if (!data.exists) {
           // LINK_ALREADY_USED is a different story from "never existed": the
           // person already signed, and telling them "not found" would invite a
-          // second signature on the same appointment.
-          setPhase(data.reason === 'LINK_ALREADY_USED' ? 'alreadyConsumed' : 'notFound');
+          // second signature on the same appointment. LINK_CONSUMED_UNFILED is
+          // the opposite story: the link was used and NOTHING was filed, so the
+          // honest page offers a restart, never a receipt.
+          setPhase(data.reason === 'LINK_ALREADY_USED' ? 'alreadyConsumed' : data.reason === 'LINK_CONSUMED_UNFILED' ? 'consumedUnfiled' : 'notFound');
           return;
         }
         setFactorRequired(data.factorRequired || 'PHONE_LAST4');
@@ -205,6 +212,19 @@ export default function SignSOA() {
                 {language === 'es'
                   ? 'Hemos recibido su firma. Un asesor de ClearPoint le llamará pronto.'
                   : 'We have received your signature. A ClearPoint advisor will contact you soon.'}
+              </p>
+            </div>
+          )}
+
+          {phase === 'consumedUnfiled' && (
+            <div className="text-center py-12">
+              <h1 className="font-serif text-2xl mb-4 text-earth-900">
+                {language === 'es' ? 'Su firma no se pudo archivar' : 'Your signature could not be filed'}
+              </h1>
+              <p className="text-earth-600">
+                {language === 'es'
+                  ? 'Este enlace ya se usó, pero la firma no quedó registrada. No tenemos ningún documento firmado suyo. Por favor llámenos al 1-855-720-8555 y le enviaremos un enlace nuevo.'
+                  : 'This link was used, but the signature was not recorded. We do not hold a signed document from you. Please call us at 1-855-720-8555 and we will send you a new link.'}
               </p>
             </div>
           )}

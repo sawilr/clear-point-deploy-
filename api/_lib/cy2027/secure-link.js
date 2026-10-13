@@ -125,6 +125,23 @@ export function storeKeyFor(token) {
 }
 
 /**
+ * AUDIT 2026-10-04 (WVG-11, red team) — what became of a consumed link. The
+ * signing handler burns the link BEFORE it writes any evidence (so a consumed
+ * link means at most one evidence record), which means "consumed" alone no
+ * longer implies "signed": a storage failure after the burn leaves a consumed
+ * link and no signature. The outcome is stamped on the record, and ONLY a link
+ * stamped FILED may ever be read as a signature — an allow-list of one value,
+ * never "anything that is not failed". In progress, failed, or no outcome at
+ * all is a link that was used with nothing filed behind it, and the status
+ * endpoint must offer a restart, not a receipt.
+ */
+export const LINK_OUTCOME = Object.freeze({
+  IN_PROGRESS: 'IN_PROGRESS',
+  FILED: 'FILED',
+  FAILED: 'FAILED',
+});
+
+/**
  * Validate a presented link BEFORE any second factor.
  *
  * Spec §26: "Invalid/expired secure token -> do not reveal form data; issue
@@ -151,7 +168,10 @@ export function checkLink(record, { now = new Date() } = {}) {
     return { ok: false, reason: 'LINK_REVOKED' };
   }
   if ('consumedAt' in record && record.consumedAt !== null && record.consumedAt !== undefined) {
-    return { ok: false, reason: 'LINK_ALREADY_USED' };
+    // AUDIT 2026-10-04 (WVG-11, red team) — "used" used to mean "signed", and
+    // the page rendered "This document is already signed" for a link whose
+    // signature had failed after the burn. See LINK_OUTCOME: only FILED says so.
+    return { ok: false, reason: record.consumedOutcome === LINK_OUTCOME.FILED ? 'LINK_ALREADY_USED' : 'LINK_CONSUMED_UNFILED' };
   }
   const exp = Date.parse(record.expiresAt);
   if (!Number.isFinite(exp)) return { ok: false, reason: 'LINK_EXPIRY_UNREADABLE' };
@@ -231,10 +251,35 @@ export function recordView(record, { now = new Date() } = {}) {
  * `ALREADY_USED` rather than signing twice.
  */
 export function consumeLink(record, { now = new Date() } = {}) {
-  if (record?.consumedAt) return { ok: false, reason: 'LINK_ALREADY_USED', record };
+  // A consumed link is refused with WHAT it is (already used, or used and
+  // unfiled) — checkLink() names it; a second call never says "signed" on its own.
   const check = checkLink(record, { now });
   if (!check.ok) return { ok: false, reason: check.reason, record };
-  return { ok: true, record: { ...record, consumedAt: now.toISOString() } };
+  return { ok: true, record: { ...record, consumedAt: now.toISOString(), consumedOutcome: LINK_OUTCOME.IN_PROGRESS } };
+}
+
+/**
+ * AUDIT 2026-10-04 (WVG-11, red team) — stamp what became of a consumed link.
+ * FILED carries the time the signature was filed — the ONLY time `signedAt` is
+ * ever written on a link, so a link cannot say "signed at …" before anything
+ * was signed. FAILED names the stage that failed and clears any time. A record
+ * that was never consumed, an outcome outside LINK_OUTCOME, a FAILED without a
+ * stage or a FILED without a time is refused by throwing: a stamp that is not
+ * one of these is not written.
+ */
+export function markLinkOutcome(record, outcome, { stage = null, signedAt = null } = {}) {
+  if (!record || typeof record !== 'object' || record.consumedAt === null || record.consumedAt === undefined) {
+    throw new Error('secure-link: only a consumed link has an outcome');
+  }
+  if (outcome === LINK_OUTCOME.FILED) {
+    if (typeof signedAt !== 'string' || !Number.isFinite(Date.parse(signedAt))) throw new Error('secure-link: FILED needs the filing time');
+    return { ...record, consumedOutcome: LINK_OUTCOME.FILED, signedAt, failedStage: null };
+  }
+  if (outcome === LINK_OUTCOME.FAILED) {
+    if (typeof stage !== 'string' || !stage) throw new Error('secure-link: FAILED needs the stage');
+    return { ...record, consumedOutcome: LINK_OUTCOME.FAILED, failedStage: stage, signedAt: null };
+  }
+  throw new Error('secure-link: unknown link outcome');
 }
 
 /** Revoke a link (beneficiary asked, or security review). */
