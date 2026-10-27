@@ -17,7 +17,8 @@ import crypto from 'node:crypto';
 
 import { SOA_TEXT, SOA_SCRIPT_VERSION, categoryText, soaTitle, SOA_AGENT_LINE } from './soa-text.js';
 import { RECORD_CLASS } from './retention.js';
-import { isSoaLanguage, languageWasElected, electionAttributionError } from './soa-instance.js';
+import { isSoaLanguage, languageWasElected, electionAttributionError, SOA_METHOD } from './soa-instance.js';
+import { voiceEvidenceProblem, voiceInstanceContradiction } from './voice-soa.js';
 
 /** Stable key ordering so the same logical object always hashes the same. */
 function canonical(value) {
@@ -80,9 +81,31 @@ export function renderTextSnapshot(instance, stateName) {
  * Returns the record plus its hash; the caller persists both and only then
  * calls completeSoaInstance().
  */
-export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null }) {
+export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null, voice = null, voiceScript = undefined } = {}) {
   if (!instance) throw new Error('evidence: no instance');
   if (!signature) throw new Error('evidence: signature/affirmation is required');
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28) — a VOICE_RECORDED instance was
+  // evidenced with exactly the record of a web signature: no recording
+  // reference, no transcript pointer, no SOA-segment timestamps, no script
+  // version it was actually spoken from, no per-category reply (spec §10/§19:
+  // "Store recording reference, transcript pointer, timestamps for the SOA
+  // segment, exact script version and selected categories"). The block is now
+  // REQUIRED for a voice instance, judged by the voice rules from its own data,
+  // checked against the instance it claims to evidence, and placed INSIDE the
+  // hashed core — a value the record exists to protect is never left outside
+  // the hash. A written instance refuses a voice block: it is a contradiction.
+  const isVoice = instance.method === SOA_METHOD.VOICE_RECORDED.code;
+  if (isVoice) {
+    if (voice === null || voice === undefined) {
+      throw new Error('evidence: a voice-recorded SOA cannot be evidenced without its recording, transcript and segment (VOICE_EVIDENCE_MISSING)');
+    }
+    const voiceProblem = voiceEvidenceProblem(voice, voiceScript === undefined ? {} : { script: voiceScript });
+    if (voiceProblem) throw new Error('evidence: the voice evidence cannot be relied on (' + voiceProblem + ')');
+    const contradiction = voiceInstanceContradiction(instance, voice);
+    if (contradiction) throw new Error('evidence: the voice evidence and the instance disagree (' + contradiction + ')');
+  } else if (voice !== null && voice !== undefined) {
+    throw new Error('evidence: a voice evidence block was supplied for a ' + String(instance.method) + ' instance (NOT_A_VOICE_INSTANCE)');
+  }
   // RED TEAM 2026-10-03 (G08, HIGH) — the election reached the PDF, the note and
   // a CRM field, but NOT this record: hash(BENEFICIARY_ELECTED) equalled
   // hash(SYSTEM_DEFAULT) equalled hash(no election at all), so the one field
@@ -133,6 +156,9 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     // backdated record would otherwise shorten its own retention undetected.
     createdAt: signedAt,
     textSnapshot,
+    // Only a voice instance carries the block, so the hash of every written
+    // record is byte-for-byte what it was before this field existed.
+    ...(isVoice ? { voice } : {}),
   };
 
   const hash = integrityHash(core);

@@ -63,6 +63,41 @@ if (soaText.APPROVED_TEXT_DIGEST === 'sha256:PENDING_FIRST_PIN') {
   notes.push(`approved SOA text digest OK (${computed.slice(0, 23)}…)`);
 }
 
+// ── 1b. Voice SOA script digest and enable flag (SPEC-10/19/26/28) ───────────
+// AUDIT 2026-10-04 — the voice script (connecting sentences, approval record
+// and the assembled lines spoken from the approved text) is pinned the same
+// way. Two refusals: the script changed without a re-pin, and VOICE_SOA_ENABLED
+// is true while no human approval of the script is recorded (the offer gate
+// refuses that at runtime too; a build must not ship it either).
+const voiceSoa = await import('../api/_lib/cy2027/voice-soa.js');
+const voiceComputed = 'sha256:' + createHash('sha256').update(voiceSoa.voiceScriptPayload(), 'utf8').digest('hex');
+if (voiceSoa.VOICE_SCRIPT_DIGEST === 'sha256:PENDING_FIRST_PIN') {
+  problems.push(
+    'VOICE_SCRIPT_DIGEST is still the placeholder. Pin it in api/_lib/cy2027/voice-soa.js:\n' +
+      `      export const VOICE_SCRIPT_DIGEST = '${voiceComputed}';`,
+  );
+} else if (voiceSoa.VOICE_SCRIPT_DIGEST !== voiceComputed) {
+  problems.push(
+    'The voice SOA script CHANGED but VOICE_SCRIPT_DIGEST was not re-pinned.\n' +
+      `      pinned:   ${voiceSoa.VOICE_SCRIPT_DIGEST}\n` +
+      `      computed: ${voiceComputed}\n` +
+      '      The connecting sentences, the approval record and the assembled lines are customer-facing compliance wording.\n' +
+      '      If the change is intended and owner-approved, re-pin the digest in the same commit so the edit is on the record.',
+  );
+} else {
+  notes.push(`voice SOA script ${voiceSoa.VOICE_SOA_SCRIPT.version} digest OK (${voiceComputed.slice(0, 23)}…)`);
+}
+if (voiceSoa.VOICE_SOA_ENABLED === true && voiceSoa.voiceScriptApprovalProblem() !== null) {
+  problems.push(
+    'VOICE_SOA_ENABLED is true but the voice SOA script has no recorded owner approval\n' +
+      `      (status ${voiceSoa.VOICE_SOA_SCRIPT.status}, approvedBy ${JSON.stringify(voiceSoa.VOICE_SOA_SCRIPT.approvedBy)}).\n` +
+      '      Record status APPROVED with a named person and a calendar day in api/_lib/cy2027/voice-soa.js, re-pin VOICE_SCRIPT_DIGEST,\n' +
+      '      or keep the flag false. Nothing may be offered by voice from an unapproved script.',
+  );
+} else {
+  notes.push(`voice SOA ${voiceSoa.VOICE_SOA_ENABLED === true ? 'ENABLED' : 'disabled'}; script ${voiceSoa.VOICE_SOA_SCRIPT.status}`);
+}
+
 // ── 2. CY2027 marketing-start instant ────────────────────────────────────────
 // The TPMO module must DERIVE this from the ruleset engine, not restate it.
 // A second Date.UTC(...) literal is how the two would silently drift apart on

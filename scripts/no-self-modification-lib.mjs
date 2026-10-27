@@ -373,6 +373,12 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   'CY2027_FIELD_KEYS', 'EXISTING_CRM_FIELDS', 'LEGACY_SOA_NAME_FIELDS', 'PRODUCTION_FIELD_IDS', 'FIELD_ID_REFUSAL',
   'CONFIRMED_ONLY_FIELDS', 'PROVENANCE', 'SELF_REPORTED_ONLY_FIELDS', 'SELF_REPORT_VALUE', 'CONFIRMING_PROVENANCE',
   'REGISTRY_PROBLEM', 'PROVISIONING_REFUSAL',
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28) — the voice SOA tables: the enable flag,
+  // the script with its approval record, the refusal and decision vocabularies
+  // and the two reply lists that decide "yes to everything" authorises nothing
+  // and "I am not sure" selects nothing. None may be edited in memory.
+  'VOICE_SOA_ENABLED', 'VOICE_SCRIPT_STATUS', 'VOICE_SOA_SCRIPT', 'VOICE_SOA_PROBLEM', 'VOICE_DECISION', 'VOICE_CAPTURE_OUTCOME',
+  'BLANKET_REPLIES', 'UNSURE_REPLIES',
 ]);
 
 const MUTATING_METHODS = Object.freeze(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear']);
@@ -546,7 +552,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link, otp, oob] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link, otp, oob, voice] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -560,6 +566,7 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/secure-link.js'),
     load('api/_lib/cy2027/otp.js'),
     load('api/_lib/cy2027/out-of-band-verification.js'),
+    load('api/_lib/cy2027/voice-soa.js'),
   ]);
   // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
   // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
@@ -610,6 +617,15 @@ async function governingObjects(root) {
     CONFIRMING_PROVENANCE: crm.CONFIRMING_PROVENANCE,
     REGISTRY_PROBLEM: crm.REGISTRY_PROBLEM,
     PROVISIONING_REFUSAL: crm.PROVISIONING_REFUSAL,
+    // AUDIT 2026-10-04 (SPEC-10/19/26/28) — see GOVERNING_IDENTIFIERS.
+    VOICE_SOA_ENABLED: voice.VOICE_SOA_ENABLED,
+    VOICE_SCRIPT_STATUS: voice.VOICE_SCRIPT_STATUS,
+    VOICE_SOA_SCRIPT: voice.VOICE_SOA_SCRIPT,
+    VOICE_SOA_PROBLEM: voice.VOICE_SOA_PROBLEM,
+    VOICE_DECISION: voice.VOICE_DECISION,
+    VOICE_CAPTURE_OUTCOME: voice.VOICE_CAPTURE_OUTCOME,
+    BLANKET_REPLIES: voice.BLANKET_REPLIES,
+    UNSURE_REPLIES: voice.UNSURE_REPLIES,
   };
 }
 

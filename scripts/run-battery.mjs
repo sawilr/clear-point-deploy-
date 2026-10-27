@@ -98,6 +98,14 @@ const SUITES = [
   // and a provider double (code path, resend caps, destination never from
   // the request); the issuer observed keeping today's factor.
   'test-cy2027-verifyflow-2026-10-04.mjs',
+  // Voice SOA (spec §10, §19, §21, §26, §28, §29, §31; SPEC-10/19/26/28): the
+  // offer gate, the per-category capture ("yes to everything" authorises
+  // nothing, "I am not sure" selects nothing), the read-back, the recording-
+  // failure rule and the voice evidence block called with every refusal; the
+  // block observed inside the integrity hash through evidence.js; the parity
+  // gate observed failing on copies of the tree with an edited script, an
+  // enabled flag over an unapproved script and a non-human approver.
+  'test-cy2027-voice-2026-10-04.mjs',
 ];
 
 const only = process.argv.slice(2);
