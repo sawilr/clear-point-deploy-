@@ -17,6 +17,20 @@
 // link after repeated failures, but nothing issued a code — api/soa-token.js
 // minted every link with PHONE_LAST4 — and no letter or call rule existed.
 //
+// AUDIT 2026-10-04 (SPEC-12, red team) — what an independent red team broke in
+// the first version of this work, and what this suite now observes instead of
+// scanning for: the SMS-bombing control was a read-modify-write that a parallel
+// burst walked through (now an atomic claim, and the burst is fired here);
+// the verification call dropped its purpose on the way to the consent rule
+// (now a consent scoped to plan discussion is refused by name); the letter's
+// price rule was dead ("$5 a month" passed; now refused) and its approval gate
+// took a caller-supplied template (now the governing letter only, and the
+// approval is bound to a digest of the text); and the issuer's one-time-code
+// branch was unreachable by any suite, so eight mutants of it survived (now
+// the issuer is driven with a consent lookup it is GIVEN, bodies are Proxies
+// that record every key the handlers read, and the provider double looks at
+// the store at the moment it is called).
+//
 // Every rule here is exercised by CALLING it, with the clock passed in. The
 // two SOA handlers are DRIVEN in process against the memory store and a
 // provider double (globalThis.fetch replaced — nothing leaves this machine):
@@ -28,10 +42,11 @@
 
 import { readFileSync } from 'node:fs';
 import { createHash, createHmac } from 'node:crypto';
+import { register } from 'node:module';
 
 import {
   OTP_CHANNELS, OTP_POLICY, OTP_REFUSAL, VERIFICATION_CLAIM, normalizeDestination, otpSendingEnabled, mayDeliverOtp, otpFactorForIssue,
-  otpDestination, otpDestinationKey, linkSendProblem, destinationSendProblem, recordDestinationSend, otpSendPlan,
+  otpDestination, otpDestinationKey, otpSendKeys, reserveOtpSend,
   issueOtp, verifyOtp, verificationClaim, buildOtpMessage, deliverOtp,
 } from '../api/_lib/cy2027/otp.js';
 import {
@@ -39,14 +54,14 @@ import {
 } from '../api/_lib/cy2027/secure-link.js';
 import {
   OFFICIAL_CONTACT, VERIFICATION_CALL_PURPOSE, CASE_STATUS, OOB_REFUSAL, VERIFICATION_LETTER,
-  letterContentProblem, letterApprovalProblem, mayIssueVerificationLetter, mayPlaceVerificationCall, reopenCaseOnCallback,
+  letterContentProblem, letterApprovalProblem, letterTextDigest, mayIssueVerificationLetter, mayPlaceVerificationCall, reopenCaseOnCallback,
 } from '../api/_lib/cy2027/out-of-band-verification.js';
 import { createConsent, CONSENT_STATUS, revokeConsent } from '../api/_lib/cy2027/consent.js';
 import { evaluateTrust, CHANNEL_VERIFICATION, IDENTITY_VERIFICATION, LEAD_TRUST_STATE } from '../api/_lib/cy2027/trust.js';
 import { AUDIT_ACTIONS } from '../api/_lib/cy2027/evidence.js';
 import { REVIEWERS_ENV } from '../api/_lib/cy2027/actors.js';
 import { assertNotMarketing } from '../api/_lib/cy2027/beneficiary-copy.js';
-import { getRecord, setRecord, leadKey, SOA_TOKEN_TTL_SEC } from '../api/_lib/soa-store.js';
+import { getRecord, setRecord, deleteRecord, leadKey, SOA_TOKEN_TTL_SEC } from '../api/_lib/soa-store.js';
 import { stripComments, unfrozenPaths, GOVERNING_IDENTIFIERS } from './no-self-modification-lib.mjs';
 
 let passed = 0;
@@ -55,6 +70,10 @@ const ok = (label, cond, detail) => { if (cond) { passed++; return; } failures.p
 const throws = (label, fn, re) => {
   try { fn(); failures.push(label + '\n        did not throw'); }
   catch (e) { if (!re || re.test(String(e && e.message))) passed++; else failures.push(label + '\n        threw: ' + (e && e.message)); }
+};
+const rejects = async (label, fn, re) => {
+  try { await fn(); failures.push(label + '\n        did not reject'); }
+  catch (e) { if (!re || re.test(String(e && e.message))) passed++; else failures.push(label + '\n        rejected: ' + (e && e.message)); }
 };
 const read = (p) => readFileSync(new URL(p, import.meta.url), 'utf8');
 const strip = (src) => stripComments(src);
@@ -84,6 +103,41 @@ const mkLast4Link = () => issueLink({
   soaId: 'soa_2', appointmentId: 'appt_2', beneficiaryRef: 'contact_def', channel: 'WEB',
   secondFactorKind: 'PHONE_LAST4', secondFactorValue: PHONE, language: 'en', now: NOW,
 });
+
+// ── The loader hook ──────────────────────────────────────────────────────────
+// Two things this suite needs exist only as reviewed edits to frozen, gate-
+// registered declarations, so a hook rewrites them IN MEMORY for specific
+// module instances; the files on disk are untouched:
+//   • the SOA handlers are gated off (SOA_ENABLED=false, pinned by
+//     test-cp-findings) — the ONE declaration becomes true as they load;
+//   • the verification letter ships PENDING_OWNER_APPROVAL — an instance
+//     imported under `?cy2027-approved=<digest>` carries an approval by a named
+//     person on a past day for that digest, which is what the owner's approving
+//     commit will look like, so the release path is observed before it exists.
+// Each rewrite asserts its anchor occurs exactly once.
+register('data:text/javascript,' + encodeURIComponent(`
+  export async function load(url, context, nextLoad) {
+    const r = await nextLoad(url, context);
+    const text = () => (typeof r.source === 'string' ? r.source : new TextDecoder().decode(r.source));
+    const once = (src, from, to, what) => {
+      const parts = src.split(from);
+      if (parts.length !== 2) throw new Error(what + ' is not declared exactly once in ' + url);
+      return parts.join(to);
+    };
+    if (/\\/api\\/(soa-token|soa-status)\\.js$/.test(url)) {
+      return { ...r, source: once(text(), 'const SOA_ENABLED = false;', 'const SOA_ENABLED = true;', 'the SOA gate') };
+    }
+    const approved = /\\/api\\/_lib\\/cy2027\\/out-of-band-verification\\.js\\?cy2027-approved=([0-9a-f]{64})$/.exec(url);
+    if (approved) {
+      return { ...r, source: once(text(),
+        "approval: { status: 'PENDING_OWNER_APPROVAL', approvedBy: null, approvedOn: null, textDigest: null },",
+        "approval: { status: 'APPROVED', approvedBy: 'Maria Lopez', approvedOn: '2026-10-20', textDigest: '" + approved[1] + "' },",
+        'the pending approval block') };
+    }
+    return r;
+  }
+`));
+const approvedLetterModule = (digest) => import(new URL('../api/_lib/cy2027/out-of-band-verification.js?cy2027-approved=' + digest, import.meta.url).href);
 
 // ── 1. The policy and the gate ───────────────────────────────────────────────
 {
@@ -237,34 +291,108 @@ const mkLast4Link = () => issueLink({
   ok('possession of a last-4 link does not name a channel', !('otpChannel' in linkDisclosure(mkLast4Link().record)));
 }
 
-// ── 4. The SMS-bombing control, with the clock passed in ─────────────────────
+// ── 4. The SMS-bombing control: atomic claims, with the store's clock in hand ─
+// A fake store with SET-NX-and-TTL semantics over a clock this block advances,
+// so the sliding window is observed in seconds, not waited for. The real
+// memory store (soa-store.claimRecord) is driven in section 11.
 {
-  const link = (sends) => ({ secondFactorKind: 'OTP', otp: { channel: 'SMS', sends } });
-  const T = NOW;
-  ok('a fresh link may send', linkSendProblem(link([]), { now: T }) === null && linkSendProblem(mkOtpLink().record, { now: T }) === null);
-  ok('a second send inside the floor is too soon', seenOtp(linkSendProblem(link([T.toISOString()]), { now: plus(T, 30) })) === 'OTP_RESEND_TOO_SOON');
-  ok('a second send after the floor may go', linkSendProblem(link([T.toISOString()]), { now: plus(T, 61) }) === null);
-  ok('the floor is measured from the LAST send, whatever order the sends were stored in', linkSendProblem(link([plus(T, 100).toISOString(), T.toISOString()]), { now: plus(T, 130) }) === 'OTP_RESEND_TOO_SOON');
-  ok('three sends in the window exhaust the link', seenOtp(linkSendProblem(link([T, plus(T, 100), plus(T, 200)].map((d) => d.toISOString())), { now: plus(T, 1000) })) === 'OTP_LINK_SEND_LIMIT');
-  ok('sends outside the window no longer count', linkSendProblem(link([T, plus(T, 100), plus(T, 200)].map((d) => d.toISOString())), { now: plus(T, 3601 + 200) }) === null);
-  ok('a send stamped in the future does not count (it cannot have happened)', linkSendProblem(link([plus(T, 9999).toISOString()]), { now: T }) === null);
-  ok('an unreadable send entry is dropped, not counted', linkSendProblem(link(['yesterday', null, 42]), { now: T }) === null);
-  ok('a link without an otp block has sent nothing', linkSendProblem({ secondFactorKind: 'OTP' }, { now: T }) === null && linkSendProblem(null, { now: T }) === null);
+  const LINK = 'soa-link:' + 'a'.repeat(64);
+  const DEST = otpDestinationKey('SMS', PHONE);
+  const keys = otpSendKeys(LINK, DEST);
+  ok('the claim keys: one floor, three link slots, five destination slots — all hashes, none naming a token or a phone',
+    keys.floor === 'otp-floor:' + 'a'.repeat(64) && keys.link.length === 3 && keys.dest.length === 5 &&
+    keys.link.every((k, i) => k === 'otp-link:' + 'a'.repeat(64) + ':' + i) && keys.dest.every((k, i) => k === DEST + ':' + i) &&
+    !JSON.stringify(keys).includes(PHONE) && Object.isFrozen(keys) && Object.isFrozen(keys.link) && Object.isFrozen(keys.dest));
+  throws('the keys need a real link store key', () => otpSendKeys('soa-link:short', DEST), /link store key/);
+  throws('the keys need a real destination key', () => otpSendKeys(LINK, 'otp-dest:nope'), /destination key/);
+  throws('the keys never take a raw destination', () => otpSendKeys(LINK, PHONE), /destination key/);
 
-  const five = Array.from({ length: 5 }, (_, i) => plus(T, i * 60).toISOString());
-  ok('a destination may receive until the cap', destinationSendProblem(null, { now: T }) === null && destinationSendProblem({ sends: five.slice(0, 4) }, { now: plus(T, 300) }) === null);
-  ok('five sends to one destination inside the window exhaust it, whichever links sent them', seenOtp(destinationSendProblem({ sends: five }, { now: plus(T, 300) })) === 'OTP_DESTINATION_SEND_LIMIT');
-  ok('the destination cap slides: an hour later the destination is free again', destinationSendProblem({ sends: five }, { now: plus(T, 3600 + 241) }) === null);
-  const dest1 = recordDestinationSend(null, { now: T });
-  const dest2 = recordDestinationSend(dest1, { now: plus(T, 60) });
-  ok('recording a send appends and keeps the earlier ones', same(dest1, { sends: [T.toISOString()] }) && same(dest2, { sends: [T.toISOString(), plus(T, 60).toISOString()] }));
-  ok('recording a send prunes sends that left the window', same(recordDestinationSend({ sends: five }, { now: plus(T, 3600 + 61) }), { sends: [...five.slice(2), plus(T, 3600 + 61).toISOString()] }));
-  ok('recording a send does not mutate the previous record', dest1.sends.length === 1);
+  let clockMs = NOW.getTime();
+  const tick = (sec) => { clockMs += sec * 1000; };
+  const fakeStore = () => {
+    const map = new Map();
+    const state = { failAll: false, failKeys: new Set(), throwing: false, claims: 0 };
+    return {
+      state, map,
+      claim: async (key, value, ttlSec) => {
+        state.claims += 1;
+        if (state.throwing) throw new Error('boom');
+        if (state.failAll || state.failKeys.has(key)) return { ok: false, claimed: false, reason: 'KV_WRITE_FAILED' };
+        const e = map.get(key);
+        if (e && e.expiresAt > clockMs) return { ok: true, claimed: false };
+        map.set(key, { value, expiresAt: clockMs + ttlSec * 1000 });
+        return { ok: true, claimed: true };
+      },
+      release: async (key) => { map.delete(key); return { ok: true }; },
+      live: () => [...map.entries()].filter(([, e]) => e.expiresAt > clockMs).map(([k]) => k).sort(),
+    };
+  };
+  const store = fakeStore();
+  const reserve = (link = LINK, dest = DEST, s = store) => reserveOtpSend({ linkStoreKey: link, destinationKey: dest, now: new Date(clockMs), claim: s.claim, release: s.release });
 
-  ok('the plan refuses on the link first', otpSendPlan({ linkRecord: link(five.slice(0, 3)), destRecord: { sends: five }, now: plus(T, 300) }).reason === 'OTP_LINK_SEND_LIMIT');
-  ok('the plan refuses on the destination when the link is fine', otpSendPlan({ linkRecord: link([]), destRecord: { sends: five }, now: plus(T, 300) }).reason === 'OTP_DESTINATION_SEND_LIMIT');
-  ok('the plan allows when both are under their caps', same(otpSendPlan({ linkRecord: link([T.toISOString()]), destRecord: { sends: five.slice(0, 2) }, now: plus(T, 120) }), { allowed: true, reason: 'OK' }));
-  ok('the plan with no destination record at all is still bounded by the link', otpSendPlan({ linkRecord: link(five.slice(0, 3)), now: plus(T, 300) }).allowed === false);
+  await rejects('the reservation needs the store\'s primitives', () => reserveOtpSend({ linkStoreKey: LINK, destinationKey: DEST }), /claim\(\) and release\(\)/);
+  await rejects('the reservation needs a link store key', () => reserve('soa-link:x'), /link store key/);
+
+  const first = await reserve();
+  ok('a fresh link may send: the floor, its first slot and the destination\'s first slot are held', first.allowed === true && first.reason === 'OK' && same(first.held, [keys.floor, keys.link[0], keys.dest[0]]) && same(store.live(), [...first.held].sort()));
+  ok('the reservation is frozen and stamped', Object.isFrozen(first) && Object.isFrozen(first.held) && first.at === new Date(clockMs).toISOString());
+  tick(30);
+  const soon = await reserve();
+  ok('a second send inside the floor is too soon, and holds nothing new', seenOtp(soon.reason) === 'OTP_RESEND_TOO_SOON' && soon.allowed === false && store.live().length === 3);
+  tick(31);
+  const second = await reserve();
+  ok('after the floor a second send may go: a new floor, the second slot, the second destination slot', second.allowed === true && same(second.held, [keys.floor, keys.link[1], keys.dest[1]]) && store.live().length === 5);
+  tick(61);
+  const third = await reserve();
+  ok('a third send takes the last link slot', third.allowed === true && same(third.held, [keys.floor, keys.link[2], keys.dest[2]]) && store.live().length === 7);
+  tick(61);
+  const fourth = await reserve();
+  ok('three sends in the window exhaust the link — and the floor the fourth took is released again', seenOtp(fourth.reason) === 'OTP_LINK_SEND_LIMIT' && !store.live().includes(keys.floor) && store.live().length === 6);
+  const fourthAgain = await reserve();
+  ok('so the fourth asked again is told the same true reason, not "too soon"', fourthAgain.reason === 'OTP_LINK_SEND_LIMIT');
+  tick(3601 - 183); // the clock is at t0+183 (30+31+61+61); the first slot, claimed at t0, lives 3600 s
+  const slid = await reserve();
+  ok('the window slides: an hour after the first send its slot is free and the link may send again', slid.allowed === true && slid.held[1] === keys.link[0]);
+
+  // The destination cap, across links.
+  const store2 = fakeStore();
+  const links = Array.from({ length: 8 }, (_, i) => 'soa-link:' + String(i).repeat(64));
+  const five = [];
+  for (const l of links.slice(0, 5)) five.push(await reserve(l, DEST, store2));
+  ok('five fresh links may each send once to one phone', five.every((r) => r.allowed) && same(five.map((r) => r.held[2]), otpSendKeys(links[0], DEST).dest) && store2.live().length === 15);
+  const sixth = await reserve(links[5], DEST, store2);
+  ok('a sixth link to the same phone is refused by the destination cap, and its own floor and slot are released', seenOtp(sixth.reason) === 'OTP_DESTINATION_SEND_LIMIT' && store2.live().length === 15);
+  const sixthAgain = await reserve(links[5], DEST, store2);
+  ok('asked again at once, that link is told the destination reason — not "too soon" — because nothing of its own was left behind', sixthAgain.reason === 'OTP_DESTINATION_SEND_LIMIT');
+  ok('another phone is another cap', (await reserve(links[5], otpDestinationKey('SMS', '6315550148'), store2)).allowed === true);
+  tick(3601);
+  ok('the destination cap slides too: an hour later the sixth link may send', (await reserve(links[6], DEST, store2)).allowed === true);
+
+  // A store that cannot say is a refusal, never a pass.
+  const store3 = fakeStore();
+  store3.state.failAll = true;
+  const down = await reserve(LINK, DEST, store3);
+  ok('a store that cannot claim refuses by name and holds nothing', seenOtp(down.reason) === 'OTP_STORE_UNAVAILABLE' && down.allowed === false && store3.live().length === 0);
+  store3.state.failAll = false;
+  store3.state.failKeys = new Set(otpSendKeys(LINK, DEST).dest);
+  const downLate = await reserve(LINK, DEST, store3);
+  ok('a store that fails on the destination claim refuses and releases the floor and the slot it already held', downLate.reason === 'OTP_STORE_UNAVAILABLE' && store3.live().length === 0);
+  store3.state.failKeys = new Set();
+  store3.state.throwing = true;
+  ok('a store that throws is a store that cannot say', (await reserve(LINK, DEST, store3)).reason === 'OTP_STORE_UNAVAILABLE');
+  store3.state.throwing = false;
+  ok('… and the same store, back, claims normally', (await reserve(LINK, DEST, store3)).allowed === true);
+
+  // The burst the red team fired: in parallel, against one store.
+  const store4 = fakeStore();
+  const burst = await Promise.all(Array.from({ length: 8 }, () => reserve(LINK, DEST, store4)));
+  ok('eight reservations fired at once on one link: exactly one is allowed, seven are too soon, three keys are held',
+    burst.filter((r) => r.allowed).length === 1 && burst.filter((r) => r.reason === 'OTP_RESEND_TOO_SOON').length === 7 && store4.live().length === 3, burst.map((r) => r.reason).join(','));
+  const store5 = fakeStore();
+  const burst2 = await Promise.all(links.map((l) => reserve(l, DEST, store5)));
+  ok('eight links fired at once at one phone: exactly five are allowed, three hit the destination cap, and the store holds five sends — what was delivered, no more',
+    burst2.filter((r) => r.allowed).length === 5 && burst2.filter((r) => r.reason === 'OTP_DESTINATION_SEND_LIMIT').length === 3 &&
+    store5.live().length === 15 && otpSendKeys(links[0], DEST).dest.every((k) => store5.live().includes(k)), burst2.map((r) => r.reason).join(','));
 }
 
 // ── 5. The message and the delivery (provider double, nothing leaves) ────────
@@ -290,6 +418,9 @@ const mkLast4Link = () => issueLink({
   ok('delivery to an unusable destination is refused by name', r.reason === 'NO_DESTINATION_ON_FILE' && calls.length === 0);
   r = await deliverOtp({ ...base, code: '', fetchImpl: provider() });
   ok('delivery without a code is refused by name', r.reason === 'OTP_NOT_ISSUED' && calls.length === 0);
+  r = await deliverOtp({ ...base, fetchImpl: provider(), buildMessage: ({ code }) => ({ subject: 'Your code', body: 'Enroll now and save on the best plan! Your code is ' + code }) });
+  ok('a message that is marketing is blocked by the layer\'s rule before any provider is touched — the builder is injectable so this is observed, not assumed',
+    seenOtp(r.reason) === 'MARKETING_CONTENT_BLOCKED' && r.sent === false && calls.length === 0 && !JSON.stringify(r).includes('482913'), JSON.stringify(r));
   r = await deliverOtp({ ...base, fetchImpl: provider() });
   ok('with everything in place the code is posted to the configured TLS channel', r.sent === true && r.reason === 'OK' && calls.length === 1 && calls[0].url === 'https://otp.invalid/send' && calls[0].opts.method === 'POST');
   ok('the provider receives the NORMALIZED destination, the code in the body, and the channel token', calls[0].body.to === PHONE && calls[0].body.channel === 'SMS' && calls[0].body.body.includes('482913') && calls[0].opts.headers.Authorization === 'Bearer t-sms');
@@ -305,7 +436,8 @@ const mkLast4Link = () => issueLink({
 // ── 6. The letter ────────────────────────────────────────────────────────────
 {
   ok('VERIFICATION_LETTER is frozen all the way down and registered with the build gate', unfrozenPaths(VERIFICATION_LETTER, 'L').length === 0 && GOVERNING_IDENTIFIERS.includes('VERIFICATION_LETTER'));
-  ok('the letter wording is PENDING OWNER APPROVAL, with nobody and no date recorded', VERIFICATION_LETTER.approval.status === 'PENDING_OWNER_APPROVAL' && VERIFICATION_LETTER.approval.approvedBy === null && VERIFICATION_LETTER.approval.approvedOn === null);
+  ok('the letter wording is PENDING OWNER APPROVAL, with nobody, no date and no digest recorded',
+    same(VERIFICATION_LETTER.approval, { status: 'PENDING_OWNER_APPROVAL', approvedBy: null, approvedOn: null, textDigest: null }));
   ok('the official contact is the published number', OFFICIAL_CONTACT.phoneDisplay === '1-855-720-8555' && OFFICIAL_CONTACT.phoneDigits === '8557208555');
 
   for (const lang of ['en', 'es']) {
@@ -313,7 +445,7 @@ const mkLast4Link = () => issueLink({
     const text = t.subject + '\n' + t.body.split('{caseRef}').join('CASE-20261101-7F3A');
     ok(`letter (${lang}) passes its own content rule`, letterContentProblem(text) === null, letterContentProblem(text));
     ok(`letter (${lang}) asks the person to call the published number and carries the reference`, text.includes('1-855-720-8555') && text.includes('CASE-20261101-7F3A'));
-    ok(`letter (${lang}) names no plan, carrier, benefit, price or enrollment`, !/\b(plan|plans|planes|Humana|Aetna|UnitedHealthcare|premium|prima|benefit|beneficio|coverage|cobertura|enroll|inscr)/i.test(text));
+    ok(`letter (${lang}) names no plan, carrier, benefit, price or enrollment`, !/\b(plan|plans|planes|Humana|Aetna|UnitedHealthcare|premium|prima|benefit|beneficio|coverage|cobertura|enroll|inscr)/i.test(text) && !/\$/.test(text));
     ok(`letter (${lang}) discloses no name, no address and nothing about the request`, !/Jane|Dear|Estimad|street|calle|apartment|ZIP|appointment|cita|SOA|Scope/i.test(text));
     ok(`letter (${lang}) says what will never be asked for`, /(never ask|Nunca le pediremos)/.test(text));
   }
@@ -322,25 +454,58 @@ const mkLast4Link = () => issueLink({
   for (const [what, text] of [
     ['a plan', 'Your plan is waiting. Call 1-855-720-8555.'],
     ['a carrier', 'Humana asked us to confirm. Call 1-855-720-8555.'],
-    ['a price', 'Your premium is $0 a month. Call 1-855-720-8555.'],
+    ['a premium', 'Your premium is $0 a month. Call 1-855-720-8555.'],
+    ['a dollar amount (red team: "$5 a month" passed)', 'Pay only $5 a month. Call 1-855-720-8555.'],
+    ['a zero price (red team: "$0" passed)', 'Costs $0. Call 1-855-720-8555.'],
+    ['a price with a space after the sign', 'Only $ 12 today. Call 1-855-720-8555.'],
+    ['a price in USD', 'USD 5 per month. Call 1-855-720-8555.'],
+    ['a price spelled out', 'Five dollars a month. Call 1-855-720-8555.'],
+    ['a Spanish price spelled out', 'Cinco dólares al mes. Llame al 1-855-720-8555.'],
     ['a benefit', 'You may qualify for a benefit. Call 1-855-720-8555.'],
     ['Medicare Advantage', 'About your Medicare Advantage request, call 1-855-720-8555.'],
+    ['Medigap', 'About your Medigap request, call 1-855-720-8555.'],
+    ['a supplement', 'About your supplement request, call 1-855-720-8555.'],
+    ['a Spanish supplement', 'Sobre su suplemento, llame al 1-855-720-8555.'],
+    ['an HMO', 'Your HMO request was received. Call 1-855-720-8555.'],
+    ['a PPO', 'Your PPO request was received. Call 1-855-720-8555.'],
+    ['a PDP', 'Your PDP request was received. Call 1-855-720-8555.'],
+    ['an MAPD', 'Your MAPD request was received. Call 1-855-720-8555.'],
+    ['a giveback', 'A giveback may apply. Call 1-855-720-8555.'],
+    ['a formulary', 'Check the formulary. Call 1-855-720-8555.'],
     ['Part D', 'About your Part D request, call 1-855-720-8555.'],
+    ['Parte D', 'Sobre su Parte D, llame al 1-855-720-8555.'],
     ['an enrollment', 'Your enrollment was received. Call 1-855-720-8555.'],
     ['a Spanish plan', 'Su plan está listo. Llame al 1-855-720-8555.'],
     ['a Spanish benefit', 'Un beneficio para usted. Llame al 1-855-720-8555.'],
     ['a Spanish enrollment', 'Su inscripción fue recibida. Llame al 1-855-720-8555.'],
   ]) ok(`a letter naming ${what} is refused`, seenOob(letterContentProblem(text)) === 'LETTER_CONTENT_NAMES_PLAN_OR_PRICE', text);
   ok('"Medicare" alone (what will not be asked for) is allowed', letterContentProblem('We will never ask for your Medicare number. Call 1-855-720-8555.') === null);
+  ok('a reference number is not a price, and "part" alone is not a plan part', letterContentProblem('Reference 5 of 12, in part. Call 1-855-720-8555.') === null);
   ok('a letter that does not point at the official number is refused', seenOob(letterContentProblem('We could not confirm a request. Please reply to this letter.')) === 'LETTER_CONTENT_NO_OFFICIAL_CHANNEL');
 
-  const approved = (over = {}) => ({ ...VERIFICATION_LETTER, approval: { status: 'APPROVED', approvedBy: 'Maria Lopez', approvedOn: '2026-10-20', ...over } });
+  // Approval is bound to the text: the digest covers the version and both languages, and nothing else.
+  const DIGEST = letterTextDigest(VERIFICATION_LETTER);
+  ok('the text digest is sha256 hex of the version and both languages', /^[0-9a-f]{64}$/.test(DIGEST) &&
+    DIGEST === sha256(['CP-VL-2026-10-04-v1', VERIFICATION_LETTER.en.subject, VERIFICATION_LETTER.en.body, VERIFICATION_LETTER.es.subject, VERIFICATION_LETTER.es.body].join('\u0000')));
+  ok('the digest moves with the version, the English and the Spanish text',
+    letterTextDigest({ ...VERIFICATION_LETTER, version: 'v2' }) !== DIGEST && letterTextDigest({ ...VERIFICATION_LETTER, en: { ...VERIFICATION_LETTER.en, body: VERIFICATION_LETTER.en.body + ' ' } }) !== DIGEST &&
+    letterTextDigest({ ...VERIFICATION_LETTER, es: { ...VERIFICATION_LETTER.es, subject: 'x' } }) !== DIGEST);
+  ok('the digest does not move with the approval block — recording an approval does not change what was approved', letterTextDigest({ ...VERIFICATION_LETTER, approval: { status: 'APPROVED', approvedBy: 'Maria Lopez', approvedOn: '2026-10-20', textDigest: 'x' } }) === DIGEST);
+  ok('the digest of nothing is still a digest, not a throw', /^[0-9a-f]{64}$/.test(letterTextDigest(null)) && letterTextDigest(null) !== DIGEST);
+
+  const approved = (over = {}) => ({ ...VERIFICATION_LETTER, approval: { status: 'APPROVED', approvedBy: 'Maria Lopez', approvedOn: '2026-10-20', textDigest: DIGEST, ...over } });
   ok('the shipped wording is not released: not approved', seenOob(letterApprovalProblem(VERIFICATION_LETTER, { now: NOW })) === 'LETTER_TEXT_NOT_APPROVED');
   ok('an approval by an automation is not an approval', seenOob(letterApprovalProblem(approved({ approvedBy: 'claude' }), { now: NOW })) === 'LETTER_APPROVER_NOT_HUMAN' && letterApprovalProblem(approved({ approvedBy: 'Sofía' }), { now: NOW }) === 'LETTER_APPROVER_NOT_HUMAN');
   ok('an approval dated in the future, or not a calendar day, is not an approval',
     seenOob(letterApprovalProblem(approved({ approvedOn: '2026-12-01' }), { now: NOW })) === 'LETTER_APPROVAL_DATE_INVALID' && letterApprovalProblem(approved({ approvedOn: 'last week' }), { now: NOW }) === 'LETTER_APPROVAL_DATE_INVALID' &&
     letterApprovalProblem(approved({ approvedOn: null }), { now: NOW }) === 'LETTER_APPROVAL_DATE_INVALID');
-  ok('a named person on a past day approves', letterApprovalProblem(approved(), { now: NOW }) === null);
+  ok('a named person on a past day, for this text, approves', letterApprovalProblem(approved(), { now: NOW }) === null);
+  ok('an approval that names no digest is not an approval of this text (red team: a forged approval block)', seenOob(letterApprovalProblem(approved({ textDigest: undefined }), { now: NOW })) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT' &&
+    letterApprovalProblem(approved({ textDigest: null }), { now: NOW }) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT' && letterApprovalProblem(approved({ textDigest: 'f'.repeat(64) }), { now: NOW }) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT');
+  ok('a text edited after its approval is unapproved text (red team: a later edit kept a once-granted approval)',
+    letterApprovalProblem({ ...approved(), en: { ...VERIFICATION_LETTER.en, body: VERIFICATION_LETTER.en.body + ' PS: call us.' } }, { now: NOW }) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT' &&
+    letterApprovalProblem({ ...approved(), es: { ...VERIFICATION_LETTER.es, subject: VERIFICATION_LETTER.es.subject + '!' } }, { now: NOW }) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT' &&
+    letterApprovalProblem({ ...approved(), version: 'CP-VL-2026-10-04-v2' }, { now: NOW }) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT');
   ok('a template with no approval block is not approved', letterApprovalProblem({ en: {}, es: {} }, { now: NOW }) === 'LETTER_TEXT_NOT_APPROVED');
 
   const ENV = { [REVIEWERS_ENV]: 'Maria Lopez, Sawil Reyes' };
@@ -348,17 +513,32 @@ const mkLast4Link = () => issueLink({
     client: { known: true, onFileSince: '2025-03-01T00:00:00Z' },
     address: { source: 'ON_FILE', verifiedAt: '2025-03-15T00:00:00Z', suppliedByRequest: false },
     request: { receivedAt: '2026-10-30T09:00:00Z', caseRef: 'CASE-20261030-7F3A' },
-    actor: 'Maria Lopez', language: 'en', env: ENV, now: NOW, template: approved(),
+    actor: 'Maria Lopez', language: 'en', env: ENV, now: NOW,
   };
-  const decide = (over = {}) => mayIssueVerificationLetter({ ...good, ...over });
-  ok('the full case releases the letter, rendered, for a staff mailing', (() => { const d = decide(); return d.allowed === true && d.mailing === 'STAFF_ACTION' && d.decidedBy === 'Maria Lopez' && d.letter.language === 'en' && d.letter.body.includes('CASE-20261030-7F3A') && !d.letter.body.includes('{caseRef}') && d.letter.version === VERIFICATION_LETTER.version; })());
-  ok('the Spanish letter renders the same way', decide({ language: 'es' }).letter.body.includes('CASE-20261030-7F3A') && /Clear Point Senior Advisors al 1-855-720-8555/.test(decide({ language: 'es' }).letter.body));
-  ok('the released letter passes the content rule', (() => { const d = decide(); return d.allowed === true && letterContentProblem(d.letter.subject + '\n' + d.letter.body) === null; })(), JSON.stringify(decide()));
-  ok('decision: an automation may not decide', seenOob(decide({ actor: 'svc_bot' }).reason) === 'ACTOR_NOT_HUMAN' && decide({ actor: 'Clara' }).reason === 'ACTOR_NOT_HUMAN');
-  ok('decision: a person not on the owner\'s list may not decide', seenOob(decide({ actor: 'Jane Doe' }).reason) === 'REVIEWER_NOT_AUTHORIZED');
+
+  // The governing letter, as shipped: refused for everybody once the person passes.
+  ok('today the full case is refused because the wording is not approved — whoever decides', seenOob(mayIssueVerificationLetter(good).reason) === 'LETTER_TEXT_NOT_APPROVED' && mayIssueVerificationLetter({ ...good, actor: 'Sawil Reyes' }).reason === 'LETTER_TEXT_NOT_APPROVED');
+  ok('the person is still judged first', seenOob(mayIssueVerificationLetter({ ...good, actor: 'svc_bot' }).reason) === 'ACTOR_NOT_HUMAN' && seenOob(mayIssueVerificationLetter({ ...good, actor: 'Jane Doe' }).reason) === 'REVIEWER_NOT_AUTHORIZED');
+  const forged = { ...VERIFICATION_LETTER, approval: { status: 'APPROVED', approvedBy: 'Anyone Person', approvedOn: '2026-01-01', textDigest: DIGEST } };
+  ok('red team: a spread copy of the letter with a forged approval — even one carrying the right digest — handed to the release function changes nothing: there is no template to hand it',
+    mayIssueVerificationLetter({ ...good, template: forged }).reason === 'LETTER_TEXT_NOT_APPROVED' && mayIssueVerificationLetter({ ...good, template: approved() }).reason === 'LETTER_TEXT_NOT_APPROVED' &&
+    mayIssueVerificationLetter({ ...good, letter: approved(), VERIFICATION_LETTER: approved() }).reason === 'LETTER_TEXT_NOT_APPROVED');
+  ok('the governing object is untouched by all of that', VERIFICATION_LETTER.approval.status === 'PENDING_OWNER_APPROVAL' && VERIFICATION_LETTER.approval.textDigest === null);
+
+  // The letter as it will be once the owner approves it: an instance whose frozen
+  // declaration carries the approval, with this text's digest (the loader hook).
+  const APPROVED = await approvedLetterModule(DIGEST);
+  ok('the approved instance is the same text with the approval recorded for its digest', letterTextDigest(APPROVED.VERIFICATION_LETTER) === DIGEST &&
+    same(APPROVED.VERIFICATION_LETTER.approval, { status: 'APPROVED', approvedBy: 'Maria Lopez', approvedOn: '2026-10-20', textDigest: DIGEST }) && APPROVED.letterApprovalProblem(APPROVED.VERIFICATION_LETTER, { now: NOW }) === null);
+  const decide = (over = {}) => APPROVED.mayIssueVerificationLetter({ ...good, ...over });
+  ok('the full case releases the letter, rendered, for a staff mailing', (() => { const d = decide(); return d.allowed === true && d.reason === 'OK' && d.mailing === 'STAFF_ACTION' && d.decidedBy === 'Maria Lopez' && d.decidedAt === NOW.toISOString() && d.letter.language === 'en' && d.letter.body.includes('CASE-20261030-7F3A') && !d.letter.body.includes('{caseRef}') && d.letter.version === VERIFICATION_LETTER.version && d.letter.caseRef === 'CASE-20261030-7F3A'; })(), JSON.stringify(decide()));
+  ok('the released English text IS the governing text with the reference filled in', decide().letter.subject === VERIFICATION_LETTER.en.subject && decide().letter.body === VERIFICATION_LETTER.en.body.split('{caseRef}').join('CASE-20261030-7F3A'));
+  ok('the Spanish letter renders the same way', decide({ language: 'es' }).letter.body === VERIFICATION_LETTER.es.body.split('{caseRef}').join('CASE-20261030-7F3A') && /Clear Point Senior Advisors al 1-855-720-8555/.test(decide({ language: 'es' }).letter.body));
+  ok('the released letter passes the content rule', (() => { const d = decide(); return d.allowed === true && letterContentProblem(d.letter.subject + '\n' + d.letter.body) === null; })());
+  ok('decision: an automation may not decide', decide({ actor: 'svc_bot' }).reason === 'ACTOR_NOT_HUMAN' && decide({ actor: 'Clara' }).reason === 'ACTOR_NOT_HUMAN');
+  ok('decision: a person not on the owner\'s list may not decide', decide({ actor: 'Jane Doe' }).reason === 'REVIEWER_NOT_AUTHORIZED');
   ok('decision: with no list configured, nobody may decide (fail-closed)', seenOob(decide({ env: {} }).reason) === 'REVIEWERS_NOT_CONFIGURED');
   ok('decision: nobody at all may decide', seenOob(decide({ actor: '' }).reason) === 'ACTOR_MISSING');
-  ok('decision: the shipped wording is refused until approved, whoever decides', decide({ template: VERIFICATION_LETTER }).reason === 'LETTER_TEXT_NOT_APPROVED');
   ok('decision: only an existing known client', seenOob(decide({ client: { known: false, onFileSince: '2025-03-01T00:00:00Z' } }).reason) === 'CLIENT_NOT_KNOWN' && decide({ client: null }).reason === 'CLIENT_NOT_KNOWN' && decide({ client: { known: true } }).reason === 'CLIENT_NOT_KNOWN');
   ok('decision: a client first seen WITH the suspicious request is not an existing client', decide({ client: { known: true, onFileSince: '2026-10-30T09:00:00Z' } }).reason === 'CLIENT_NOT_KNOWN' && decide({ client: { known: true, onFileSince: '2026-10-31T00:00:00Z' } }).reason === 'CLIENT_NOT_KNOWN');
   ok('decision: the request must say when it arrived', seenOob(decide({ request: { caseRef: 'CASE-20261030-7F3A' } }).reason) === 'REQUEST_TIME_MISSING' && decide({ request: null }).reason === 'REQUEST_TIME_MISSING');
@@ -371,19 +551,26 @@ const mkLast4Link = () => issueLink({
     decide({ address: { ...good.address, verifiedAt: '2026-10-30T09:00:00Z' } }).reason === 'ADDRESS_NOT_PREVIOUSLY_VERIFIED' &&
     decide({ address: { source: 'ON_FILE', suppliedByRequest: false } }).reason === 'ADDRESS_NOT_PREVIOUSLY_VERIFIED');
   ok('decision: an unknown language', seenOob(decide({ language: 'fr' }).reason) === 'LANGUAGE_UNKNOWN');
-  const tainted = (body) => approved({}) && { ...approved(), en: { subject: 'Please contact us', body } };
-  ok('decision: an approved template that acquired marketing wording is refused at release', decide({ template: tainted('Call 1-855-720-8555 now — limited time, reference {caseRef}.') }).reason === 'LETTER_CONTENT_MARKETING');
-  ok('decision: an approved template that acquired a plan name is refused at release', decide({ template: tainted('Your plan needs a call to 1-855-720-8555, reference {caseRef}.') }).reason === 'LETTER_CONTENT_NAMES_PLAN_OR_PRICE');
-  ok('decision: an approved template that lost the official number is refused at release', decide({ template: tainted('Reply by mail, reference {caseRef}.') }).reason === 'LETTER_CONTENT_NO_OFFICIAL_CHANNEL');
-  ok('the decision mutates none of its inputs', good.address.suppliedByRequest === false && VERIFICATION_LETTER.approval.status === 'PENDING_OWNER_APPROVAL');
+  ok('decision: the rendered text is checked at release — a case reference that names a carrier or a plan is refused there',
+    decide({ request: { ...good.request, caseRef: 'HUMANA-20261030' } }).reason === 'LETTER_CONTENT_NAMES_PLAN_OR_PRICE' && decide({ request: { ...good.request, caseRef: 'PLAN-20261030' } }).reason === 'LETTER_CONTENT_NAMES_PLAN_OR_PRICE');
+  ok('the decision mutates none of its inputs', good.address.suppliedByRequest === false && VERIFICATION_LETTER.approval.status === 'PENDING_OWNER_APPROVAL' && APPROVED.VERIFICATION_LETTER.approval.status === 'APPROVED');
+
+  // The same approval recorded for ANOTHER digest — the owner's commit approving a text that was then edited — releases nothing.
+  const STALE = await approvedLetterModule('f'.repeat(64));
+  ok('an approval recorded for another digest releases nothing: the release function itself binds approval to text', seenOob(STALE.mayIssueVerificationLetter(good).reason) === 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT' && STALE.VERIFICATION_LETTER.approval.status === 'APPROVED');
 }
 
 // ── 7. The verification call ─────────────────────────────────────────────────
 {
-  const good = { requestPhone: '+1 (631) 555-0147', dialPhone: PHONE, callbackConsent: CALLBACK, doNotContact: false, caller: 'Maria Lopez', callerMode: 'HUMAN', purpose: VERIFICATION_CALL_PURPOSE };
+  // A permission captured FOR the verification call: its stated scope is the purpose.
+  const VERIFY_CALLBACK = grant('CALLBACK_CONTACT_PERMISSION', { channel: 'PHONE', scope: VERIFICATION_CALL_PURPOSE });
+  const good = { requestPhone: '+1 (631) 555-0147', dialPhone: PHONE, callbackConsent: VERIFY_CALLBACK, doNotContact: false, caller: 'Maria Lopez', callerMode: 'HUMAN', purpose: VERIFICATION_CALL_PURPOSE };
   const call = (over = {}) => mayPlaceVerificationCall({ ...good, ...over });
   ok('the purpose vocabulary is one value', VERIFICATION_CALL_PURPOSE === 'SECURITY_REQUEST_VERIFICATION');
-  ok('a human may call the request number for security verification, on a recorded contact basis', (() => { const d = call(); return d.allowed === true && d.purpose === 'SECURITY_REQUEST_VERIFICATION' && d.planMarketing === false && d.script === 'SECURITY_VERIFICATION_ONLY' && d.contactBasis === 'CALLBACK_CONSENT_GRANTED' && d.consentScope === 'this request' && d.caller === 'Maria Lopez'; })());
+  ok('a human may call the request number for security verification, on a contact basis whose stated scope is that verification', (() => { const d = call(); return d.allowed === true && d.purpose === 'SECURITY_REQUEST_VERIFICATION' && d.planMarketing === false && d.script === 'SECURITY_VERIFICATION_ONLY' && d.contactBasis === 'CALLBACK_CONSENT_GRANTED' && d.consentScope === 'SECURITY_REQUEST_VERIFICATION' && d.caller === 'Maria Lopez'; })(), JSON.stringify(call()));
+  ok('red team: the production web consent, scoped to plan discussion, does NOT authorise a security verification call (CT-07 — the purpose reaches the scope rule)',
+    (() => { const d = call({ callbackConsent: grant('CALLBACK_CONTACT_PERMISSION', { scope: 'DISCUSS_MEDICARE_PLAN_OPTIONS' }) }); return d.allowed === false && d.reason === 'PURPOSE_OUTSIDE_CONSENT_SCOPE' && !('script' in d); })());
+  ok('nor does a consent scoped to anything else', call({ callbackConsent: CALLBACK }).reason === 'PURPOSE_OUTSIDE_CONSENT_SCOPE' && call({ callbackConsent: grant('CALLBACK_CONTACT_PERMISSION', { scope: 'PLAN_MARKETING' }) }).reason === 'PURPOSE_OUTSIDE_CONSENT_SCOPE');
   ok('call: a marketing purpose is refused by name', seenOob(call({ purpose: 'PLAN_MARKETING' }).reason) === 'PURPOSE_NOT_VERIFICATION' && call({ purpose: 'DISCUSS_MEDICARE_PLAN_OPTIONS' }).reason === 'PURPOSE_NOT_VERIFICATION');
   ok('call: no purpose is no call', call({ purpose: undefined }).reason === 'PURPOSE_NOT_VERIFICATION');
   ok('call: an automated or AI caller is refused', seenOob(call({ callerMode: 'AI_AUTOMATED' }).reason) === 'CALLER_NOT_HUMAN' && call({ callerMode: 'HUMAN', caller: 'Sofía' }).reason === 'CALLER_NOT_HUMAN' && call({ caller: 'svc_dialer' }).reason === 'CALLER_NOT_HUMAN' && call({ callerMode: undefined }).reason === 'CALLER_NOT_HUMAN');
@@ -393,8 +580,8 @@ const mkLast4Link = () => issueLink({
   ok('call: an unknown do-not-contact status is a refusal (the list must have been consulted)', call({ doNotContact: undefined }).reason === 'DO_NOT_CONTACT_STATUS_UNKNOWN');
   ok('call: a do-not-contact wins', call({ doNotContact: true }).reason === 'DO_NOT_CONTACT');
   ok('call: no contact basis, no call', call({ callbackConsent: null }).reason === 'NO_CALLBACK_CONSENT');
-  ok('call: §6 — an SOA signature or a recording notice is not a contact basis', call({ callbackConsent: grant('SCOPE_OF_APPOINTMENT') }).reason === 'NO_CALLBACK_CONSENT' && call({ callbackConsent: grant('RECORDING_NOTICE') }).reason === 'NO_CALLBACK_CONSENT');
-  ok('call: a revoked basis is no basis', call({ callbackConsent: revokeConsent(CALLBACK, { via: 'PHONE' }) }).reason === 'NO_CALLBACK_CONSENT');
+  ok('call: §6 — an SOA signature or a recording notice is not a contact basis, whatever its scope says', call({ callbackConsent: grant('SCOPE_OF_APPOINTMENT', { scope: VERIFICATION_CALL_PURPOSE }) }).reason === 'NO_CALLBACK_CONSENT' && call({ callbackConsent: grant('RECORDING_NOTICE', { scope: VERIFICATION_CALL_PURPOSE }) }).reason === 'NO_CALLBACK_CONSENT');
+  ok('call: a revoked basis is no basis', call({ callbackConsent: revokeConsent(VERIFY_CALLBACK, { via: 'PHONE' }) }).reason === 'NO_CALLBACK_CONSENT');
   ok('call: the order is purpose, caller, number, then the basis', call({ purpose: 'X', callerMode: 'AI_AUTOMATED', requestPhone: '', doNotContact: true }).reason === 'PURPOSE_NOT_VERIFICATION' && call({ callerMode: 'AI_AUTOMATED', requestPhone: '', doNotContact: true }).reason === 'CALLER_NOT_HUMAN');
 }
 
@@ -421,9 +608,8 @@ const mkLast4Link = () => issueLink({
 // ── 9. Audit vocabulary, and every refusal reached ───────────────────────────
 {
   ok('OTP_ISSUED and OTP_SEND_REFUSED are registered audit actions', AUDIT_ACTIONS.includes('OTP_ISSUED') && AUDIT_ACTIONS.includes('OTP_SEND_REFUSED'));
-  const otpExpected = Object.values(OTP_REFUSAL).filter((r) => r !== 'MARKETING_CONTENT_BLOCKED');
-  ok('the sections above reached every OTP refusal there is (the marketing block is fixed text and is scanned below)',
-    otpExpected.every((r) => otpReasons.has(r)), otpExpected.filter((r) => !otpReasons.has(r)).join(','));
+  ok('the sections above reached every OTP refusal there is — the marketing block and the unavailable store included',
+    Object.values(OTP_REFUSAL).every((r) => otpReasons.has(r)), Object.values(OTP_REFUSAL).filter((r) => !otpReasons.has(r)).join(','));
   ok('and every out-of-band refusal', Object.values(OOB_REFUSAL).every((r) => oobReasons.has(r)), Object.values(OOB_REFUSAL).filter((r) => !oobReasons.has(r)).join(','));
   ok('OTP_REFUSAL is frozen', unfrozenPaths(OTP_REFUSAL, 'R').length === 0);
 }
@@ -439,39 +625,42 @@ const mkLast4Link = () => issueLink({
   ok('otp.js never logs (the code and the destination have no way to a log line)', !/console\./.test(OTP));
   ok('otp.js compares with crypto.timingSafeEqual on the line that decides', line(/const matches = a\.length === b\.length && crypto\.timingSafeEqual\(a, b\)/).test(OTP));
   ok('otp.js runs the layer\'s marketing rule over the message before any send', line(/try \{ assertNotMarketing\(msg\.subject \+ ' ' \+ msg\.body\); \}/).test(OTP));
-  ok('otp.js and out-of-band-verification.js import only from the layer and node:crypto', [...OTP.matchAll(/from '([^']+)'/g)].every((m) => /^(node:crypto|\.\/[\w-]+\.js)$/.test(m[1])) && [...OOB.matchAll(/from '([^']+)'/g)].every((m) => /^\.\/[\w-]+\.js$/.test(m[1])));
-  ok('out-of-band-verification.js has no Node import at all (environment-neutral)', !/from 'node:/.test(OOB) && !/console\./.test(OOB));
-  ok('soa-token.js no longer hard-codes the factor kind', !/secondFactorKind: 'PHONE_LAST4'/.test(TOK) && line(/var factor = otpFactorForIssue\(\{ channel: 'SMS', consent: OTP_CONSENT_BASIS, env: process\.env \}\);/).test(TOK));
-  ok('soa-token.js states that it holds no consent basis (null, never a body claim)', line(/var OTP_CONSENT_BASIS = null;/).test(TOK) && !/body\.consent/.test(TOK));
-  ok('soa-status.js never reads a destination from the body', !/body\.(to|phone|email|destination)\b/.test(STAT));
+  ok('otp.js imports only from the layer and node:crypto', [...OTP.matchAll(/from '([^']+)'/g)].every((m) => /^(node:crypto|\.\/[\w-]+\.js)$/.test(m[1])));
+  ok('out-of-band-verification.js imports only from the layer and node:crypto (for the digest), and never logs',
+    [...OOB.matchAll(/from '([^']+)'/g)].every((m) => /^(node:crypto|\.\/[\w-]+\.js)$/.test(m[1])) && same([...OOB.matchAll(/from 'node:([^']+)'/g)].map((m) => m[1]), ['crypto']) && !/console\./.test(OOB));
+  ok('the GET → decide → SET send plan is gone from the layer and from both handlers', !/otpSendPlan|recordDestinationSend|linkSendProblem|destinationSendProblem/.test(OTP + TOK + STAT));
+  ok('both handlers reserve with the store\'s atomic claim and release, on an anchored line',
+    line(/var plan = await reserveOtpSend\(\{ linkStoreKey: link\.storeKey, destinationKey: otpDestinationKey\(factor\.otpChannel, dest\.to\), claim: claimRecord, release: deleteRecord \}\);/).test(TOK) &&
+    line(/var plan = await reserveOtpSend\(\{ linkStoreKey: storeKeyFor\(ptoken\), destinationKey: otpDestinationKey\(otpChannel, dest\.to\), claim: claimRecord, release: deleteRecord \}\);/).test(STAT));
+  ok('both handlers answer 503 when the store cannot claim (unreachable through the memory store, hence anchored)',
+    line(/if \(plan\.reason === OTP_REFUSAL\.OTP_STORE_UNAVAILABLE\) return res\.status\(503\)\.json\(\{ error: plan\.reason \}\);/).test(TOK) &&
+    line(/if \(plan\.reason === OTP_REFUSAL\.OTP_STORE_UNAVAILABLE\) return res\.status\(503\)\.json\(\{ exists: true, resent: false, reason: plan\.reason \}\);/).test(STAT));
+  ok('the issuer stores the records before it delivers (the resend path is observed doing so in section 11)',
+    TOK.indexOf('var w2 = await setRecord(link.storeKey, link.record, SOA_TOKEN_TTL_SEC);') > 0 && TOK.indexOf('var w2 = await setRecord(link.storeKey, link.record, SOA_TOKEN_TTL_SEC);') < TOK.indexOf('delivery = await deliverOtp('));
+  ok('soa-token.js no longer hard-codes the factor kind, in either quote', !/secondFactorKind: ['"]PHONE_LAST4['"]/.test(TOK) && line(/var factor = otpFactorForIssue\(\{ channel: 'SMS', consent: OTP_CONSENT_BASIS, env: process\.env \}\);/).test(TOK));
+  ok('soa-token.js takes its consent lookup as an in-process dependency, starts from null, and names no body field for it',
+    line(/export default async function handler\(req, res, deps\) \{/).test(TOK) && line(/var OTP_CONSENT_BASIS = null;/).test(TOK) &&
+    line(/var consentLookup = deps && typeof deps\.otpConsentBasis === 'function' \? deps\.otpConsentBasis : null;/).test(TOK) && !/body\.(consent|callbackConsent|permission)/.test(TOK));
   ok('the status handler and the verifier share one attempt limit', line(/if \(factorLocked\(prec\)\) \{/).test(STAT) && line(/if \(factorLocked\(record, \{ maxAttempts \}\)\) \{/).test(LINK));
   ok('the page asks for a six-digit code on an OTP link and can request a new one', /factorRequired === 'OTP'/.test(PAGE) && /resendCode: true/.test(PAGE) && /one-time-code/.test(PAGE) && /code_stale/.test(PAGE));
 }
 
 // ── 11. The two handlers, driven in process ──────────────────────────────────
-// The handlers are gated off (SOA_ENABLED=false, pinned by test-cp-findings). A
-// loader hook rewrites that ONE declaration to true in memory for the two
-// handler modules as they load; the files on disk are untouched.
+// The handlers are gated off (SOA_ENABLED=false, pinned by test-cp-findings);
+// the loader hook above rewrites that ONE declaration to true in memory for the
+// two handler modules as they load; the files on disk are untouched.
 {
-  const { register } = await import('node:module');
-  register('data:text/javascript,' + encodeURIComponent(`
-    export async function load(url, context, nextLoad) {
-      const r = await nextLoad(url, context);
-      if (!/\\/api\\/(soa-token|soa-status)\\.js$/.test(url)) return r;
-      const src = typeof r.source === 'string' ? r.source : new TextDecoder().decode(r.source);
-      const parts = src.split('const SOA_ENABLED = false;');
-      if (parts.length !== 2) throw new Error('the SOA gate is not declared exactly once in ' + url);
-      return { ...r, source: parts.join('const SOA_ENABLED = true;') };
-    }
-  `));
-
   Object.assign(process.env, FULL_ENV);
   const provider = [];
   let providerStatus = 200;
+  // What the provider double sees in the STORE at the moment it is called: the
+  // claims must be held and the records written before any code goes out.
+  let onProvider = null;
   globalThis.fetch = async (url, opts = {}) => {
     const u = String(url);
     if (u === 'https://otp.invalid/send' || u === 'https://otp.invalid/mail') {
-      provider.push({ url: u, body: JSON.parse(opts.body), auth: opts.headers && opts.headers.Authorization });
+      const call = { url: u, body: JSON.parse(opts.body), auth: opts.headers && opts.headers.Authorization, seen: onProvider ? await onProvider() : null };
+      provider.push(call);
       return { ok: providerStatus < 400, status: providerStatus, json: async () => ({}) };
     }
     throw new Error('the handler section must not reach ' + u.slice(0, 60));
@@ -497,18 +686,45 @@ const mkLast4Link = () => issueLink({
     };
   };
   const mkRes = () => { const h = {}; return { statusCode: 200, payload: undefined, setHeader(k, v) { h[k] = v; }, getHeader(k) { return h[k]; }, status(c) { this.statusCode = c; return this; }, json(o) { this.payload = o; return this; }, end(d) { this.payload = d; return this; } }; };
-  const run = async (fn, body, method, url) => {
+  const run = async (fn, body, method, url, deps) => {
     const res = mkRes(); let threw = null;
-    try { await fn(mkReq(body, method, url), res); } catch (e) { threw = String((e && e.stack) || e); }
+    try { await fn(mkReq(body, method, url), res, deps); } catch (e) { threw = String((e && e.stack) || e); }
     return { status: res.statusCode, payload: res.payload, retryAfter: res.getHeader('Retry-After'), threw };
   };
   const status = (token) => run(soaStatus, null, 'GET', '/api/soa-status?token=' + token);
   const verify = (token, factor) => run(soaStatus, { token, factor });
   const resend = (token, extra = {}) => run(soaStatus, { token, resendCode: true, ...extra });
-  const codeFrom = (call) => (call.body.body.match(/\b(\d{6})\b/) || [])[1];
+  const LEAD_BODY = { fullName: 'Jane Q Public', phone: PHONE, email: '', zip: '11717', language: 'en' };
+  const issue = (deps, body = LEAD_BODY) => run(soaToken, body, 'POST', '/api/soa-token', deps);
+  /** The i-th provider call, or an empty one — so an assertion about a call that never happened FAILS by name instead of crashing the suite. */
+  const sent = (i) => provider[i] || { url: null, body: { to: null, body: '' }, auth: null, seen: null };
+  const codeFrom = (call) => (String(call && call.body ? call.body.body : '').match(/\b(\d{6})\b/) || [])[1] || null;
+  /** A body that records every key a handler asks it for, and answers decoys for names it must never ask. */
+  const spyBody = (own, decoys) => {
+    const reads = new Set();
+    const body = new Proxy({ ...own }, { get(t, k) { if (typeof k === 'string') reads.add(k); return Object.prototype.hasOwnProperty.call(decoys, k) ? decoys[k] : t[k]; } });
+    return { body, reads };
+  };
+  const INCIDENTAL = ['toJSON', 'then'];
+  const onlyRead = (reads, allowed) => [...reads].filter((k) => !allowed.includes(k) && !INCIDENTAL.includes(k));
+  const WITH_CONSENT = { otpConsentBasis: async () => CALLBACK };
 
-  // Seed an OTP link the way the issuer would once it can: the lead record
-  // (phone on file) and the link record, both in the memory store.
+  const destKey = otpDestinationKey('SMS', PHONE);
+  const keysOf = (linkStoreKey) => otpSendKeys(linkStoreKey, destKey);
+  const held = async (key) => (await getRecord(key)) !== null;
+  const destHeld = async () => { let n = 0; for (const k of keysOf('soa-link:' + '0'.repeat(64)).dest) if (await held(k)) n += 1; return n; };
+  /** Hold the claims a link with these past sends would hold: slots inside the window, the floor if the last send is inside it. */
+  const hold = async (linkStoreKey, times) => {
+    const k = keysOf(linkStoreKey);
+    const nowMs = Date.now();
+    const inWindow = times.map((t) => Date.parse(t)).filter((t) => nowMs - t < OTP_POLICY.windowSec * 1000).sort((a, b) => a - b);
+    for (let i = 0; i < inWindow.length && i < k.link.length; i++) await setRecord(k.link[i], { at: new Date(inWindow[i]).toISOString() }, Math.ceil(OTP_POLICY.windowSec - (nowMs - inWindow[i]) / 1000));
+    const last = inWindow.length ? inWindow[inWindow.length - 1] : null;
+    if (last !== null && nowMs - last < OTP_POLICY.minResendIntervalSec * 1000) await setRecord(k.floor, { at: new Date(last).toISOString() }, Math.ceil(OTP_POLICY.minResendIntervalSec - (nowMs - last) / 1000));
+  };
+
+  // Seed an OTP link the way the issuer would: the lead record (phone on file),
+  // the link record, and the claims its sends hold — all in the memory store.
   let seq = 0;
   const seed = async ({ consentBasis = CALLBACK, sends, failedFactorAttempts, kind = 'OTP', issuedAt = new Date() } = {}) => {
     seq += 1;
@@ -523,21 +739,58 @@ const mkLast4Link = () => issueLink({
     if (failedFactorAttempts !== undefined) record = { ...record, failedFactorAttempts };
     await setRecord(leadKey(ref), { beneficiaryRef: ref, fullName: 'Jane Q Public', phone: PHONE, email: 'jane@example.com', zip: '11717', language: 'en', leadSource: 'customer_service' }, SOA_TOKEN_TTL_SEC);
     await setRecord(link.storeKey, record, SOA_TOKEN_TTL_SEC);
-    return { token: link.token, code, ref, key: link.storeKey };
+    if (kind === 'OTP') await hold(link.storeKey, record.otp.sends);
+    return { token: link.token, code, ref, key: link.storeKey, keys: keysOf(link.storeKey) };
   };
   const linkOf = (key) => getRecord(key);
-  const destKey = otpDestinationKey('SMS', PHONE);
-  const fresh = async () => { LOGS.length = 0; provider.length = 0; providerStatus = 200; await setRecord(destKey, { sends: [] }, 1); };
+  const fresh = async () => { LOGS.length = 0; provider.length = 0; providerStatus = 200; onProvider = null; for (const k of keysOf('soa-link:' + '0'.repeat(64)).dest) await deleteRecord(k); };
 
-  // (a) The issuer today: no consent basis is reachable, so the factor stays PHONE_LAST4 and nothing is sent.
+  // (a) The issuer in production: no consent lookup is wired, so the factor stays PHONE_LAST4 and nothing is sent.
   await fresh();
-  const issued = await run(soaToken, { fullName: 'Jane Q Public', phone: PHONE, email: '', zip: '11717', language: 'en' });
-  ok('handler: with the OTP channel configured but no consent basis, the issuer keeps today\'s factor', issued.status === 200 && issued.payload.factorRequired === 'PHONE_LAST4' && !('codeSent' in issued.payload) && !issued.threw, JSON.stringify(issued));
+  const issued = await issue(undefined);
+  ok('handler: with the OTP channel configured but no consent lookup, the issuer keeps today\'s factor', issued.status === 200 && issued.payload.factorRequired === 'PHONE_LAST4' && !('codeSent' in issued.payload) && !issued.threw, JSON.stringify(issued));
   ok('handler: no code went to any provider', provider.length === 0);
   ok('handler: the issue audit records WHY the code was not offered', audited('SOA_LINK_ISSUED', 'OK').some((a) => a.details && a.details.factor === 'PHONE_LAST4' && a.details.factorReason === 'NO_CONTACT_PERMISSION'));
   ok('handler: the issued link is a last-4 link with no otp block', (await linkOf(storeKeyFor(issued.payload.token))).secondFactorKind === 'PHONE_LAST4' && !('otp' in (await linkOf(storeKeyFor(issued.payload.token)))));
+  const spyA = spyBody(LEAD_BODY, { callbackConsent: CALLBACK, consent: CALLBACK, permission: CALLBACK, consentBasis: CALLBACK, otpConsentBasis: CALLBACK, contactPermission: CALLBACK });
+  const issuedSpy = await issue(undefined, spyA.body);
+  ok('handler: the issuer asks the body for the lead fields and NOTHING else — a consent offered under any name is never read, so it changes nothing',
+    issuedSpy.status === 200 && issuedSpy.payload.factorRequired === 'PHONE_LAST4' && provider.length === 0 && onlyRead(spyA.reads, ['fullName', 'phone', 'email', 'zip', 'language', 'leadSource', 'appointmentId']).length === 0, [...spyA.reads].join(','));
+  const issuedBad = await issue({ otpConsentBasis: async () => { throw new Error('crm down'); } });
+  ok('handler: a consent lookup that fails is no consent — the factor stays and nothing is sent', issuedBad.status === 200 && issuedBad.payload.factorRequired === 'PHONE_LAST4' && provider.length === 0 && audited('SOA_LINK_ISSUED', 'OK').some((a) => a.details.factorReason === 'NO_CONTACT_PERMISSION'));
+  const issuedJunk = await issue({ otpConsentBasis: async () => 'yes' });
+  ok('handler: a lookup that answers something other than a consent record is no consent', issuedJunk.payload.factorRequired === 'PHONE_LAST4' && provider.length === 0);
 
-  // (b) An OTP link: what possession shows, and the code path through the status endpoint.
+  // (b) The issuer with a consent lookup it is GIVEN: the one-time-code branch, observed.
+  await fresh();
+  onProvider = async () => ({ destHeld: await destHeld() });
+  const otpIssue = await issue(WITH_CONSENT);
+  ok('handler: with a recorded permission the issuer mints an OTP link and says a code went out — never the code, never the number',
+    otpIssue.status === 200 && otpIssue.payload.factorRequired === 'OTP' && otpIssue.payload.codeSent === true && !otpIssue.threw && !JSON.stringify(otpIssue.payload).includes(PHONE) && !/\b\d{6}\b/.test(JSON.stringify(otpIssue.payload)), JSON.stringify(otpIssue));
+  ok('handler: the code went to the phone the ISSUER wrote on the lead record', provider.length === 1 && sent(0).body.to === PHONE && sent(0).url === 'https://otp.invalid/send' && sent(0).auth === 'Bearer t-sms');
+  ok('handler: the destination claim was held BEFORE the provider was called', sent(0).seen && sent(0).seen.destHeld === 1);
+  const issuedKey = storeKeyFor(otpIssue.payload.token);
+  const issuedLink = await linkOf(issuedKey);
+  ok('handler: the stored link is an OTP link with a hash, one send, and the consent basis the issuer verified', issuedLink.secondFactorKind === 'OTP' && /^[0-9a-f]{64}$/.test(issuedLink.otp.hash) && issuedLink.otp.sends.length === 1 && same(issuedLink.otp.consentBasis, CALLBACK) && issuedLink.secondFactorHash === null);
+  ok('handler: the issue holds the floor and the link\'s first slot', (await held(keysOf(issuedKey).floor)) && (await held(keysOf(issuedKey).link[0])) && !(await held(keysOf(issuedKey).link[1])));
+  ok('handler: the issue is audited as OTP, SENT, one send, without the code or the phone', audited('OTP_ISSUED', 'SENT').length === 1 && audited('OTP_ISSUED', 'SENT')[0].details.sendsOnLink === 1 && audited('SOA_LINK_ISSUED', 'OK').some((a) => a.details.factor === 'OTP' && a.details.factorReason === 'OK') && !LOGS.some((l) => l.includes(PHONE) || l.includes(codeFrom(sent(0)))));
+  const tooSoonIssued = await resend(otpIssue.payload.token);
+  ok('handler: a resend right after the issue is too soon — the issue took the floor', tooSoonIssued.status === 429 && tooSoonIssued.payload.reason === 'OTP_RESEND_TOO_SOON' && tooSoonIssued.retryAfter === '60' && provider.length === 1);
+  const issuedVerify = await verify(otpIssue.payload.token, codeFrom(sent(0)));
+  ok('handler: the code the provider received verifies the issued link as channel-verified', issuedVerify.status === 200 && issuedVerify.payload.verification === 'CONTACT_CHANNEL_VERIFIED' && issuedVerify.payload.lead.fullName === 'Jane Q Public', JSON.stringify(issuedVerify));
+  for (let i = 0; i < 4; i++) ok(`handler: issue ${i + 2} of 5 for the same phone goes out`, (await issue(WITH_CONSENT)).payload.codeSent === true);
+  const sixth = await issue(WITH_CONSENT);
+  ok('handler: the sixth issue for one phone inside the window is refused by the destination cap, mints nothing and sends nothing',
+    sixth.status === 429 && sixth.payload.error === 'OTP_DESTINATION_SEND_LIMIT' && sixth.retryAfter === '3600' && !('token' in sixth.payload) && provider.length === 5 && (await destHeld()) === 5 && audited('OTP_SEND_REFUSED', 'OTP_DESTINATION_SEND_LIMIT').length === 1, JSON.stringify(sixth));
+
+  // (b') Eight issues for one phone, fired at once (the red team's burst).
+  await fresh();
+  const burstIssue = await Promise.all(Array.from({ length: 8 }, () => issue(WITH_CONSENT)));
+  ok('handler: eight parallel issues for one phone — exactly five mint and send, three are refused by the destination cap, and the store holds exactly five',
+    burstIssue.filter((r) => r.status === 200 && r.payload.codeSent === true).length === 5 && burstIssue.filter((r) => r.status === 429 && r.payload.error === 'OTP_DESTINATION_SEND_LIMIT').length === 3 &&
+    provider.length === 5 && (await destHeld()) === 5 && audited('OTP_ISSUED', 'SENT').length === 5 && audited('OTP_SEND_REFUSED').length === 3, burstIssue.map((r) => r.status + ':' + JSON.stringify(r.payload)).join(' | '));
+
+  // (c) An OTP link: what possession shows, and the code path through the status endpoint.
   await fresh();
   const A = await seed();
   const shown = await status(A.token);
@@ -555,7 +808,7 @@ const mkLast4Link = () => issueLink({
   ok('handler: the same code again is refused as already used', againA.status === 401 && againA.payload.reason === 'OTP_ALREADY_USED');
   ok('handler: no audit line carries the code or the phone', !LOGS.some((l) => l.includes(A.code) || l.includes(PHONE)));
 
-  // (c) A last-4 link through the same endpoint: factor matched, no channel claim.
+  // (d) A last-4 link through the same endpoint: factor matched, no channel claim.
   await fresh();
   const F = await seed({ kind: 'PHONE_LAST4' });
   const rightF = await verify(F.token, '0147');
@@ -564,16 +817,22 @@ const mkLast4Link = () => issueLink({
   const resendF = await resend(F.token);
   ok('handler: a resend on a last-4 link is refused by name', resendF.status === 400 && resendF.payload.reason === 'FACTOR_NOT_OTP' && provider.length === 0);
 
-  // (d) Resend: the destination is the lead record's phone, never the body's; the old code dies; the caps bite.
+  // (e) Resend: the destination is the lead record's phone, never the body's; the claims precede delivery; the old code dies; the caps bite.
   await fresh();
-  const B = await seed({ issuedAt: plus(new Date(), -120) });
-  const resentB = await resend(B.token, { to: '+15550000000', phone: '5550000000', email: 'attacker@example.com', destination: '5550000000' });
+  const now = new Date();
+  const B = await seed({ issuedAt: plus(now, -120) });
+  onProvider = async () => ({ linkSends: (await linkOf(B.key)).otp.sends.length, floor: await held(B.keys.floor), slot1: await held(B.keys.link[1]), dest0: await held(B.keys.dest[0]) });
+  const spyB = spyBody({ token: B.token, resendCode: true }, { to: '+15550000000', phone: '5550000000', email: 'attacker@example.com', destination: '5550000000', number: '5550000000', channel: 'EMAIL', otpChannel: 'EMAIL' });
+  const resentB = await run(soaStatus, spyB.body);
   ok('handler: a resend issues and delivers a new code', resentB.status === 200 && resentB.payload.resent === true && resentB.payload.reason === 'OK' && provider.length === 1, JSON.stringify(resentB));
-  ok('handler: the code went to the phone ON THE LEAD RECORD — not to anything in the request body', provider[0].body.to === PHONE && provider[0].url === 'https://otp.invalid/send' && provider[0].auth === 'Bearer t-sms');
+  ok('handler: the code went to the phone ON THE LEAD RECORD — the handler asked the body for the token and the resend flag and for nothing else',
+    sent(0).body.to === PHONE && sent(0).url === 'https://otp.invalid/send' && sent(0).auth === 'Bearer t-sms' && onlyRead(spyB.reads, ['token', 'factor', 'resendCode']).length === 0, [...spyB.reads].join(','));
+  ok('handler: at the moment the provider was called, the link already carried the new send and the floor, the link slot and the destination slot were already held',
+    same(sent(0).seen, { linkSends: 2, floor: true, slot1: true, dest0: true }), JSON.stringify(sent(0).seen));
   ok('handler: the response carries neither the code nor the destination', !JSON.stringify(resentB.payload).includes(PHONE) && !JSON.stringify(resentB.payload).match(/\b\d{6}\b/));
-  const newCodeB = codeFrom(provider[0]);
+  const newCodeB = codeFrom(sent(0));
   ok('handler: the resend is counted on the link (two sends)', (await linkOf(B.key)).otp.sends.length === 2 && /^\d{6}$/.test(newCodeB));
-  ok('handler: the resend is counted on the destination', ((await getRecord(destKey)) || { sends: [] }).sends.length === 1);
+  ok('handler: the resend is counted on the destination — one slot held, the next free', (await destHeld()) === 1 && !(await held(B.keys.dest[1])));
   ok('handler: the resend is audited without the code or the phone', audited('OTP_ISSUED', 'SENT').length === 1 && !LOGS.some((l) => l.includes(newCodeB) || l.includes(PHONE)));
   const oldB = await verify(B.token, B.code);
   ok('handler: the previous code no longer verifies', oldB.status === 401 && oldB.payload.reason === 'OTP_MISMATCH');
@@ -583,18 +842,29 @@ const mkLast4Link = () => issueLink({
   const newB = await verify(B.token, newCodeB);
   ok('handler: the new code verifies', newB.status === 200 && newB.payload.verification === 'CONTACT_CHANNEL_VERIFIED');
 
+  // (e') Eight resends on one link, fired at once (the red team's burst).
   await fresh();
-  const now = new Date();
+  const B2 = await seed({ issuedAt: plus(new Date(), -120) });
+  const burst = await Promise.all(Array.from({ length: 8 }, () => resend(B2.token)));
+  ok('handler: eight parallel resends on one link — exactly one delivers, seven are too soon, the link counts two sends and the store holds one destination send',
+    burst.filter((r) => r.status === 200 && r.payload.resent === true).length === 1 && burst.filter((r) => r.status === 429 && r.payload.reason === 'OTP_RESEND_TOO_SOON').length === 7 &&
+    provider.length === 1 && (await linkOf(B2.key)).otp.sends.length === 2 && (await destHeld()) === 1 && audited('OTP_ISSUED', 'SENT').length === 1 && audited('OTP_SEND_REFUSED', 'OTP_RESEND_TOO_SOON').length === 7,
+    burst.map((r) => r.status + ':' + (r.payload && r.payload.reason)).join(','));
+  ok('handler: after the burst the link holds its floor and two slots, the third is free', (await held(B2.keys.floor)) && (await held(B2.keys.link[0])) && (await held(B2.keys.link[1])) && !(await held(B2.keys.link[2])));
+
+  await fresh();
   const C = await seed({ sends: [plus(now, -600), plus(now, -400), plus(now, -200)].map((d) => d.toISOString()) });
   const limitC = await resend(C.token);
   ok('handler: a link that sent three codes in the window gets no fourth', limitC.status === 429 && limitC.payload.reason === 'OTP_LINK_SEND_LIMIT' && limitC.retryAfter === '3600' && provider.length === 0, JSON.stringify(limitC));
+  ok('handler: the refused fourth left no floor behind, so asking again says the same true thing', !(await held(C.keys.floor)) && (await resend(C.token)).payload.reason === 'OTP_LINK_SEND_LIMIT');
 
   await fresh();
-  await setRecord(destKey, { sends: Array.from({ length: 5 }, (_, i) => plus(now, -60 * (i + 1)).toISOString()) }, 3600);
+  for (const k of keysOf('soa-link:' + '0'.repeat(64)).dest) await setRecord(k, { at: now.toISOString() }, 3600);
   const D = await seed({ issuedAt: plus(now, -120) });
   const limitD = await resend(D.token);
-  ok('handler: a phone that received five codes in the window gets no sixth, from any link', limitD.status === 429 && limitD.payload.reason === 'OTP_DESTINATION_SEND_LIMIT' && provider.length === 0 && audited('OTP_SEND_REFUSED', 'OTP_DESTINATION_SEND_LIMIT').length === 1, JSON.stringify(limitD));
-  ok('handler: the refused resend did not touch the link\'s send log', (await linkOf(D.key)).otp.sends.length === 1);
+  ok('handler: a phone that received five codes in the window gets no sixth, from any link', limitD.status === 429 && limitD.payload.reason === 'OTP_DESTINATION_SEND_LIMIT' && limitD.retryAfter === '3600' && provider.length === 0 && audited('OTP_SEND_REFUSED', 'OTP_DESTINATION_SEND_LIMIT').length === 1, JSON.stringify(limitD));
+  ok('handler: the refused resend did not touch the link\'s send log, and released the floor and the slot it had taken', (await linkOf(D.key)).otp.sends.length === 1 && !(await held(D.keys.floor)) && !(await held(D.keys.link[1])));
+  ok('handler: asked again, that link is told the destination reason, not "too soon"', (await resend(D.token)).payload.reason === 'OTP_DESTINATION_SEND_LIMIT');
 
   await fresh();
   const E = await seed({ failedFactorAttempts: 5, issuedAt: plus(now, -120) });
@@ -614,9 +884,9 @@ const mkLast4Link = () => issueLink({
   const H = await seed({ issuedAt: plus(now, -120) });
   const resentH = await resend(H.token);
   ok('handler: a provider failure is reported, the attempt still counts, and the link stays usable',
-    resentH.status === 200 && resentH.payload.resent === false && resentH.payload.reason === 'PROVIDER_REJECTED' && (await linkOf(H.key)).otp.sends.length === 2 && (await status(H.token)).status === 200, JSON.stringify(resentH));
+    resentH.status === 200 && resentH.payload.resent === false && resentH.payload.reason === 'PROVIDER_REJECTED' && (await linkOf(H.key)).otp.sends.length === 2 && (await held(H.keys.link[1])) && (await status(H.token)).status === 200, JSON.stringify(resentH));
 
-  // (e) The endpoint's own guards still front the resend action.
+  // (f) The endpoint's own guards still front the resend action.
   await fresh();
   const badToken = await resend('not-a-token');
   ok('handler: a malformed token is refused before anything is read', badToken.status === 400);

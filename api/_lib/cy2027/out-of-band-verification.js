@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CY2027 — OUT-OF-BAND VERIFICATION: THE LETTER, THE CALL, THE CALLBACK
 // (spec §12, Phase 6 "letter-verification workflow definition").
-// Environment-neutral: imports only from this layer. Server-side in purpose —
-// these are staff decisions, never a browser's.
+// SERVER ONLY (node:crypto, for the letter's text digest); otherwise imports
+// only from this layer. These are staff decisions, never a browser's.
 //
 // §12  "Human validation may call the same number only when the system has an
 //       appropriate contact basis/permission for that verification call.
@@ -28,8 +28,19 @@
 // it means editing VERIFICATION_LETTER.approval in this file — a reviewed
 // change, never a runtime write: the object is frozen all the way down and
 // registered with the no-self-modification gate.
+//
+// AUDIT 2026-10-04 (SPEC-12, red team) — that gate was one object spread away:
+// mayIssueVerificationLetter() took a caller-supplied `template`, so a copy of
+// the frozen letter with a forged `approval` released the shipped, unapproved
+// wording under its own version id, and any later text edit would have kept a
+// once-granted approval. Two changes: the release function releases the
+// governing VERIFICATION_LETTER and nothing a caller hands it; and an approval
+// is bound to the text it approved — `approval.textDigest` must equal
+// letterTextDigest() of the letter (version and both languages), so an
+// edited text is unapproved text until a person re-approves it, in this file.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import crypto from 'node:crypto';
 import { humanActorProblem, reviewerProblem } from './actors.js';
 import { mayPlaceOutbound } from './consent.js';
 import { assertNotMarketing } from './beneficiary-copy.js';
@@ -74,6 +85,7 @@ export const OOB_REFUSAL = deepFreeze({
   LETTER_TEXT_NOT_APPROVED: 'LETTER_TEXT_NOT_APPROVED',
   LETTER_APPROVER_NOT_HUMAN: 'LETTER_APPROVER_NOT_HUMAN',
   LETTER_APPROVAL_DATE_INVALID: 'LETTER_APPROVAL_DATE_INVALID',
+  LETTER_APPROVAL_NOT_FOR_THIS_TEXT: 'LETTER_APPROVAL_NOT_FOR_THIS_TEXT',
   LETTER_CONTENT_MARKETING: 'LETTER_CONTENT_MARKETING',
   LETTER_CONTENT_NAMES_PLAN_OR_PRICE: 'LETTER_CONTENT_NAMES_PLAN_OR_PRICE',
   LETTER_CONTENT_NO_OFFICIAL_CHANNEL: 'LETTER_CONTENT_NO_OFFICIAL_CHANNEL',
@@ -102,11 +114,12 @@ export const OOB_REFUSAL = deepFreeze({
  * received and not acted on, gives an opaque case reference and the published
  * number, and says what will never be asked. No name, no address, no detail of
  * the request, no plan, carrier, benefit or price. `{caseRef}` is the only
- * substitution. PENDING OWNER APPROVAL: see the header.
+ * substitution. PENDING OWNER APPROVAL: see the header. To approve, record the
+ * person, the day and letterTextDigest(VERIFICATION_LETTER) in `approval`.
  */
 export const VERIFICATION_LETTER = deepFreeze({
   version: 'CP-VL-2026-10-04-v1',
-  approval: { status: 'PENDING_OWNER_APPROVAL', approvedBy: null, approvedOn: null },
+  approval: { status: 'PENDING_OWNER_APPROVAL', approvedBy: null, approvedOn: null, textDigest: null },
   en: {
     subject: 'Please contact us about a recent request',
     body:
@@ -131,10 +144,20 @@ export const VERIFICATION_LETTER = deepFreeze({
 
 /**
  * Words a verification letter may not contain: anything that names a plan, a
- * carrier, a benefit, a price or an enrollment. "Medicare" alone is allowed
- * (the letter says what will never be asked for); "Medicare Advantage" is not.
+ * plan type, a carrier, a benefit, a price or an enrollment. "Medicare" alone
+ * is allowed (the letter says what will never be asked for); "Medicare
+ * Advantage" is not.
+ *
+ * AUDIT 2026-10-04 (SPEC-12, red team) — the currency pattern sat INSIDE the
+ * `\b(…)\b` group, and there is no word boundary between a space and "$", so
+ * "$5 a month" and "$0" passed; the suite's one price case was caught by
+ * "premium". The currency alternative now stands outside the word-boundary
+ * group, amounts spelled out are named too, and the plan-type vocabulary the
+ * first list lacked (Medigap, supplement, HMO/PPO/PDP/MAPD, formulary,
+ * giveback) is in it. The frozen template remains the primary control; this
+ * is the check that the rendered text has not drifted from it.
  */
-const PLAN_OR_PRICE_RE = /\b(?:plans?|planes?|medicare\s+advantage|part\s+[abcd]|premiums?|primas?|copays?|copagos?|deductibles?|deducibles?|benefits?|beneficios?|coverage|cobertura|enroll\w*|inscri\w*|humana|aetna|unitedhealthcare|anthem|cigna|wellcare|elevance|centene|molina|emblemhealth|healthfirst|fidelis|\$\s?\d)\b/iu;
+const PLAN_OR_PRICE_RE = /(?:\b(?:plans?|planes?|medicare\s+advantage|medigap|supplement\w*|suplement\w*|hmo|ppo|pdp|mapd|giveback|formulary|part\s+[abcd]|parte\s+[abcd]|premiums?|primas?|copays?|copagos?|deductibles?|deducibles?|benefits?|beneficios?|coverage|cobertura|enroll\w*|inscri\w*|dollars?|d[oó]lares?|usd|humana|aetna|unitedhealthcare|anthem|cigna|wellcare|elevance|centene|molina|emblemhealth|healthfirst|fidelis)\b|\$\s?\d)/iu;
 
 /** Why a rendered letter may not go out, or null. The marketing check is the layer's one (beneficiary-copy). */
 export function letterContentProblem(text) {
@@ -147,9 +170,23 @@ export function letterContentProblem(text) {
 }
 
 /**
+ * The digest an approval is bound to: the version and the customer-facing
+ * strings of both languages, in a fixed order. Anything else on the template
+ * (the approval block itself) is outside it, so recording an approval does not
+ * move the digest it records.
+ */
+export function letterTextDigest(template = VERIFICATION_LETTER) {
+  const t = template && typeof template === 'object' ? template : {};
+  const part = (lang, field) => String(t[lang] && t[lang][field] != null ? t[lang][field] : '');
+  const material = [String(t.version == null ? '' : t.version), part('en', 'subject'), part('en', 'body'), part('es', 'subject'), part('es', 'body')].join('\u0000');
+  return crypto.createHash('sha256').update(material, 'utf8').digest('hex');
+}
+
+/**
  * Why the letter text may not be released, or null. Approval is a named
  * person (the layer's one human-actor rule) on a real calendar day already
- * past. Nothing here fills in an approval that is not recorded.
+ * past, recorded FOR THIS TEXT (`textDigest` equals letterTextDigest of the
+ * template). Nothing here fills in an approval that is not recorded.
  */
 export function letterApprovalProblem(template = VERIFICATION_LETTER, { now = new Date() } = {}) {
   const a = template && template.approval;
@@ -158,6 +195,7 @@ export function letterApprovalProblem(template = VERIFICATION_LETTER, { now = ne
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(a.approvedOn)) || !isIso(a.approvedOn + 'T00:00:00Z') || Date.parse(a.approvedOn + 'T00:00:00Z') > now.getTime()) {
     return OOB_REFUSAL.LETTER_APPROVAL_DATE_INVALID;
   }
+  if (typeof a.textDigest !== 'string' || a.textDigest !== letterTextDigest(template)) return OOB_REFUSAL.LETTER_APPROVAL_NOT_FOR_THIS_TEXT;
   return null;
 }
 
@@ -174,8 +212,13 @@ export function letterApprovalProblem(template = VERIFICATION_LETTER, { now = ne
  * Refusals are named and checked in this order: the person, the text, the
  * client, the request, the address. The letter text is rendered last and is
  * itself checked (letterContentProblem) before it is returned.
+ *
+ * The letter released is VERIFICATION_LETTER, the governing object. There is
+ * no parameter for another text: an approval lives in that object or nowhere
+ * (see the header, red team).
  */
-export function mayIssueVerificationLetter({ client, address, request, actor, language = 'en', env, now = new Date(), template = VERIFICATION_LETTER } = {}) {
+export function mayIssueVerificationLetter({ client, address, request, actor, language = 'en', env, now = new Date() } = {}) {
+  const template = VERIFICATION_LETTER;
   const who = env === undefined ? reviewerProblem(actor) : reviewerProblem(actor, env);
   if (who) return { allowed: false, reason: who };
   const approval = letterApprovalProblem(template, { now });
@@ -222,6 +265,18 @@ export function mayIssueVerificationLetter({ client, address, request, actor, la
  * The contact basis is decided by consent.mayPlaceOutbound() for a human
  * caller: it refuses an unknown or set do-not-contact and a missing or
  * wrong-typed consent. An automated or AI caller is refused here by name.
+ *
+ * AUDIT 2026-10-04 (SPEC-12, red team) — the purpose was recorded on the
+ * decision and checked against nothing: this caller dropped it on the way to
+ * mayPlaceOutbound(), so the layer's one scope rule (CT-07, spec §24: "generic
+ * callback consent authorizes only the scope actually stated") never ran and
+ * a consent scoped to plan discussion authorised a security call. The purpose
+ * now goes through, so the basis must be a CALLBACK_CONTACT_PERMISSION whose
+ * stated scope IS the verification purpose (§12: "an appropriate contact
+ * basis/permission for THAT verification call"). The production web consent
+ * (scope DISCUSS_MEDICARE_PLAN_OPTIONS) therefore does not authorise this call;
+ * whether it should is the owner's reading, and until it is written here by
+ * name the answer is no.
  */
 export function mayPlaceVerificationCall({ requestPhone, dialPhone, callbackConsent, doNotContact, caller, callerMode, purpose } = {}) {
   if (purpose !== VERIFICATION_CALL_PURPOSE) return { allowed: false, reason: OOB_REFUSAL.PURPOSE_NOT_VERIFICATION };
@@ -229,7 +284,7 @@ export function mayPlaceVerificationCall({ requestPhone, dialPhone, callbackCons
   const requested = digitsOf(requestPhone);
   if (!requested) return { allowed: false, reason: OOB_REFUSAL.REQUEST_NUMBER_MISSING };
   if (digitsOf(dialPhone) !== requested) return { allowed: false, reason: OOB_REFUSAL.NUMBER_NOT_THE_REQUEST_NUMBER };
-  const basis = mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent, doNotContact });
+  const basis = mayPlaceOutbound({ mode: 'HUMAN_LICENSED_AGENT', callbackConsent, doNotContact, purpose: VERIFICATION_CALL_PURPOSE });
   if (!basis.allowed) return { allowed: false, reason: basis.reason };
   return {
     allowed: true,

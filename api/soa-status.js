@@ -23,13 +23,13 @@
 // pending (spec §26: an invalid token must not reveal form data).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getRecord, setRecord, leadKey, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
+import { getRecord, setRecord, claimRecord, deleteRecord, leadKey, SOA_TOKEN_TTL_SEC } from './_lib/soa-store.js';
 import { checkOrigin, applyCors, rateLimit, clientId } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
 import { readJsonBody } from './_lib/read-body.js';
 import { storeKeyFor, checkLink, verifySecondFactor, linkDisclosure, recordView, factorLocked } from './_lib/cy2027/secure-link.js';
 import {
-  OTP_POLICY, VERIFICATION_CLAIM, verificationClaim, otpDestination, otpDestinationKey, otpSendPlan, recordDestinationSend, issueOtp, deliverOtp,
+  OTP_POLICY, OTP_REFUSAL, VERIFICATION_CLAIM, verificationClaim, otpDestination, otpDestinationKey, reserveOtpSend, issueOtp, deliverOtp,
 } from './_lib/cy2027/otp.js';
 import { emitAudit } from './_lib/cy2027/evidence.js';
 
@@ -159,9 +159,16 @@ export default async function handler(req, res) {
  * issue, reached through the opaque reference inside the link; a `to`, `phone`
  * or `email` in the request body is never read. A locked link gets no code (a
  * resend never resets the attempt counter either — that lives on the link). The
- * per-link and per-destination caps (§30, SMS bombing) are counted and stored
- * BEFORE delivery, so a send the provider drops still counts. The code and the
+ * per-link and per-destination caps (§30, SMS bombing) are claimed BEFORE a
+ * code exists, so a send the provider drops still counts. The code and the
  * destination reach no log line and no response.
+ *
+ * AUDIT 2026-10-04 (SPEC-12, red team) — the caps were read, decided and
+ * written back here (getRecord → otpSendPlan → setRecord): eight resends fired
+ * in parallel at one link all passed, eight codes went out, the stored counts
+ * said two. The bound is now an atomic claim in the store (otp.reserveOtpSend
+ * over soa-store.claimRecord), taken before the code is issued; a store that
+ * cannot claim refuses with 503, and a claim a later bound refuses is released.
  */
 async function resendOtp(res, ptoken, prec) {
   if (prec.secondFactorKind !== 'OTP') return res.status(400).json({ exists: true, resent: false, reason: 'FACTOR_NOT_OTP' });
@@ -173,18 +180,17 @@ async function resendOtp(res, ptoken, prec) {
   var lead = await getRecord(leadKey(prec.beneficiaryRef));
   var dest = otpDestination(lead, otpChannel);
   if (!dest.ok) return res.status(404).json({ exists: true, resent: false, reason: dest.reason });
-  var destKey = otpDestinationKey(otpChannel, dest.to);
-  var destRecord = await getRecord(destKey);
-  var plan = otpSendPlan({ linkRecord: prec, destRecord: destRecord });
+  var plan = await reserveOtpSend({ linkStoreKey: storeKeyFor(ptoken), destinationKey: otpDestinationKey(otpChannel, dest.to), claim: claimRecord, release: deleteRecord });
   if (!plan.allowed) {
     emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'beneficiary:unverified', result: plan.reason, source: 'WEB', correlationId: prec.beneficiaryRef, soaId: prec.soaId, details: { channel: otpChannel } });
-    res.setHeader('Retry-After', String(plan.reason === 'OTP_RESEND_TOO_SOON' ? OTP_POLICY.minResendIntervalSec : OTP_POLICY.windowSec));
+    if (plan.reason === OTP_REFUSAL.OTP_STORE_UNAVAILABLE) return res.status(503).json({ exists: true, resent: false, reason: plan.reason });
+    res.setHeader('Retry-After', String(plan.reason === OTP_REFUSAL.OTP_RESEND_TOO_SOON ? OTP_POLICY.minResendIntervalSec : OTP_POLICY.windowSec));
     return res.status(429).json({ exists: true, resent: false, reason: plan.reason });
   }
   var issued = issueOtp(prec);
+  // A reservation taken above stays taken on failure: a send that could not be recorded still counts.
   var w1 = await setRecord(storeKeyFor(ptoken), issued.record, SOA_TOKEN_TTL_SEC);
-  var w2 = await setRecord(destKey, recordDestinationSend(destRecord), OTP_POLICY.windowSec);
-  if (!w1.ok || !w2.ok) return res.status(503).json({ exists: true, resent: false, reason: 'STORAGE_FAILED' });
+  if (!w1.ok) return res.status(503).json({ exists: true, resent: false, reason: 'STORAGE_FAILED' });
   var delivery = await deliverOtp({ channel: otpChannel, to: dest.to, code: issued.code, language: prec.language, consent: prec.otp.consentBasis, env: process.env });
   emitAudit({
     action: 'OTP_ISSUED', actor: 'beneficiary:unverified', result: delivery.sent ? 'SENT' : delivery.reason, source: 'WEB',

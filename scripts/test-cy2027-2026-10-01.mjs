@@ -2725,7 +2725,7 @@ consentScope: {
         "const h = require('fs');\nconst i = import(name);\n// import x from 'in-a-comment';\n/* import('also-a-comment') */\n")) ===
       JSON.stringify(['./a.js', 'node:fs', 'crypto', './d.js', '../e.js', 'node:path', 'node:os', './g.js', 'fs', '<not a literal: name>']));
     const LIB = fileURLToPath(new URL('../api/_lib/cy2027/', import.meta.url));
-    const SERVER_ONLY = ['crm-fields.js', 'callback-consent.js', 'evidence.js', 'evidence-store.js', 'secure-link.js', 'otp.js'];
+    const SERVER_ONLY = ['crm-fields.js', 'callback-consent.js', 'evidence.js', 'evidence-store.js', 'secure-link.js', 'otp.js', 'out-of-band-verification.js'];
     const offences = (entryFile, readSource = (f) => readFileSync(pathJoin(LIB, f), 'utf8')) => {
       const seen = new Set();
       const bad = [];

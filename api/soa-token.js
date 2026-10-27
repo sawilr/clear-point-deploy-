@@ -16,10 +16,10 @@
 import crypto from 'node:crypto';
 import { rateLimit, clientId, checkOrigin, applyCors } from './_lib/rate-limit.js';
 import { noStorePII } from './_lib/security-headers.js';
-import { SOA_TOKEN_TTL_SEC, getRecord, setRecord, leadKey } from './_lib/soa-store.js';
+import { SOA_TOKEN_TTL_SEC, setRecord, claimRecord, deleteRecord, leadKey } from './_lib/soa-store.js';
 import { issueLink } from './_lib/cy2027/secure-link.js';
 import {
-  OTP_POLICY, otpFactorForIssue, otpDestination, otpDestinationKey, otpSendPlan, recordDestinationSend, issueOtp, deliverOtp,
+  OTP_POLICY, OTP_REFUSAL, otpFactorForIssue, otpDestination, otpDestinationKey, reserveOtpSend, issueOtp, deliverOtp,
 } from './_lib/cy2027/otp.js';
 import { appointmentIdForReissue } from './_lib/cy2027/soa-ledger.js';
 import { emitAudit } from './_lib/cy2027/evidence.js';
@@ -31,7 +31,10 @@ import { readJsonBody } from './_lib/read-body.js';
 // issue tokens so that no SOA PDF with [X]/[Y] placeholders can be signed.
 const SOA_ENABLED = false;
 
-export default async function handler(req, res) {
+// `deps` is an IN-PROCESS dependency bag, never anything from the request:
+// Vercel calls (req, res) and passes none; a suite passes a double. Today it
+// may carry `otpConsentBasis`, the server-side consent lookup (see below).
+export default async function handler(req, res, deps) {
   // ── CORS allowlist ─────────────────────────────────────────────────────
   var allowedOrigin = checkOrigin(req);
     // AUDIT 2026-09-14 (SEC-10) — never let a rejection be cached
@@ -118,7 +121,26 @@ export default async function handler(req, res) {
   // NO_CONTACT_PERMISSION and today's factor stays, with the reason audited.
   // Wiring the CRM's callback-consent state into this handler is the step that
   // makes the code reachable (docs/compliance/CY2027-ARCHITECTURE.md §2.3a).
+  //
+  // AUDIT 2026-10-04 (SPEC-12, red team) — the basis was the literal null, so
+  // the one-time-code branch below could not be executed by any suite and
+  // eight mutants of it survived, one of them reading a consent off the body.
+  // The basis is now whatever server-side lookup this handler is GIVEN answers
+  // (`deps.otpConsentBasis`, an in-process dependency: Vercel passes none, a
+  // suite passes a double that answers a recorded permission). With no lookup,
+  // or a lookup that fails, the basis is null, exactly as before. The body is
+  // still never read for one.
+  var consentLookup = deps && typeof deps.otpConsentBasis === 'function' ? deps.otpConsentBasis : null;
   var OTP_CONSENT_BASIS = null;
+  if (consentLookup) {
+    try {
+      var looked = await consentLookup({ phone: phone, email: email || null });
+      OTP_CONSENT_BASIS = looked && typeof looked === 'object' ? looked : null;
+    } catch (e) {
+      console.error('[soa-token] consent lookup failed, no code will be offered:', e && e.message);
+      OTP_CONSENT_BASIS = null;
+    }
+  }
   var factor = otpFactorForIssue({ channel: 'SMS', consent: OTP_CONSENT_BASIS, env: process.env });
 
   var link;
@@ -142,12 +164,17 @@ export default async function handler(req, res) {
   }
 
   // The code: issued against the destination ON THE LEAD RECORD (never the
-  // body), counted against the per-link and per-destination caps BEFORE it is
-  // delivered (a send the provider drops still counts — §30, SMS bombing), and
-  // refused by name when a cap is reached. Nothing is minted in that case.
+  // body), bounded by the per-link and per-destination caps BEFORE it exists
+  // (§30, SMS bombing), and refused by name when a cap is reached. Nothing is
+  // minted in that case.
+  //
+  // AUDIT 2026-10-04 (SPEC-12, red team) — the caps were read, decided and
+  // written back here (getRecord → otpSendPlan → setRecord), which a parallel
+  // burst of issues for one phone walked straight through: 8 of 8 minted and
+  // delivered, the stored count said 2. The bound is now an atomic claim in the
+  // store (otp.reserveOtpSend over soa-store.claimRecord); a store that cannot
+  // claim refuses, and a claim a later bound refuses is released.
   var otpCode = null;
-  var destKey = null;
-  var destRecord = null;
   var destTo = null;
   if (factor.kind === 'OTP') {
     var dest = otpDestination(leadRecord, factor.otpChannel);
@@ -156,12 +183,11 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'OTP_DESTINATION_UNAVAILABLE' });
     }
     destTo = dest.to;
-    destKey = otpDestinationKey(factor.otpChannel, dest.to);
-    destRecord = await getRecord(destKey);
-    var plan = otpSendPlan({ linkRecord: link.record, destRecord: destRecord });
+    var plan = await reserveOtpSend({ linkStoreKey: link.storeKey, destinationKey: otpDestinationKey(factor.otpChannel, dest.to), claim: claimRecord, release: deleteRecord });
     if (!plan.allowed) {
       emitAudit({ action: 'OTP_SEND_REFUSED', actor: 'system:soa-token', result: plan.reason, source: 'WEB', correlationId: beneficiaryRef, soaId: link.record.soaId, details: { channel: factor.otpChannel } });
-      res.setHeader('Retry-After', String(OTP_POLICY.windowSec));
+      if (plan.reason === OTP_REFUSAL.OTP_STORE_UNAVAILABLE) return res.status(503).json({ error: plan.reason });
+      res.setHeader('Retry-After', String(plan.reason === OTP_REFUSAL.OTP_RESEND_TOO_SOON ? OTP_POLICY.minResendIntervalSec : OTP_POLICY.windowSec));
       return res.status(429).json({ error: plan.reason });
     }
     var issued = issueOtp(link.record);
@@ -171,18 +197,19 @@ export default async function handler(req, res) {
 
   // Both writes must be durable. A link whose lead record lives only in one
   // lambda's memory breaks on the next request, and a beneficiary who clicks a
-  // dead link is a beneficiary who signs nothing.
+  // dead link is a beneficiary who signs nothing. A reservation taken above
+  // stays taken on failure: a send that could not be recorded still counts.
   var w1 = await setRecord(leadKey(beneficiaryRef), leadRecord, SOA_TOKEN_TTL_SEC);
   var w2 = await setRecord(link.storeKey, link.record, SOA_TOKEN_TTL_SEC);
-  var w3 = destKey ? await setRecord(destKey, recordDestinationSend(destRecord), OTP_POLICY.windowSec) : { ok: true };
-  if (!w1.ok || !w2.ok || !w3.ok) {
-    console.error('[soa-token] storage failed:', w1.reason || w2.reason || w3.reason);
+  if (!w1.ok || !w2.ok) {
+    console.error('[soa-token] storage failed:', w1.reason || w2.reason);
     return res.status(503).json({ error: 'Token storage failed' });
   }
 
-  // Delivery comes AFTER the counts are stored. A code that did not arrive
-  // leaves a link that reveals nothing; the page offers a resend, which the
-  // same caps bound. The code and the destination reach no log line.
+  // Delivery comes AFTER the claims are held and the records are stored. A
+  // code that did not arrive leaves a link that reveals nothing; the page
+  // offers a resend, which the same caps bound. The code and the destination
+  // reach no log line.
   var delivery = null;
   if (otpCode !== null) {
     delivery = await deliverOtp({ channel: factor.otpChannel, to: destTo, code: otpCode, language: language, consent: OTP_CONSENT_BASIS, env: process.env });

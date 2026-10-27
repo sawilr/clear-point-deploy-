@@ -24,10 +24,11 @@
 //                     secure-link.verifySecondFactor(), which keeps the ONE
 //                     attempt counter and lockout for every factor kind, so a
 //                     resend cannot reset a brute-force count.
-//   otpSendPlan()     the SMS-bombing control: a floor between sends, a cap per
+//   reserveOtpSend()  the SMS-bombing control: a floor between sends, a cap per
 //                     link per window, and a cap per DESTINATION per window
 //                     across links (so minting many links for one phone does
-//                     not become many messages).
+//                     not become many messages) — every one an atomic claim in
+//                     the store, taken before a code exists (see the section).
 //   otpDestination()  the ONLY source of the destination: the lead record the
 //                     server itself wrote at issue, reached through the opaque
 //                     reference inside the link. A phone or email arriving with
@@ -94,6 +95,7 @@ export const OTP_REFUSAL = deepFreeze({
   OTP_RESEND_TOO_SOON: 'OTP_RESEND_TOO_SOON',
   OTP_LINK_SEND_LIMIT: 'OTP_LINK_SEND_LIMIT',
   OTP_DESTINATION_SEND_LIMIT: 'OTP_DESTINATION_SEND_LIMIT',
+  OTP_STORE_UNAVAILABLE: 'OTP_STORE_UNAVAILABLE',
   OTP_NOT_ISSUED: 'OTP_NOT_ISSUED',
   OTP_ALREADY_USED: 'OTP_ALREADY_USED',
   OTP_EXPIRED: 'OTP_EXPIRED',
@@ -206,6 +208,32 @@ export function otpDestinationKey(channel, to) {
 }
 
 // ── The SMS-bombing control ──────────────────────────────────────────────────
+//
+// AUDIT 2026-10-04 (SPEC-12, red team) — the first shape of this control read
+// the link's and the destination's send logs, decided over them and wrote them
+// back (getRecord → otpSendPlan → setRecord). Eight resends fired in parallel
+// at one link each read the same logs, all eight passed, eight codes reached
+// the provider and the stored counts said two: nothing decided over a record
+// read a moment earlier can bound a parallel burst. The store has to decide.
+//
+// Every bound is now an atomic CLAIM — SET … NX with a TTL, which Redis
+// performs as one operation (soa-store.claimRecord; its memory fallback is
+// synchronous, so atomic within a process):
+//
+//   floor  one key per link, alive minResendIntervalSec      held      → OTP_RESEND_TOO_SOON
+//   link   maxSendsPerLink slot keys per link, alive windowSec  none free → OTP_LINK_SEND_LIMIT
+//   dest   maxSendsPerDestination slot keys per DESTINATION,    none free → OTP_DESTINATION_SEND_LIMIT
+//          alive windowSec, shared by every link to that phone/email
+//
+// A slot is held for the whole window from the moment it is claimed, so no
+// window of windowSec seconds ever holds more claims than there are slots: the
+// window slides. What a later bound refuses is released again, so a refused
+// request leaves no count behind and the next request is told the true
+// reason. A store that cannot say whether it claimed is a refusal, never a
+// pass (OTP_STORE_UNAVAILABLE). The primitives are passed in (soa-store's
+// claimRecord and deleteRecord) so that this module keeps importing only from
+// the layer. The link record's own `otp.sends` (issueOtp) remains the audit
+// count; it bounds nothing.
 
 /** Sends inside the window, oldest first. Anything unreadable is dropped (it cannot count for the caller). */
 function sendsInWindow(sends, now, policy) {
@@ -215,37 +243,69 @@ function sendsInWindow(sends, now, policy) {
     .sort((a, b) => Date.parse(a) - Date.parse(b));
 }
 
-/** Why one more send on THIS link is refused, or null. */
-export function linkSendProblem(linkRecord, { now = new Date(), policy = OTP_POLICY } = {}) {
-  const sends = sendsInWindow(linkRecord && linkRecord.otp ? linkRecord.otp.sends : [], now, policy);
-  if (sends.length >= policy.maxSendsPerLink) return OTP_REFUSAL.OTP_LINK_SEND_LIMIT;
-  const last = sends.length ? Date.parse(sends[sends.length - 1]) : null;
-  if (last !== null && now.getTime() - last < policy.minResendIntervalSec * 1000) return OTP_REFUSAL.OTP_RESEND_TOO_SOON;
-  return null;
-}
+const LINK_STORE_KEY_RE = /^soa-link:[0-9a-f]{64}$/;
+const DESTINATION_KEY_RE = /^otp-dest:[0-9a-f]{64}$/;
 
-/** Why one more send to THIS phone/email is refused, whichever link asks, or null. */
-export function destinationSendProblem(destRecord, { now = new Date(), policy = OTP_POLICY } = {}) {
-  const sends = sendsInWindow(destRecord ? destRecord.sends : [], now, policy);
-  if (sends.length >= policy.maxSendsPerDestination) return OTP_REFUSAL.OTP_DESTINATION_SEND_LIMIT;
-  return null;
-}
-
-/** The per-destination record after one more send; sends outside the window are dropped. */
-export function recordDestinationSend(destRecord, { now = new Date(), policy = OTP_POLICY } = {}) {
-  return { sends: [...sendsInWindow(destRecord ? destRecord.sends : [], now, policy), now.toISOString()] };
+/**
+ * The claim keys of one send: the link's floor, its send slots and the
+ * destination's send slots. Both inputs are already hashes (the link's store
+ * key, the destination key), so no key names a token or a phone.
+ */
+export function otpSendKeys(linkStoreKey, destinationKey, policy = OTP_POLICY) {
+  if (typeof linkStoreKey !== 'string' || !LINK_STORE_KEY_RE.test(linkStoreKey)) throw new Error('otp: a link store key is required');
+  if (typeof destinationKey !== 'string' || !DESTINATION_KEY_RE.test(destinationKey)) throw new Error('otp: a destination key is required');
+  const link = linkStoreKey.slice('soa-link:'.length);
+  return Object.freeze({
+    floor: 'otp-floor:' + link,
+    link: Object.freeze(Array.from({ length: policy.maxSendsPerLink }, (_, i) => 'otp-link:' + link + ':' + i)),
+    dest: Object.freeze(Array.from({ length: policy.maxSendsPerDestination }, (_, i) => destinationKey + ':' + i)),
+  });
 }
 
 /**
- * Both caps, link first (so a destination that is at its limit is not even
- * named to a link that has exhausted its own). Returns `{ allowed, reason }`.
+ * Reserve one send, or say why not. Returns `{ allowed, reason }` and, when
+ * allowed, the keys now held. Order: the floor, the link, the destination —
+ * so a destination at its limit is not even named to a link that may not
+ * send. `claim(key, value, ttlSec)` must answer `{ ok, claimed }` and
+ * `release(key)` must remove a key (soa-store.claimRecord / deleteRecord).
  */
-export function otpSendPlan({ linkRecord, destRecord, now = new Date(), policy = OTP_POLICY } = {}) {
-  const link = linkSendProblem(linkRecord, { now, policy });
-  if (link) return { allowed: false, reason: link };
-  const dest = destinationSendProblem(destRecord, { now, policy });
-  if (dest) return { allowed: false, reason: dest };
-  return { allowed: true, reason: 'OK' };
+export async function reserveOtpSend({ linkStoreKey, destinationKey, now = new Date(), policy = OTP_POLICY, claim, release } = {}) {
+  if (typeof claim !== 'function' || typeof release !== 'function') throw new Error('otp: reserveOtpSend needs the store\'s claim() and release()');
+  const keys = otpSendKeys(linkStoreKey, destinationKey, policy);
+  const at = now.toISOString();
+  const held = [];
+  // true: this call holds the key now; false: somebody else does; null: the store could not say.
+  const tryClaim = async (key, ttlSec) => {
+    let r;
+    try { r = await claim(key, { at }, ttlSec); } catch { r = null; }
+    if (!r || r.ok !== true) return null;
+    if (r.claimed !== true) return false;
+    held.push(key);
+    return true;
+  };
+  const firstFree = async (candidates, ttlSec) => {
+    for (const key of candidates) {
+      const r = await tryClaim(key, ttlSec);
+      if (r !== false) return r;
+    }
+    return false;
+  };
+  const refuse = async (reason) => {
+    for (const key of [...held].reverse()) {
+      try { await release(key); } catch { /* the hold expires on its own; a stale hold refuses, never passes */ }
+    }
+    return { allowed: false, reason };
+  };
+  const floor = await tryClaim(keys.floor, policy.minResendIntervalSec);
+  if (floor === null) return refuse(OTP_REFUSAL.OTP_STORE_UNAVAILABLE);
+  if (floor === false) return refuse(OTP_REFUSAL.OTP_RESEND_TOO_SOON);
+  const link = await firstFree(keys.link, policy.windowSec);
+  if (link === null) return refuse(OTP_REFUSAL.OTP_STORE_UNAVAILABLE);
+  if (link === false) return refuse(OTP_REFUSAL.OTP_LINK_SEND_LIMIT);
+  const dest = await firstFree(keys.dest, policy.windowSec);
+  if (dest === null) return refuse(OTP_REFUSAL.OTP_STORE_UNAVAILABLE);
+  if (dest === false) return refuse(OTP_REFUSAL.OTP_DESTINATION_SEND_LIMIT);
+  return Object.freeze({ allowed: true, reason: 'OK', at, held: Object.freeze([...held]) });
 }
 
 // ── The code ─────────────────────────────────────────────────────────────────
@@ -353,14 +413,20 @@ export function buildOtpMessage({ code, language, policy = OTP_POLICY }) {
  * Deliver a code, if everything above permits it. Never throws for a transport
  * problem; the caller decides what a failed delivery means for the link. The
  * code is never logged by this function and is not in the returned object.
+ *
+ * AUDIT 2026-10-04 (SPEC-12, red team) — `buildMessage` is the text builder
+ * (buildOtpMessage unless a caller passes another), so that the marketing block
+ * below can be observed by handing it a tainted builder: a mutant that emptied
+ * the block survived the suite because the fixed text never trips it. Whatever
+ * builds the text, the layer's marketing rule runs over it before any send.
  */
-export async function deliverOtp({ channel, to, code, language, consent, env = process.env, fetchImpl = fetch }) {
+export async function deliverOtp({ channel, to, code, language, consent, env = process.env, fetchImpl = fetch, buildMessage = buildOtpMessage }) {
   const gate = mayDeliverOtp({ channel, consent, env });
   if (!gate.allowed) return { sent: false, reason: gate.reason };
   if (!normalizeDestination(channel, to)) return { sent: false, reason: OTP_REFUSAL.NO_DESTINATION_ON_FILE };
   if (typeof code !== 'string' || !code) return { sent: false, reason: OTP_REFUSAL.OTP_NOT_ISSUED };
 
-  const msg = buildOtpMessage({ code, language });
+  const msg = buildMessage({ code, language });
   try { assertNotMarketing(msg.subject + ' ' + msg.body); }
   catch (e) { return { sent: false, reason: OTP_REFUSAL.MARKETING_CONTENT_BLOCKED, detail: e.message }; }
 
