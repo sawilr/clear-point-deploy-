@@ -348,6 +348,9 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // "used, nothing filed — restart"; only its FILED value may claim a signature.
   'LINK_OUTCOME',
   'CARRIER_OVERLAYS', 'MEDICARE_KNOWLEDGE', 'SYSTEM_PROMPT',
+  // AUDIT 2026-10-04 (SPEC-31 / SPEC-35) — the two vocabularies the carrier gate
+  // decides with: the overlay status and the status of each row's state list.
+  'OVERLAY_STATUS', 'STATES_STATUS',
   'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
   // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables
   // govern a review signal and a tag refusal, and were not registered here:
@@ -555,7 +558,7 @@ export function walkTree(root, dir, out = { code: [], other: [] }) {
 /** The objects that must be frozen at load, by module. */
 async function governingObjects(root) {
   const load = (p) => import(pathToFileURL(join(root, p)).href);
-  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link, otp, oob, voice] = await Promise.all([
+  const [rulesets, lifecycle, states, text, tpmo, instance, learning, quality, knowledge, crm, link, otp, oob, voice, overlay] = await Promise.all([
     load('api/_lib/cy2027/rulesets.js'),
     load('api/_lib/cy2027/ruleset-lifecycle.js'),
     load('api/_lib/cy2027/state-rules.js'),
@@ -570,6 +573,7 @@ async function governingObjects(root) {
     load('api/_lib/cy2027/otp.js'),
     load('api/_lib/cy2027/out-of-band-verification.js'),
     load('api/_lib/cy2027/voice-soa.js'),
+    load('api/_lib/cy2027/carrier-overlay.js'),
   ]);
   // AUDIT 2026-10-04 (CBF-10, red team) — see GOVERNING_IDENTIFIERS. KB_PROVENANCE
   // is what api/chat.js holds from load: knowledgeProvenance(sha256 of the body
@@ -591,6 +595,12 @@ async function governingObjects(root) {
     SOA_SCOPE_PROBLEM: instance.SOA_SCOPE_PROBLEM,
     // AUDIT 2026-10-04 (WVG-11, red team) — see GOVERNING_IDENTIFIERS.
     LINK_OUTCOME: link.LINK_OUTCOME,
+    // AUDIT 2026-10-04 (SPEC-31 / SPEC-35) — see GOVERNING_IDENTIFIERS. The
+    // registry itself (CARRIER_OVERLAYS) is module-private by design, so only
+    // the two vocabularies the gate decides with can be checked at load; the
+    // QA-matrix suite proves the rows are frozen through the guarded accessor.
+    OVERLAY_STATUS: overlay.OVERLAY_STATUS,
+    STATES_STATUS: overlay.STATES_STATUS,
     // AUDIT 2026-10-04 (SPEC-12) — see GOVERNING_IDENTIFIERS.
     OTP_POLICY: otp.OTP_POLICY,
     VERIFICATION_LETTER: oob.VERIFICATION_LETTER,

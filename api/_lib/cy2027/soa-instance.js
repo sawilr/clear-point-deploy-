@@ -668,3 +668,23 @@ export function requiresNewInstance(instance, appointment, ruleset) {
   if (!instF || instF.inPerson !== f.inPerson) return true;
   return false;
 }
+
+// AUDIT 2026-10-04 (SPEC-31 "User changes NY to NJ after SOA started") — the
+// form withdrew the two acknowledgements and the typed signature when the
+// document LANGUAGE changed (G08) but kept them when the residence STATE
+// changed, so a signature typed under "Scope of Appointment - New York"
+// survived a switch to New Jersey and was filed under the New Jersey ruleset.
+// The rule is one pure function the form calls on a jurisdiction change:
+// whatever was AFFIRMED is withdrawn when the context it was affirmed in
+// changes; facts (ZIP, date, categories) are kept and re-confirmed at the
+// read-back. Only a literal `true` counts as an affirmation and only a string
+// as a signature; nothing is mutated and the answer is frozen.
+export function affirmationsAfterContextChange(previous, next, affirmations) {
+  const current = affirmations && typeof affirmations === 'object' ? affirmations : {};
+  const same = previous === next;
+  return Object.freeze({
+    noObligation: same && current.noObligation === true,
+    eSignature: same && current.eSignature === true,
+    signature: same && typeof current.signature === 'string' ? current.signature : '',
+  });
+}

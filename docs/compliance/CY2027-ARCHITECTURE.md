@@ -91,6 +91,45 @@ reason — never a bare boolean:
 | `SOA_NOT_RECORDED_BEFORE_APPOINTMENT` | the CY2027 ordering rule |
 | `IN_PERSON_REQUIRES_WRITTEN_SOA` | voice-only never unlocks an in-person appointment |
 
+### 2.1a The document language is an election (G08)
+
+The language of a signed SOA is the language its disclosures were **read** in. It
+used to come from `lead?.language || 'es'` on the client and a coalesce-to-`'es'`
+on the server, so a record could not tell "chose Spanish" from "defaulted to
+Spanish". It is now two fields, and only an election is signable:
+
+| `languageSource` | Signable | Meaning |
+|---|---|---|
+| `BENEFICIARY_ELECTED` | yes | chosen on the bilingual election screen by the beneficiary |
+| `REPRESENTATIVE_ELECTED` | yes | chosen by a representative — the record must also carry `representativeRelationship` |
+| `SYSTEM_DEFAULT` | **no** | exists so the gap can be named and refused |
+| `INFERRED_FROM_LEAD` | **no** | idem |
+
+Where it is enforced — every layer, not only the constructor:
+
+- `readLanguageElection(body)` — the only place the handler reads it; reasons
+  `LANGUAGE_NOT_SUPPLIED` / `ELECTION_NOT_RECORDED` / `NOT_AN_ELECTION`. `api/sign-soa.js`
+  answers `400 SOA_LANGUAGE_ELECTION_REQUIRED` with that reason and emits the audit
+  action `SOA_REFUSED` (reason only — never the raw submitted strings).
+- `createSoaInstance()` — `election_required`, `not_an_election`, and the attribution
+  cross-check `representative_required` / `election_attribution_mismatch`: who elected
+  must agree with who signed.
+- `completeSoaInstance()`, `buildEvidenceRecord()`, `renderTextSnapshot()` and
+  `marketingGate()` each refuse a record without an election
+  (`SOA_LANGUAGE_NOT_ELECTED`), so a rehydrated or hand-built instance cannot slip
+  past the constructor.
+- `languageElectionLabel()` — one function for the read-back screen and the PDF; it
+  throws rather than print a default.
+- The form withdraws both acknowledgements and the typed signature whenever the
+  language is changed: an affirmation given against one language's text is not an
+  affirmation of the other's (spec §9, no prechecked boxes).
+
+**Not done — owner decision:** the approved template keeps its title and opening
+paragraph in English in both language versions (`SOA_TEXT.es.title` / `.intro`).
+The election screen therefore promises only what is true (categories, statements
+and signature section in the elected language). Approving a Spanish title and intro
+means editing `soa-text.js` and re-pinning `APPROVED_TEXT_DIGEST`.
+
 ### 2.2 Plan-year rulesets
 
 ```
@@ -612,46 +651,26 @@ fabricated compliance evidence. A valid Master SOA is deliberately **not** an in
 this gate — §33 lists "carrier-specific requirement is bypassed because Master SOA
 exists" as an immediate-fail.
 
+**State lists and evidence sources (SPEC-31 / SPEC-35, 2026-10-04).** The per-carrier
+`states` lists were written by an earlier engineer; spec §17/§37 states a state for exactly
+two carriers (Clover Health: NJ; ConnectiCare: CT). Each row now carries `statesStatus` —
+`STATED_BY_SPEC` for those two, `UNVERIFIED` for the other eight (an engineer's working
+assumption, part of the pending verification, never presented as a fact; `VERIFIED` exists
+for a named person to set after verifying a current-year market list) — and
+`evidenceSourceUrl`, the public source spec §36 gives for the carrier (six carriers; `null`
+for UnitedHealthcare, Fidelis, HealthSpring/HCSC and Anthem/Empire, for which the spec
+gives none). The gate is one pure function, `overlayGateDecision(row)`, that
+`canDiscussCarrier()` calls: a pending status is refused with the status as the reason,
+and a verified status over an unverified state list is refused by name
+(`STATES_UNVERIFIED`), so verifying a contract never unlocks a state nobody verified.
+The rows and their state lists are frozen all the way down (observed through the guarded
+accessor by `scripts/test-cy2027-qa-matrix-2026-10-04.mjs`); `OVERLAY_STATUS` and
+`STATES_STATUS` are registered governing objects; the registry itself stays
+module-private. `overlayInventory()` now reports carrier, plan year, states, state-list
+status, status and evidence source — the §35 "Carrier Overlay Registry with evidence
+source, plan year and status".
+
 ---
-
-### 2.1a The document language is an election (G08)
-
-The language of a signed SOA is the language its disclosures were **read** in. It
-used to come from `lead?.language || 'es'` on the client and a coalesce-to-`'es'`
-on the server, so a record could not tell "chose Spanish" from "defaulted to
-Spanish". It is now two fields, and only an election is signable:
-
-| `languageSource` | Signable | Meaning |
-|---|---|---|
-| `BENEFICIARY_ELECTED` | yes | chosen on the bilingual election screen by the beneficiary |
-| `REPRESENTATIVE_ELECTED` | yes | chosen by a representative — the record must also carry `representativeRelationship` |
-| `SYSTEM_DEFAULT` | **no** | exists so the gap can be named and refused |
-| `INFERRED_FROM_LEAD` | **no** | idem |
-
-Where it is enforced — every layer, not only the constructor:
-
-- `readLanguageElection(body)` — the only place the handler reads it; reasons
-  `LANGUAGE_NOT_SUPPLIED` / `ELECTION_NOT_RECORDED` / `NOT_AN_ELECTION`. `api/sign-soa.js`
-  answers `400 SOA_LANGUAGE_ELECTION_REQUIRED` with that reason and emits the audit
-  action `SOA_REFUSED` (reason only — never the raw submitted strings).
-- `createSoaInstance()` — `election_required`, `not_an_election`, and the attribution
-  cross-check `representative_required` / `election_attribution_mismatch`: who elected
-  must agree with who signed.
-- `completeSoaInstance()`, `buildEvidenceRecord()`, `renderTextSnapshot()` and
-  `marketingGate()` each refuse a record without an election
-  (`SOA_LANGUAGE_NOT_ELECTED`), so a rehydrated or hand-built instance cannot slip
-  past the constructor.
-- `languageElectionLabel()` — one function for the read-back screen and the PDF; it
-  throws rather than print a default.
-- The form withdraws both acknowledgements and the typed signature whenever the
-  language is changed: an affirmation given against one language's text is not an
-  affirmation of the other's (spec §9, no prechecked boxes).
-
-**Not done — owner decision:** the approved template keeps its title and opening
-paragraph in English in both language versions (`SOA_TEXT.es.title` / `.intro`).
-The election screen therefore promises only what is true (categories, statements
-and signature section in the elected language). Approving a Spanish title and intro
-means editing `soa-text.js` and re-pinning `APPROVED_TEXT_DIGEST`.
 
 ## 5. Evidence
 
@@ -677,7 +696,7 @@ Stated plainly rather than implied:
 | TPMO organization/product counts | **OWNER-SUPPLIED.** `BLOCKED_COUNTS_REQUIRED`; the count-less standardized sentence renders. Never to be guessed. |
 | Knowledge base approval | **OWNER-SUPPLIED.** The body every assistant answers from (`api/_lib/medicare-knowledge.js`) is release `CP-UMKE-CY2026-v1.0`, pinned by digest (the build fails if the text changes without a new release) and stamped on every `[AI-AUDIT]` line (`kb_version`, `kb_digest`, `kb_status`). `approvedBy`/`approvedOn` are null (`APPROVAL_NOT_RECORDED`) and it is tagged plan year 2026 because it was last changed on 2026-09-13; nobody has recorded a CY2027 review. Never to be filled from a commit date. When the owner records them, `approvedBy` must name a person — judged by the layer's one human-actor rule (`humanActorProblem()`: an automation, an AI product, one of the agency's own assistants, or a string with hidden characters fails the build) — and `approvedOn` must be a real calendar day, already past, no earlier than `issuedOn`; the ledger itself must stay chronological and version-increasing. Unlike the rows above, this does not close a gate: the body is live. |
 | Evidence store backend | **CONFIGURATION.** Verify with `node scripts/cy2027-verify-evidence-store.mjs` — it writes, reads back and compares bytes before you flip the precondition. The code path is complete and fails closed, but `CY2027_EVIDENCE_STORE_URL` / `_TOKEN` are unset, so `signedPdfPersisted` stays false until a real round trip is verified. |
-| Carrier overlays | All `PENDING_*`. Each needs private/contract/current-year verification. |
+| Carrier overlays | All `PENDING_*`. Each needs private/contract/current-year verification. The state lists of eight carriers are `UNVERIFIED` (an earlier engineer's assumption; only Clover Health NJ and ConnectiCare CT are stated by the spec) and are part of that verification; a verified status over an unverified list is refused `STATES_UNVERIFIED`. The inventory carries the spec §36 source URL per carrier, `null` for the four the spec gives none for (§4). |
 | ZIP→county dataset | Not installed; the form asks the beneficiary instead. `parseCountyCsv()` turns a two-column `zip,county` CSV into the dataset, so installing real data is a file drop. Malformed rows are skipped, never guessed. |
 | `ENROLLMENT_RECORD` retention period | Unconfirmed; that class cannot be purged at all until the owner supplies it. |
 | Recording-notice all-party positions | Carried as the project's existing position of record, flagged `complianceReview: OWNER_COUNSEL`. Not re-determined by this code. |
@@ -706,10 +725,32 @@ Stated plainly rather than implied:
 
 - `npm run build` — 46/46 routes prerendered; the parity guard runs inside the build.
 - `tsc -b` clean; `eslint .` clean.
-- `npm test` — 44/44 suites.
+- `npm test` — 54/54 suites (run 2026-10-27; the figure was 44/44 when first written —
+  run the battery for the current one).
 - `scripts/test-cy2027-2026-10-01.mjs` — covers every gate in both directions (blocks
   what it must block, still permits what must keep working). The count grows with every
   finding; run the suite for the current figure rather than trusting one written here.
+- **QA matrix and website gates (SPEC-27 / SPEC-31, 2026-10-04)** —
+  `docs/compliance/CY2027-QA-MATRIX.md` maps each of the 25 spec §31 cases and the 12
+  website gates W0–W11 to executed assertions (suite file and label), with the status
+  exactly PASS / FAIL / NOT TESTABLE HERE and the voice-agent and GoHighLevel halves
+  never marked PASS. `scripts/test-cy2027-qa-matrix-2026-10-04.mjs` keeps it honest
+  mechanically (every cited label must exist as a literal in the suite it names; the
+  checker is observed failing on defective matrices first) and adds the behavioural
+  tests the cases lacked. It found and fixed one contained defect: the form kept the
+  acknowledgements and the typed signature across a change of residence state
+  (`affirmationsAfterContextChange()`, one rule the form now calls for both state
+  radios). Gates W6 (channel choice) and W11 (licensed workspace) do not exist and W9
+  (copy, filed PDF) is unmet in production configuration — recorded as FAIL with the
+  options, not redesigned.
+- **Security operations (SPEC-30, 2026-10-04)** —
+  `docs/compliance/CY2027-SECURITY-OPERATIONS.md`: threat model with the assertion per
+  control, incident and breach workflow (hold through `applyHold()`, notification
+  duties for counsel), storage inventory (nothing is backed up by this project; restore
+  NOT DONE), rollback as the project really deploys, cost items without prices, what
+  scanning exists (`npm audit` in the preflight, the red-team rounds) and what does not
+  (no external penetration test, no CI), and the real-credentials-in-the-test-shell
+  finding.
 - **Independent red team (2026-10-02)** — 6 attack lenses, every claimed break
   re-run from scratch by a different agent before it counted. **37 findings
   reproduced: 9 critical, 22 high, 4 medium, 2 low. All 37 are fixed and pinned

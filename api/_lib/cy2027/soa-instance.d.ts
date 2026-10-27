@@ -149,3 +149,19 @@ export declare function requiresNewInstance(
   appointment: SoaAppointment | null,
   ruleset?: { planYear: number } | null,
 ): boolean;
+
+/** What the beneficiary AFFIRMED on the form: the two acknowledgements and the typed signature. */
+export interface SoaAffirmations {
+  readonly noObligation: boolean;
+  readonly eSignature: boolean;
+  readonly signature: string;
+}
+/**
+ * The affirmations that survive a change of context (residence state, document
+ * language): all of them when `previous === next`, none otherwise.
+ */
+export declare function affirmationsAfterContextChange(
+  previous: unknown,
+  next: unknown,
+  affirmations: Partial<SoaAffirmations> | null | undefined,
+): SoaAffirmations;

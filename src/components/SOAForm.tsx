@@ -39,7 +39,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
   STATE_RULESETS, SUPPORTED_STATES, soaFormRules, readBackLines, partitionSelection,
-  LANGUAGE_SOURCE, languageElectionLabel,
+  LANGUAGE_SOURCE, languageElectionLabel, affirmationsAfterContextChange,
   type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
@@ -291,6 +291,24 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
     setErrors({});
     setStep('form');
     setElected(null);
+  };
+
+  // AUDIT 2026-10-04 (SPEC-31 "User changes NY to NJ after SOA started") — the
+  // residence state is the jurisdiction: it names the document ("Scope of
+  // Appointment - New York") and selects the state ruleset the signature is
+  // filed under. The two radios used to call setResidenceState() directly, so
+  // acknowledgements ticked and a name typed under one state survived a switch
+  // to another. Every state change now goes through this handler, and what
+  // survives is decided by affirmationsAfterContextChange() — the shared rule —
+  // never here: facts (ZIP, date, categories) are kept and re-confirmed at the
+  // read-back, affirmations are withdrawn.
+  const changeResidenceState = (code: SupportedState | 'OTHER') => {
+    const kept = affirmationsAfterContextChange(residenceState, code, { noObligation: ackNoObl, eSignature: ackEsig, signature });
+    setAckNoObl(kept.noObligation);
+    setAckEsig(kept.eSignature);
+    setSignature(kept.signature);
+    setResidenceState(code);
+    setErrors((p) => ({ ...p, residenceState: '' }));
   };
 
   const Tpmo = (
@@ -555,7 +573,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
                   className="w-5 h-5 accent-gold-500"
                   checked={residenceState === code}
                   aria-invalid={!!errors.residenceState}
-                  onChange={() => { setResidenceState(code); setErrors((p) => ({ ...p, residenceState: '' })); }}
+                  onChange={() => changeResidenceState(code)}
                 />
                 <span className="text-earth-800 text-sm font-medium">
                   {L === 'es' ? STATE_RULESETS[code].nameEs : STATE_RULESETS[code].name}
@@ -568,7 +586,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
                 name="residence-state"
                 className="w-5 h-5 accent-gold-500"
                 checked={residenceState === 'OTHER'}
-                onChange={() => setResidenceState('OTHER')}
+                onChange={() => changeResidenceState('OTHER')}
               />
               <span className="text-earth-800 text-sm font-medium">{t('stateOther', L)}</span>
             </label>

@@ -588,6 +588,8 @@ ok('the governing list is exactly the prompt, the knowledge, the rulesets, the S
     // AUDIT 2026-10-04 (WVG-11, red team) — the outcome of a consumed signing link: only FILED may be read as a signature.
     'LINK_OUTCOME',
     'CARRIER_OVERLAYS', 'MEDICARE_KNOWLEDGE', 'SYSTEM_PROMPT',
+    // AUDIT 2026-10-04 (SPEC-31 / SPEC-35) — the overlay status and the status of each row's state list: what the carrier gate decides with.
+    'OVERLAY_STATUS', 'STATES_STATUS',
     'CANDIDATE_KINDS', 'LEARNING_PIPELINE', 'LEARNING_REJECTION_REASONS', 'AUTOMATED_OBSERVATIONS',
     // AUDIT 2026-10-04 (FTQ-11 / FTQ-15, red team) — the data-quality tables govern a review signal and a tag refusal.
     'DISPOSABLE_EMAIL_DOMAINS', 'REVIEW_INCONSISTENCY_KINDS', 'VERDICT_TAG_VOCABULARY', 'TAG_REFUSAL_REASONS',
@@ -633,7 +635,8 @@ ok('a getter is not frozen data, however frozen the object is',
   // AUDIT 2026-10-04 (SPEC-12) — 37 → 39: the one-time-code policy (OTP_POLICY) and the verification letter (VERIFICATION_LETTER).
   // AUDIT 2026-10-04 (SPEC-10/19/26/28) — 39 → 47: the voice SOA flag, script, three vocabularies and two reply lists.
   // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — 47 → 48: the voice negation tokens (VOICE_NEGATIVE_TOKENS).
-  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 48, `${r.frozenCount}/${r.objectCount}`);
+  // AUDIT 2026-10-04 (SPEC-31 / SPEC-35) — 48 → 50: OVERLAY_STATUS and STATES_STATUS from carrier-overlay.js.
+  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 50, `${r.frozenCount}/${r.objectCount}`);
 }
 {
   // The same gate, handed a tree that contains each kind of defect.
