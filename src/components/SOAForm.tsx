@@ -39,10 +39,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   SOA_CATEGORIES, SOA_TEXT, APPOINTMENT_FORMATS, SOA_AGENT_LINE,
   STATE_RULESETS, SUPPORTED_STATES, soaFormRules, readBackLines, partitionSelection,
-  LANGUAGE_SOURCE, languageElectionLabel, affirmationsAfterContextChange,
-  type SoaCategoryCode, type SupportedState, type LanguageSourceCode,
+  LANGUAGE_SOURCE, languageElectionLabel, jurisdictionAfterStateChange, jurisdictionAfterLanguageChange,
+  type SoaCategoryCode, type SupportedState, type LanguageSourceCode, type SoaJurisdiction,
 } from '../lib/cy2027';
 import { AGENT, ACKNOWLEDGEMENTS, tLabel, tpmoDisclaimer } from '../lib/soaContent';
+
+/** What the residence-state picker can hold: a supported state, "another state", or nothing yet. */
+type ResidenceChoice = SupportedState | 'OTHER' | '';
 
 export interface SOAFormResult {
   ok: boolean;
@@ -144,15 +147,19 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
     if (!mounted.current) { mounted.current = true; return; }
     headingRef.current?.focus();
   }, [elected, step]);
-  const [residenceState, setResidenceState] = useState<SupportedState | 'OTHER' | ''>('');
+  // AUDIT 2026-10-04 (SPEC-31, red team) — the residence state and the three
+  // affirmations made under it were four separate states, so applying the
+  // jurisdiction rule took three writes after the state write, and a copy that
+  // skipped or undid them passed the suite's scan. They are ONE value now: each
+  // context change is a pure transition from src/lib/cy2027 (tested by calling
+  // it) applied with a single write. Nothing starts ticked or typed.
+  const [jurisdiction, setJurisdiction] = useState<SoaJurisdiction<ResidenceChoice>>({ residenceState: '', noObligation: false, eSignature: false, signature: '' });
+  const { residenceState, noObligation: ackNoObl, eSignature: ackEsig, signature } = jurisdiction;
   const [zip, setZip] = useState(lead.zip || '');
   const [county, setCounty] = useState('');
   const [appointmentDate, setAppointmentDate] = useState('');
   const [appointmentFormat, setAppointmentFormat] = useState('');
   const [categories, setCategories] = useState<SoaCategoryCode[]>([]);
-  const [ackNoObl, setAckNoObl] = useState(false);
-  const [ackEsig, setAckEsig] = useState(false);
-  const [signature, setSignature] = useState('');
   const [representativeAuthority, setRepresentativeAuthority] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -285,9 +292,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   // saying the person agreed in Spanish. Answers that are merely FACTS (state,
   // ZIP, date, categories) are kept: the read-back step re-confirms them.
   const changeLanguage = () => {
-    setAckNoObl(false);
-    setAckEsig(false);
-    setSignature('');
+    setJurisdiction((current) => jurisdictionAfterLanguageChange(current));
     setErrors({});
     setStep('form');
     setElected(null);
@@ -298,16 +303,15 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
   // Appointment - New York") and selects the state ruleset the signature is
   // filed under. The two radios used to call setResidenceState() directly, so
   // acknowledgements ticked and a name typed under one state survived a switch
-  // to another. Every state change now goes through this handler, and what
-  // survives is decided by affirmationsAfterContextChange() — the shared rule —
-  // never here: facts (ZIP, date, categories) are kept and re-confirmed at the
-  // read-back, affirmations are withdrawn.
+  // to another. Every state change goes through this handler, and what survives
+  // is decided by the shared rule — never here: facts (ZIP, date, categories)
+  // are kept and re-confirmed at the read-back, affirmations are withdrawn.
+  // AUDIT 2026-10-04 (SPEC-31, red team) — the rule used to be applied here with
+  // three writes a defective copy could skip or undo unseen; the whole next
+  // jurisdiction is now one value from jurisdictionAfterStateChange(), applied
+  // with this single write.
   const changeResidenceState = (code: SupportedState | 'OTHER') => {
-    const kept = affirmationsAfterContextChange(residenceState, code, { noObligation: ackNoObl, eSignature: ackEsig, signature });
-    setAckNoObl(kept.noObligation);
-    setAckEsig(kept.eSignature);
-    setSignature(kept.signature);
-    setResidenceState(code);
+    setJurisdiction((current) => jurisdictionAfterStateChange(current, code));
     setErrors((p) => ({ ...p, residenceState: '' }));
   };
 
@@ -434,11 +438,11 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
           <p className="text-earth-700 text-sm mb-4 leading-relaxed">{txt.authorizationStatement}</p>
           <div className="space-y-3">
             <label className="flex items-start gap-3 p-3 rounded-lg border border-cream-200 cursor-pointer min-h-[56px]">
-              <input type="checkbox" className="mt-1 w-5 h-5 accent-gold-500" checked={ackNoObl} onChange={(e) => setAckNoObl(e.target.checked)} />
+              <input type="checkbox" className="mt-1 w-5 h-5 accent-gold-500" checked={ackNoObl} onChange={(e) => setJurisdiction((current) => ({ ...current, noObligation: e.target.checked }))} />
               <span className="text-earth-700 text-sm leading-relaxed">{ACKNOWLEDGEMENTS.no_obligation[L]}</span>
             </label>
             <label className="flex items-start gap-3 p-3 rounded-lg border border-cream-200 cursor-pointer min-h-[56px]">
-              <input type="checkbox" className="mt-1 w-5 h-5 accent-gold-500" checked={ackEsig} onChange={(e) => setAckEsig(e.target.checked)} />
+              <input type="checkbox" className="mt-1 w-5 h-5 accent-gold-500" checked={ackEsig} onChange={(e) => setJurisdiction((current) => ({ ...current, eSignature: e.target.checked }))} />
               <span className="text-earth-700 text-sm leading-relaxed">{ACKNOWLEDGEMENTS.e_signature[L]}</span>
             </label>
           </div>
@@ -460,7 +464,7 @@ export function SOAForm({ language, lead, onSubmit }: SOAFormProps) {
             label={txt.fields.printedName}
             placeholder={lead.fullName}
             value={signature}
-            onChange={setSignature}
+            onChange={(v) => setJurisdiction((current) => ({ ...current, signature: v }))}
             error={errors.signature}
             required
             autoComplete="off"

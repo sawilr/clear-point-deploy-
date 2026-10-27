@@ -735,12 +735,18 @@ Stated plainly rather than implied:
   website gates W0–W11 to executed assertions (suite file and label), with the status
   exactly PASS / FAIL / NOT TESTABLE HERE and the voice-agent and GoHighLevel halves
   never marked PASS. `scripts/test-cy2027-qa-matrix-2026-10-04.mjs` keeps it honest
-  mechanically (every cited label must exist as a literal in the suite it names; the
+  mechanically (every cited suite must be one `npm test` runs and every cited label
+  must be the label of an assertion in it — a fixture or a payload is not evidence; the
   checker is observed failing on defective matrices first) and adds the behavioural
   tests the cases lacked. It found and fixed one contained defect: the form kept the
   acknowledgements and the typed signature across a change of residence state
-  (`affirmationsAfterContextChange()`, one rule the form now calls for both state
-  radios). Gates W6 (channel choice) and W11 (licensed workspace) do not exist and W9
+  (`affirmationsAfterContextChange()`, one rule). After an independent red team showed
+  the form's three-write application could be neutered or undone unseen by the scan,
+  the form holds the residence state and the three affirmations as one value and applies
+  `jurisdictionAfterStateChange()` / `jurisdictionAfterLanguageChange()` with a single
+  write each; both transitions are tested by calling them. The same round replaced the
+  QA-12 configuration scan with the three SOA handlers driven in process (the request
+  past each cap answers 429). Gates W6 (channel choice) and W11 (licensed workspace) do not exist and W9
   (copy, filed PDF) is unmet in production configuration — recorded as FAIL with the
   options, not redesigned.
 - **Security operations (SPEC-30, 2026-10-04)** —

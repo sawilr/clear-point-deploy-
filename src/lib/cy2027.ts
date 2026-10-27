@@ -65,10 +65,14 @@ export {
   // AUDIT 2026-10-04 (SPEC-31) — the one rule for what a jurisdiction change
   // does to the acknowledgements and the typed signature; the form calls it.
   affirmationsAfterContextChange,
+  // AUDIT 2026-10-04 (SPEC-31, red team) — the two transitions the form applies
+  // with a single state write, so the application is a callable rule too.
+  jurisdictionAfterStateChange,
+  jurisdictionAfterLanguageChange,
 } from '../../api/_lib/cy2027/soa-instance.js';
 
 export type {
-  SoaInstance, SoaStatus, SoaMethodCode, SoaAppointment, GateDecision, LanguageSourceCode, SoaAffirmations,
+  SoaInstance, SoaStatus, SoaMethodCode, SoaAppointment, GateDecision, LanguageSourceCode, SoaAffirmations, SoaJurisdiction,
 } from '../../api/_lib/cy2027/soa-instance.js';
 
 export { activePlanYear, CY2027_MARKETING_START_UTC } from '../../api/_lib/cy2027/rulesets.js';

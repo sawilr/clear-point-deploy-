@@ -26,7 +26,7 @@ import {
   SOA_STATUS, SOA_METHOD, methodIsWritten, partitionSelection, createSoaInstance, completeSoaInstance,
   superseded, revokeSoaInstance, coversCategory, requiresScopeUpdate, marketingGate as marketingGateAtClock, requiresNewInstance,
   LANGUAGE_SOURCE, languageWasElected, isSoaLanguage, languageElectionLabel, readLanguageElection,
-  electionAttributionError,
+  electionAttributionError, jurisdictionAfterLanguageChange,
 } from '../api/_lib/cy2027/soa-instance.js';
 import {
   CONSENT_STATUS, createConsent, revokeConsent, classifyReply, isAffirmative, assertNoCrossInference, mayPlaceOutbound,
@@ -1732,14 +1732,21 @@ const baseInput = {
     !/Everything you sign will be in the language you pick/.test(FORM2) &&
     !/Todo lo que firme estará en el idioma/.test(FORM2));
   const CHANGE = (FORM2.match(/const changeLanguage = \(\) => \{([\s\S]*?)\n\s*\};/) || [])[1] || '';
+  // AUDIT 2026-10-04 (SPEC-31, red team) — the affirmations and the residence
+  // state are one value now (see jurisdictionAfterLanguageChange in
+  // soa-instance.js): the withdrawal is the rule, called here, and the handler
+  // is pinned to apply it with its single write.
+  const afterLanguage = jurisdictionAfterLanguageChange({ residenceState: 'NY', noObligation: true, eSignature: true, signature: 'Jane Q Public' });
   ok('G08: changing language withdraws everything that was affirmed',
-    /setAckNoObl\(false\);/.test(CHANGE) && /setAckEsig\(false\);/.test(CHANGE) &&
-    /setSignature\(''\);/.test(CHANGE) && /setErrors\(\{\}\);/.test(CHANGE) && /setElected\(null\);/.test(CHANGE));
+    /^[ \t]*setJurisdiction\(\(current\) => jurisdictionAfterLanguageChange\(current\)\);$/m.test(CHANGE) &&
+    /setErrors\(\{\}\);/.test(CHANGE) && /setElected\(null\);/.test(CHANGE) &&
+    JSON.stringify(afterLanguage) === JSON.stringify({ residenceState: 'NY', noObligation: false, eSignature: false, signature: '' }),
+    JSON.stringify(afterLanguage));
   ok('G08: the way back uses that handler and exists on both steps',
     /onClick=\{changeLanguage\}/.test(FORM2) && (FORM2.match(/\{LangChange\}/g) || []).length === 2);
   ok('G08: the acknowledgements never start ticked',
-    /const \[ackNoObl, setAckNoObl\] = useState\(false\);/.test(FORM2) &&
-    /const \[ackEsig, setAckEsig\] = useState\(false\);/.test(FORM2));
+    /^[ \t]*const \[jurisdiction, setJurisdiction\] = useState<SoaJurisdiction<ResidenceChoice>>\(\{ residenceState: '', noObligation: false, eSignature: false, signature: '' \}\);$/m.test(FORM2) &&
+    /^[ \t]*const \{ residenceState, noObligation: ackNoObl, eSignature: ackEsig, signature \} = jurisdiction;$/m.test(FORM2));
   ok('G08: focus follows the view instead of falling to the page',
     /headingRef\.current\?\.focus\(\);\s*\}, \[elected, step\]\);/.test(FORM2) &&
     /ref=\{headingRef\}\s*tabIndex=\{-1\}/.test(FORM2));

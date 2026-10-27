@@ -688,3 +688,37 @@ export function affirmationsAfterContextChange(previous, next, affirmations) {
     signature: same && typeof current.signature === 'string' ? current.signature : '',
   });
 }
+
+// AUDIT 2026-10-04 (SPEC-31, red team) — the form applied the rule above with
+// three separate state writes after the call, and the suite pinned those lines
+// by an anchored scan. A copy of the form that wrapped the three writes in
+// `if (false)`, or restored the old values right after the state write, kept
+// every assertion green: a scan sees that a line exists, never whether it is
+// reached or overridden. What the form holds for the jurisdiction is now ONE
+// value — the residence state and the three affirmations together — and each
+// context change is one pure transition below, applied with a single state
+// write and tested by CALLING it. The scan that remains is a tripwire on the
+// wiring, not the evidence. `next` must be a string to become a state; anything
+// else leaves no state and keeps nothing.
+export function jurisdictionAfterStateChange(current, next) {
+  const cur = current && typeof current === 'object' ? current : {};
+  const previous = typeof cur.residenceState === 'string' ? cur.residenceState : '';
+  const kept = affirmationsAfterContextChange(previous, next, cur);
+  return Object.freeze({
+    residenceState: typeof next === 'string' ? next : '',
+    noObligation: kept.noObligation,
+    eSignature: kept.eSignature,
+    signature: kept.signature,
+  });
+}
+
+/** The document language changed (G08): the state is a fact and stays; every affirmation is withdrawn. */
+export function jurisdictionAfterLanguageChange(current) {
+  const cur = current && typeof current === 'object' ? current : {};
+  return Object.freeze({
+    residenceState: typeof cur.residenceState === 'string' ? cur.residenceState : '',
+    noObligation: false,
+    eSignature: false,
+    signature: '',
+  });
+}

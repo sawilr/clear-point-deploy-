@@ -109,10 +109,12 @@ const SUITES = [
   // QA matrix, website gates and carrier-registry evidence (spec §17, §27, §30,
   // §31, §35, §36; SPEC-27/30/31): the matrix checker observed failing on
   // defective matrices and then run on docs/compliance/CY2027-QA-MATRIX.md
-  // (every status exact, every PASS cited, every cited label present in the
-  // suite it names, spec text verbatim; skipped by name when docs/ is absent);
-  // the §31 cases that had no behavioural test called directly; the carrier
-  // gate decision with every refusal, the rows frozen through the accessor.
+  // (every status exact, every PASS cited, every cited suite in this SUITES
+  // array, every cited label the first argument of an assertion in that suite,
+  // spec text verbatim; skipped by name when docs/ is absent); the §31 cases
+  // that had no behavioural test called directly (the form's jurisdiction
+  // transition, the three SOA handlers driven past their per-IP caps); the
+  // carrier gate decision with every refusal, the rows frozen through the accessor.
   'test-cy2027-qa-matrix-2026-10-04.mjs',
 ];
 

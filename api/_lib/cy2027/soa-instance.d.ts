@@ -165,3 +165,20 @@ export declare function affirmationsAfterContextChange(
   next: unknown,
   affirmations: Partial<SoaAffirmations> | null | undefined,
 ): SoaAffirmations;
+
+/**
+ * The jurisdiction the web form holds as ONE value: the residence state and the
+ * three affirmations made under it (SPEC-31, red team).
+ */
+export interface SoaJurisdiction<S extends string = string> extends SoaAffirmations {
+  readonly residenceState: S;
+}
+/** The full next jurisdiction after a change of residence state: the new state, and the affirmations that survive it. */
+export declare function jurisdictionAfterStateChange<S extends string>(
+  current: Partial<SoaJurisdiction<S>> | null | undefined,
+  next: S,
+): SoaJurisdiction<S>;
+/** The full next jurisdiction after a change of document language: the state kept, every affirmation withdrawn. */
+export declare function jurisdictionAfterLanguageChange<S extends string>(
+  current: Partial<SoaJurisdiction<S>> | null | undefined,
+): SoaJurisdiction<S>;
