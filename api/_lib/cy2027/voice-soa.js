@@ -39,7 +39,7 @@ import {
   categoryByCode, categoryText, readBackLines,
 } from './soa-text.js';
 import { resolveFormat, SOA_METHOD, isSoaLanguage, languageWasElected, electionAttributionError } from './soa-instance.js';
-import { classifyReply, CONSENT_STATUS, isIsoInstant } from './consent.js';
+import { classifyReply, CONSENT_STATUS, isIsoInstant, isRecordableInstant } from './consent.js';
 import { humanActorProblem, ACTOR_MAX_CHARS } from './actors.js';
 import { SUPPORTED_STATES } from './state-rules.js';
 import { plainRecord, plainList } from './plain-record.js';
@@ -69,12 +69,26 @@ export const VOICE_SCRIPT_STATUS = Object.freeze({
  * status stays PENDING_OWNER_APPROVAL and nothing may be offered by voice.
  */
 export const VOICE_SOA_SCRIPT = Object.freeze({
-  version: 'CP-SOA-VOICE-SCRIPT-CY2027-v0.1',
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — v0.2: the owner package
+  // told Emely/Sofía to say sentences that lived ONLY in the document (the
+  // four-choice offer, the in-person refusal, "ask each one separately", the
+  // §21 "has been recorded" close and the save-failed close), so they sat
+  // outside the digest and the approval. Every customer-facing sentence of the
+  // addenda is now here, pinned by VOICE_SCRIPT_DIGEST; the suite checks the
+  // document against the data in BOTH directions. v0.1 was never approved;
+  // v0.2 is still PENDING_OWNER_APPROVAL.
+  version: 'CP-SOA-VOICE-SCRIPT-CY2027-v0.2',
   basedOn: SOA_SCRIPT_VERSION,
   status: VOICE_SCRIPT_STATUS.PENDING_OWNER_APPROVAL,
   approvedBy: null,
   approvedOn: null,
   en: Object.freeze({
+    // Offer stage (§28): the four choices, then the refusal for an in-person
+    // appointment. Spoken before the SOA segment; pinned, not assembled.
+    fourChoices:
+      'You can complete it now with me by voice, receive a secure link by text message, receive it by email, or speak with a licensed Clear Point agent first. Which do you prefer?',
+    inPersonRefusal:
+      'For an in-person appointment, a written Scope of Appointment must be completed first. I can send you a secure link by text message or email.',
     // Asked after the four §28 choices are offered; the reply to THIS question
     // is what voiceSoaOfferProblem() classifies as the caller choosing voice.
     channelConfirmQuestion: 'Would you like to complete it now with me by voice? Please answer yes or no.',
@@ -86,13 +100,24 @@ export const VOICE_SOA_SCRIPT = Object.freeze({
       'Do you authorize the licensed agent to discuss this type of plan with you at this appointment? Please answer yes or no.',
     unsureLead: 'You may also choose this option:',
     unsureQuestion: 'Would you like to choose this option instead? Please answer yes or no.',
+    // Said after a blanket reply ("yes to everything"), before that category is asked again by itself.
+    reAsk: 'I need to ask about each one separately.',
     confirmQuestion: 'Is that correct? Please answer yes or no.',
+    // §21: the "saved" claim is spoken ONLY after the system confirmed the
+    // write; the failed-save close is what is said otherwise.
+    savedClose: 'Your Scope of Appointment has been recorded.',
+    saveFailedClose:
+      'I was not able to save that just now. A licensed Clear Point agent will follow up with you to complete it.',
     incompleteClose:
       'That is fine. Nothing has been recorded as authorized today. A licensed Clear Point agent will explain the process with you first, before any plan-specific discussion.',
     recordingLostClose:
       'I am sorry, the recording of this call was interrupted, so this step cannot be completed by voice. Nothing has been recorded as authorized. A licensed Clear Point agent will follow up with you to complete it another way.',
   }),
   es: Object.freeze({
+    fourChoices:
+      'Puede completarlo ahora conmigo por voz, recibir un enlace seguro por mensaje de texto, recibirlo por correo electrónico, o hablar primero con un agente licenciado de Clear Point. ¿Cuál prefiere?',
+    inPersonRefusal:
+      'Para una cita presencial primero debe completarse un Scope of Appointment por escrito. Puedo enviarle un enlace seguro por mensaje de texto o por correo electrónico.',
     channelConfirmQuestion: '¿Desea completarlo ahora conmigo por voz? Por favor responda sí o no.',
     purpose:
       'El propósito de este paso es documentar qué tipos de productos de planes de Medicare usted desea que el agente licenciado pueda conversar con usted en su próxima cita.',
@@ -102,7 +127,11 @@ export const VOICE_SOA_SCRIPT = Object.freeze({
       '¿Autoriza usted al agente licenciado a conversar sobre este tipo de plan con usted en esta cita? Por favor responda sí o no.',
     unsureLead: 'También puede elegir esta opción:',
     unsureQuestion: '¿Desea elegir esta opción en su lugar? Por favor responda sí o no.',
+    reAsk: 'Necesito preguntarle por cada una por separado.',
     confirmQuestion: '¿Es correcto? Por favor responda sí o no.',
+    savedClose: 'Su Scope of Appointment ha sido registrado.',
+    saveFailedClose:
+      'No pude guardarlo en este momento. Un agente licenciado de Clear Point se comunicará con usted para completarlo.',
     incompleteClose:
       'Está bien. Hoy no se ha registrado ninguna autorización. Un agente licenciado de Clear Point le explicará primero el proceso, antes de cualquier conversación específica sobre planes.',
     recordingLostClose:
@@ -116,7 +145,7 @@ export const VOICE_SOA_SCRIPT = Object.freeze({
  * too). Recomputed by scripts/check-cy2027-parity.mjs; a mismatch fails the
  * build. Re-pin ONLY together with an owner-approved change.
  */
-export const VOICE_SCRIPT_DIGEST = 'sha256:445c1027f56f55826c9920fff8c7d196dd044f0ba69a5b6a6061917afcb9f690';
+export const VOICE_SCRIPT_DIGEST = 'sha256:b0adef6e811d906af040042c91d5fdbadc1a0c7be4a46ca5fe176c075506aca1';
 
 /** Why a voice-SOA step cannot proceed. Every refusal is one of these names. */
 export const VOICE_SOA_PROBLEM = Object.freeze({
@@ -141,7 +170,9 @@ export const VOICE_SOA_PROBLEM = Object.freeze({
   READ_BACK_NOT_CONFIRMED: 'READ_BACK_NOT_CONFIRMED',
   READ_BACK_REJECTED: 'READ_BACK_REJECTED',
   SEGMENT_TIMESTAMPS_INVALID: 'SEGMENT_TIMESTAMPS_INVALID',
+  SEGMENT_AFTER_AFFIRMATION: 'SEGMENT_AFTER_AFFIRMATION',
   RECORDING_LOST_DURING_SEGMENT: 'RECORDING_LOST_DURING_SEGMENT',
+  VOICE_SCRIPT_DIGEST_MISMATCH: 'VOICE_SCRIPT_DIGEST_MISMATCH',
   VOICE_EVIDENCE_MISSING: 'VOICE_EVIDENCE_MISSING',
   VOICE_EVIDENCE_INCOMPLETE: 'VOICE_EVIDENCE_INCOMPLETE',
   VOICE_EVIDENCE_CONTRADICTS_INSTANCE: 'VOICE_EVIDENCE_CONTRADICTS_INSTANCE',
@@ -171,8 +202,11 @@ export const VOICE_CAPTURE_OUTCOME = Object.freeze({
 export const BLANKET_REPLIES = Object.freeze([
   'everything', 'all', 'all of them', 'all of those', 'all of the above', 'all three', 'both',
   'yes to everything', 'yes to all', 'yes all', 'yes everything', 'any of them', 'anything', 'whatever',
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — "yes every one", "yes each of them", "the whole lot" slipped a list of exact tokens.
+  'every one', 'everyone', 'every single one', 'each of them', 'each one', 'the whole lot', 'the lot', 'all of em',
   'todo', 'todos', 'todas', 'a todo', 'sí a todo', 'si a todo', 'todo sí', 'todo si', 'todas las opciones',
   'todos los planes', 'las tres', 'los tres', 'cualquiera', 'lo que sea', 'ambos', 'ambas',
+  'cada una', 'cada uno', 'todas ellas', 'todos ellos',
 ]);
 
 /**
@@ -209,6 +243,40 @@ export function isBlanketReply(text) {
 export function isUnsureReply(text) {
   const t = norm(text);
   return !!t && UNSURE_REPLIES.some((p) => containsPhrase(t, p));
+}
+
+/**
+ * AUDIT 2026-10-04 (SPEC-10/19/26/28, red team, HIGH) — "yes, not that one",
+ * "yes, not really", "yes I would rather not", "yes, probably not" were
+ * AUTHORIZED per category, and "yes, that is not right" / "yes, incorrect"
+ * CONFIRMED the read-back: consent.js NEGATIVE knows "no", "do not" and
+ * "don't" but not "not" (nor "never", "wrong", "incorrect", "nunca",
+ * "tampoco"), and its short-affirmative-opening rule grants anything that
+ * starts with "yes". This module layered blanket and unsure guards on top of
+ * classifyReply and no negation guard, and gave the misreading a new
+ * consequence: a per-category authorization inside a hashed record, and a
+ * confirmed read-back that opens the marketing gate.
+ *
+ * A negation anywhere in the reply is a refusal of what was just asked — the
+ * stance of consent.js CT-01 ("a refusal anywhere wins"), applied in every
+ * voice path that reads a yes: the channel choice, each category, the
+ * read-back. The unsure guard runs first, so "not sure" / "I dont know" stay
+ * uncertainty, never a decline. Apostrophes are stripped by norm(), so the
+ * contractions are listed without them. Widening consent.js NEGATIVE itself
+ * would change the web/chat consent paths too: that is the owner's call,
+ * listed, not taken.
+ */
+export const VOICE_NEGATIVE_TOKENS = Object.freeze([
+  'not', 'nope', 'nah', 'never', 'wrong', 'incorrect', 'mistaken', 'negative', 'decline', 'cancel',
+  'dont', 'isnt', 'doesnt', 'didnt', 'cant', 'wont', 'couldnt', 'shouldnt', 'wouldnt', 'arent', 'wasnt', 'werent', 'aint', 'havent', 'hasnt',
+  'tampoco', 'nunca', 'jamás', 'jamas', 'ninguno', 'ninguna', 'incorrecto', 'incorrecta', 'equivocado', 'equivocada',
+  'está mal', 'esta mal', 'cancele', 'cancelar',
+]);
+
+/** True when the reply carries a negation anywhere — a refusal, never a yes. */
+export function isNegatedReply(text) {
+  const t = norm(text);
+  return !!t && VOICE_NEGATIVE_TOKENS.some((p) => containsPhrase(t, p));
 }
 
 const hasOwn = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
@@ -260,9 +328,16 @@ export function assembleVoiceScript(lang, script = VOICE_SOA_SCRIPT) {
     if (c.authorizes) lines.push(line('CATEGORY', `${ct.label}. ${ct.description} ${s.categoryQuestion}`, c.code));
     else lines.push(line('UNSURE_OPTION', `${s.unsureLead} ${ct.label}. ${ct.description} ${s.unsureQuestion}`, c.code));
   }
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — the re-ask line and the two
+  // closes after the confirmation were spoken from the document only. They are
+  // fixed lines of the script now: in the digest, in the evidence block's
+  // scriptLines, and quoted by the owner package verbatim.
+  lines.push(line('RE_ASK', s.reAsk));
   lines.push(line('READ_BACK', `${t.readBackHeading}. ${t.readBackIntro}`));
   lines.push(line('AUTHORIZATION', t.authorizationStatement));
   lines.push(line('CONFIRM', s.confirmQuestion));
+  lines.push(line('SAVED_CLOSE', s.savedClose));
+  lines.push(line('SAVE_FAILED_CLOSE', s.saveFailedClose));
   lines.push(line('INCOMPLETE_CLOSE', s.incompleteClose));
   lines.push(line('RECORDING_LOST_CLOSE', s.recordingLostClose));
   return Object.freeze(lines);
@@ -327,6 +402,8 @@ export function voiceSoaOfferProblem(ctx, { enabled = VOICE_SOA_ENABLED, script 
   const choice = plainRecord(c.channelChoice, ['channel', 'reply']);
   if (!choice || choice.channel !== 'VOICE') return VOICE_SOA_PROBLEM.CHANNEL_NOT_CHOSEN_BY_CALLER;
   if (typeof choice.reply !== 'string' || isUnsureReply(choice.reply) || isBlanketReply(choice.reply)) return VOICE_SOA_PROBLEM.CHANNEL_NOT_CHOSEN_BY_CALLER;
+  // "yes, not by voice" / "yes, never mind" is not the caller choosing voice.
+  if (isNegatedReply(choice.reply)) return VOICE_SOA_PROBLEM.CHANNEL_NOT_CHOSEN_BY_CALLER;
   if (classifyReply(choice.reply) !== CONSENT_STATUS.GRANTED) return VOICE_SOA_PROBLEM.CHANNEL_NOT_CHOSEN_BY_CALLER;
 
   const format = resolveFormat(c.appointmentFormat);
@@ -361,6 +438,10 @@ export function classifyCategoryReply(code, reply) {
   }
   if (isBlanketReply(text)) {
     return Object.freeze({ ...base, replyClass: CONSENT_STATUS.UNCLEAR, decision: null, problem: VOICE_SOA_PROBLEM.BLANKET_REPLY_NOT_AUTHORIZATION });
+  }
+  // A negation anywhere declines the category, whatever the reply opened with.
+  if (isNegatedReply(text)) {
+    return Object.freeze({ ...base, replyClass: CONSENT_STATUS.DECLINED, decision: VOICE_DECISION.DECLINED, problem: null });
   }
   const replyClass = classifyReply(text);
   if (replyClass === CONSENT_STATUS.DECLINED) return Object.freeze({ ...base, replyClass, decision: VOICE_DECISION.DECLINED, problem: null });
@@ -450,6 +531,8 @@ export function readBackProblem(capture, readBack) {
   if (!selected || !sameSet(items, selected)) return VOICE_SOA_PROBLEM.READ_BACK_MISMATCH;
   if (typeof rb.confirmReply !== 'string' || rb.confirmReply.length > REPLY_MAX_CHARS) return VOICE_SOA_PROBLEM.READ_BACK_NOT_CONFIRMED;
   if (isUnsureReply(rb.confirmReply) || isBlanketReply(rb.confirmReply)) return VOICE_SOA_PROBLEM.READ_BACK_NOT_CONFIRMED;
+  // "Is that correct?" — "yes, not exactly" / "yes, incorrect" is a rejection (§31: the read-back catches the discrepancy).
+  if (isNegatedReply(rb.confirmReply)) return VOICE_SOA_PROBLEM.READ_BACK_REJECTED;
   const cls = classifyReply(rb.confirmReply);
   if (cls === CONSENT_STATUS.DECLINED) return VOICE_SOA_PROBLEM.READ_BACK_REJECTED;
   if (cls !== CONSENT_STATUS.GRANTED) return VOICE_SOA_PROBLEM.READ_BACK_NOT_CONFIRMED;
@@ -461,18 +544,32 @@ export function readBackProblem(capture, readBack) {
  * portion". A segment whose recording was not confirmed active THROUGHOUT is
  * void: nothing captured in it is completed, and the reason is named.
  */
-export function recordingSegmentProblem(segment) {
+export function recordingSegmentProblem(segment, nowMs = Date.now()) {
   const s = plainRecord(segment, ['startedAt', 'endedAt', 'recordingActiveThroughout'], ['recordingLostAt']);
   if (!s) return VOICE_SOA_PROBLEM.SEGMENT_TIMESTAMPS_INVALID;
   if (!isIsoInstant(s.startedAt) || !isIsoInstant(s.endedAt)) return VOICE_SOA_PROBLEM.SEGMENT_TIMESTAMPS_INVALID;
   if (Date.parse(s.startedAt) >= Date.parse(s.endedAt)) return VOICE_SOA_PROBLEM.SEGMENT_TIMESTAMPS_INVALID;
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — a segment "recorded" in
+  // 2099 was valid: only the shape and start<end were checked. A segment
+  // cannot end in the future (the layer's one rule for that, from consent.js,
+  // with its clock tolerance); `nowMs` is the clock it is judged against.
+  if (!isRecordableInstant(s.endedAt, nowMs)) return VOICE_SOA_PROBLEM.SEGMENT_TIMESTAMPS_INVALID;
   if (s.recordingActiveThroughout !== true) return VOICE_SOA_PROBLEM.RECORDING_LOST_DURING_SEGMENT;
   if (hasOwn(s, 'recordingLostAt') && s.recordingLostAt !== null && s.recordingLostAt !== undefined) return VOICE_SOA_PROBLEM.RECORDING_LOST_DURING_SEGMENT;
   return null;
 }
 
+// AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — the block carried nothing
+// that bound it to the call or the appointment, so one recording segment
+// evidenced any number of instances and beneficiaries. It now names the
+// GoHighLevel contact the recording belongs to and the appointment it was
+// taken for; the appointment is compared with the instance at
+// voiceInstanceContradiction(). The instance model carries no contact
+// reference, and refusing a second COMPLETED instance over the same
+// recordingReference (RECORDING_ALREADY_EVIDENCED) needs the evidence store
+// the receiving handler will use: both are compared there when it exists.
 const VOICE_EVIDENCE_KEYS = Object.freeze([
-  'recordingReference', 'transcriptReference', 'segment', 'scriptVersion', 'scriptDigest', 'scriptApproval',
+  'contactReference', 'appointmentId', 'recordingReference', 'transcriptReference', 'segment', 'scriptVersion', 'scriptDigest', 'scriptApproval',
   'language', 'languageSource', 'representativeRelationship', 'scriptLines', 'decisions', 'selectedCategories',
   'declinedCategories', 'readBack',
 ]);
@@ -485,15 +582,28 @@ const VOICE_EVIDENCE_KEYS = Object.freeze([
  * whole block INSIDE the integrity hash of a VOICE_RECORDED instance.
  *
  * Returns { ok: true, voice } or { ok: false, reason, code? }.
+ *
+ * AUDIT 2026-10-04 (SPEC-10/19/26/28, red team, MEDIUM) — VOICE_SOA_ENABLED
+ * was enforced by the offer gate only: with the flag false, an approved
+ * script let a block be built, judged and written into a COMPLETED instance.
+ * The flag is now the first refusal of every stage, then the approval, in the
+ * order the offer gate uses. `scriptDigest` is the digest of the script
+ * actually spoken (this module cannot hash; evidence.js recomputes the digest
+ * of the script in force with node:crypto and refuses a block whose digest
+ * differs). `nowMs` is the clock the segment is judged against. evidence.js
+ * passes NONE of these options: it runs on the flag, the repository script,
+ * its pinned digest and the real clock; the options exist for the suite.
  */
-export function buildVoiceEvidence(input, { script = VOICE_SOA_SCRIPT, today = utcToday() } = {}) {
+export function buildVoiceEvidence(input, { enabled = VOICE_SOA_ENABLED, script = VOICE_SOA_SCRIPT, scriptDigest = VOICE_SCRIPT_DIGEST, today = utcToday(), nowMs = Date.now() } = {}) {
   const refuse = (reason, code = null) => Object.freeze({ ok: false, reason, code });
+  if (enabled !== true) return refuse(VOICE_SOA_PROBLEM.VOICE_SOA_DISABLED);
   const approval = voiceScriptApprovalProblem(script, today);
   if (approval) return refuse(approval);
-  const i = plainRecord(input, ['recordingReference', 'transcriptReference', 'segment', 'language', 'languageSource', 'replies', 'readBack'], ['representativeRelationship']);
+  const i = plainRecord(input, ['contactReference', 'appointmentId', 'recordingReference', 'transcriptReference', 'segment', 'language', 'languageSource', 'replies', 'readBack'], ['representativeRelationship']);
   if (!i) return refuse(VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE);
+  if (!nonEmptyString(i.contactReference) || !nonEmptyString(i.appointmentId)) return refuse(VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE);
   if (!nonEmptyString(i.recordingReference) || !nonEmptyString(i.transcriptReference)) return refuse(VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE);
-  const segmentProblem = recordingSegmentProblem(i.segment);
+  const segmentProblem = recordingSegmentProblem(i.segment, nowMs);
   if (segmentProblem) return refuse(segmentProblem);
   if (!isSoaLanguage(i.language) || !languageWasElected(i.languageSource)) return refuse(VOICE_SOA_PROBLEM.SOA_LANGUAGE_NOT_ELECTED);
   const rep = hasOwn(i, 'representativeRelationship') && typeof i.representativeRelationship === 'string' && i.representativeRelationship.trim()
@@ -514,11 +624,13 @@ export function buildVoiceEvidence(input, { script = VOICE_SOA_SCRIPT, today = u
   return Object.freeze({
     ok: true,
     voice: Object.freeze({
+      contactReference: i.contactReference.trim(),
+      appointmentId: i.appointmentId.trim(),
       recordingReference: i.recordingReference.trim(),
       transcriptReference: i.transcriptReference.trim(),
       segment: Object.freeze({ startedAt: segment.startedAt, endedAt: segment.endedAt, recordingActiveThroughout: true }),
       scriptVersion: script.version,
-      scriptDigest: VOICE_SCRIPT_DIGEST,
+      scriptDigest,
       scriptApproval: Object.freeze({ approvedBy: script.approvedBy, approvedOn: script.approvedOn }),
       language: i.language,
       languageSource: i.languageSource,
@@ -537,16 +649,19 @@ export function buildVoiceEvidence(input, { script = VOICE_SOA_SCRIPT, today = u
  * block's OWN data: the decisions are re-run through the capture rule, the
  * read-back is re-checked, the script version/digest/approval must be the
  * ones in force, and the spoken lines must be exactly the assembled script.
+ * The flag and the approval are judged first, as in buildVoiceEvidence().
  */
-export function voiceEvidenceProblem(voice, { script = VOICE_SOA_SCRIPT, today = utcToday() } = {}) {
-  const v = plainRecord(voice, VOICE_EVIDENCE_KEYS);
-  if (!v) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
-  if (!nonEmptyString(v.recordingReference) || !nonEmptyString(v.transcriptReference)) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
-  const segmentProblem = recordingSegmentProblem(v.segment);
-  if (segmentProblem) return segmentProblem;
+export function voiceEvidenceProblem(voice, { enabled = VOICE_SOA_ENABLED, script = VOICE_SOA_SCRIPT, scriptDigest = VOICE_SCRIPT_DIGEST, today = utcToday(), nowMs = Date.now() } = {}) {
+  if (enabled !== true) return VOICE_SOA_PROBLEM.VOICE_SOA_DISABLED;
   const approval = voiceScriptApprovalProblem(script, today);
   if (approval) return approval;
-  if (v.scriptVersion !== script.version || v.scriptDigest !== VOICE_SCRIPT_DIGEST) return VOICE_SOA_PROBLEM.VOICE_SCRIPT_VERSION_MISMATCH;
+  const v = plainRecord(voice, VOICE_EVIDENCE_KEYS);
+  if (!v) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
+  if (!nonEmptyString(v.contactReference) || !nonEmptyString(v.appointmentId)) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
+  if (!nonEmptyString(v.recordingReference) || !nonEmptyString(v.transcriptReference)) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
+  const segmentProblem = recordingSegmentProblem(v.segment, nowMs);
+  if (segmentProblem) return segmentProblem;
+  if (v.scriptVersion !== script.version || v.scriptDigest !== scriptDigest) return VOICE_SOA_PROBLEM.VOICE_SCRIPT_VERSION_MISMATCH;
   const recordedApproval = plainRecord(v.scriptApproval, ['approvedBy', 'approvedOn']);
   if (!recordedApproval || recordedApproval.approvedBy !== script.approvedBy || recordedApproval.approvedOn !== script.approvedOn) return VOICE_SOA_PROBLEM.VOICE_SCRIPT_NOT_APPROVED;
   if (!isSoaLanguage(v.language) || !languageWasElected(v.languageSource)) return VOICE_SOA_PROBLEM.SOA_LANGUAGE_NOT_ELECTED;
@@ -575,14 +690,26 @@ export function voiceEvidenceProblem(voice, { script = VOICE_SOA_SCRIPT, today =
 
 /**
  * The voice block and the instance it evidences must agree on everything they
- * both state: the method, the language and its election, the representative,
- * the script version and the scope. Null when they do; otherwise the reason.
+ * both state: the method, the appointment, the language and its election, the
+ * representative, the script version, the scope and the non-authorizing
+ * selection. Null when they do; otherwise the reason.
+ *
+ * AUDIT 2026-10-04 (SPEC-10/19/26/28, red team, MEDIUM) — the offer gate
+ * refused an in-person or unknown appointment format and the write stage did
+ * not: a VOICE_RECORDED instance for an IN_PERSON appointment was evidenced,
+ * hashed and COMPLETED (§10/§11/§33 held only by marketingGate, last). The
+ * same two refusals, by the same resolver, are enforced here again.
  */
 export function voiceInstanceContradiction(instance, voice) {
   if (!instance || typeof instance !== 'object') return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
   if (instance.method !== SOA_METHOD.VOICE_RECORDED.code) return VOICE_SOA_PROBLEM.NOT_A_VOICE_INSTANCE;
+  const format = resolveFormat(instance.appointmentFormat);
+  if (!format) return VOICE_SOA_PROBLEM.UNKNOWN_APPOINTMENT_FORMAT;
+  if (format.inPerson !== false) return VOICE_SOA_PROBLEM.IN_PERSON_REQUIRES_WRITTEN_SOA;
   const v = plainRecord(voice, VOICE_EVIDENCE_KEYS);
   if (!v) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_INCOMPLETE;
+  // The block names the appointment it was recorded for; a block cannot evidence another.
+  if (!nonEmptyString(instance.appointmentId) || instance.appointmentId.trim() !== v.appointmentId) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
   if (instance.language !== v.language || instance.languageSource !== v.languageSource) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
   const instRep = typeof instance.representativeRelationship === 'string' && instance.representativeRelationship.trim() ? instance.representativeRelationship.trim() : null;
   if (instRep !== v.representativeRelationship) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
@@ -593,5 +720,19 @@ export function voiceInstanceContradiction(instance, voice) {
   const vDeclined = plainList(v.declinedCategories);
   if (!authorized || !declined || !selected || !vDeclined) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
   if (!sameSet(authorized, selected) || !sameSet(declined, vDeclined)) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — an instance that records
+  // the "I am not sure" option as selected was evidenced by a block in which
+  // it was declined. The non-authorizing selection the instance states must be
+  // exactly the UNSURE decisions the block states (none, for an evidenced one).
+  const nonAuthorizing = plainList(instance.nonAuthorizingSelections);
+  const decisions = plainList(v.decisions);
+  if (!nonAuthorizing || !decisions) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
+  const unsureInBlock = [];
+  for (const d of decisions) {
+    const r = plainRecord(d, ['code', 'reply', 'replyClass', 'decision', 'problem']);
+    if (!r) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
+    if (r.decision === VOICE_DECISION.UNSURE) unsureInBlock.push(r.code);
+  }
+  if (!sameSet(nonAuthorizing, unsureInBlock)) return VOICE_SOA_PROBLEM.VOICE_EVIDENCE_CONTRADICTS_INSTANCE;
   return null;
 }

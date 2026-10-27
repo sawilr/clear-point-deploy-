@@ -4,7 +4,7 @@
 
 **Date:** 2026-10-04 · **Spec:** CY2027 integrated master prompt §10, §11, §19, §21, §26, §28, §29, §31 · **Audit ID:** SPEC-10/19/26/28 · **Code:** `api/_lib/cy2027/voice-soa.js` (server-only), `api/_lib/cy2027/evidence.js`, suite `scripts/test-cy2027-voice-2026-10-04.mjs`.
 
-Script version this package belongs to: **`CP-SOA-VOICE-SCRIPT-CY2027-v0.1`** — status **`PENDING_OWNER_APPROVAL`**. The voice-SOA flag in code (`VOICE_SOA_ENABLED`) is **false**.
+Script version this package belongs to: **`CP-SOA-VOICE-SCRIPT-CY2027-v0.2`** — status **`PENDING_OWNER_APPROVAL`**. The voice-SOA flag in code (`VOICE_SOA_ENABLED`) is **false**, and while it is false nothing voice can be offered, evidenced or completed: the flag is the first refusal of the offer gate and of the evidence stage alike.
 
 ---
 
@@ -69,7 +69,7 @@ Script version this package belongs to: **`CP-SOA-VOICE-SCRIPT-CY2027-v0.1`** �
 ```
 ═══════════════════════════════════════════════════════════════
 VOICE SCOPE OF APPOINTMENT — CY2027 (Layer B) — applies only when every
-condition in A holds. Script CP-SOA-VOICE-SCRIPT-CY2027-v0.1.
+condition in A holds. Script CP-SOA-VOICE-SCRIPT-CY2027-v0.2.
 ═══════════════════════════════════════════════════════════════
 A. WHEN YOU MAY OFFER A RECORDED SCOPE OF APPOINTMENT (all of these, in order):
    1. The caller's current residence state is confirmed and is New York,
@@ -148,7 +148,9 @@ C. HOW ANSWERS COUNT (the system applies the same rules; you apply them too):
      Book the licensed-agent callback and set the outcome to SOA_INCOMPLETE.
    - "Ok", "mhm", "sure", "please" alone is not an answer: ask the same
      question once more.
-   - A "no" anywhere in the answer is a no, even after a "yes".
+   - A "no", "not", "never", "wrong" or "incorrect" anywhere in the answer
+     is a no, even after a "yes": "yes, not that one" declines the category,
+     and "yes, that is not right" rejects the read-back.
    - If the caller says the read-back is wrong, or you are not certain you
      heard a category correctly: do not confirm. Go back to that category
      and ask it again, then read back again.
@@ -182,7 +184,7 @@ F. Everything in DETERMINISM & DISCLOSURE RULES still applies: the recording
 ```
 ═══════════════════════════════════════════════════════════════
 SCOPE OF APPOINTMENT POR VOZ — CY2027 (Capa B) — aplica solo cuando se
-cumple TODO lo de A. Guion CP-SOA-VOICE-SCRIPT-CY2027-v0.1.
+cumple TODO lo de A. Guion CP-SOA-VOICE-SCRIPT-CY2027-v0.2.
 ═══════════════════════════════════════════════════════════════
 A. CUÁNDO PUEDE OFRECER UN SCOPE OF APPOINTMENT GRABADO (todo esto, en orden):
    1. El estado de residencia actual está confirmado y es Nueva York, Nueva
@@ -266,8 +268,9 @@ C. CÓMO CUENTAN LAS RESPUESTAS (el sistema aplica las mismas reglas; usted
      licenciado y registre el resultado SOA_INCOMPLETE.
    - "Ok", "ajá", "claro", "bueno" solos no son respuesta: repita la misma
      pregunta una vez más.
-   - Un "no" en cualquier parte de la respuesta es un no, aunque venga
-     después de un "sí".
+   - Un "no", "tampoco", "nunca", "incorrecto" o "está mal" en cualquier
+     parte de la respuesta es un no, aunque venga después de un "sí": "sí,
+     esa no" rechaza la categoría y "sí, está mal" rechaza la repetición.
    - Si la persona dice que la repetición está mal, o usted no está segura
      de haber escuchado bien una categoría: no confirme. Vuelva a esa
      categoría, pregúntela de nuevo y repita la lectura.

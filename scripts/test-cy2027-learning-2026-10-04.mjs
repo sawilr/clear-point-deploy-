@@ -604,6 +604,8 @@ ok('the governing list is exactly the prompt, the knowledge, the rulesets, the S
     // the refusal/decision/outcome vocabularies and the two reply lists ("yes to everything", "I am not sure").
     'VOICE_SOA_ENABLED', 'VOICE_SCRIPT_STATUS', 'VOICE_SOA_SCRIPT', 'VOICE_SOA_PROBLEM', 'VOICE_DECISION', 'VOICE_CAPTURE_OUTCOME',
     'BLANKET_REPLIES', 'UNSURE_REPLIES',
+    // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — the voice negation tokens ("yes, not that one" is a refusal).
+    'VOICE_NEGATIVE_TOKENS',
   ]) && Object.isFrozen(GOVERNING_IDENTIFIERS));
 for (const id of GOVERNING_IDENTIFIERS) {
   ok(`a write to ${id} is refused`, findGoverningMutation(file(`${id}.x = 1;`)).length === 1 && findGoverningMutation(file(`${id} = 1;`)).length === 1);
@@ -630,7 +632,8 @@ ok('a getter is not frozen data, however frozen the object is',
   // AUDIT 2026-10-04 (WVG-11, red team) — 36 → 37: the consumed-link outcome vocabulary (LINK_OUTCOME).
   // AUDIT 2026-10-04 (SPEC-12) — 37 → 39: the one-time-code policy (OTP_POLICY) and the verification letter (VERIFICATION_LETTER).
   // AUDIT 2026-10-04 (SPEC-10/19/26/28) — 39 → 47: the voice SOA flag, script, three vocabularies and two reply lists.
-  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 47, `${r.frozenCount}/${r.objectCount}`);
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — 47 → 48: the voice negation tokens (VOICE_NEGATIVE_TOKENS).
+  ok('every governing object it knows about is frozen all the way down', r.frozenCount === r.objectCount && r.objectCount === 48, `${r.frozenCount}/${r.objectCount}`);
 }
 {
   // The same gate, handed a tree that contains each kind of defect.

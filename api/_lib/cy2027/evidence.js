@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import { SOA_TEXT, SOA_SCRIPT_VERSION, categoryText, soaTitle, SOA_AGENT_LINE } from './soa-text.js';
 import { RECORD_CLASS } from './retention.js';
 import { isSoaLanguage, languageWasElected, electionAttributionError, SOA_METHOD } from './soa-instance.js';
-import { voiceEvidenceProblem, voiceInstanceContradiction } from './voice-soa.js';
+import { voiceEvidenceProblem, voiceInstanceContradiction, voiceScriptPayload, VOICE_SOA_PROBLEM } from './voice-soa.js';
 
 /** Stable key ordering so the same logical object always hashes the same. */
 function canonical(value) {
@@ -81,7 +81,7 @@ export function renderTextSnapshot(instance, stateName) {
  * Returns the record plus its hash; the caller persists both and only then
  * calls completeSoaInstance().
  */
-export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null, voice = null, voiceScript = undefined } = {}) {
+export function buildEvidenceRecord(instance, { stateName, signature, signedAt = new Date().toISOString(), sourceIp = null, userAgent = null, correlationId = null, voice = null } = {}) {
   if (!instance) throw new Error('evidence: no instance');
   if (!signature) throw new Error('evidence: signature/affirmation is required');
   // AUDIT 2026-10-04 (SPEC-10/19/26/28) — a VOICE_RECORDED instance was
@@ -99,10 +99,26 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     if (voice === null || voice === undefined) {
       throw new Error('evidence: a voice-recorded SOA cannot be evidenced without its recording, transcript and segment (VOICE_EVIDENCE_MISSING)');
     }
-    const voiceProblem = voiceEvidenceProblem(voice, voiceScript === undefined ? {} : { script: voiceScript });
+    // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — this call took a
+    // `voiceScript` option, so any api/ caller could evidence a voice SOA from
+    // a self-made "approved" script while the repository script was PENDING;
+    // its only guard was a regex in the suite. There is no seam now: the block
+    // is judged on VOICE_SOA_ENABLED, the repository script, its pinned digest
+    // and the real clock. The suite drives the positive path through a copy of
+    // the tree in which the owner approval is recorded and the flag is on.
+    const voiceProblem = voiceEvidenceProblem(voice);
     if (voiceProblem) throw new Error('evidence: the voice evidence cannot be relied on (' + voiceProblem + ')');
+    // The digest in the block is checked against the script in force, computed
+    // here — not only against the constant voice-soa.js carries.
+    const digestInForce = 'sha256:' + crypto.createHash('sha256').update(voiceScriptPayload(), 'utf8').digest('hex');
+    if (voice.scriptDigest !== digestInForce) throw new Error('evidence: the voice evidence names a script digest that is not the script in force (' + VOICE_SOA_PROBLEM.VOICE_SCRIPT_DIGEST_MISMATCH + ')');
     const contradiction = voiceInstanceContradiction(instance, voice);
     if (contradiction) throw new Error('evidence: the voice evidence and the instance disagree (' + contradiction + ')');
+    // The affirmation is complete only when the segment that holds it has
+    // ended: a segment that ends after signedAt, or a signedAt that is not an
+    // instant, is an impossible timeline inside a hashed record.
+    const signedMs = Date.parse(signedAt);
+    if (!Number.isFinite(signedMs) || Date.parse(voice.segment.endedAt) > signedMs) throw new Error('evidence: the SOA segment ends after the affirmation (' + VOICE_SOA_PROBLEM.SEGMENT_AFTER_AFFIRMATION + ')');
   } else if (voice !== null && voice !== undefined) {
     throw new Error('evidence: a voice evidence block was supplied for a ' + String(instance.method) + ' instance (NOT_A_VOICE_INSTANCE)');
   }
@@ -126,7 +142,13 @@ export function buildEvidenceRecord(instance, { stateName, signature, signedAt =
     throw new Error('evidence: the instance does not name the CMS ruleset version it was signed under (SOA_CMS_RULESET_VERSION_MISSING)');
   }
 
-  const textSnapshot = renderTextSnapshot(instance, stateName);
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — for a voice instance the
+  // snapshot (the web form's text, from SOA_TEXT) was labelled with the VOICE
+  // script version. It is labelled with the version of the text it holds, and
+  // names the spoken script separately; the written path is byte-identical.
+  const textSnapshot = isVoice
+    ? { ...renderTextSnapshot(instance, stateName), scriptVersion: SOA_SCRIPT_VERSION, spokenScriptVersion: instance.scriptVersion }
+    : renderTextSnapshot(instance, stateName);
   const core = {
     soaId: instance.soaId,
     appointmentId: instance.appointmentId,

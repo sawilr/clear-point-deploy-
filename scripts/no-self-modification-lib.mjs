@@ -379,6 +379,9 @@ export const GOVERNING_IDENTIFIERS = Object.freeze([
   // and "I am not sure" selects nothing. None may be edited in memory.
   'VOICE_SOA_ENABLED', 'VOICE_SCRIPT_STATUS', 'VOICE_SOA_SCRIPT', 'VOICE_SOA_PROBLEM', 'VOICE_DECISION', 'VOICE_CAPTURE_OUTCOME',
   'BLANKET_REPLIES', 'UNSURE_REPLIES',
+  // AUDIT 2026-10-04 (SPEC-10/19/26/28, red team) — the negation tokens that
+  // make "yes, not that one" a refusal in every voice path.
+  'VOICE_NEGATIVE_TOKENS',
 ]);
 
 const MUTATING_METHODS = Object.freeze(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'add', 'delete', 'clear']);
@@ -626,6 +629,7 @@ async function governingObjects(root) {
     VOICE_CAPTURE_OUTCOME: voice.VOICE_CAPTURE_OUTCOME,
     BLANKET_REPLIES: voice.BLANKET_REPLIES,
     UNSURE_REPLIES: voice.UNSURE_REPLIES,
+    VOICE_NEGATIVE_TOKENS: voice.VOICE_NEGATIVE_TOKENS,
   };
 }
 
