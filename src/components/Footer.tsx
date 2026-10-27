@@ -170,6 +170,7 @@ export function Footer() {
                   mailto href stays a single string so the email client opens
                   the address correctly. <wbr> is silent for screen readers. */}
               <li><a href="mailto:info@clearpointsenioradvisors.com" className="block py-2 min-h-[44px] hover:text-cream-50 transition-colors break-all">info@clearpointsenioradvisors.com</a></li>
+              <li><a href="https://www.facebook.com/profile.php?id=61594999305972" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 py-2 min-h-[44px] text-cream-50/80 hover:text-cream-50 transition-colors">{t('Follow us on Facebook', 'Síguenos en Facebook')} <ExternalLinkIcon className="w-3 h-3" /></a></li>
               <li className="text-cream-50/70 text-[13px]">{t('Mon–Fri · 9am–6pm ET', 'Lun–Vie · 9am–6pm ET')}</li>
               {/* HIDDEN per Sawil 2026-06: FL not yet licensed. Restore once authorization confirmed. Keeping file/text intact for easy re-enable. */}
               <li className="text-cream-50/70 text-[13px] mt-2">{t('Serving: NY, CT, NJ', 'Sirviendo: NY, CT, NJ')}</li>
