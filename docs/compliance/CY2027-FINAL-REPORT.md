@@ -319,10 +319,19 @@ created through the GoHighLevel API with the handler's own serializer
 (`existingField()` + `buildCustomFields()`, `{id, key, value}` entries) answered 201,
 `LEAD_TRUST_STATE = UNVERIFIED`, `RETENTION_CLASS = GENERAL_CRM`,
 `DATA_SENSITIVITY_CLASS = CONTACT_PII` were read back exactly, and the contact was deleted
-(200). **Not verified:** a lead submitted through the live site reaching the CRM with
-these fields — the handler rejects every fictional phone pattern and the agency's own
-numbers already belong to contacts, so no safe test number was available; the owner can
-verify with one real lead from the site and a look at the contact's CY2027 fields. Ids:
+(200). **Live-site verification (2026-10-29, three controlled leads through
+`POST /api/submit-lead` on production, each read back by id and deleted):** every lead
+answered 200 "Contact created"; the contact carried source "ClearPoint Website", tags
+`status-newlead, lang-es, source-web, consent captured`, the twelve production fields
+and the CY2027 fields the handler writes today: `DATA_SENSITIVITY_CLASS = CONTACT_PII`
+on all three, and — once the registered consent wording was sent exactly as the form
+sends it (`consent_text` + `disclaimer_version`) — `CALLBACK_CONSENT_STATUS = GRANTED`,
+`CALLBACK_CONSENT_AT`, `CALLBACK_CONSENT_SCOPE = DISCUSS_MEDICARE_PLAN_OPTIONS`, with the
+TCPA receipt and the verbatim consent text in the contact note (CE-09 live). A payload
+without the wording is recorded as `NOT_RECORDED(CONSENT_TEXT_MISSING)` and flagged
+`CALLBACK_CONSENT_NOT_RECORDED`, as designed. The test phone used a New York 958 plant-test
+exchange (not assignable to subscribers); the sub-account has no lead workflow (its four
+workflows are voice-only), so no automated outreach could fire. Ids:
 
 `contact.soa_id`, `soa_appointment_id`, `soa_plan_year`, `soa_status`, `soa_method`,
 `soa_language`, `soa_language_source`, `soa_state`, `soa_zip`, `soa_county`,
@@ -547,7 +556,9 @@ Executed evidence on 2026-10-27 (final tree `a650129`):
 | Vercel preview build of `4be5afa` (2026-10-29) | all gates ran in Vercel's build (parity 14/14, self-modification 50/50, prerender 46/46 with the CY2027 TPMO, sitemap), "Build Completed in 23s"; preview verified through the SSO share cookie: bundle `index-C9yqRwo0.js` = local, TPMO EN/ES, 0 SHIP, headers present, `/api/soa-status` 403, `/api/opt-out {}` 400, `/api/chat` 200 with a correct answer |
 | Production after `vercel promote` (2026-10-29) | same bundle and TPMO on 46/46 served pages (`cy2027-preflight.mjs --url`), headers present, `www` 308 → apex, `/api/soa-status` 403 / 503 `SOA_DISABLED`, opt-out 400, chat 200, submit-lead rejects a 555 number with 400; GoHighLevel field contract probed and the throwaway contact deleted (§5.2) |
 | Browser load of production (`/`, `/es`) | bundle runs and renders; titles and Spanish TPMO sentence present; six CSP `style-src` console errors from seven inline `style` attributes — identical on the previous production deployment `j1l0wc0fn` (same hashes, same elements), so pre-existing and cosmetic |
-| Not verified after promotion | a lead from the live site landing in the CRM with CY2027 fields (no safe test phone); Clara/Zara and Smart Review driven end-to-end in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs |
+| Live lead pipeline (2026-10-29, three controlled leads, deleted afterwards) | 200 "Contact created" each; contact with source, tags, 12 fields including `DATA_SENSITIVITY_CLASS` and, with the registered wording, `CALLBACK_CONSENT_STATUS = GRANTED` / `_AT` / `_SCOPE`; TCPA receipt and verbatim consent text in the note (§5.2) |
+| GoHighLevel workflows | four published workflows, all voice (IVR routing, post-call EN/ES/both): no lead workflow filters on `medicare_status`, so the `dual` change affects no automation; smart lists are views and are not readable through the API |
+| Not verified after promotion | Clara/Zara and Smart Review driven end-to-end in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs; GoHighLevel smart lists that may filter on `medicare_status = dual` (views only) |
 
 To re-run: `npm test`, `npm run build` (then `git checkout -- public/sitemap.xml
 scripts/sitemap-dates.json`), `node scripts/<suite>.mjs` for any single suite.

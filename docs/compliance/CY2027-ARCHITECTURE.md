@@ -908,10 +908,18 @@ evidence, all observed the same evening (America/New_York):
   same three hashes and the same seven elements. Cosmetic (styles blocked, layout intact);
   fix later by moving those seven styles to classes or adding `'unsafe-hashes'` with the
   three hashes to `style-src`.
-- **Not verified:** a lead from the live site landing in the CRM (every fictional phone
-  pattern is rejected by design and the agency's own numbers already belong to contacts);
-  the `[AI-AUDIT]` lines in the function logs; Clara/Zara and Smart Review driven
-  end-to-end in a browser. **Unchanged:**
+- Live lead pipeline, later the same evening: three controlled leads through
+  `POST /api/submit-lead` on production (New York 958 plant-test exchange; the sub-account's
+  four workflows are voice-only, so nothing automated could fire), each read back by id and
+  deleted. Each answered 200 "Contact created"; the contact carried the twelve production
+  fields plus `DATA_SENSITIVITY_CLASS = CONTACT_PII`, and with the registered consent
+  wording `CALLBACK_CONSENT_STATUS = GRANTED`, `CALLBACK_CONSENT_AT`,
+  `CALLBACK_CONSENT_SCOPE = DISCUSS_MEDICARE_PLAN_OPTIONS`, with the TCPA receipt and the
+  verbatim text in the note (CE-09 live). Without the wording: `NOT_RECORDED(CONSENT_TEXT_MISSING)`
+  and the `CALLBACK_CONSENT_NOT_RECORDED` flag, as designed.
+- **Not verified:** the `[AI-AUDIT]` lines in the function logs; Clara/Zara and Smart Review
+  driven end-to-end in a browser; GoHighLevel smart lists (views) that may filter on
+  `medicare_status = dual`. **Unchanged:**
   `SOA_ENABLED = false`, voice package NOT APPLIED, KV and evidence store not configured,
   the three SOA preconditions open.
 - **Rollback point:** `vercel promote https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app --scope sawil-reyess-projects --yes`
