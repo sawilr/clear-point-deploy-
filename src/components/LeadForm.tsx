@@ -380,7 +380,12 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
               any submission where this field has a value. Defense in depth:
               tabIndex={-1} blocks keyboard tab, aria-hidden hides from AT,
               autoComplete=off prevents browser autofill, off-screen position
-              prevents visual rendering. */}
+              prevents visual rendering.
+              CSP 2026-10-29 — the off-screen position is Tailwind classes, not
+              `style={{}}`: the prerender serializes a style prop as an HTML
+              style="" attribute, which `style-src 'self'` blocks at parse time,
+              so the field was VISIBLE in the prerendered page until React
+              mounted (plus one console error per load). */}
           <input
             type="text"
             name="website_url"
@@ -389,7 +394,7 @@ export function LeadForm({ variant = 'standalone', source = 'website' }: LeadFor
             aria-hidden="true"
             value={formData.website_url}
             onChange={handleChange}
-            style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
+            className="absolute -left-[9999px] w-px h-px opacity-0 pointer-events-none"
           />
           <div className="grid grid-cols-1 min-[380px]:grid-cols-2 gap-3.5">
             <div>

@@ -2007,11 +2007,11 @@ export function CustomerServiceBot({ onEscalate, initialLanguage, mode = 'widget
             through the middle of a line, which reads as a rendering fault. With 16
             px the whole entry screen fits with no scroll at all and nothing is cut.
             Spanish at 320 is the tightest of the 12 combinations; every other one
-            already had slack. */}
-        <div
-          className="px-3 pt-2 space-y-2.5"
-          style={{ paddingBottom: '8px' }}
-        >
+            already had slack.
+            CSP 2026-10-29 — the 8 px is a Tailwind class, not `style={{}}`: the
+            /support shell is prerendered, and a style prop becomes an HTML
+            style="" attribute that `style-src 'self'` blocks at parse time. */}
+        <div className="px-3 pt-2 pb-[8px] space-y-2.5">
           {messages.map((m) => (
             <div key={m.id} data-msg-id={m.id} className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div

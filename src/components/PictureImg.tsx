@@ -20,8 +20,14 @@ export function PictureImg({ src, className, ...imgProps }: PictureImgProps) {
   // against the ORIGINAL parent container exactly as a bare <img> did — no layout
   // change. Without this, <picture>'s default `display:inline` shrinks to content
   // and the hero background stops covering. Supported in Safari 11.1+ / iOS 14.
+  //
+  // CSP 2026-10-29 — it is a Tailwind class (`contents`), NOT `style={{}}`:
+  // prerender-body.mjs serializes a style prop as an HTML `style=""` attribute,
+  // which `style-src 'self'` blocks at parse time (one console error per
+  // <picture>, and no `display:contents` until React mounts). A class resolves
+  // from the bundled stylesheet, so the prerendered HTML lays out correctly.
   return (
-    <picture style={{ display: 'contents' }}>
+    <picture className="contents">
       {webp && <source srcSet={webp} type="image/webp" />}
       <img src={src} className={className} {...imgProps} />
     </picture>

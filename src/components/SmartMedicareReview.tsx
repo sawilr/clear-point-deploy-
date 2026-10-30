@@ -450,7 +450,7 @@ export function SmartMedicareReview() {
         aria-hidden="true"
         value={websiteUrl}
         onChange={(e) => setWebsiteUrl(e.target.value)}
-        style={{ position: 'absolute', left: '-9999px', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none' }}
+        className="absolute -left-[9999px] w-px h-px opacity-0 pointer-events-none"
       />
       <div className="max-w-2xl mx-auto px-5">
         {/* Header */}
