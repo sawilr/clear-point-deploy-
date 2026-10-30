@@ -900,9 +900,18 @@ evidence, all observed the same evening (America/New_York):
   Contract probe with the handler's serializer on a throwaway contact without a phone:
   POST 201, `LEAD_TRUST_STATE` / `RETENTION_CLASS` / `DATA_SENSITIVITY_CLASS` read back
   exactly, contact deleted (200).
+- Browser check (built-in Chromium, production, `/` and `/es`): the bundle runs, the page
+  renders (header, Smart Review form, cookie banner, help button), titles EN/ES correct,
+  the Spanish TPMO sentence is in the DOM. Console: six `style-src 'self'` CSP errors from
+  seven inline `style` attributes (3 `picture`, 2 `input`, `html`, `img`) — **pre-existing**:
+  the previous production deployment `j1l0wc0fn` shows the identical six errors with the
+  same three hashes and the same seven elements. Cosmetic (styles blocked, layout intact);
+  fix later by moving those seven styles to classes or adding `'unsafe-hashes'` with the
+  three hashes to `style-src`.
 - **Not verified:** a lead from the live site landing in the CRM (every fictional phone
   pattern is rejected by design and the agency's own numbers already belong to contacts);
-  the `[AI-AUDIT]` lines in the function logs; the site in a browser. **Unchanged:**
+  the `[AI-AUDIT]` lines in the function logs; Clara/Zara and Smart Review driven
+  end-to-end in a browser. **Unchanged:**
   `SOA_ENABLED = false`, voice package NOT APPLIED, KV and evidence store not configured,
   the three SOA preconditions open.
 - **Rollback point:** `vercel promote https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app --scope sawil-reyess-projects --yes`

@@ -546,7 +546,8 @@ Executed evidence on 2026-10-27 (final tree `a650129`):
 | Production read-only probe (2026-10-27, before promotion) | home page serves the CY2026 TPMO sentence (3 SHIP occurrences), bundle `index-jgWGDRt6.js`; `/api/soa-status` → 403 |
 | Vercel preview build of `4be5afa` (2026-10-29) | all gates ran in Vercel's build (parity 14/14, self-modification 50/50, prerender 46/46 with the CY2027 TPMO, sitemap), "Build Completed in 23s"; preview verified through the SSO share cookie: bundle `index-C9yqRwo0.js` = local, TPMO EN/ES, 0 SHIP, headers present, `/api/soa-status` 403, `/api/opt-out {}` 400, `/api/chat` 200 with a correct answer |
 | Production after `vercel promote` (2026-10-29) | same bundle and TPMO on 46/46 served pages (`cy2027-preflight.mjs --url`), headers present, `www` 308 → apex, `/api/soa-status` 403 / 503 `SOA_DISABLED`, opt-out 400, chat 200, submit-lead rejects a 555 number with 400; GoHighLevel field contract probed and the throwaway contact deleted (§5.2) |
-| Not verified after promotion | a lead from the live site landing in the CRM with CY2027 fields (no safe test phone); Clara/Zara and Smart Review in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs |
+| Browser load of production (`/`, `/es`) | bundle runs and renders; titles and Spanish TPMO sentence present; six CSP `style-src` console errors from seven inline `style` attributes — identical on the previous production deployment `j1l0wc0fn` (same hashes, same elements), so pre-existing and cosmetic |
+| Not verified after promotion | a lead from the live site landing in the CRM with CY2027 fields (no safe test phone); Clara/Zara and Smart Review driven end-to-end in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs |
 
 To re-run: `npm test`, `npm run build` (then `git checkout -- public/sitemap.xml
 scripts/sitemap-dates.json`), `node scripts/<suite>.mjs` for any single suite.
