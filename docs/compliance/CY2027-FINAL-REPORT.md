@@ -10,7 +10,12 @@ blocked the preflight). **Deployed 2026-10-29:** `4be5afa` pushed, built as prev
 `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo` (`clearpoint-deploy-a263o0q19`) now serves
 `clearpointsenioradvisors.com` and `www`. The 36 CY2027 custom fields were created in the
 GoHighLevel sub-account and mapped in the Vercel Production environment (§5.2). Nothing
-voice-related was applied to GoHighLevel.
+voice-related was applied to GoHighLevel. **Second promotion the same evening:** `5b6bca1`
+(= `4be5afa` + the CSP inline-style fix `6ad2f8e` + the merged monthly-audit documents
+`3c5a073` + verification docs) → preview `clearpoint-deploy-f0azn3qbi` verified →
+production `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv` (`clearpoint-deploy-ebp7pkngv`), bundle
+`index-BAhDMdvx.js`, browser console clean. The production branch
+`security-hotfix/audit-2026-06-29` was fast-forwarded to `5b6bca1`.
 
 Every figure below was read from the tree or from a command run on 2026-10-27; the
 command is named where it matters so the figure can be re-derived. Where a fact could
@@ -57,7 +62,10 @@ allowed Origin and 503 `SOA_DISABLED` with one; `POST /api/opt-out {}` → 400 w
 expected message; `/api/chat` → 200 with a correct AEP answer; `POST /api/submit-lead`
 with a fictional 555 number → 400 "Phone appears fake" (the new validation is live).
 Before the promotion (2026-10-27) production served bundle `index-jgWGDRt6.js` with the
-CY2026 sentence and 3 SHIP occurrences.
+CY2026 sentence and 3 SHIP occurrences. After the second promotion (`5b6bca1`, bundle
+`index-BAhDMdvx.js`) every check above was repeated with the same results, the served
+HTML carries zero `style=""` attributes, and a fresh-tab browser console on `/` and `/es`
+shows zero errors (the six pre-existing CSP inline-style errors are gone).
 
 Why this label: the layer runs in production with its controls on and the SOA workflow
 gated off, which is "controlled production"; IMPLEMENTED-MONITORING would overstate (no
@@ -157,7 +165,7 @@ audit comments; "after" is `a650129`.
 | Carrier overlay registry | None | 10 rows, all `PENDING_*`; state lists `STATED_BY_SPEC` for 2, `UNVERIFIED` for 8; module-private |
 | Governing objects frozen by the build | 0 | 50/50 (`check-no-self-modification.mjs`) |
 | Test battery | 44/44 suites when the architecture document was first written | 54/54 suites; 11 CY2027 suites, 5,163 assertions (sum of the per-suite RESULT lines, §9) |
-| Production | Bundle `index-jgWGDRt6.js` (commit `50eb408`, 2026-09-27), CY2026 TPMO with SHIP, `/api/soa-status` 403 | **Promoted 2026-10-29:** bundle `index-C9yqRwo0.js` (commit `4be5afa`), CY2027 TPMO on 46/46 pages, `/api/soa-status` 403 / 503 `SOA_DISABLED`; rollback point `clearpoint-deploy-j1l0wc0fn` |
+| Production | Bundle `index-jgWGDRt6.js` (commit `50eb408`, 2026-09-27), CY2026 TPMO with SHIP, `/api/soa-status` 403 | **Promoted 2026-10-29 (twice):** `4be5afa` → bundle `index-C9yqRwo0.js`, then `5b6bca1` → bundle `index-BAhDMdvx.js` (CSP fix, monthly-audit docs); CY2027 TPMO on 46/46 pages, `/api/soa-status` 403 / 503 `SOA_DISABLED`, console clean; current `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv`; rollback points `a263o0q19` (CY2027, pre-CSP-fix) and `j1l0wc0fn` (CY2026) |
 | GoHighLevel CY2027 fields | 0 of 36 exist | **36 created 2026-10-29** (`cy2027-provision-crm-fields.mjs --apply`, 0 reused, 0 refused); map set as `CY2027_CRM_FIELD_IDS` in Vercel Production |
 
 ---
@@ -556,6 +564,7 @@ Executed evidence on 2026-10-27 (final tree `a650129`):
 | Vercel preview build of `4be5afa` (2026-10-29) | all gates ran in Vercel's build (parity 14/14, self-modification 50/50, prerender 46/46 with the CY2027 TPMO, sitemap), "Build Completed in 23s"; preview verified through the SSO share cookie: bundle `index-C9yqRwo0.js` = local, TPMO EN/ES, 0 SHIP, headers present, `/api/soa-status` 403, `/api/opt-out {}` 400, `/api/chat` 200 with a correct answer |
 | Production after `vercel promote` (2026-10-29) | same bundle and TPMO on 46/46 served pages (`cy2027-preflight.mjs --url`), headers present, `www` 308 → apex, `/api/soa-status` 403 / 503 `SOA_DISABLED`, opt-out 400, chat 200, submit-lead rejects a 555 number with 400; GoHighLevel field contract probed and the throwaway contact deleted (§5.2) |
 | Browser load of production (`/`, `/es`) | bundle runs and renders; titles and Spanish TPMO sentence present; six CSP `style-src` console errors from seven inline `style` attributes — identical on the previous production deployment `j1l0wc0fn` (same hashes, same elements), so pre-existing and cosmetic |
+| Second promotion `5b6bca1` (2026-10-29) | preview `f0azn3qbi`: bundle `index-BAhDMdvx.js` = local, TPMO EN/ES, 0 SHIP, 6/6 headers, soa-status 503 `SOA_DISABLED`, opt-out 400, chat 200, browser console with zero inline-style errors and zero `[style]` elements; production after `vercel promote`: same bundle, served HTML with zero `style=""` attributes, `cy2027-preflight.mjs --url` 46/46, fresh-tab console on `/` and `/es` with no errors |
 | Live lead pipeline (2026-10-29, three controlled leads, deleted afterwards) | 200 "Contact created" each; contact with source, tags, 12 fields including `DATA_SENSITIVITY_CLASS` and, with the registered wording, `CALLBACK_CONSENT_STATUS = GRANTED` / `_AT` / `_SCOPE`; TCPA receipt and verbatim consent text in the note (§5.2) |
 | GoHighLevel workflows | four published workflows, all voice (IVR routing, post-call EN/ES/both): no lead workflow filters on `medicare_status`, so the `dual` change affects no automation; smart lists are views and are not readable through the API |
 | Not verified after promotion | Clara/Zara and Smart Review driven end-to-end in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs; GoHighLevel smart lists that may filter on `medicare_status = dual` (views only) |
@@ -672,11 +681,13 @@ fabrication. None of these has been activated. Full table: SECOPS §5.
 
 ## 12. Rollback
 
-Production is `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo` (`clearpoint-deploy-a263o0q19`, commit
-`4be5afa`, promoted 2026-10-29). **The rollback point is the previous Production
-deployment `https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app`**
-(commit `50eb408`, 2026-09-27, `isRollbackCandidate: true`), which restores the CY2026
-TPMO sentence. Exact steps (matching `docs/conversational-platform/DEPLOYMENT.md` and
+Production is `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv` (`clearpoint-deploy-ebp7pkngv`, commit
+`5b6bca1`, promoted 2026-10-29 23:23 ET). **Rollback points:** the previous Production
+deployment `https://clearpoint-deploy-a263o0q19-sawil-reyess-projects.vercel.app` (commit
+`4be5afa`, same CY2027 layer without the CSP fix and the monthly-audit documents), and
+two steps back `https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app`
+(commit `50eb408`, 2026-09-27), which restores the CY2026 TPMO sentence and the pre-CY2027
+lead handler. Exact steps (matching `docs/conversational-platform/DEPLOYMENT.md` and
 `ROLLBACK.md`; SECOPS §4):
 
 1. `git push` builds a **preview only**. Production changes only through

@@ -717,7 +717,7 @@ Stated plainly rather than implied:
 | Verification letter wording (SPEC-12) | **PENDING OWNER APPROVAL.** `VERIFICATION_LETTER` in `api/_lib/cy2027/out-of-band-verification.js` ships with `approval.status = PENDING_OWNER_APPROVAL`; `mayIssueVerificationLetter()` refuses to release it until `approval` records a named person (judged by `humanActorProblem()`), a real past day and `textDigest` = `letterTextDigest(VERIFICATION_LETTER)` (red team 2026-10-04: the approval is bound to the text, and the function no longer takes a template). Approving is an edit to that frozen object in a reviewed change — the suite's loader hook shows what that commit looks like and that the release path then works. Deciding a letter also needs `CY2027_REVIEWERS` (above). Mailing is a staff action: nothing in code prints or posts a letter. |
 | Verification call and callback case tooling (SPEC-12) | **DEFINITION ONLY.** `mayPlaceVerificationCall()` and `reopenCaseOnCallback()` are the rules; there is no case store, no dialler integration and no screen that calls them. Staff tooling that places a verification call or re-opens a case must call them and record the decision object. The do-not-contact answer must come from the suppression list (an absent answer is a refusal). **OWNER DECISION (red team 2026-10-04):** the production web consent is scoped `DISCUSS_MEDICARE_PLAN_OPTIONS` and under CT-07 does not authorise a `SECURITY_REQUEST_VERIFICATION` call; today `mayPlaceVerificationCall()` allows a call only on a `CALLBACK_CONTACT_PERMISSION` scoped to that purpose (a permission captured for the verification call). If the owner's legal reading is that the plan-discussion scope covers a security verification call, that must be written into the rule by name in a reviewed change; until then the answer is no. |
 | Signature audit actor (`api/sign-soa.js`) | **NOT CHANGED.** Every signature is still audited as `beneficiary:channel-verified`, including one reached through a last-4 factor; the status endpoint now distinguishes the two (`verificationClaim()`), the signer does not. The label is pinned by the main suite; changing it is its own reviewed change. |
-| Production deploy | **DONE 2026-10-29** under the owner's GO. Commit `4be5afa` (= `a650129` + final report + `zod` lockfile fix) pushed → preview `clearpoint-deploy-mcuy5c3lf` built with every gate green in Vercel → verified → `vercel promote` → production `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo` serving `clearpointsenioradvisors.com`; §8.4. `SOA_ENABLED` stays false. Rollback point: `clearpoint-deploy-j1l0wc0fn`. |
+| Production deploy | **DONE 2026-10-29** under the owner's GO, twice. First `4be5afa` (= `a650129` + final report + `zod` lockfile fix) → preview `clearpoint-deploy-mcuy5c3lf` → `vercel promote` → `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo`; then `5b6bca1` (+ CSP inline-style fix `6ad2f8e`, merged monthly-audit documents `3c5a073`, verification docs) → preview `clearpoint-deploy-f0azn3qbi` → `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv` (current, bundle `index-BAhDMdvx.js`, console clean), serving `clearpointsenioradvisors.com`; §8.4. The production branch `security-hotfix/audit-2026-06-29` was fast-forwarded to `5b6bca1`. `SOA_ENABLED` stays false. Rollback points: `clearpoint-deploy-a263o0q19` (CY2027, pre-CSP-fix) and `clearpoint-deploy-j1l0wc0fn` (CY2026). |
 
 ---
 
@@ -924,3 +924,18 @@ evidence, all observed the same evening (America/New_York):
   the three SOA preconditions open.
 - **Rollback point:** `vercel promote https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app --scope sawil-reyess-projects --yes`
   (commit `50eb408`, CY2026 sentence).
+- **Second promotion, 23:23 ET.** The owner's separate session fixed the pre-existing CSP
+  inline-style errors (`6ad2f8e`: `style={{}}` props that the prerender serialized as HTML
+  `style=""` attributes became Tailwind classes in `PictureImg`, `LeadForm`,
+  `SmartMedicareReview`, `CustomerServiceBot`, `Home`). The orphaned monthly-audit commit
+  from the production branch (`3c5a073`, `compliance/` documents only) was merged
+  (`e0d7cb2`), the build with every gate and the 54/54 battery ran green on that tree, and
+  `5b6bca1` was pushed → preview `clearpoint-deploy-f0azn3qbi` (bundle `index-BAhDMdvx.js`
+  = local; TPMO EN/ES, 0 SHIP, 6/6 headers, soa-status 503 `SOA_DISABLED`, opt-out 400, chat
+  200; browser console with zero inline-style errors and zero `[style]` elements) →
+  `vercel promote` → `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv` (`clearpoint-deploy-ebp7pkngv`).
+  Production re-verified: same bundle, zero `style=""` in the served HTML,
+  `cy2027-preflight.mjs --url` 46/46, fresh-tab console on `/` and `/es` with no errors.
+  `security-hotfix/audit-2026-06-29` fast-forwarded to `5b6bca1`. Rollback points:
+  `clearpoint-deploy-a263o0q19` (`4be5afa`, CY2027 pre-CSP-fix) and `clearpoint-deploy-j1l0wc0fn`
+  (`50eb408`, CY2026).

@@ -173,9 +173,11 @@ This project deploys as documented in `docs/conversational-platform/DEPLOYMENT.m
   (`SOA_ENABLED` stays false; the carrier registry stays private; the form change is
   behind the disabled flow). Rolling it back is `git revert <sha>` on the branch followed
   by the owner's promote; there is no data migration to undo.
-- **Promotion of 2026-10-29 (commit `4be5afa`, `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo`):** the
-  rollback point is the previous Production deployment
-  `clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app` (commit `50eb408`). The
+- **Promotions of 2026-10-29 (`4be5afa` → `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo`, then
+  `5b6bca1` → `dpl_49hYLcSJsEjP4bHNSGDx653M8Emv`, current):** rollback points are
+  `clearpoint-deploy-a263o0q19-sawil-reyess-projects.vercel.app` (commit `4be5afa`, CY2027
+  layer, pre-CSP-fix) and `clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app`
+  (commit `50eb408`, CY2026). The
   36 CY2027 custom fields created the same day are additive and empty until written; to
   stop writing them, `vercel env rm CY2027_CRM_FIELD_IDS production` and re-promote.
   See `CY2027-ARCHITECTURE.md` §8.4.
