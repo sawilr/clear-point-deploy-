@@ -1,9 +1,16 @@
 # ClearPoint CY2027 — Final report (spec §35)
 
-Date of this report: 2026-10-27. Branch `fix/master-audit-2026-09-10`, HEAD `a650129`.
+Date of this report: 2026-10-27, updated 2026-10-29 after the owner's GO ("push live
+todo lo que se puede … make it live"). Branch `fix/master-audit-2026-09-10`.
 Scope: every commit from `8d69af0` (2026-10-01, first CY2027 commit) to `a650129`
-(2026-10-27): 54 commits, 96 files, +28,935 / −634 lines. Nothing in this range has been
-pushed, previewed, promoted or applied to GoHighLevel. Production is unchanged.
+(2026-10-27): 54 commits, 96 files, +28,935 / −634 lines, plus `edcfcdb` (this report)
+and `4be5afa` (lockfile: transitive `zod` 4.3.5 → 4.6.7, the one high advisory that
+blocked the preflight). **Deployed 2026-10-29:** `4be5afa` pushed, built as preview
+`clearpoint-deploy-mcuy5c3lf`, verified, promoted; production deployment
+`dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo` (`clearpoint-deploy-a263o0q19`) now serves
+`clearpointsenioradvisors.com` and `www`. The 36 CY2027 custom fields were created in the
+GoHighLevel sub-account and mapped in the Vercel Production environment (§5.2). Nothing
+voice-related was applied to GoHighLevel.
 
 Every figure below was read from the tree or from a command run on 2026-10-27; the
 command is named where it matters so the figure can be re-derived. Where a fact could
@@ -14,13 +21,16 @@ would verify it is stated.
 
 ## 0. Final status
 
-**BLOCKED-COMPLIANCE.**
+**IMPLEMENTED-CONTROLLED PRODUCTION** (since 2026-10-29; it was BLOCKED-COMPLIANCE on
+2026-10-27, before the owner's GO).
 
-Read precisely: the code is **implemented and verified on the branch** — build gates,
-54/54 battery suites, three independent red-team rounds in this session with every
-reproduced finding repaired and mutation-tested — but the layer **cannot be enabled and
-must not be promoted** because the remaining blockers are compliance inputs that only the
-owner, counsel or a named reviewer can supply. Nothing in code can close them:
+Read precisely: the layer is **live in production in controlled mode** — the CY2027 TPMO
+sentence on all 46 served pages, the trust engine as a signal on every lead, the
+sensitivity and prohibited-signal filters, the audit record, the CRM field registry with
+the 36 fields mapped — while the **SOA workflow itself stays off** (`SOA_ENABLED = false`)
+and the voice SOA stays unapproved. What remains blocked is **enabling** the SOA workflow,
+and the blockers are compliance inputs that only the owner, counsel or a named reviewer
+can supply. Nothing in code can close them:
 
 | Blocker | Why it is compliance, not engineering | Where it is enforced |
 |---|---|---|
@@ -30,18 +40,29 @@ owner, counsel or a named reviewer can supply. Nothing in code can close them:
 | Voice SOA script approval | New customer-facing wording | `VOICE_SOA_SCRIPT.status = PENDING_OWNER_APPROVAL`, `VOICE_SOA_ENABLED = false` |
 | Verification letter approval | New customer-facing wording | `VERIFICATION_LETTER.approval.status = PENDING_OWNER_APPROVAL` |
 | Counsel readings | Recording-notice positions (NY/NJ one-party, CT all-party), consent scope for a verification call, breach-notification duties, carrier producer agreements | Carried as `complianceReview: OWNER_COUNSEL`, QA-matrix §3, SECOPS §2 |
-| Production deploy | Owner GO required by the engagement rules | Not done |
+| Production deploy | Owner GO required by the engagement rules | **DONE 2026-10-29** — GO given in chat; see §12 for the rollback point |
 
 `SOA_ENABLED = false` in all four mirrors (`api/sign-soa.js:85`, `api/soa-status.js:37`,
 `api/soa-token.js:32`, `src/lib/soaContent.ts:63`); `assertSoaEnablementSafe()` throws at
-module load if it is flipped while any precondition is false. Production, read on
-2026-10-27 (GET of the home page and of `/api/soa-status`): bundle `index-jgWGDRt6.js`,
-TPMO sentence still the CY2026 variant with the SHIP reference (3 occurrences), SOA
-status endpoint answers 403. The §8 verification of 2026-10-02 therefore still holds.
+module load if it is flipped while any precondition is false.
 
-Why not the other labels: nothing is deployed anywhere, so IMPLEMENTED-STAGING would
-overstate; no security finding is open and unrepaired, so BLOCKED-SECURITY would misname
-the cause; the code exists and is tested, so DESIGNED-NOT IMPLEMENTED would understate.
+Production as served on 2026-10-29 after the promotion (curl against the custom domain,
+no cookie): home 200, bundle `index-C9yqRwo0.js` equal to the local build and to the
+preview; TPMO EN "We do not offer every plan available in your area. Please contact
+Medicare.gov or 1-800-MEDICARE to get information on all of your options." and its ES
+counterpart, zero SHIP occurrences, 46/46 served pages verified by
+`cy2027-preflight.mjs --url`; CSP, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy,
+Permissions-Policy present; `www` → 308 to the apex; `/api/soa-status` 403 without an
+allowed Origin and 503 `SOA_DISABLED` with one; `POST /api/opt-out {}` → 400 with the
+expected message; `/api/chat` → 200 with a correct AEP answer; `POST /api/submit-lead`
+with a fictional 555 number → 400 "Phone appears fake" (the new validation is live).
+Before the promotion (2026-10-27) production served bundle `index-jgWGDRt6.js` with the
+CY2026 sentence and 3 SHIP occurrences.
+
+Why this label: the layer runs in production with its controls on and the SOA workflow
+gated off, which is "controlled production"; IMPLEMENTED-MONITORING would overstate (no
+log drain, no alerting, no CI); BLOCKED-COMPLIANCE now describes only the enablement
+step, not the deployment; no security finding is open, so not BLOCKED-SECURITY.
 
 ---
 
@@ -136,7 +157,8 @@ audit comments; "after" is `a650129`.
 | Carrier overlay registry | None | 10 rows, all `PENDING_*`; state lists `STATED_BY_SPEC` for 2, `UNVERIFIED` for 8; module-private |
 | Governing objects frozen by the build | 0 | 50/50 (`check-no-self-modification.mjs`) |
 | Test battery | 44/44 suites when the architecture document was first written | 54/54 suites; 11 CY2027 suites, 5,163 assertions (sum of the per-suite RESULT lines, §9) |
-| Production | — | Unchanged: bundle `index-jgWGDRt6.js`, CY2026 TPMO, `/api/soa-status` 403 |
+| Production | Bundle `index-jgWGDRt6.js` (commit `50eb408`, 2026-09-27), CY2026 TPMO with SHIP, `/api/soa-status` 403 | **Promoted 2026-10-29:** bundle `index-C9yqRwo0.js` (commit `4be5afa`), CY2027 TPMO on 46/46 pages, `/api/soa-status` 403 / 503 `SOA_DISABLED`; rollback point `clearpoint-deploy-j1l0wc0fn` |
+| GoHighLevel CY2027 fields | 0 of 36 exist | **36 created 2026-10-29** (`cy2027-provision-crm-fields.mjs --apply`, 0 reused, 0 refused); map set as `CY2027_CRM_FIELD_IDS` in Vercel Production |
 
 ---
 
@@ -191,10 +213,12 @@ Commit chain by phase (`git log 8d69af0^..HEAD`):
   security operations, carrier registry provenance, form jurisdiction fix, red-team
   repaired (SPEC-27/30/31).
 
-**Workflows changed: none.** No GoHighLevel workflow, agent prompt, tool, custom field or
-Vercel setting was modified. Every platform change is written as an owner package
-(`docs/voice/…`, `scripts/cy2027-provision-crm-fields.mjs --apply`) and labelled NOT
-APPLIED.
+**Workflows changed: none.** No GoHighLevel workflow, agent prompt or tool was modified.
+Platform changes made on 2026-10-29 under the owner's GO: the 36 CY2027 custom fields
+were created in the GoHighLevel sub-account (additive; the script never edits or deletes
+a field), `CY2027_CRM_FIELD_IDS` was added to the Vercel project (Production target), and
+the verified preview was promoted. The voice package (`docs/voice/…`) remains NOT
+APPLIED: its script is `PENDING_OWNER_APPROVAL`.
 
 ---
 
@@ -284,7 +308,21 @@ approval**; the full EN/ES text is in `voice-soa.js` and in the owner package.
 | BEST_TIME_TO_CALL | PpDDusEEsMz4xNIcrwRW |
 | MEDICARE_INTEREST | fLxx7s1GpVJYlxJl08G6 |
 
-### 5.2 CY2027 fields (`CY2027_FIELD_KEYS`, 36 keys) — **not yet created; unmapped**
+### 5.2 CY2027 fields (`CY2027_FIELD_KEYS`, 36 keys) — **created and mapped 2026-10-29**
+
+Created in the production sub-account with `node scripts/cy2027-provision-crm-fields.mjs
+--apply` (already present 0, created 36, refused 0); the printed map was validated with
+`fieldIdConfig()` (36 ids, `refused: {}`) and set as `CY2027_CRM_FIELD_IDS` in the Vercel
+**Production** environment (the Preview target was not set: previews carry no CRM token,
+so they cannot write to the CRM anyway). Contract probe, same day: a throwaway contact
+created through the GoHighLevel API with the handler's own serializer
+(`existingField()` + `buildCustomFields()`, `{id, key, value}` entries) answered 201,
+`LEAD_TRUST_STATE = UNVERIFIED`, `RETENTION_CLASS = GENERAL_CRM`,
+`DATA_SENSITIVITY_CLASS = CONTACT_PII` were read back exactly, and the contact was deleted
+(200). **Not verified:** a lead submitted through the live site reaching the CRM with
+these fields — the handler rejects every fictional phone pattern and the agency's own
+numbers already belong to contacts, so no safe test number was available; the owner can
+verify with one real lead from the site and a look at the contact's CY2027 fields. Ids:
 
 `contact.soa_id`, `soa_appointment_id`, `soa_plan_year`, `soa_status`, `soa_method`,
 `soa_language`, `soa_language_source`, `soa_state`, `soa_zip`, `soa_county`,
@@ -297,6 +335,25 @@ approval**; the full EN/ES text is in `voice-soa.js` and in the owner package.
 `human_security_review_status`, `carrier_overlay_status`,
 `licensed_agent_review_required`, `data_sensitivity_class`, `retention_class`,
 `self_reported_medicaid_status`, `self_reported_lis_status`.
+
+`SOA_ID` IBxnJOh71dyOB2Z0Eodt · `SOA_APPOINTMENT_ID` 3vcBf003PkWvBDsUPgU4 · `SOA_PLAN_YEAR`
+O2QqfmKJuk2lpqGFFaeP · `SOA_STATUS` aL8JFiT6RdXENMQd59tA · `SOA_METHOD` 1uedzX9v2EyNZbOZ0Mlu ·
+`SOA_LANGUAGE` 8QhYQU6Ef4YwiAfg3ba1 · `SOA_LANGUAGE_SOURCE` GqLGTOJxuIlVVB9AdFWs · `SOA_STATE`
+lGkMAmg72SASBUknxi11 · `SOA_ZIP` 73qFmnpGzq5Hx2B4ObDS · `SOA_COUNTY` 1Zem92TLsyadRuC4J7sV ·
+`SOA_AUTHORIZED_CATEGORIES` 5ZaLNBs2veAy8u3tH4Hj · `SOA_DECLINED_CATEGORIES` 0emudNKbXTCHBgxmrZjU ·
+`SOA_FORM_VERSION` hj8GATSapCu2ZtmovIHW · `SOA_SCRIPT_VERSION` U8RZv6Cd1vIdunZojK2d ·
+`SOA_COMPLETED_AT` 9NgGWDkIwzvuX0C2HDMu · `SOA_SUPERSEDES_ID` JMguEJtIdiOxPrbD4GGJ ·
+`SOA_REVOKED_AT` DuT2HMQsB651pDXrrTjz · `SOA_EVIDENCE_URI` EpHXxvX5u0GtRn3B0Whq ·
+`SOA_INTEGRITY_HASH` F9253LGvmJlQCoBDAo3n · `RECORDING_NOTICE_STATUS` Hhn72DHvm04ccb2Ao2US ·
+`CALLBACK_CONSENT_STATUS` fPVNfFLJL9pzB9aM2lqE · `CALLBACK_CONSENT_AT` axKUzekIyn7JKdfZHY3K ·
+`CALLBACK_CONSENT_SCOPE` HOxaWD66rlLfWB6wTyRp · `AI_OUTBOUND_CONSENT_STATUS` dR6knqkOKtSqTaQpNP5Z ·
+`RESIDENCE_STATE` TbgRTwbD5fB9lopv6y5c · `STATE_RULESET_VERSION` afLnnPxOA012GyhQhUJg ·
+`CMS_RULESET_VERSION` ocWmF9Ep7hPRa1wU3xJM · `LEAD_TRUST_STATE` 7DzFMZs3LJ6whU7mK6Tr ·
+`CHANNEL_VERIFICATION_STATUS` efMLBn3SmCUuGSNQlX1G · `HUMAN_SECURITY_REVIEW_STATUS`
+XqE6VKhziAjGCzowCqz7 · `CARRIER_OVERLAY_STATUS` cedsftnNrnWMZAPF8J6p ·
+`LICENSED_AGENT_REVIEW_REQUIRED` JXRiSpBbMXEtxUPXmYjY · `DATA_SENSITIVITY_CLASS`
+f7NW1WH7SkfkOnPA5jZc · `RETENTION_CLASS` DocZFsk9r318WiYeAyhB · `SELF_REPORTED_MEDICAID_STATUS`
+iKdHRcCKg6xCyPmPrU4j · `SELF_REPORTED_LIS_STATUS` N3Z1tu9uisnuNKQ6LxRe.
 
 Mapping rules enforced in code: a key is written only when `CY2027_CRM_FIELD_IDS` gives
 it an id; an id that equals one of the twelve production ids (`IN_USE`) or is given to two
@@ -486,7 +543,10 @@ Executed evidence on 2026-10-27 (final tree `a650129`):
 | `npm run build` | exit 0; all gates OK; `tsc` + `vite` OK; prerender 46/46 routes, TPMO verified against the CY2027 variant; sitemap files restored after the run |
 | `check-no-self-modification.mjs` | 56 api files allow-listed; 50/50 governing objects frozen; no runtime write in 140 files |
 | `check-cy2027-parity.mjs` | OK — SOA text, TPMO, consent wording v2026-06-01, knowledge release `CP-UMKE-CY2026-v1.0` each match their pinned digest |
-| Production read-only probe | home page serves the CY2026 TPMO sentence (3 SHIP occurrences), bundle `index-jgWGDRt6.js`; `/api/soa-status` → 403 |
+| Production read-only probe (2026-10-27, before promotion) | home page serves the CY2026 TPMO sentence (3 SHIP occurrences), bundle `index-jgWGDRt6.js`; `/api/soa-status` → 403 |
+| Vercel preview build of `4be5afa` (2026-10-29) | all gates ran in Vercel's build (parity 14/14, self-modification 50/50, prerender 46/46 with the CY2027 TPMO, sitemap), "Build Completed in 23s"; preview verified through the SSO share cookie: bundle `index-C9yqRwo0.js` = local, TPMO EN/ES, 0 SHIP, headers present, `/api/soa-status` 403, `/api/opt-out {}` 400, `/api/chat` 200 with a correct answer |
+| Production after `vercel promote` (2026-10-29) | same bundle and TPMO on 46/46 served pages (`cy2027-preflight.mjs --url`), headers present, `www` 308 → apex, `/api/soa-status` 403 / 503 `SOA_DISABLED`, opt-out 400, chat 200, submit-lead rejects a 555 number with 400; GoHighLevel field contract probed and the throwaway contact deleted (§5.2) |
+| Not verified after promotion | a lead from the live site landing in the CRM with CY2027 fields (no safe test phone); Clara/Zara and Smart Review in a browser; the chat `[AI-AUDIT]` lines in the Vercel function logs |
 
 To re-run: `npm test`, `npm run build` (then `git checkout -- public/sitemap.xml
 scripts/sitemap-dates.json`), `node scripts/<suite>.mjs` for any single suite.
@@ -600,9 +660,12 @@ fabrication. None of these has been activated. Full table: SECOPS §5.
 
 ## 12. Rollback
 
-Nothing in this range is deployed, so the current rollback is "do not promote". If the
-branch is promoted later, the exact steps (matching `docs/conversational-platform/
-DEPLOYMENT.md` and `ROLLBACK.md`; SECOPS §4):
+Production is `dpl_BiQKWLqpdU5VTdSBPc8nwLVgmXMo` (`clearpoint-deploy-a263o0q19`, commit
+`4be5afa`, promoted 2026-10-29). **The rollback point is the previous Production
+deployment `https://clearpoint-deploy-j1l0wc0fn-sawil-reyess-projects.vercel.app`**
+(commit `50eb408`, 2026-09-27, `isRollbackCandidate: true`), which restores the CY2026
+TPMO sentence. Exact steps (matching `docs/conversational-platform/DEPLOYMENT.md` and
+`ROLLBACK.md`; SECOPS §4):
 
 1. `git push` builds a **preview only**. Production changes only through
    `vercel promote <deploymentUrl> --scope sawil-reyess-projects --yes` with the global
@@ -623,21 +686,25 @@ DEPLOYMENT.md` and `ROLLBACK.md`; SECOPS §4):
 6. **Voice (GoHighLevel):** nothing was applied. If the owner applies the Layer-B addendum
    later: paste the backed-up prompt from `docs/voice/backups/` into the agent and save;
    5–10 minutes to propagate; never edit without the backup step.
-7. **CRM fields:** if `--apply` is run later, the created fields are additive; unmapping is
-   `CY2027_CRM_FIELD_IDS` unset + re-promote (the code then logs the gap and writes
-   nothing to them).
+7. **CRM fields (created 2026-10-29):** the 36 fields are additive and hold no data until
+   a lead or signature writes them; unmapping is `vercel env rm CY2027_CRM_FIELD_IDS
+   production` + re-promote (the code then logs the gap and writes nothing to them);
+   deleting the fields themselves is an owner action in GoHighLevel.
 
 ---
 
 ## 13. Owner GO package (what unblocks the status)
 
-In the order the gates need them: (1) deploy GO for a **preview** build of `a650129`;
-(2) TPMO counts; (3) `CY2027_REVIEWERS` and the ruleset attestation; (4) evidence store
-credentials + round-trip + restore test; (5) KV provisioning; (6) GoHighLevel field
-creation and the id map; (7) Spanish title/intro approval; (8) voice script v0.2 approval
-and legal sign-off; (9) letter approval; (10) consent-scope legal reading; (11) counsel
-items (recording notice, breach duties); (12) external pentest on the preview; (13) only
-then `SOA_ENABLED` and a production promote with the §12 verification steps.
+In the order the gates need them: (1) ~~deploy GO~~ **done 2026-10-29** (`4be5afa`
+promoted); (2) TPMO counts; (3) `CY2027_REVIEWERS` and the ruleset attestation;
+(4) evidence store credentials + round-trip + restore test; (5) KV provisioning;
+(6) ~~GoHighLevel field creation and the id map~~ **done 2026-10-29**; (7) Spanish
+title/intro approval; (8) voice script v0.2 approval and legal sign-off; (9) letter
+approval; (10) consent-scope legal reading; (11) counsel items (recording notice, breach
+duties); (12) external pentest on a preview; (13) only then `SOA_ENABLED` and a production
+promote with the §12 verification steps. Also open: one real lead from the live site to
+confirm the CRM write with the CY2027 fields, and the `dual` option no longer writing
+`medicare_status` (check GoHighLevel workflows and smart lists that filtered on it).
 
 Until (2)–(4) are recorded, `assertSoaEnablementSafe()` will refuse to let
 `SOA_ENABLED = true` build — the status stays **BLOCKED-COMPLIANCE** by construction, not
