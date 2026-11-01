@@ -1,6 +1,6 @@
 {
   "$schema_note": "Temporal rule database — Clear Point Continuous Compliance Engine. Status: CURRENT | FUTURE | EXPIRED | SUPERSEDED | PENDING_VERIFICATION. Never activate FUTURE before effective_date; never leave SUPERSEDED active. Maintained by the monthly audit (compliance/ENGINE.md).",
-  "database_version": "2026-09-28.1",
+  "database_version": "2026-11-01.1",
   "authorized_jurisdictions": [
     "NY",
     "NJ",
@@ -23,8 +23,8 @@
         "api/chat.js",
         "api/_lib/medicare-figures.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "2026-09-28: figures file, api/chat.js prompt and api/_lib/medicare-figures.js backstop agree ($202.90/$283). No 2027 Part B announcement yet (expected ~Nov, W2)."
+      "last_verified": "2026-11-01",
+      "verification_note": "2026-11-01: no 2027 Part B announcement yet (CMS newsroom read through 2026-10-30). Figures file, api/chat.js and backstop unchanged at 23c731b."
     },
     {
       "rule_id": "FED-2026-PARTA",
@@ -39,7 +39,7 @@
         "src/data/medicare-figures-2026.ts",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28"
+      "last_verified": "2026-11-01"
     },
     {
       "rule_id": "FED-2026-PARTD",
@@ -55,7 +55,7 @@
         "api/chat.js",
         "api/_lib/medicare-figures.js"
       ],
-      "last_verified": "2026-09-28",
+      "last_verified": "2026-11-01",
       "verification_note": "2026-09-28: CY2027 Rate Announcement (2026-04-06) Table V-2 lists the 2026 column as $615 deductible / $2,100 OOP threshold — independent confirmation of the current values."
     },
     {
@@ -71,8 +71,8 @@
         "src/data/medicare-figures-2026.ts",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "2026-09-28: 2026 LIS copays $5.10/$12.65 independently confirmed by CY2027 Rate Announcement Table V-2 (2026 column). Income/asset figures carried from prior audits; annual change lands Jan/Mar (W9)."
+      "last_verified": "2026-11-01",
+      "verification_note": "2026-11-01: CY2026 LIS resource-limits HPMS memo (2025-10-31) read directly from cms.gov: $16,590 single / $33,100 married, or $18,090 / $36,100 for applicants who tell SSA they expect to use some resources for burial (20 CFR 416.1231). Our $18,090/$36,100 equals the burial-inclusive column; api/chat.js does not state the condition → proposal P-2026-10-01 (LEVEL 2). Income figures carried; annual change Jan/Mar (W9)."
     },
     {
       "rule_id": "FED-TPMO-DISCLAIMER",
@@ -87,8 +87,8 @@
         "src/components/DisclaimerBlock.tsx",
         "src/lib/tpmoConfig.ts"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "CORRECTED 2026-09-12 (master audit, verified against eCFR versioner XML 2026-09-08 + 91 FR 17384): the CY2027 final rule DID revise (e)(41) — introductory text and (e)(41)(ii): the SHIP reference is removed from the standardized sentence and the verbal disclaimer timing becomes 'prior to the discussion of any benefits'; applicable to CY2027 marketing beginning 2026-10-01. The COUNTS requirement is unchanged and the site's count-less fallback remains NON-COMPLIANT until the owner/FMO supplies organization/product counts (tpmoConfig.ts, status BLOCKED_COUNTS_REQUIRED). Variant switch is automatic (activeContractYearVariant). 2026-09-28: date switch EXECUTED against src/lib/tpmoConfig.ts via tsx — 2026-09-30T23:59-04:00 → CY2026, 2026-10-01T00:00-04:00 → CY2027. Counts still null (status BLOCKED_COUNTS_REQUIRED) — P1 remains OPEN and becomes more acute with PY2027 marketing (Oct 1) and AEP (Oct 15)."
+      "last_verified": "2026-11-01",
+      "verification_note": "2026-11-01: LIVE SITE READ (clearpointsenioradvisors.com /, /es, /support; bundle index-BAhDMdvx.js, promotion 2026-10-29): serves the CY2027 count-less sentence 'We do not offer every plan available in your area. Please contact Medicare.gov or 1-800-MEDICARE…' — wording switch confirmed in production. Counts still null in api/_lib/cy2027/tpmo.js (status BLOCKED_COUNTS_REQUIRED) → the count-less sentence remains NON-COMPLIANT with (e)(41) and has now been live through the whole of AEP so far. P1 OPEN, owner/FMO data."
     },
     {
       "rule_id": "FED-2027-TPMO-WORDING",
@@ -104,8 +104,8 @@
         "src/components/DisclaimerBlock.tsx",
         "src/components/CustomerServiceBot.tsx"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "Wording staged and date-switched in code. Counts still owner-gated (see FED-TPMO-DISCLAIMER). Voice agents (GHL) must convey the statement before any benefit discussion — owner action."
+      "last_verified": "2026-11-01",
+      "verification_note": "2026-11-01: effective since 2026-10-01 for CY2027 marketing; production serves this wording (live read). Remains tagged FUTURE only because the CY2027 plan year starts 2027-01-01; marketing-side it is in force. Counts still owner-gated."
     },
     {
       "rule_id": "NY-2026-MSP",
@@ -120,8 +120,8 @@
         "src/data/medicare-figures-2026.ts",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "RE-VERIFIED VERBATIM 2026-09-28 (DOH page Rev. 3/26, footer \"Revised: May 2026\"): QMB $1,836/$2,489 base, $1,856/$2,509 +$20; QI $2,474/$3,355 base, $2,494/$3,375 +$20; helpline 1-800-541-2831. No change."
+      "last_verified": "2026-11-01",
+      "verification_note": "RE-VERIFIED 2026-11-01 (DOH page Rev. 3/26, footer 'Revised: May 2026', fetched directly): QMB $1,836/$2,489 base, $1,856/$2,509 +$20; QI $2,474/$3,355 base, $2,494/$3,375 +$20; helpline 1-800-541-2831. No change."
     },
     {
       "rule_id": "NY-2026-EPIC",
@@ -137,8 +137,8 @@
         "src/components/ChatBot.tsx",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "RE-VERIFIED 2026-09-28 against program_highlights_2026.htm: up to $75,000 single / $100,000 married; Part D enrollment required."
+      "last_verified": "2026-11-01",
+      "verification_note": "RE-VERIFIED 2026-11-01 against program_highlights_2026.htm: up to $75,000 single / $100,000 married; Part D required. program_highlights_2027.htm returns 404 (not yet published); EPIC index footer 'Revised: March 2026'."
     },
     {
       "rule_id": "NJ-2026-PAAD-SENIORGOLD",
@@ -154,8 +154,8 @@
         "src/components/ChatBot.tsx",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "RE-VERIFIED 2026-09-28 against nj.gov DoAS PAAD + Senior Gold pages: PAAD <$54,943/<$62,390, copays $5 generic / $7 brand, hotline 1-800-792-9745; Senior Gold $54,943–$64,943 / $62,390–$72,390. Exact match."
+      "last_verified": "2026-11-01",
+      "verification_note": "RE-VERIFIED 2026-11-01 against nj.gov DoAS pages: PAAD <$54,943 / <$62,390; Senior Gold $54,943–$64,943 / $62,390–$72,390; hotline 1-800-792-9745. No 2027 figures posted."
     },
     {
       "rule_id": "NJ-2026-MSP",
@@ -169,8 +169,8 @@
       "implemented_in": [
         "src/data/medicare-figures-2026.ts"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "VERIFIED 2026-09-28 against the official NJ DoAS MSP page (closes the carried item): 2026 annual income QMB $15,960/$21,640, SLMB $19,152/$25,968, QI $21,546/$29,214; assets $9,950/$14,910 all three. Monthly equivalents in the figures file (1,330/1,803 · 1,596/2,164 · 1,795/2,434 floored) are exact twelfths or floors. Official application path on that page: NJSave or DoAS hotline 1-800-792-9745. Clara (api/chat.js lines 115/1305) refers MSP to the NJ Medicaid hotline 1-800-356-1561 — confirmed as the official Medicaid hotline on current nj.gov pages (DOH complaint page, DCF KLG page), so NOT wrong, but differs from the MSP page and from Zara (ChatBot.tsx uses 1-800-792-9745). LEVEL 2 consistency proposal P-2026-09-02."
+      "last_verified": "2026-11-01",
+      "verification_note": "RE-VERIFIED 2026-11-01 against nj.gov/humanservices/doas/services/l-p/msp/: QMB $15,960/$21,640, SLMB $19,152/$25,968, QI $21,546/$29,214 annual; assets $9,950/$14,910. No change."
     },
     {
       "rule_id": "CT-2026-MSP",
@@ -185,8 +185,8 @@
         "src/data/medicare-figures-2026.ts",
         "api/chat.js"
       ],
-      "last_verified": "2026-09-28",
-      "verification_note": "RE-VERIFIED VERBATIM 2026-09-28 against portal.ct.gov DSS eligibility page (\"effective March 1, 2026\"): QMB $2,807/$3,806, SLMB $3,073/$4,166, ALMB $3,272/$4,437; CHOICES 1-800-994-9422 on the same page; DSS Benefits Center 1-855-626-6632 confirmed on portal.ct.gov/dss/common-elements/dss-client-information-line-and-benefits-center. CAUTION: archived ct.gov pages still circulate 2021-era limits (~$2,196 QMB). Note: CT page text still mentions a \"coverage gap\" (state copy, not ours — Part D has no gap since 2025)."
+      "last_verified": "2026-11-01",
+      "verification_note": "RE-VERIFIED 2026-11-01 against portal.ct.gov DSS eligibility page ('effective March 1, 2026'): QMB $2,807/$3,806, SLMB $3,073/$4,166, ALMB $3,272/$4,437; CHOICES 1-800-994-9422. Page now carries a DSS-wide notice about a one-time $300 grocery card for people who lost SNAP under federal work rules — SNAP/HUSKY (H.R.1), not MSP; no Clear Point surface affected. CAUTION (unchanged): archived ct.gov pages circulate 2021-era limits."
     },
     {
       "rule_id": "CT-CONNPACE-SUNSET",
@@ -200,7 +200,7 @@
       "implemented_in": [
         "src/data/medicare-figures-2026.ts"
       ],
-      "last_verified": "2026-09-28"
+      "last_verified": "2026-11-01"
     },
     {
       "rule_id": "FED-2027-PARTD-BASEPREMIUM",
@@ -212,8 +212,8 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-09-28",
-      "verification_note": "Read from official CMS fact sheet in browser 2026-08-28. Do NOT surface as current-year figure before 2027-01-01."
+      "last_verified": "2026-11-01",
+      "verification_note": "Read from official CMS fact sheet 2026-08-28. 2026-11-01: superseded in practical effect by the 2026-09-28 landscape release (FED-2027-LANDSCAPE): CMS projects the average standalone PDP total premium rises <$1 ($35.09 → $36). The 'may shift up' caution in this rule's text should NOT be used in AEP education without that figure. Do NOT surface as current-year figure before 2027-01-01."
     },
     {
       "rule_id": "FED-2027-FINALRULE",
@@ -225,7 +225,7 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-09-28",
+      "last_verified": "2026-11-01",
       "verification_note": "Fact sheet read in full via browser. LEVEL 2 item: 'removing restrictions on time and manner of agent conversations' may allow relaxing the SOA waiting flow — OPTIONAL, current stricter flow remains compliant; verify §422.2264 amendments in rule text before any change. OWNER DECISION."
     },
     {
@@ -238,7 +238,7 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-09-28",
+      "last_verified": "2026-11-01",
       "verification_note": "Read directly from the official PDF (139 pp., downloaded from cms.gov 2026-09-28). Resolves watchlist W3. Do NOT surface as the current-year figure before 2027-01-01; may be surfaced from 2026-10-01 ONLY if clearly labeled '2027' and only after owner approval (proposal P-2026-09-01)."
     },
     {
@@ -251,8 +251,8 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-09-28",
-      "verification_note": "2027 LIS resource limits NOT yet published — CMS says they come in the annual HPMS memo after the September 2026 CPI (expected mid-late October). Income standards follow the 2027 FPL (~Jan–Mar 2027). Status of those two pieces: PENDING (W9/W14)."
+      "last_verified": "2026-11-01",
+      "verification_note": "2027 LIS resource limits STILL NOT published as of 2026-11-01: cms.gov LIS partner page still links only cy2026-lis-resource-limits-memo.pdf; cy2027 memo URLs return 404. Last year's memo was dated 2025-10-31 — re-check in the November audit (W14). Income standards follow the 2027 FPL (~Jan–Mar 2027)."
     },
     {
       "rule_id": "FED-2027-APPEALS-AIC",
@@ -264,8 +264,60 @@
       "regulatory_year": 2027,
       "status": "FUTURE",
       "implemented_in": [],
-      "last_verified": "2026-09-28",
+      "last_verified": "2026-11-01",
       "verification_note": "Read via Federal Register API abstract. NO impact: no Clear Point surface cites AIC thresholds (grep of src/api/docs 2026-09-28). Informational only."
+    },
+    {
+      "rule_id": "FED-2027-LANDSCAPE",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "PY2027 MA/Part D landscape (projections): weighted average MA premium $14.37 (2026) → $12.00 (2027); MA-PD average Part D premium $11.32 → $7; standalone PDP average total premium $35.09 → $36; ~5,532 MA plans nationally. State fact sheets: NY avg MA premium $36.19 → $30.79, 227 MA plans (218 in 2026), 9 PDPs; NJ $23.37 → $20.09, 72 MA plans (85 in 2026), 11 PDPs; CT $16.89 → $25.31, 48 MA plans (47 in 2026), 10 PDPs. $0-premium MA available to 100% in all three states.",
+      "source_url": "https://www.cms.gov/newsroom/press-releases/medicare-advantage-medicare-prescription-drug-programs-expected-remain-stable-2027 + https://www.cms.gov/files/document/2027-medicare-advantage-part-d-landscape-state-state-fact-sheets.pdf (pp. 22 CT, 97 NJ, 103 NY)",
+      "publication_date": "2026-09-28",
+      "effective_date": "2027-01-01 (plan year); AEP 2026-10-15 → 2026-12-07",
+      "regulatory_year": 2027,
+      "status": "FUTURE",
+      "implemented_in": [],
+      "last_verified": "2026-11-01",
+      "verification_note": "Press release and state PDF read directly from cms.gov 2026-10-27/28 (PDF text-extracted in the browser). Resolves watchlist W1. Averages are CMS projections, not any plan's price; usable only as clearly-labeled 2027 AEP context and only with owner approval (folded into P-2026-09-01). NJ MA plan count FALLS 85 → 72: callers in exiting plans may have an SEP/non-renewal question — education only, no plan-specific claim."
+    },
+    {
+      "rule_id": "FED-2026-MIF-REBATE",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "Medicare Improvement Fund Premium Rebate: one-time $90 Part B premium rebate, October 2026, to ~20.8M people in Original Medicare Part B living in the U.S. who are NOT receiving Medicaid premium assistance and NOT paying IRMAA; MA enrollees NOT eligible. Direct deposit ~Oct 8 (SSA) or Treasury check later in October. Eligibility: 1-800-MEDICARE; payment status: SSA 1-800-772-1213 from 2026-10-15.",
+      "source_url": "https://www.cms.gov/newsroom/fact-sheets/medicare-improvement-fund-premium-rebate-frequently-asked-questions",
+      "publication_date": "2026-10-03",
+      "effective_date": "2026-10 (one-time payment)",
+      "regulatory_year": 2026,
+      "status": "CURRENT",
+      "implemented_in": [],
+      "last_verified": "2026-11-01",
+      "verification_note": "FAQ read in full from cms.gov 2026-10-27. Not referenced anywhere in src/ or api/ (grep). Callers (especially MSP/QMB members, who are excluded, and MA members, who are excluded) may ask why they did not receive it → proposal P-2026-10-02 (LEVEL 2, optional). Mark EXPIRED in the December audit once the October payment window has closed, unless CMS announces a repeat."
+    },
+    {
+      "rule_id": "FED-2028-CMS4214P",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "PROPOSED rule CMS-4214-P (CAA 2026 §§6219/6220/6224): $0 generic copay (from $1) for full-benefit dual eligibles ≤100% FPL from plan year 2028; MA provider-directory verification/accuracy + cost-sharing protection for enrollees misled by inaccurate directories from CY2028 (accuracy scores displayed CY2029); Part D PBM remuneration/transparency rules.",
+      "source_url": "https://www.cms.gov/newsroom/fact-sheets/medicare-program-implementation-sections-6219-6220-6224-consolidated-appropriations-act-2026-cms (Federal Register doc 2026-21420, published 2026-10-20)",
+      "publication_date": "2026-10-20",
+      "effective_date": "2028-01-01 (proposed); comments close 2026-12-15",
+      "regulatory_year": 2028,
+      "status": "PENDING_VERIFICATION",
+      "implemented_in": [],
+      "last_verified": "2026-11-01",
+      "verification_note": "PROPOSED, NOT FINAL — never present as law. Fact sheet read from cms.gov; FR publication/comment dates from the Federal Register API. No Clear Point surface today. Track to final rule (W17)."
+    },
+    {
+      "rule_id": "FED-2027-SSA-COLA",
+      "jurisdiction": "FEDERAL/CMS",
+      "rule": "SSA 2027 COLA 3.6% (benefits payable January 2027; SSI from 2026-12-31) — context for the 2027 Part B premium/hold-harmless discussion",
+      "source_url": "https://www.ssa.gov/news/en/press/releases/2026-10-14.html (and /news/en/cola/factsheets/2027.html)",
+      "publication_date": "2026-10-14",
+      "effective_date": "2027-01-01",
+      "regulatory_year": 2027,
+      "status": "PENDING_VERIFICATION",
+      "implemented_in": [],
+      "last_verified": "2026-11-01",
+      "verification_note": "NOT VERIFIED on the primary page: ssa.gov returned 403 to direct fetch and the browser pane timed out on 2026-10-28/29. Figure comes from a web-search result whose listed URLs are ssa.gov and oig.ssa.gov pages (lead, not authority). Context only — no Clear Point surface states a COLA. Read the SSA fact sheet in the November audit alongside the 2027 Part B premium."
     }
   ]
 }
